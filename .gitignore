@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtualenv
+venv/
+.venv/
+
+# Secrets — never commit keys
+.env
+secrets.py
+
+# Runtime output
+logs/*.log
+logs/*.jsonl
+
+# Models are large; fetch them with scripts/, don't commit
+assets/models/
+*.onnx
+*.gguf
+
+# OS
+.DS_Store
