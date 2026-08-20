@@ -43,19 +43,48 @@ VAD_SILENCE_MS = None        # TODO: tune — how much silence ends an utterance
 TTS_VOICE = None             # TODO: choose a Piper voice, then pin it here
 
 # --- Audio devices -------------------------------------------------------
-# TODO: fill from `arecord -l` / `aplay -l` on the real Pi. Never guess.
-MIC_DEVICE = None            # USB shotgun mic (top)
-SPEAKER_DEVICE = None        # via USB soundcard
+# GeneralPlus USB soundcard (1b3f:2008) — carries BOTH the shotgun mic in and
+# the speaker out. Addressed by CARD NAME, not index: card indices shift when
+# a USB device drops off the bus (verified 2026-08-20, both directions tested).
+MIC_DEVICE = "plughw:CARD=Device,DEV=0"
+SPEAKER_DEVICE = "plughw:CARD=Device,DEV=0"
+MIC_SAMPLE_RATE = 16000      # what faster-whisper and openWakeWord expect
 
 # --- Cameras -------------------------------------------------------------
-# TODO: fill from `ls /dev/video*`. Indices are NOT stable across reboots —
-# prefer a /dev/v4l/by-id/ path once verified.
+# by-id paths, not indices — indices are not stable across reboots.
+CAM_C270 = "/dev/v4l/by-id/usb-046d_0825_9B5B4130-video-index0"
+CAM_C270_MAX = (1280, 720)   # MJPG
+
+# TODO: which physical position is the C270 in? Assign once confirmed.
 CAM_UP = None                # forward vision, above screen
 CAM_DOWN = None              # floor / cliff / optical flow, above bumper
 
+# The second camera ("Generic HD", 349c:2317) dropped off the USB bus on
+# 2026-08-20 and did not re-enumerate. Vision code must treat a second camera
+# as OPTIONAL and degrade cleanly when it is absent.
+CAM_SECOND = None
+
 # --- Range sensors -------------------------------------------------------
-LIDAR_PORT = None            # TODO: LDROBOT D500, from `ls /dev/serial/by-id/`
-TOF_I2C_ADDR = None          # TODO: DFRobot 8x8 ToF, from `i2cdetect -y 1`
+# LDROBOT D500 via CP2102. Verified streaming: LD19-family binary protocol,
+# 0x54 header / 0x2C verlen / 12 points per 47-byte packet, ~9.9 Hz.
+LIDAR_PORT = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
+LIDAR_BAUD = 230400
+
+# DFRobot 8x8 ToF, bridged through a Raspberry Pi Pico over USB CDC.
+# NOT on I2C — /dev/i2c-1 is disabled and enabling it is off-limits (see
+# CLAUDE.md Part 1). The Pico makes that unnecessary.
+# Protocol: ASCII lines "yN:d0,d1,...,d7," for N in 0..7, one 8x8 frame
+# per 8 lines, distances in mm, ~15 fps. 4000 = no return / out of range.
+TOF_PORT = "/dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00"
+TOF_BAUD = 115200
+TOF_NO_RETURN_MM = 4000
+TOF_ROWS = 8
+TOF_COLS = 8
+
+# Unidentified: an FTDI FT232R (serial A5069RR4) sits on /dev/ttyUSB1.
+# Do NOT open it until Harsh confirms what it drives — if it reaches the
+# motors, probing it could move the robot.
+FTDI_PORT_UNKNOWN = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0"
 
 # --- Drive ---------------------------------------------------------------
 # L298N, 4-motor differential drive. Pins are BCM numbering.
@@ -75,6 +104,6 @@ def missing_hardware_settings() -> list[str]:
     required = (
         "WAKE_THRESHOLD", "VAD_SILENCE_MS", "TTS_VOICE",
         "MIC_DEVICE", "SPEAKER_DEVICE", "CAM_UP", "CAM_DOWN",
-        "LIDAR_PORT", "TOF_I2C_ADDR", "MOTOR_PINS",
+        "LIDAR_PORT", "TOF_PORT", "MOTOR_PINS",
     )
     return [name for name in required if globals()[name] is None]
