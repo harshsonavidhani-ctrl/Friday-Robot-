@@ -35,10 +35,12 @@ DEFAULT_EMOTION = "neutral"
 # The canonical list. friday_face.py imports this and refuses to start unless
 # it has geometry for every name here, so the two can never drift apart.
 EMOTIONS: tuple[str, ...] = (
+    # neutral, then thinking right after -- this order is the demo/check order
+    "neutral", "thinking",
     # core
-    "neutral", "happy", "sad", "angry", "surprised",
+    "happy", "sad", "angry", "surprised",
     # functional — what Friday is doing
-    "listening", "thinking", "speaking", "confused", "dizzy", "success",
+    "listening", "speaking", "confused", "dizzy", "success",
     # personality
     "excited", "wink", "love", "curious", "proud", "bored",
     # low energy

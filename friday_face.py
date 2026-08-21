@@ -106,6 +106,9 @@ class Eye:
     h: float = EYE_H
     radius: float = EYE_RADIUS
     tilt: float = 0.0            # degrees, + rotates counter-clockwise
+    bevel: float = 0.0           # px chamfered off ONE top corner of a rect
+                                  # eye, not the whole shape: + cuts this
+                                  # eye's own top-RIGHT corner, - cuts top-LEFT
     dx: float = 0.0
     dy: float = 0.0
     pupil: float = 0.0           # dark pupil radius as a fraction of width
@@ -136,9 +139,13 @@ class Face:
 
 
 def _eyes(**kw) -> tuple[Eye, Eye]:
-    """A matched pair. `tilt` mirrors: + means both outer edges drop."""
+    """A matched pair. `tilt` and `bevel` both mirror between the two eyes,
+    so +tilt/+bevel on the LEFT eye becomes -tilt/-bevel on the right one --
+    call sites only ever specify one signed value for a symmetric pair."""
     tilt = kw.pop("tilt", 0.0)
-    return Eye(tilt=tilt, **kw), Eye(tilt=-tilt, **kw)
+    bevel = kw.pop("bevel", 0.0)
+    return (Eye(tilt=tilt, bevel=bevel, **kw),
+            Eye(tilt=-tilt, bevel=-bevel, **kw))
 
 
 def _face(left: Eye, right: Eye, mouth: Mouth, **kw) -> Face:
@@ -165,13 +172,17 @@ EMOTIONS: dict[str, Face] = {
     ),
 
     "sad": _face(
-        # Outer top corners droop -- a soft rotation, not a sharp diamond.
-        *_eyes(h=118, radius=26, tilt=11, dy=6),
+        # Outer top corner chamfered off -- a clean angled cut, not a
+        # whole-eye rotation (that read as a skewed parallelogram on the
+        # real screen).
+        *_eyes(h=118, radius=24, bevel=-30, dy=6),
         Mouth("curve", w=205, thickness=14, curve=-32),
     ),
 
     "angry": _face(
-        *_eyes(h=86, radius=20, tilt=-22),
+        # Inner top corners chamfered off -- eyebrows angled down toward
+        # the nose, same clean-cut language as sad's outer chamfer.
+        *_eyes(h=100, radius=20, bevel=40),
         Mouth("bar", w=150, thickness=17),
     ),
 
@@ -182,14 +193,16 @@ EMOTIONS: dict[str, Face] = {
 
     # --- functional --------------------------------------------------
     "listening": _face(
-        *_eyes(h=148, radius=30),
+        # Eyes stay the neutral square -- the pulse is what reads as
+        # "listening", not a different resting shape.
+        _L, _R,
         Mouth("bar", w=140),
         extras=("pulse_eyes",),
     ),
 
     "thinking": _face(
-        # Flatter than neutral, nowhere near the yawn squint: calm, narrowed.
-        *_eyes(h=82, radius=22),
+        # Eyes unchanged from neutral -- the dots overlay carries this one.
+        _L, _R,
         Mouth("bar", w=130, thickness=12),
         extras=("dots",),
     ),
@@ -215,7 +228,9 @@ EMOTIONS: dict[str, Face] = {
     ),
 
     "success": _face(
-        *_eyes(h=54, radius=22),
+        # Only a slight happy squint -- close to the neutral square, not
+        # the deep flatten used elsewhere.
+        *_eyes(h=104, radius=24),
         Mouth("curve", w=270, thickness=18, curve=64),
         extras=("sparkle_brief",),
     ),
@@ -434,6 +449,20 @@ def _eye_surface(eye: Eye) -> pygame.Surface:
         mask = _new(w, h)
         radius = int(round(min(eye.radius * s, min(w, h) / 2)))
         pygame.draw.rect(mask, MASK_WHITE, (0, 0, w, h), border_radius=radius)
+        if eye.bevel:
+            # A clean diagonal chamfer on ONE top corner -- not a rotation
+            # of the whole eye. `keep` is opaque everywhere except a
+            # triangle over the corner being cut; BLEND_RGBA_MIN intersects
+            # it with the mask, punching a hard-edged notch with the other
+            # three corners (and their rounding) untouched.
+            cut = min(abs(eye.bevel) * s, min(w, h) * 0.85)
+            keep = _new(w, h)
+            if eye.bevel > 0:      # this eye's own top-RIGHT corner
+                pts = [(0, 0), (w - cut, 0), (w, cut), (w, h), (0, h)]
+            else:                  # this eye's own top-LEFT corner
+                pts = [(cut, 0), (w, 0), (w, h), (0, h), (0, cut)]
+            pygame.draw.polygon(keep, MASK_WHITE, pts)
+            mask.blit(keep, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
 
     mask = _rotate(mask, eye.tilt)                    # rotate the SHAPE...
     art = _finish(mask, glossy=glossy)                # ...so the gradient
@@ -516,7 +545,7 @@ def _cached(key, build):
 
 def _eye_art(eye: Eye) -> pygame.Surface:
     key = ("e", eye.kind, round(eye.w), round(eye.h), round(eye.radius),
-           round(eye.tilt, 1), round(eye.pupil, 2))
+           round(eye.tilt, 1), round(eye.bevel), round(eye.pupil, 2))
     return _cached(key, lambda: _eye_surface(eye))
 
 
@@ -536,6 +565,7 @@ def _lerp_eye(a: Eye, b: Eye, t: float) -> Eye:
         w=_lerp(a.w, b.w, t), h=_lerp(a.h, b.h, t),
         radius=_lerp(a.radius, b.radius, t),
         tilt=_lerp(a.tilt, b.tilt, t),
+        bevel=_lerp(a.bevel, b.bevel, t),
         dx=_lerp(a.dx, b.dx, t), dy=_lerp(a.dy, b.dy, t),
         pupil=_lerp(a.pupil, b.pupil, t),
     )
