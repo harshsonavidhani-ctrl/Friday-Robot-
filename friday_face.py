@@ -1,12 +1,15 @@
 """friday_face.py — Friday's face on the 7" display.
 
     python3 friday_face.py            fullscreen, follows state/emotion.txt
-    python3 friday_face.py --demo     cycle all 20 emotions
+    python3 friday_face.py --demo     cycle all 20 emotions + play the yawn
     python3 friday_face.py --window   windowed, for testing over SSH/VNC
 
-Nothing drives this directly. It watches state/emotion.txt and tweens to
-whatever it finds there; use face_control.py to write that file.
+Nothing drives this directly. It watches state/emotion.txt (and
+state/yawn.txt for the yawn trigger) and tweens to whatever it finds
+there; use face_control.py to write those files.
 
+Every eye and mouth is a flat white silhouette until _finish() runs: a
+top-lit vertical gradient, an upper-left gloss, and a soft drop shadow.
 Geometry is authored on a 1024x600 canvas and letterboxed onto whatever the
 real panel reports, so the proportions hold on any screen.
 """
@@ -22,14 +25,31 @@ from dataclasses import dataclass, replace
 import pygame
 
 from face_control import (EMOTIONS as EMOTION_NAMES, DEFAULT_EMOTION,
-                          EMOTION_FILE, get_emotion)
+                          EMOTION_FILE, YAWN_FILE, get_emotion)
 
 # =====================================================================
 # COLOURS — tune these
 # =====================================================================
 BG_COLOR = (26, 38, 72)          # dark navy background
-ORANGE = (236, 132, 64)          # eyes, mouth, and every accent
+ORANGE = (236, 132, 64)          # base colour; every shape's gradient mid-point
 PUPIL_COLOR = (18, 26, 52)       # only used by `scared`
+MASK_WHITE = (255, 255, 255, 255)  # silhouettes are drawn white, then tinted
+
+# --- dimensional finish -----------------------------------------------
+# Every eye and mouth is a flat white silhouette until _finish() runs: a
+# top-to-bottom gradient (lit from above), a soft upper-left gloss, and a
+# drop shadow. Deliberately subtle -- from a normal viewing distance this
+# should still read as one clean orange shape, not chrome.
+GRADIENT_LIFT = 22               # how much lighter the top gets
+GRADIENT_DROP = 28               # how much darker the bottom gets
+GRADIENT_TOP = tuple(min(255, c + GRADIENT_LIFT) for c in ORANGE)
+GRADIENT_BOTTOM = tuple(max(0, c - GRADIENT_DROP) for c in ORANGE)
+HIGHLIGHT_ALPHA = 46              # upper-left gloss strength
+HIGHLIGHT_ALPHA_GLOSSY = 110      # heart eyes and the dizzy spiral shine more
+SHADOW_COLOR = (10, 14, 34)
+SHADOW_ALPHA = 70
+SHADOW_OFFSET = (0, 5)            # px, before supersampling
+BLUR_AMOUNT = 5                   # smoothscale down/up divisor -- softness
 
 # =====================================================================
 # GEOMETRY — authored at 1024x600, tune these
@@ -55,8 +75,20 @@ TRANSITION_S = 0.40              # emotion tween length
 BLINK_CLOSED_S = 0.13            # one blink, close and open again
 BLINK_GAP_MIN_S = 2.0            # idle blinking, random in this range
 BLINK_GAP_MAX_S = 5.0
-POLL_S = 0.25                    # how often state/emotion.txt is checked
+POLL_S = 0.25                    # how often the state files are checked
 DEMO_HOLD_S = 2.6                # --demo dwell per emotion
+
+# --- yawn overlay -------------------------------------------------
+# Not one of the 20 emotions -- a transient reflex that plays on top of
+# whatever emotion is showing, then returns to it. See play_yawn().
+YAWN_EYE_W = round(EYE_W * 1.05)
+YAWN_EYE_H = round(EYE_H / 3)     # squinted nearly shut
+YAWN_EYE_RADIUS = 18
+YAWN_MOUTH_W = 46                 # a small vertical pill: taller than wide
+YAWN_MOUTH_H = 92
+YAWN_IN_S = 0.18                  # eyes/mouth close into the yawn shape
+YAWN_HOLD_S = 0.62                # held open
+YAWN_OUT_S = 0.30                 # eases back to whatever was showing
 
 SUPERSAMPLE = 2                  # shapes are drawn 2x then shrunk, for clean
                                  # edges without per-pixel antialiasing cost
@@ -133,8 +165,9 @@ EMOTIONS: dict[str, Face] = {
     ),
 
     "sad": _face(
-        *_eyes(h=118, radius=26, tilt=20, dy=8),
-        Mouth("curve", w=210, thickness=15, curve=-42),
+        # Outer top corners droop -- a soft rotation, not a sharp diamond.
+        *_eyes(h=118, radius=26, tilt=11, dy=6),
+        Mouth("curve", w=205, thickness=14, curve=-32),
     ),
 
     "angry": _face(
@@ -155,8 +188,9 @@ EMOTIONS: dict[str, Face] = {
     ),
 
     "thinking": _face(
-        *_eyes(h=118, radius=26, dy=-16),
-        Mouth("bar", w=120, dx=-40),
+        # Flatter than neutral, nowhere near the yawn squint: calm, narrowed.
+        *_eyes(h=82, radius=22),
+        Mouth("bar", w=130, thickness=12),
         extras=("dots",),
     ),
 
@@ -280,7 +314,66 @@ def _shrink(surf: pygame.Surface) -> pygame.Surface:
     )
 
 
-def _thick_path(surf, points, thickness, color=ORANGE) -> None:
+def _blur(surf: pygame.Surface, amount: int = BLUR_AMOUNT) -> pygame.Surface:
+    """Cheap blur: shrink then grow back. Used for the gloss and the shadow."""
+    w, h = surf.get_size()
+    small = pygame.transform.smoothscale(
+        surf, (max(1, w // amount), max(1, h // amount)))
+    return pygame.transform.smoothscale(small, (w, h))
+
+
+def _gradient_seed() -> pygame.Surface:
+    seed = _new(1, 2)
+    seed.set_at((0, 0), (*GRADIENT_TOP, 255))
+    seed.set_at((0, 1), (*GRADIENT_BOTTOM, 255))
+    return seed
+
+
+_GRADIENT_SEED = _gradient_seed()
+
+
+def _finish(mask: pygame.Surface, glossy: bool = False) -> pygame.Surface:
+    """Turn a flat white silhouette into a dimensional one: a top-lit
+    vertical gradient, an upper-left gloss, and a soft drop shadow. Runs on
+    the supersampled mask so the shrink at the end also smooths the finish.
+    Returns a padded surface -- callers just centre on it as usual."""
+    w, h = mask.get_size()
+    pad = int(SUPERSAMPLE * (max(SHADOW_OFFSET) + 4 * BLUR_AMOUNT))
+    canvas = _new(w + 2 * pad, h + 2 * pad)
+
+    # 1. drop shadow: the silhouette recoloured, blurred, offset, and laid
+    #    down first so the coloured shape below covers most of it.
+    shadow = _new(w, h)
+    shadow.fill((*SHADOW_COLOR, SHADOW_ALPHA))
+    shadow.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    shadow = _blur(shadow)
+    ox = pad + SHADOW_OFFSET[0] * SUPERSAMPLE
+    oy = pad + SHADOW_OFFSET[1] * SUPERSAMPLE
+    canvas.blit(shadow, (ox, oy))
+
+    # 2. the shape itself, tinted with a vertical gradient (lighter on top).
+    #    A 1x2 strip stretched by smoothscale interpolates it for us --
+    #    far cheaper than a Python loop drawing one rect per row, and this
+    #    runs on every cache miss (i.e. every frame of every tween).
+    grad = pygame.transform.smoothscale(_GRADIENT_SEED, (w, h))
+    colored = mask.copy()
+    colored.blit(grad, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    canvas.blit(colored, (pad, pad))
+
+    # 3. a soft gloss highlight near the upper-left, clipped to the shape.
+    hi = _new(w, h)
+    rect = pygame.Rect(0, 0, w * 0.72, h * 0.56)
+    rect.center = (int(w * 0.33), int(h * 0.30))
+    alpha = HIGHLIGHT_ALPHA_GLOSSY if glossy else HIGHLIGHT_ALPHA
+    pygame.draw.ellipse(hi, (255, 255, 255, alpha), rect)
+    hi = _blur(hi)
+    hi.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    canvas.blit(hi, (pad, pad))
+
+    return canvas
+
+
+def _thick_path(surf, points, thickness, color=MASK_WHITE) -> None:
     """Stamp a rounded-ended stroke along a point list."""
     r = max(1, int(round(thickness / 2)))
     for x, y in points:
@@ -296,13 +389,14 @@ def _rotate(surf: pygame.Surface, degrees: float) -> pygame.Surface:
 # --- eye silhouettes -------------------------------------------------
 
 def _eye_surface(eye: Eye) -> pygame.Surface:
-    """One eye, drawn oversized then shrunk. Result is already coloured."""
+    """One eye, drawn oversized then shrunk. Result is already dimensional."""
     s = SUPERSAMPLE
     w = max(2, int(round(eye.w * s)))
     h = max(2, int(round(eye.h * s)))
+    glossy = eye.kind in ("heart", "spiral")
 
     if eye.kind == "heart":
-        surf = _new(w, h)
+        mask = _new(w, h)
         pts = []
         for i in range(121):
             a = 2 * math.pi * i / 120
@@ -310,10 +404,10 @@ def _eye_surface(eye: Eye) -> pygame.Surface:
             hy = (13 * math.cos(a) - 5 * math.cos(2 * a)
                   - 2 * math.cos(3 * a) - math.cos(4 * a))
             pts.append((w / 2 + hx * w / 34, h / 2 - hy * h / 30))
-        pygame.draw.polygon(surf, ORANGE, pts)
+        pygame.draw.polygon(mask, MASK_WHITE, pts)
 
     elif eye.kind == "spiral":
-        surf = _new(w, h)
+        mask = _new(w, h)
         turns, steps = 2.6, 190
         thick = max(2, int(9 * s))
         outer = (min(w, h) - thick) / 2
@@ -322,29 +416,37 @@ def _eye_surface(eye: Eye) -> pygame.Surface:
             a = turns * 2 * math.pi * i / steps
             rad = outer * i / steps
             pts.append((w / 2 + rad * math.cos(a), h / 2 + rad * math.sin(a)))
-        _thick_path(surf, pts, thick)
+        _thick_path(mask, pts, thick)
 
     elif eye.kind == "arc":
         # A closed, sleeping eye: peak in the middle, ends dropping away.
         thick = max(2, int(round(min(eye.h, 20) * s)))
-        surf = _new(w, h + thick)
+        mask = _new(w, h + thick)
         span, depth = w - thick, h
         pts = []
         for i in range(81):
             u = i / 80 * 2 - 1                      # -1 .. 1
             pts.append((thick / 2 + (u + 1) / 2 * span,
                         thick / 2 + depth * (u * u)))
-        _thick_path(surf, pts, thick)
+        _thick_path(mask, pts, thick)
 
     else:                                            # rounded square
-        surf = _new(w, h)
+        mask = _new(w, h)
         radius = int(round(min(eye.radius * s, min(w, h) / 2)))
-        pygame.draw.rect(surf, ORANGE, (0, 0, w, h), border_radius=radius)
-        if eye.pupil > 0:
-            pr = max(2, int(round(eye.pupil * w)))
-            pygame.draw.circle(surf, PUPIL_COLOR, (w // 2, h // 2), pr)
+        pygame.draw.rect(mask, MASK_WHITE, (0, 0, w, h), border_radius=radius)
 
-    return _shrink(_rotate(surf, eye.tilt))
+    mask = _rotate(mask, eye.tilt)                    # rotate the SHAPE...
+    art = _finish(mask, glossy=glossy)                # ...so the gradient
+                                                       # underneath stays
+                                                       # screen-vertical.
+    if eye.pupil > 0:
+        # Flat dark hole, added after the finish -- it's a marking on the
+        # eye, not a shape that itself needs the gradient/gloss/shadow.
+        pr = max(2, int(round(eye.pupil * w)))
+        cx, cy = art.get_width() // 2, art.get_height() // 2
+        pygame.draw.circle(art, PUPIL_COLOR, (cx, cy), pr)
+
+    return _shrink(art)
 
 
 # --- mouth silhouettes -----------------------------------------------
@@ -357,20 +459,20 @@ def _mouth_surface(mouth: Mouth) -> pygame.Surface:
 
     if mouth.kind == "o":
         h = max(2, int(round(mouth.h * s)))
-        surf = _new(w, h)
-        pygame.draw.ellipse(surf, ORANGE, (0, 0, w, h))
+        mask = _new(w, h)
+        pygame.draw.ellipse(mask, MASK_WHITE, (0, 0, w, h))
 
     elif mouth.kind == "grin":
         # Open smile: the bottom half of an ellipse, so the top is flat.
         h = max(2, int(round(mouth.h * s)))
         tall = _new(w, h * 2)
-        pygame.draw.ellipse(tall, ORANGE, (0, 0, w, h * 2))
-        surf = _new(w, h)
-        surf.blit(tall, (0, -h))
+        pygame.draw.ellipse(tall, MASK_WHITE, (0, 0, w, h * 2))
+        mask = _new(w, h)
+        mask.blit(tall, (0, -h))
 
     elif mouth.kind == "bar" or abs(curve) < 0.5:
-        surf = _new(w, thick)
-        pygame.draw.rect(surf, ORANGE, (0, 0, w, thick),
+        mask = _new(w, thick)
+        pygame.draw.rect(mask, MASK_WHITE, (0, 0, w, thick),
                          border_radius=thick // 2)
 
     else:
@@ -390,10 +492,10 @@ def _mouth_surface(mouth: Mouth) -> pygame.Surface:
 
         lo = min(y for _, y in pts)
         hi = max(y for _, y in pts)
-        surf = _new(w, hi - lo + thick)
-        _thick_path(surf, [(x, y - lo + thick / 2) for x, y in pts], thick)
+        mask = _new(w, hi - lo + thick)
+        _thick_path(mask, [(x, y - lo + thick / 2) for x, y in pts], thick)
 
-    return _shrink(surf)
+    return _shrink(_finish(mask))
 
 
 # --- cache -----------------------------------------------------------
@@ -487,6 +589,16 @@ def _glyph(surf, text, size, x, y, alpha=255) -> None:
     surf.blit(art, art.get_rect(center=(int(x), int(y))))
 
 
+def _dot_art(diameter: int) -> pygame.Surface:
+    def build():
+        s = SUPERSAMPLE
+        d = diameter * s
+        mask = _new(d, d)
+        pygame.draw.circle(mask, MASK_WHITE, (d // 2, d // 2), d // 2)
+        return _shrink(_finish(mask))
+    return _cached(("dot", diameter), build)
+
+
 def _sparkle(surf, x, y, r, alpha=255) -> None:
     """A four-pointed star, the same flat orange as everything else."""
     pts = []
@@ -536,6 +648,10 @@ class FridayFace:
         self._poll_next = 0.0
         self._file_stamp = None
 
+        self._yawn_start = None       # elapsed-time timestamp, or None
+        self._yawn_poll_next = 0.0
+        self._yawn_stamp = None
+
     # --- control -----------------------------------------------------
 
     @property
@@ -579,6 +695,39 @@ class FridayFace:
             return
         if name in EMOTIONS:
             self.set_emotion(name)
+
+    def play_yawn(self) -> None:
+        """Trigger the yawn overlay. Plays on top of whatever emotion is
+        showing, then returns to it -- never touches self._name."""
+        self._yawn_start = self._elapsed
+
+    def _yawn_amount(self) -> float:
+        """0 = not yawning, 1 = fully into the yawn shape, eased in between."""
+        if self._yawn_start is None:
+            return 0.0
+        dt = self._elapsed - self._yawn_start
+        if dt < YAWN_IN_S:
+            return _ease(dt / YAWN_IN_S)
+        if dt < YAWN_IN_S + YAWN_HOLD_S:
+            return 1.0
+        if dt < YAWN_IN_S + YAWN_HOLD_S + YAWN_OUT_S:
+            return 1.0 - _ease((dt - YAWN_IN_S - YAWN_HOLD_S) / YAWN_OUT_S)
+        self._yawn_start = None
+        return 0.0
+
+    def _poll_yawn_file(self, now: float) -> None:
+        if now < self._yawn_poll_next:
+            return
+        self._yawn_poll_next = now + POLL_S
+        try:
+            st = os.stat(YAWN_FILE)
+            stamp = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return
+        if stamp == self._yawn_stamp:
+            return
+        self._yawn_stamp = stamp
+        self.play_yawn()
 
     # --- per-frame state ---------------------------------------------
 
@@ -679,6 +828,18 @@ class FridayFace:
         p = _ease(self._t)
         face, ox, oy = self._animate(self._current_shape())
 
+        y = self._yawn_amount()
+        if y > 0:
+            yawn_eye = Eye(kind="rect", w=YAWN_EYE_W, h=YAWN_EYE_H,
+                           radius=YAWN_EYE_RADIUS)
+            yawn_mouth = Mouth(kind="o", w=YAWN_MOUTH_W, h=YAWN_MOUTH_H)
+            face = replace(
+                face,
+                left=_lerp_eye(face.left, yawn_eye, y),
+                right=_lerp_eye(face.right, yawn_eye, y),
+                mouth=_lerp_mouth(face.mouth, yawn_mouth, y),
+            )
+
         cx0 = BASE_W / 2
         cy0 = (face.eye_y + face.mouth_y) / 2
         rot = math.radians(face.tilt)
@@ -690,20 +851,29 @@ class FridayFace:
             return (cx0 + dx * cos_a + dy * sin_a + ox,
                     cy0 - dx * sin_a + dy * cos_a + oy)
 
-        for eye, side, src, dst in (
-            (face.left, -1, self._from.left, self._to.left),
-            (face.right, +1, self._from.right, self._to.right),
+        # While yawning, the eye/mouth kind is decided by the yawn amount,
+        # not by the settled emotion -- and the two cross-fades don't
+        # compose, so yawning suspends the emotion cross-fade (in practice
+        # yawn only fires once an emotion has already settled anyway).
+        eye_fading = fading and y <= 0
+        for eye, side, src_kind, dst_kind in (
+            (face.left, -1, self._from.left.kind,
+             "rect" if y >= 0.5 else self._to.left.kind),
+            (face.right, +1, self._from.right.kind,
+             "rect" if y >= 0.5 else self._to.right.kind),
         ):
             ex = cx0 + side * (face.eye_gap / 2 + eye.w / 2) + eye.dx
             ey = face.eye_y + eye.dy
             px, py = place(ex, ey)
-            for shape, alpha in self._variants(eye, src.kind, dst.kind, p, fading):
+            for shape, alpha in self._variants(eye, src_kind, dst_kind,
+                                               p, eye_fading):
                 self._blit(_eye_art(shape), px, py, alpha, spin=face.tilt)
 
         mouth = face.mouth
+        mouth_dst_kind = "o" if y >= 0.5 else self._to.mouth.kind
         mx, my = place(cx0 + mouth.dx, face.mouth_y + mouth.dy)
         for shape, alpha in self._variants(
-                mouth, self._from.mouth.kind, self._to.mouth.kind, p, fading):
+                mouth, self._from.mouth.kind, mouth_dst_kind, p, eye_fading):
             self._blit(_mouth_art(shape), mx, my, alpha, spin=face.tilt)
 
         self._overlays(face, ox, oy)
@@ -720,8 +890,7 @@ class FridayFace:
                 phase = (t * 1.5 - i * 0.22) % 1.0
                 lift = 8 * math.sin(math.pi * min(1.0, phase * 1.6))
                 alpha = 90 + 165 * math.sin(math.pi * min(1.0, phase * 1.6))
-                dot = _new(24, 24)
-                pygame.draw.circle(dot, ORANGE, (12, 12), 11)
+                dot = _dot_art(22).copy()
                 dot.set_alpha(int(alpha))
                 self.screen.blit(dot, dot.get_rect(
                     center=(int(cx + (i - 1) * 52), int(top - 132 - lift))))
@@ -779,6 +948,7 @@ class FridayFace:
             self.handle_events()
             if follow_file:
                 self._poll_state_file(now)
+                self._poll_yawn_file(now)
             self.update(dt)
             self.draw()
             pygame.display.flip()
@@ -787,10 +957,15 @@ class FridayFace:
     def run_demo(self, hold: float = DEMO_HOLD_S) -> None:
         order, index, since = list(EMOTION_NAMES), 0, 0.0
         self.set_emotion(order[0])
+        yawn_at = order.index("sleepy") if "sleepy" in order else 0
+        yawned = False
         while self.running:
             dt = self.clock.tick(FPS) / 1000.0
             self.handle_events()
             since += dt
+            if index == yawn_at and not yawned and since >= hold * 0.35:
+                self.play_yawn()
+                yawned = True
             if since >= hold:
                 since = 0.0
                 index = (index + 1) % len(order)
@@ -808,7 +983,7 @@ class FridayFace:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Friday's face")
     ap.add_argument("--demo", action="store_true",
-                    help="cycle all 20 emotions instead of following the file")
+                    help="cycle all 20 emotions and play the yawn once")
     ap.add_argument("--window", action="store_true",
                     help="windowed, for testing over SSH/VNC")
     args = ap.parse_args()
