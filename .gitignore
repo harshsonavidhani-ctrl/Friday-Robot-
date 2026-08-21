@@ -22,3 +22,7 @@ assets/models/
 
 # OS
 .DS_Store
+
+# runtime state (written by face_control.py)
+state/*.txt
+state/.emotion.*
