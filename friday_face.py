@@ -30,7 +30,7 @@ from face_control import (EMOTIONS as EMOTION_NAMES, DEFAULT_EMOTION,
 # =====================================================================
 # COLOURS — tune these
 # =====================================================================
-BG_COLOR = (26, 38, 72)          # dark navy background
+BG_COLOR = (17, 25, 50)          # dark navy background, darker than before
 ORANGE = (236, 132, 64)          # base colour; every shape's gradient mid-point
 PUPIL_COLOR = (18, 26, 52)       # only used by `scared`
 MASK_WHITE = (255, 255, 255, 255)  # silhouettes are drawn white, then tinted
@@ -109,6 +109,10 @@ class Eye:
     bevel: float = 0.0           # px chamfered off ONE top corner of a rect
                                   # eye, not the whole shape: + cuts this
                                   # eye's own top-RIGHT corner, - cuts top-LEFT
+    taper: float = 0.0           # px chamfered off ONE bottom corner (the
+                                  # "happy squint" trapezoid): + cuts this
+                                  # eye's own bottom-RIGHT corner, - cuts
+                                  # bottom-LEFT
     dx: float = 0.0
     dy: float = 0.0
     pupil: float = 0.0           # dark pupil radius as a fraction of width
@@ -139,13 +143,15 @@ class Face:
 
 
 def _eyes(**kw) -> tuple[Eye, Eye]:
-    """A matched pair. `tilt` and `bevel` both mirror between the two eyes,
-    so +tilt/+bevel on the LEFT eye becomes -tilt/-bevel on the right one --
-    call sites only ever specify one signed value for a symmetric pair."""
+    """A matched pair. `tilt`, `bevel` and `taper` all mirror between the two
+    eyes, so +tilt/+bevel/+taper on the LEFT eye becomes -tilt/-bevel/-taper
+    on the right one -- call sites only ever specify one signed value for a
+    symmetric pair."""
     tilt = kw.pop("tilt", 0.0)
     bevel = kw.pop("bevel", 0.0)
-    return (Eye(tilt=tilt, bevel=bevel, **kw),
-            Eye(tilt=-tilt, bevel=-bevel, **kw))
+    taper = kw.pop("taper", 0.0)
+    return (Eye(tilt=tilt, bevel=bevel, taper=taper, **kw),
+            Eye(tilt=-tilt, bevel=-bevel, taper=-taper, **kw))
 
 
 def _face(left: Eye, right: Eye, mouth: Mouth, **kw) -> Face:
@@ -167,16 +173,17 @@ EMOTIONS: dict[str, Face] = {
     "neutral": _face(_L, _R, Mouth()),
 
     "happy": _face(
-        *_eyes(h=102, radius=26),
+        # Bottom-inner corner tapered off -- a squinting, smiling-eyes
+        # trapezoid, not a whole-eye rotation.
+        *_eyes(h=120, radius=22, taper=48),
         Mouth("curve", w=250, thickness=16, curve=52),
     ),
 
     "sad": _face(
-        # Outer top corner chamfered off -- a clean angled cut, not a
-        # whole-eye rotation (that read as a skewed parallelogram on the
-        # real screen).
-        *_eyes(h=118, radius=24, bevel=-30, dy=6),
-        Mouth("curve", w=205, thickness=14, curve=-32),
+        # Eyes stay the plain neutral square -- only the mouth changes,
+        # into a frown the same width as the neutral bar.
+        _L, _R,
+        Mouth("curve", w=260, thickness=14, curve=-32),
     ),
 
     "angry": _face(
@@ -201,10 +208,11 @@ EMOTIONS: dict[str, Face] = {
     ),
 
     "thinking": _face(
-        # Eyes unchanged from neutral -- the dots overlay carries this one.
+        # Eyes are the neutral square, breathing open/contract in place --
+        # plus the dots overlay above.
         _L, _R,
         Mouth("bar", w=130, thickness=12),
-        extras=("dots",),
+        extras=("dots", "pulse_eyes"),
     ),
 
     "speaking": _face(
@@ -463,6 +471,17 @@ def _eye_surface(eye: Eye) -> pygame.Surface:
                 pts = [(cut, 0), (w, 0), (w, h), (0, h), (0, cut)]
             pygame.draw.polygon(keep, MASK_WHITE, pts)
             mask.blit(keep, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        if eye.taper:
+            # Same chamfer technique, on ONE bottom corner instead -- the
+            # "happy squint" trapezoid.
+            cut = min(abs(eye.taper) * s, min(w, h) * 0.85)
+            keep = _new(w, h)
+            if eye.taper > 0:      # this eye's own bottom-RIGHT corner
+                pts = [(0, 0), (w, 0), (w, h - cut), (w - cut, h), (0, h)]
+            else:                  # this eye's own bottom-LEFT corner
+                pts = [(0, 0), (w, 0), (w, h), (cut, h), (0, h - cut)]
+            pygame.draw.polygon(keep, MASK_WHITE, pts)
+            mask.blit(keep, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
 
     mask = _rotate(mask, eye.tilt)                    # rotate the SHAPE...
     art = _finish(mask, glossy=glossy)                # ...so the gradient
@@ -545,7 +564,8 @@ def _cached(key, build):
 
 def _eye_art(eye: Eye) -> pygame.Surface:
     key = ("e", eye.kind, round(eye.w), round(eye.h), round(eye.radius),
-           round(eye.tilt, 1), round(eye.bevel), round(eye.pupil, 2))
+           round(eye.tilt, 1), round(eye.bevel), round(eye.taper),
+           round(eye.pupil, 2))
     return _cached(key, lambda: _eye_surface(eye))
 
 
@@ -566,6 +586,7 @@ def _lerp_eye(a: Eye, b: Eye, t: float) -> Eye:
         radius=_lerp(a.radius, b.radius, t),
         tilt=_lerp(a.tilt, b.tilt, t),
         bevel=_lerp(a.bevel, b.bevel, t),
+        taper=_lerp(a.taper, b.taper, t),
         dx=_lerp(a.dx, b.dx, t), dy=_lerp(a.dy, b.dy, t),
         pupil=_lerp(a.pupil, b.pupil, t),
     )
