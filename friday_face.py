@@ -8,10 +8,10 @@ Nothing drives this directly. It watches state/emotion.txt (and
 state/yawn.txt for the yawn trigger) and tweens to whatever it finds
 there; use face_control.py to write those files.
 
-Every eye and mouth is a flat white silhouette until _finish() runs: a
-top-lit vertical gradient, an upper-left gloss, and a soft drop shadow.
-Geometry is authored on a 1024x600 canvas and letterboxed onto whatever the
-real panel reports, so the proportions hold on any screen.
+Flat design: every eye and mouth is a single flat-filled colour, small
+corner radius, no gradients, no gloss, no drop shadow. Geometry is
+authored on a 1024x600 canvas and letterboxed onto whatever the real
+panel reports, so the proportions hold on any screen.
 """
 
 from __future__ import annotations
@@ -28,28 +28,14 @@ from face_control import (EMOTIONS as EMOTION_NAMES, DEFAULT_EMOTION,
                           EMOTION_FILE, YAWN_FILE, get_emotion)
 
 # =====================================================================
-# COLOURS — tune these
+# COLOURS — flat design, tune these. No gradients, no gloss, no shadow --
+# every shape is a single flat fill.
 # =====================================================================
-BG_COLOR = (17, 25, 50)          # dark navy background, darker than before
-ORANGE = (236, 132, 64)          # base colour; every shape's gradient mid-point
-PUPIL_COLOR = (18, 26, 52)       # only used by `scared`
-MASK_WHITE = (255, 255, 255, 255)  # silhouettes are drawn white, then tinted
-
-# --- dimensional finish -----------------------------------------------
-# Every eye and mouth is a flat white silhouette until _finish() runs: a
-# top-to-bottom gradient (lit from above), a soft upper-left gloss, and a
-# drop shadow. Deliberately subtle -- from a normal viewing distance this
-# should still read as one clean orange shape, not chrome.
-GRADIENT_LIFT = 22               # how much lighter the top gets
-GRADIENT_DROP = 28               # how much darker the bottom gets
-GRADIENT_TOP = tuple(min(255, c + GRADIENT_LIFT) for c in ORANGE)
-GRADIENT_BOTTOM = tuple(max(0, c - GRADIENT_DROP) for c in ORANGE)
-HIGHLIGHT_ALPHA = 46              # upper-left gloss strength
-HIGHLIGHT_ALPHA_GLOSSY = 110      # heart eyes and the dizzy spiral shine more
-SHADOW_COLOR = (10, 14, 34)
-SHADOW_ALPHA = 70
-SHADOW_OFFSET = (0, 5)            # px, before supersampling
-BLUR_AMOUNT = 5                   # smoothscale down/up divisor -- softness
+BG_COLOR = (38, 42, 56)           # flat dark slate/navy, #262A38
+ORANGE = (242, 169, 59)           # primary shape colour (eyes; most mouths), #F2A93B
+CREAM = (245, 230, 211)           # secondary colour: happy/sad mouths only, #F5E6D3
+PUPIL_COLOR = BG_COLOR            # `scared`'s pupil is a hole through to the bg
+MASK_WHITE = (255, 255, 255, 255)  # used only for the corner-cut stencil trick
 
 # =====================================================================
 # GEOMETRY — authored at 1024x600, tune these
@@ -58,8 +44,8 @@ BASE_W, BASE_H = 1024, 600
 
 EYE_W = 130                      # neutral eye width
 EYE_H = 130                      # neutral eye height
-EYE_RADIUS = 28                  # corner rounding
-EYE_GAP = 200                    # bare gap between the two eyes
+EYE_RADIUS = 12                  # small corner rounding -- soften, don't round
+EYE_GAP = 130                    # bare gap, about one eye-width, between eyes
 EYE_CY = int(BASE_H * 0.45)      # eye centre line: 45% down the screen
 
 MOUTH_W = 260                    # neutral mouth width
@@ -83,7 +69,7 @@ DEMO_HOLD_S = 2.6                # --demo dwell per emotion
 # whatever emotion is showing, then returns to it. See play_yawn().
 YAWN_EYE_W = round(EYE_W * 1.05)
 YAWN_EYE_H = round(EYE_H / 3)     # squinted nearly shut
-YAWN_EYE_RADIUS = 18
+YAWN_EYE_RADIUS = 8
 YAWN_MOUTH_W = 46                 # a small vertical pill: taller than wide
 YAWN_MOUTH_H = 92
 YAWN_IN_S = 0.18                  # eyes/mouth close into the yawn shape
@@ -125,6 +111,7 @@ class Mouth:
     h: float = MOUTH_T           # only `o` and `grin` use height
     thickness: float = MOUTH_T
     curve: float = 0.0           # + smiles up, - frowns down
+    color: tuple = ORANGE        # CREAM only for happy/sad, per spec
     dx: float = 0.0
     dy: float = 0.0
 
@@ -174,27 +161,27 @@ EMOTIONS: dict[str, Face] = {
 
     "happy": _face(
         # Bottom-inner corner tapered off deep, into a pointed trapezoid --
-        # a squinting, smiling-eyes shape, not a whole-eye rotation.
-        *_eyes(h=124, radius=18, taper=92),
-        Mouth("curve", w=250, thickness=16, curve=52),
+        # wide at the top, narrowing toward the inner-bottom corner.
+        *_eyes(h=124, radius=10, taper=92),
+        Mouth("curve", w=250, thickness=16, curve=52, color=CREAM),
     ),
 
     "sad": _face(
-        # Eyes stay the plain neutral square -- only the mouth changes,
-        # into a frown the same width as the neutral bar.
-        _L, _R,
-        Mouth("curve", w=260, thickness=14, curve=-32),
+        # Outer top corner chamfered off, soft and shallow -- the mirror
+        # of happy's cut, angled the other way. A gentle droop, not sharp.
+        *_eyes(bevel=-28, dy=4),
+        Mouth("curve", w=260, thickness=14, curve=-32, color=CREAM),
     ),
 
     "angry": _face(
         # Inner top corners chamfered off -- eyebrows angled down toward
         # the nose, same clean-cut language as sad's outer chamfer.
-        *_eyes(h=100, radius=20, bevel=40),
+        *_eyes(h=100, radius=10, bevel=40),
         Mouth("bar", w=150, thickness=17),
     ),
 
     "surprised": _face(
-        *_eyes(w=142, h=172, radius=32),
+        *_eyes(w=142, h=172, radius=14),
         Mouth("o", w=66, h=80),
     ),
 
@@ -208,11 +195,12 @@ EMOTIONS: dict[str, Face] = {
     ),
 
     "thinking": _face(
-        # Eyes are the neutral square, breathing open/contract in place --
-        # plus the dots overlay above.
-        _L, _R,
-        Mouth("bar", w=130, thickness=12),
-        extras=("dots", "think_eyes"),
+        # Left eye's top-left corner chamfered off into a trapezoid; the
+        # right eye stays a plain rectangle. Asymmetric on purpose -- a
+        # cocked, considering look, not a symmetric animation.
+        Eye(bevel=-30),
+        Eye(),
+        Mouth("bar", w=90, thickness=8),
     ),
 
     "speaking": _face(
@@ -222,8 +210,8 @@ EMOTIONS: dict[str, Face] = {
     ),
 
     "confused": _face(
-        Eye(w=152, h=152, radius=32, dy=-8),
-        Eye(w=104, h=104, radius=22, dy=10),
+        Eye(w=152, h=152, radius=14, dy=-8),
+        Eye(w=104, h=104, radius=10, dy=10),
         Mouth("wavy", w=190, thickness=14, curve=13),
         extras=("question",),
     ),
@@ -238,21 +226,21 @@ EMOTIONS: dict[str, Face] = {
     "success": _face(
         # Only a slight happy squint -- close to the neutral square, not
         # the deep flatten used elsewhere.
-        *_eyes(h=104, radius=24),
+        *_eyes(h=104, radius=10),
         Mouth("curve", w=270, thickness=18, curve=64),
         extras=("sparkle_brief",),
     ),
 
     # --- personality -------------------------------------------------
     "excited": _face(
-        *_eyes(w=152, h=156, radius=32),
+        *_eyes(w=152, h=156, radius=14),
         Mouth("grin", w=210, h=96, dy=14),
         extras=("sparkle", "bounce"),
     ),
 
     "wink": _face(
         Eye(),
-        Eye(h=22, radius=11, dy=26),
+        Eye(h=22, radius=6, dy=26),
         Mouth("smirk", w=200, thickness=15, curve=34),
     ),
 
@@ -264,25 +252,27 @@ EMOTIONS: dict[str, Face] = {
     ),
 
     "curious": _face(
-        Eye(h=140, radius=30, dy=-14),
-        Eye(h=124, radius=28, dy=6),
+        Eye(h=140, radius=12, dy=-14),
+        Eye(h=124, radius=12, dy=6),
         Mouth("bar", w=170),
         tilt=9.0,
     ),
 
     "proud": _face(
-        *_eyes(h=66, radius=22, dy=-6),
+        *_eyes(h=66, radius=10, dy=-6),
         Mouth("smirk", w=200, thickness=16, curve=30),
     ),
 
+    # Flat, wide, short bars -- half-closed, unimpressed eyes. Best fit in
+    # our 20-name list for the spec's unnamed "skeptical" state.
     "bored": _face(
-        *_eyes(h=64, radius=22, dy=10),
-        Mouth("bar", w=230),
+        *_eyes(w=150, h=40, radius=8, dy=10),
+        Mouth("bar", w=90, thickness=8),
     ),
 
     # --- low energy --------------------------------------------------
     "sleepy": _face(
-        *_eyes(h=26, radius=13, dy=16),
+        *_eyes(h=26, radius=6, dy=16),
         Mouth("bar", w=70),
         extras=("z_one",),
         blink=False,
@@ -296,7 +286,7 @@ EMOTIONS: dict[str, Face] = {
     ),
 
     "scared": _face(
-        *_eyes(w=150, h=166, radius=32, pupil=0.20),
+        *_eyes(w=150, h=166, radius=14, pupil=0.20),
         Mouth("wavy", w=200, thickness=14, curve=15),
         extras=("shake",),
     ),
@@ -337,65 +327,6 @@ def _shrink(surf: pygame.Surface) -> pygame.Surface:
     )
 
 
-def _blur(surf: pygame.Surface, amount: int = BLUR_AMOUNT) -> pygame.Surface:
-    """Cheap blur: shrink then grow back. Used for the gloss and the shadow."""
-    w, h = surf.get_size()
-    small = pygame.transform.smoothscale(
-        surf, (max(1, w // amount), max(1, h // amount)))
-    return pygame.transform.smoothscale(small, (w, h))
-
-
-def _gradient_seed() -> pygame.Surface:
-    seed = _new(1, 2)
-    seed.set_at((0, 0), (*GRADIENT_TOP, 255))
-    seed.set_at((0, 1), (*GRADIENT_BOTTOM, 255))
-    return seed
-
-
-_GRADIENT_SEED = _gradient_seed()
-
-
-def _finish(mask: pygame.Surface, glossy: bool = False) -> pygame.Surface:
-    """Turn a flat white silhouette into a dimensional one: a top-lit
-    vertical gradient, an upper-left gloss, and a soft drop shadow. Runs on
-    the supersampled mask so the shrink at the end also smooths the finish.
-    Returns a padded surface -- callers just centre on it as usual."""
-    w, h = mask.get_size()
-    pad = int(SUPERSAMPLE * (max(SHADOW_OFFSET) + 4 * BLUR_AMOUNT))
-    canvas = _new(w + 2 * pad, h + 2 * pad)
-
-    # 1. drop shadow: the silhouette recoloured, blurred, offset, and laid
-    #    down first so the coloured shape below covers most of it.
-    shadow = _new(w, h)
-    shadow.fill((*SHADOW_COLOR, SHADOW_ALPHA))
-    shadow.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-    shadow = _blur(shadow)
-    ox = pad + SHADOW_OFFSET[0] * SUPERSAMPLE
-    oy = pad + SHADOW_OFFSET[1] * SUPERSAMPLE
-    canvas.blit(shadow, (ox, oy))
-
-    # 2. the shape itself, tinted with a vertical gradient (lighter on top).
-    #    A 1x2 strip stretched by smoothscale interpolates it for us --
-    #    far cheaper than a Python loop drawing one rect per row, and this
-    #    runs on every cache miss (i.e. every frame of every tween).
-    grad = pygame.transform.smoothscale(_GRADIENT_SEED, (w, h))
-    colored = mask.copy()
-    colored.blit(grad, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-    canvas.blit(colored, (pad, pad))
-
-    # 3. a soft gloss highlight near the upper-left, clipped to the shape.
-    hi = _new(w, h)
-    rect = pygame.Rect(0, 0, w * 0.72, h * 0.56)
-    rect.center = (int(w * 0.33), int(h * 0.30))
-    alpha = HIGHLIGHT_ALPHA_GLOSSY if glossy else HIGHLIGHT_ALPHA
-    pygame.draw.ellipse(hi, (255, 255, 255, alpha), rect)
-    hi = _blur(hi)
-    hi.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-    canvas.blit(hi, (pad, pad))
-
-    return canvas
-
-
 def _thick_path(surf, points, thickness, color=MASK_WHITE) -> None:
     """Stamp a rounded-ended stroke along a point list."""
     r = max(1, int(round(thickness / 2)))
@@ -412,14 +343,14 @@ def _rotate(surf: pygame.Surface, degrees: float) -> pygame.Surface:
 # --- eye silhouettes -------------------------------------------------
 
 def _eye_surface(eye: Eye) -> pygame.Surface:
-    """One eye, drawn oversized then shrunk. Result is already dimensional."""
+    """One eye: a single flat-filled shape, drawn oversized then shrunk for
+    a clean anti-aliased edge. No gradient, no gloss, no shadow."""
     s = SUPERSAMPLE
     w = max(2, int(round(eye.w * s)))
     h = max(2, int(round(eye.h * s)))
-    glossy = eye.kind in ("heart", "spiral")
 
     if eye.kind == "heart":
-        mask = _new(w, h)
+        art = _new(w, h)
         pts = []
         for i in range(121):
             a = 2 * math.pi * i / 120
@@ -427,10 +358,10 @@ def _eye_surface(eye: Eye) -> pygame.Surface:
             hy = (13 * math.cos(a) - 5 * math.cos(2 * a)
                   - 2 * math.cos(3 * a) - math.cos(4 * a))
             pts.append((w / 2 + hx * w / 34, h / 2 - hy * h / 30))
-        pygame.draw.polygon(mask, MASK_WHITE, pts)
+        pygame.draw.polygon(art, ORANGE, pts)
 
     elif eye.kind == "spiral":
-        mask = _new(w, h)
+        art = _new(w, h)
         turns, steps = 2.6, 190
         thick = max(2, int(9 * s))
         outer = (min(w, h) - thick) / 2
@@ -439,29 +370,29 @@ def _eye_surface(eye: Eye) -> pygame.Surface:
             a = turns * 2 * math.pi * i / steps
             rad = outer * i / steps
             pts.append((w / 2 + rad * math.cos(a), h / 2 + rad * math.sin(a)))
-        _thick_path(mask, pts, thick)
+        _thick_path(art, pts, thick, color=ORANGE)
 
     elif eye.kind == "arc":
         # A closed, sleeping eye: peak in the middle, ends dropping away.
         thick = max(2, int(round(min(eye.h, 20) * s)))
-        mask = _new(w, h + thick)
+        art = _new(w, h + thick)
         span, depth = w - thick, h
         pts = []
         for i in range(81):
             u = i / 80 * 2 - 1                      # -1 .. 1
             pts.append((thick / 2 + (u + 1) / 2 * span,
                         thick / 2 + depth * (u * u)))
-        _thick_path(mask, pts, thick)
+        _thick_path(art, pts, thick, color=ORANGE)
 
     else:                                            # rounded square
-        mask = _new(w, h)
+        art = _new(w, h)
         radius = int(round(min(eye.radius * s, min(w, h) / 2)))
-        pygame.draw.rect(mask, MASK_WHITE, (0, 0, w, h), border_radius=radius)
+        pygame.draw.rect(art, ORANGE, (0, 0, w, h), border_radius=radius)
         if eye.bevel:
             # A clean diagonal chamfer on ONE top corner -- not a rotation
             # of the whole eye. `keep` is opaque everywhere except a
             # triangle over the corner being cut; BLEND_RGBA_MIN intersects
-            # it with the mask, punching a hard-edged notch with the other
+            # it with the shape, punching a hard-edged notch with the other
             # three corners (and their rounding) untouched.
             cut = min(abs(eye.bevel) * s, min(w, h) * 0.85)
             keep = _new(w, h)
@@ -470,7 +401,7 @@ def _eye_surface(eye: Eye) -> pygame.Surface:
             else:                  # this eye's own top-LEFT corner
                 pts = [(cut, 0), (w, 0), (w, h), (0, h), (0, cut)]
             pygame.draw.polygon(keep, MASK_WHITE, pts)
-            mask.blit(keep, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+            art.blit(keep, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
         if eye.taper:
             # Same chamfer technique, on ONE bottom corner instead -- the
             # "happy squint" trapezoid.
@@ -481,15 +412,11 @@ def _eye_surface(eye: Eye) -> pygame.Surface:
             else:                  # this eye's own bottom-LEFT corner
                 pts = [(0, 0), (w, 0), (w, h), (cut, h), (0, h - cut)]
             pygame.draw.polygon(keep, MASK_WHITE, pts)
-            mask.blit(keep, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+            art.blit(keep, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
 
-    mask = _rotate(mask, eye.tilt)                    # rotate the SHAPE...
-    art = _finish(mask, glossy=glossy)                # ...so the gradient
-                                                       # underneath stays
-                                                       # screen-vertical.
+    art = _rotate(art, eye.tilt)
     if eye.pupil > 0:
-        # Flat dark hole, added after the finish -- it's a marking on the
-        # eye, not a shape that itself needs the gradient/gloss/shadow.
+        # A flat hole through to the background colour.
         pr = max(2, int(round(eye.pupil * w)))
         cx, cy = art.get_width() // 2, art.get_height() // 2
         pygame.draw.circle(art, PUPIL_COLOR, (cx, cy), pr)
@@ -500,27 +427,29 @@ def _eye_surface(eye: Eye) -> pygame.Surface:
 # --- mouth silhouettes -----------------------------------------------
 
 def _mouth_surface(mouth: Mouth) -> pygame.Surface:
+    """A single flat-filled shape. No gradient, no gloss, no shadow."""
     s = SUPERSAMPLE
     w = max(2, int(round(mouth.w * s)))
     thick = max(2, int(round(mouth.thickness * s)))
     curve = mouth.curve * s
+    color = mouth.color
 
     if mouth.kind == "o":
         h = max(2, int(round(mouth.h * s)))
-        mask = _new(w, h)
-        pygame.draw.ellipse(mask, MASK_WHITE, (0, 0, w, h))
+        art = _new(w, h)
+        pygame.draw.ellipse(art, color, (0, 0, w, h))
 
     elif mouth.kind == "grin":
         # Open smile: the bottom half of an ellipse, so the top is flat.
         h = max(2, int(round(mouth.h * s)))
         tall = _new(w, h * 2)
-        pygame.draw.ellipse(tall, MASK_WHITE, (0, 0, w, h * 2))
-        mask = _new(w, h)
-        mask.blit(tall, (0, -h))
+        pygame.draw.ellipse(tall, color, (0, 0, w, h * 2))
+        art = _new(w, h)
+        art.blit(tall, (0, -h))
 
     elif mouth.kind == "bar" or abs(curve) < 0.5:
-        mask = _new(w, thick)
-        pygame.draw.rect(mask, MASK_WHITE, (0, 0, w, thick),
+        art = _new(w, thick)
+        pygame.draw.rect(art, color, (0, 0, w, thick),
                          border_radius=thick // 2)
 
     else:
@@ -540,10 +469,11 @@ def _mouth_surface(mouth: Mouth) -> pygame.Surface:
 
         lo = min(y for _, y in pts)
         hi = max(y for _, y in pts)
-        mask = _new(w, hi - lo + thick)
-        _thick_path(mask, [(x, y - lo + thick / 2) for x, y in pts], thick)
+        art = _new(w, hi - lo + thick)
+        _thick_path(art, [(x, y - lo + thick / 2) for x, y in pts], thick,
+                    color=color)
 
-    return _shrink(_finish(mask))
+    return _shrink(art)
 
 
 # --- cache -----------------------------------------------------------
@@ -571,7 +501,7 @@ def _eye_art(eye: Eye) -> pygame.Surface:
 
 def _mouth_art(mouth: Mouth) -> pygame.Surface:
     key = ("m", mouth.kind, round(mouth.w), round(mouth.h),
-           round(mouth.thickness), round(mouth.curve, 1))
+           round(mouth.thickness), round(mouth.curve, 1), mouth.color)
     return _cached(key, lambda: _mouth_surface(mouth))
 
 
@@ -598,6 +528,7 @@ def _lerp_mouth(a: Mouth, b: Mouth, t: float) -> Mouth:
         w=_lerp(a.w, b.w, t), h=_lerp(a.h, b.h, t),
         thickness=_lerp(a.thickness, b.thickness, t),
         curve=_lerp(a.curve, b.curve, t),
+        color=b.color if t >= 0.5 else a.color,
         dx=_lerp(a.dx, b.dx, t), dy=_lerp(a.dy, b.dy, t),
     )
 
@@ -638,16 +569,6 @@ def _glyph(surf, text, size, x, y, alpha=255) -> None:
         art = art.copy()
         art.set_alpha(int(alpha))
     surf.blit(art, art.get_rect(center=(int(x), int(y))))
-
-
-def _dot_art(diameter: int) -> pygame.Surface:
-    def build():
-        s = SUPERSAMPLE
-        d = diameter * s
-        mask = _new(d, d)
-        pygame.draw.circle(mask, MASK_WHITE, (d // 2, d // 2), d // 2)
-        return _shrink(_finish(mask))
-    return _cached(("dot", diameter), build)
 
 
 def _sparkle(surf, x, y, r, alpha=255) -> None:
@@ -826,14 +747,6 @@ class FridayFace:
         if "pulse_eyes" in ex:
             k = 1 + 0.07 * math.sin(2 * math.pi * t / 1.6)
             left, right = replace(left, h=left.h * k), replace(right, h=right.h * k)
-        if "think_eyes" in ex:
-            # A deep, deliberate open/contract squint -- eyes shrink almost
-            # to a flat bar and open back up, much more pronounced than the
-            # subtle pulse_eyes wobble used elsewhere.
-            cyc = (1 + math.sin(2 * math.pi * t / 2.6)) / 2   # 0..1
-            k = 0.32 + 0.68 * cyc
-            left = replace(left, h=left.h * k, radius=left.radius * k)
-            right = replace(right, h=right.h * k, radius=right.radius * k)
         if "pulse" in ex:
             k = 1 + 0.06 * math.sin(2 * math.pi * t / 1.4)
             left = replace(left, w=left.w * k, h=left.h * k)
@@ -950,16 +863,6 @@ class FridayFace:
             return
         cx = BASE_W / 2 + ox
         top = face.eye_y + oy
-
-        if "dots" in ex:
-            for i in range(3):
-                phase = (t * 1.5 - i * 0.22) % 1.0
-                lift = 8 * math.sin(math.pi * min(1.0, phase * 1.6))
-                alpha = 90 + 165 * math.sin(math.pi * min(1.0, phase * 1.6))
-                dot = _dot_art(22).copy()
-                dot.set_alpha(int(alpha))
-                self.canvas.blit(dot, dot.get_rect(
-                    center=(int(cx + (i - 1) * 52), int(top - 132 - lift))))
 
         if "question" in ex:
             bob = 9 * math.sin(2 * math.pi * t / 1.8)
