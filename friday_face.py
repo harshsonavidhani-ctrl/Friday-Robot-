@@ -8,14 +8,19 @@ Nothing drives this directly. It watches state/emotion.txt (and
 state/yawn.txt for the yawn trigger) and switches to whatever it finds
 there; use face_control.py to write those files.
 
-Retro-futuristic block geometry on a pure black screen: solid deep-amber
-shapes, sharp corners, flat fills. No gradients, no gloss, no shadows, no
-corner rounding. The five reference moods (neutral, thinking, happy, sad,
-listening) and the speaking mouth reproduce hardware/saras_face.py's
-measured geometry exactly -- those proportions were derived from photos of
-the real panel, so they are copied verbatim rather than re-invented. The
-remaining emotions are built from the same primitives in the same
-language.
+Block geometry on a pure black screen, finished to read as raised,
+polished orange plastic: every shape gets a strong vertical gradient
+(lighter at the top, deeper at the bottom), a glossy highlight near its
+upper left, and a drop shadow. See _finish().
+
+Shapes are recorded as white silhouettes onto a scratch surface between
+_begin()/_end() -- the `with self._shape():` blocks -- and that silhouette
+is what the finish is applied to, so adding a new shape needs no knowledge
+of the lighting at all.
+
+The reference moods (neutral, thinking, happy, sad, listening) and the
+speaking mouth keep hardware/saras_face.py's measured geometry, which was
+derived from photos of the real panel -- copied verbatim, not re-invented.
 
 Geometry is proportional to the actual screen size, so nothing is ever
 cropped or letterboxed regardless of what the panel reports.
@@ -24,6 +29,7 @@ cropped or letterboxed regardless of what the panel reports.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import math
 import os
 import random
@@ -39,10 +45,25 @@ from face_control import (EMOTIONS as EMOTION_NAMES, DEFAULT_EMOTION,
 BG_COLOR = (0, 0, 0)              # pure black
 FG_COLOR = (255, 106, 0)          # #FF6A00 deep amber -- matches the chassis
 
+# --- dimensional finish ----------------------------------------------
+# Bold and glossy: a strong top-to-bottom gradient, a clear upper-left
+# highlight, and a defined drop shadow, so each shape reads as raised
+# polished plastic rather than a flat fill.
+GRADIENT_TOP = (255, 168, 74)     # lit top edge
+GRADIENT_BOTTOM = (168, 58, 0)    # deep bottom edge
+HIGHLIGHT_ALPHA = 105             # upper-left gloss strength
+HIGHLIGHT_ALPHA_GLOSSY = 165      # heart eyes and the dizzy spiral shine more
+# The background is pure black, so a black shadow would be invisible --
+# this is a deep warm brown, which still reads as the shape's own shadow.
+SHADOW_COLOR = (74, 27, 0)
+SHADOW_ALPHA = 235
+SHADOW_OFFSET = (0, 9)
+BLUR_AMOUNT = 4                   # smoothscale down/up divisor -- softness
+
 # =====================================================================
 # TIMING — tune these
 # =====================================================================
-FPS = 60
+FPS = 30
 TRANSITION_S = 0.28               # cross-fade between emotions
 BLINK_MIN_INTERVAL = 2.0
 BLINK_MAX_INTERVAL = 6.0
@@ -63,6 +84,8 @@ YAWN_OUT_S = 0.30
 SCREEN_CANDIDATES = [(1920, 1080), (1024, 600), (800, 480)]
 DEV_PREVIEW_SIZE = (960, 540)     # exact half-scale of the panel, 16:9
 
+MASK_WHITE = (255, 255, 255, 255)
+
 
 def _detect_screen_size() -> tuple[tuple[int, int], bool]:
     pygame.display.init()
@@ -80,6 +103,24 @@ def _lerp(a: float, b: float, t: float) -> float:
 def _ease(t: float) -> float:
     t = max(0.0, min(1.0, t))
     return 4 * t * t * t if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
+
+
+def _blur(surf: pygame.Surface, amount: int = BLUR_AMOUNT) -> pygame.Surface:
+    """Cheap blur: shrink then grow back."""
+    w, h = surf.get_size()
+    small = pygame.transform.smoothscale(
+        surf, (max(1, w // amount), max(1, h // amount)))
+    return pygame.transform.smoothscale(small, (w, h))
+
+
+def _gradient_seed() -> pygame.Surface:
+    seed = pygame.Surface((1, 2), pygame.SRCALPHA)
+    seed.set_at((0, 0), (*GRADIENT_TOP, 255))
+    seed.set_at((0, 1), (*GRADIENT_BOTTOM, 255))
+    return seed
+
+
+_GRADIENT_SEED = _gradient_seed()
 
 
 class FridayFace:
@@ -111,9 +152,6 @@ class FridayFace:
         self._elapsed = 0.0
         self._since_change = 0.0
 
-        # Cross-fade: a snapshot of the last frame of the previous emotion,
-        # faded out over the new one. Shapes stay pixel-exact throughout --
-        # nothing is interpolated geometrically.
         self._fade_from = None
         self._fade_t = 1.0
 
@@ -127,13 +165,19 @@ class FridayFace:
         self._yawn_poll_next = 0.0
         self._yawn_stamp = None
 
-        # Per-frame whole-face transform, applied by _xf() to every shape:
-        # shake (scared), breathing bob (sleeping), head tilt (curious).
+        # Per-frame whole-face transform, applied by _xf() to every shape.
         self._off_x = 0.0
         self._off_y = 0.0
         self._tilt = 0.0
 
         self._fonts: dict[int, pygame.font.Font] = {}
+
+        # Shapes are drawn white onto this, then lit by _finish().
+        self._scratch = pygame.Surface((self.width, self.height),
+                                       pygame.SRCALPHA)
+        self._bbox = None
+        self._mat_cache: dict = {}
+        self._shadow_cache: dict = {}
 
     # --- geometry ----------------------------------------------------
 
@@ -150,8 +194,10 @@ class FridayFace:
         self.left_eye_x = cx - self.eye_gap // 2 - self.eye_size
         self.right_eye_x = cx + self.eye_gap // 2
 
-        # happy has its own, larger, closer-set eyes and its own vertical
-        # nudge -- measured separately from the shared values above.
+        # Outer edge of the left eye to outer edge of the right eye. The
+        # resting mouth matches this span -- it used to run much wider.
+        self.eye_span = self.eye_gap + 2 * self.eye_size
+
         self.happy_eye_size = int(min(w, h) * 0.32)
         self.happy_y_shift = int(h * 0.075)
         self.happy_eye_gap = int(self.happy_eye_size * 0.47)
@@ -180,7 +226,6 @@ class FridayFace:
         self._since_change = 0.0
 
     def _poll_state_file(self, now: float) -> None:
-        """Cheap: stat first, only read when the file actually changed."""
         if now < self._poll_next:
             return
         self._poll_next = now + POLL_S
@@ -200,12 +245,9 @@ class FridayFace:
             self.set_emotion(name)
 
     def play_yawn(self) -> None:
-        """Trigger the yawn overlay. Plays on top of whatever emotion is
-        showing, then returns to it -- never touches self._name."""
         self._yawn_start = self._elapsed
 
     def _yawn_amount(self) -> float:
-        """0 = not yawning, 1 = fully into the yawn shape."""
         if self._yawn_start is None:
             return 0.0
         dt = self._elapsed - self._yawn_start
@@ -255,18 +297,15 @@ class FridayFace:
                 self._blink_t = 0.0
 
     def _blink_factor(self) -> float:
-        """1.0 = eyes open, ~0.0 = fully closed. Triangle wave."""
         if self._blink_t is None or self._name in _NO_BLINK:
             return 1.0
         t = self._blink_t / BLINK_DURATION
         return abs(2 * t - 1)
 
-    # --- drawing primitives ------------------------------------------
+    # --- transform ---------------------------------------------------
 
     def _xf(self, x, y) -> tuple[float, float]:
-        """Apply this frame's head tilt and offset to one point. With no
-        tilt and no offset this is the identity, so the reference moods
-        render exactly as they did before any of this existed."""
+        """Apply this frame's head tilt and offset to one point."""
         if self._tilt:
             cx = self.width / 2
             cy = (self.eye_y + self.mouth_y) / 2
@@ -276,40 +315,140 @@ class FridayFace:
             x, y = cx + dx * ca - dy * sa, cy + dx * sa + dy * ca
         return x + self._off_x, y + self._off_y
 
-    def _rect_eye(self, x, y, w, h, color=FG_COLOR) -> None:
-        """A sharp, flat, filled rectangle. No rounding anywhere. Falls back
-        to a rotated polygon when the face is tilted."""
+    # --- shape recording and lighting --------------------------------
+
+    def _mark(self, rect: pygame.Rect) -> None:
+        self._bbox = rect if self._bbox is None else self._bbox.union(rect)
+
+    @contextlib.contextmanager
+    def _shape(self, glossy: bool = False):
+        """Record one visual shape as a white silhouette, then light it."""
+        self._bbox = None
+        try:
+            yield
+        finally:
+            self._finish(glossy)
+
+    def _material(self, w: int, h: int, glossy: bool) -> pygame.Surface:
+        """The lit orange surface a shape is cut out of: vertical gradient
+        with the gloss highlight already baked in. Cached per size, so the
+        expensive blur only runs when a shape changes size -- not every
+        frame of every shape."""
+        key = (w, h, glossy)
+        mat = self._mat_cache.get(key)
+        if mat is None:
+            if len(self._mat_cache) > 160:
+                self._mat_cache.clear()
+            mat = pygame.transform.smoothscale(_GRADIENT_SEED, (w, h))
+            mat = mat.convert_alpha()
+            gloss = pygame.Surface((w, h), pygame.SRCALPHA)
+            ell = pygame.Rect(0, 0, max(1, int(w * 0.78)),
+                              max(1, int(h * 0.5)))
+            ell.center = (int(w * 0.36), int(h * 0.27))
+            alpha = HIGHLIGHT_ALPHA_GLOSSY if glossy else HIGHLIGHT_ALPHA
+            pygame.draw.ellipse(gloss, (255, 255, 255, alpha), ell)
+            mat.blit(_blur(gloss), (0, 0))
+            self._mat_cache[key] = mat
+        return mat
+
+    def _shadow_layer(self, size) -> pygame.Surface:
+        sh = self._shadow_cache.get(size)
+        if sh is None:
+            if len(self._shadow_cache) > 160:
+                self._shadow_cache.clear()
+            sh = pygame.Surface(size, pygame.SRCALPHA)
+            sh.fill((*SHADOW_COLOR, SHADOW_ALPHA))
+            self._shadow_cache[size] = sh
+        return sh
+
+    def _finish(self, glossy: bool) -> None:
+        """Light one recorded silhouette: a hard offset drop shadow, then
+        the shape cut out of the lit material."""
+        if self._bbox is None:
+            return
+        screen_rect = self.screen.get_rect()
+        tight = self._bbox.clip(screen_rect)
+        self._bbox = None
+        if tight.width < 1 or tight.height < 1:
+            return
+
+        mask = self._scratch.subsurface(tight).copy()
+        size = tight.size
+
+        # 1. drop shadow -- the silhouette recoloured and offset, laid down
+        #    first so the lit shape covers most of it. Hard-edged on
+        #    purpose: a blurred shadow all but vanishes against pure black.
+        shadow = self._shadow_layer(size).copy()
+        shadow.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        self.screen.blit(shadow, (tight.x + SHADOW_OFFSET[0],
+                                  tight.y + SHADOW_OFFSET[1]))
+
+        # 2. the shape, cut out of the lit material. BLEND_RGBA_MIN takes
+        #    the mask's alpha (the silhouette) and the material's colour.
+        body = self._material(size[0], size[1], glossy).copy()
+        body.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        self.screen.blit(body, tight.topleft)
+
+        self._scratch.fill((0, 0, 0, 0),
+                           tight.union(tight.move(*SHADOW_OFFSET)))
+
+    # --- primitives (draw white onto the scratch silhouette) ---------
+
+    def _rect_eye(self, x, y, w, h) -> None:
         if w < 1 or h < 1:
             return
         if self._tilt:
-            self._poly([(x, y), (x + w, y), (x + w, y + h), (x, y + h)],
-                       color=color)
+            self._poly([(x, y), (x + w, y), (x + w, y + h), (x, y + h)])
             return
         ox, oy = self._xf(x, y)
-        pygame.draw.rect(self.screen, color,
-                         pygame.Rect(int(ox), int(oy), int(w), int(h)))
+        r = pygame.Rect(int(ox), int(oy), int(w), int(h))
+        pygame.draw.rect(self._scratch, MASK_WHITE, r)
+        self._mark(r)
 
-    def _rect_c(self, cx, cy, w, h, color=FG_COLOR) -> None:
-        """A centred filled rectangle, routed through the transform so it
-        picks up tilt/shake/bob like everything else."""
+    def _rect_c(self, cx, cy, w, h) -> None:
         if w < 1 or h < 1:
             return
-        self._rect_eye(cx - w / 2, cy - h / 2, w, h, color=color)
+        self._rect_eye(cx - w / 2, cy - h / 2, w, h)
 
-    def _poly(self, points, color=FG_COLOR) -> None:
+    def _poly(self, points) -> None:
         pts = [self._xf(px, py) for px, py in points]
-        pygame.draw.polygon(self.screen, color,
-                            [(int(px), int(py)) for px, py in pts])
+        ipts = [(int(px), int(py)) for px, py in pts]
+        pygame.draw.polygon(self._scratch, MASK_WHITE, ipts)
+        xs = [p[0] for p in ipts]
+        ys = [p[1] for p in ipts]
+        self._mark(pygame.Rect(min(xs), min(ys),
+                               max(1, max(xs) - min(xs)),
+                               max(1, max(ys) - min(ys))))
+
+    def _ellipse(self, cx, cy, w, h) -> None:
+        if w < 1 or h < 1:
+            return
+        ox, oy = self._xf(cx, cy)
+        r = pygame.Rect(int(ox - w / 2), int(oy - h / 2), int(w), int(h))
+        pygame.draw.ellipse(self._scratch, MASK_WHITE, r)
+        self._mark(r)
 
     def _thick_polyline(self, points, width) -> None:
-        """Solid (non anti-aliased) thick stroke through the given points."""
         pts = [self._xf(px, py) for px, py in points]
         r = max(int(width) // 2, 1)
         for px, py in pts:
-            pygame.draw.circle(self.screen, FG_COLOR, (int(px), int(py)), r)
-        pygame.draw.lines(self.screen, FG_COLOR, False,
+            pygame.draw.circle(self._scratch, MASK_WHITE, (int(px), int(py)), r)
+        pygame.draw.lines(self._scratch, MASK_WHITE, False,
                           [(int(px), int(py)) for px, py in pts],
                           max(1, int(width)))
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        self._mark(pygame.Rect(int(min(xs)) - r, int(min(ys)) - r,
+                               int(max(xs) - min(xs)) + 2 * r,
+                               int(max(ys) - min(ys)) + 2 * r))
+
+    def _hole(self, x, y, w, h) -> None:
+        """Punch a hole straight through the finished pixels on screen --
+        used for scared's pupils, which are a marking on the eye rather
+        than a raised shape of their own."""
+        ox, oy = self._xf(x, y)
+        pygame.draw.rect(self.screen, BG_COLOR,
+                         pygame.Rect(int(ox), int(oy), int(w), int(h)))
 
     # --- overlay glyphs and sparkles ---------------------------------
 
@@ -322,16 +461,21 @@ class FridayFace:
         return f
 
     def _glyph(self, text, size, x, y, alpha=255) -> None:
-        """A floating character -- the '?' and the 'z's."""
-        art = self._font(int(size)).render(text, True, FG_COLOR)
+        """A floating character -- the '?' and the 'z's. Rendered white into
+        the silhouette so it picks up the same finish as everything else."""
+        art = self._font(int(size)).render(text, True, (255, 255, 255))
         if alpha < 255:
             art = art.copy()
             art.set_alpha(int(max(0, min(255, alpha))))
         px, py = self._xf(x, y)
-        self.screen.blit(art, art.get_rect(center=(int(px), int(py))))
+        r = art.get_rect(center=(int(px), int(py)))
+        self._scratch.blit(art, r)
+        self._mark(r)
 
     def _sparkle(self, x, y, r, alpha=255) -> None:
-        """A sharp four-pointed star -- flat fill, same as everything else."""
+        """A sharp four-pointed star. Self-contained: it opens its own
+        _shape() block, because it is a shape in its own right and would
+        otherwise be discarded when the next block resets the bounds."""
         if r < 1 or alpha <= 0:
             return
         pts = []
@@ -339,30 +483,32 @@ class FridayFace:
             a = math.pi * i / 4
             rad = r if i % 2 == 0 else r * 0.26
             pts.append((x + rad * math.cos(a), y + rad * math.sin(a)))
-        if alpha >= 255:
-            self._poly(pts)
+        if alpha >= 250:
+            with self._shape():
+                self._poly(pts)
             return
-        pts = [self._xf(px, py) for px, py in pts]
-        pad = int(r * 2 + 4)
-        layer = pygame.Surface((pad, pad), pygame.SRCALPHA)
-        ox, oy = self._xf(x, y)
-        pygame.draw.polygon(layer, FG_COLOR,
-                            [(int(px - ox + r + 2), int(py - oy + r + 2))
-                             for px, py in pts])
+        ipts = [self._xf(px, py) for px, py in pts]
+        xs = [p[0] for p in ipts]
+        ys = [p[1] for p in ipts]
+        rect = pygame.Rect(int(min(xs)), int(min(ys)),
+                           max(1, int(max(xs) - min(xs))),
+                           max(1, int(max(ys) - min(ys))))
+        layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+        pygame.draw.polygon(layer, MASK_WHITE,
+                            [(int(px - rect.x), int(py - rect.y))
+                             for px, py in ipts])
         layer.set_alpha(int(max(0, min(255, alpha))))
-        self.screen.blit(layer, (int(ox - r - 2), int(oy - r - 2)))
+        with self._shape():
+            self._scratch.blit(layer, rect.topleft)
+            self._mark(rect)
 
     def _blinked(self, y, size, factor):
-        """Apply the blink squeeze to one eye box: returns (y, height)."""
         h = max(2, int(size * factor))
         return y + (size - h) // 2, h
 
     # --- eyes --------------------------------------------------------
 
     def _plain_eyes(self, size=None, dy=0, wide=None, pupil=0.0) -> None:
-        """The default pair of solid squares, with blink applied. `pupil`
-        punches a small dark square in each eye (scared), sized as a
-        fraction of the eye."""
         size = self.eye_size if size is None else size
         w = size if wide is None else wide
         blink = self._blink_factor()
@@ -370,17 +516,16 @@ class FridayFace:
         cx = self.width // 2
         lx = cx - self.eye_gap // 2 - w
         rx = cx + self.eye_gap // 2
-        self._rect_eye(lx, y, w, h)
-        self._rect_eye(rx, y, w, h)
+        for ex in (lx, rx):
+            with self._shape():
+                self._rect_eye(ex, y, w, h)
         if pupil > 0 and h > 4:
             pw = max(2, int(w * pupil))
             ph = max(2, int(min(h * 0.9, w * pupil)))
             for ex in (lx, rx):
-                self._rect_eye(ex + (w - pw) // 2, y + (h - ph) // 2,
-                               pw, ph, color=BG_COLOR)
+                self._hole(ex + (w - pw) // 2, y + (h - ph) // 2, pw, ph)
 
     def _bar_eyes(self, w_mul, h_mul, dy=0, pulse=0.0) -> None:
-        """Thin wide horizontal bars -- listening / bored / sleepy / sleeping."""
         w = int(self.eye_size * w_mul)
         h = max(4, int(self.eye_size * h_mul))
         y = self.eye_y + (self.eye_size - h) // 2 + dy
@@ -388,53 +533,52 @@ class FridayFace:
         if pulse:
             extra = int((math.sin(self._elapsed * 5) * 0.5 + 0.5) * h * pulse)
         for ex in (self.left_eye_x, self.right_eye_x):
-            self._rect_c(ex + self.eye_size // 2, y + h // 2, w, h + extra)
+            with self._shape():
+                self._rect_c(ex + self.eye_size // 2, y + h // 2, w, h + extra)
 
     def _happy_eye_points(self, x, y, w, h, inner_side):
         """Uplifted anime-squint eye: flat top, a single straight diagonal
-        bottom edge sloping upward from the outer corner (full height) to
-        the inner corner near the nose bridge (shortened) -- a plain
-        4-point trapezoid with no intermediate kink."""
-        if inner_side == "right":          # left eye: inner edge on the right
+        bottom edge sloping up from the outer corner to the inner corner."""
+        if inner_side == "right":
             return [(x + w * 0.02, y + h * 0.02),
                     (x + w * 0.98, y + h * 0.02),
                     (x + w * 0.98, y + h * 0.40),
                     (x + w * 0.02, y + h * 0.97)]
-        return [(x + w * 0.98, y + h * 0.02),   # right eye: mirrored
+        return [(x + w * 0.98, y + h * 0.02),
                 (x + w * 0.02, y + h * 0.02),
                 (x + w * 0.02, y + h * 0.40),
                 (x + w * 0.98, y + h * 0.97)]
 
     def _draw_happy_eyes(self) -> None:
-        """Solid filled trapezoids -- sharp edges, flat fill. Uses the
-        happy-only size and gap measured off the reference photo."""
         w = self.happy_eye_size
         h = int(self.happy_eye_size * 0.81)
         y = self.eye_y - self.happy_y_shift + (self.happy_eye_size - h) // 2
         cx = self.width // 2
         lx = cx - self.happy_eye_gap // 2 - w
         rx = cx + self.happy_eye_gap // 2
-        self._poly(self._happy_eye_points(lx, y, w, h, inner_side="right"))
-        self._poly(self._happy_eye_points(rx, y, w, h, inner_side="left"))
+        with self._shape():
+            self._poly(self._happy_eye_points(lx, y, w, h, inner_side="right"))
+        with self._shape():
+            self._poly(self._happy_eye_points(rx, y, w, h, inner_side="left"))
 
     def _draw_thinking_eyes(self) -> None:
-        """Left eye: right-trapezoid -- vertical outer edge, level bottom,
-        inner-top corner sheared down ~15% of the height (a slanted top edge
-        only, not a notch). Right eye: plain open square, untouched."""
+        """Left eye: right-trapezoid, inner-top corner sheared down ~15%.
+        Right eye: plain open square."""
         left_h = int(self.eye_size * 0.82)
         ly = self.eye_y + (self.eye_size - left_h) // 2
         lx = self.left_eye_x
         drop = int(left_h * 0.15)
-        self._poly([(lx, ly),
-                    (lx + self.eye_size, ly + drop),
-                    (lx + self.eye_size, ly + left_h),
-                    (lx, ly + left_h)])
-        self._rect_eye(self.right_eye_x, self.eye_y,
-                       self.eye_size, self.eye_size)
+        with self._shape():
+            self._poly([(lx, ly),
+                        (lx + self.eye_size, ly + drop),
+                        (lx + self.eye_size, ly + left_h),
+                        (lx, ly + left_h)])
+        with self._shape():
+            self._rect_eye(self.right_eye_x, self.eye_y,
+                           self.eye_size, self.eye_size)
 
     def _draw_drooped_eyes(self, corner) -> None:
-        """Square eyes with one top corner drooped down. corner="outer"
-        gives sad's outward/downward brow; "inner" gives angry's."""
+        """Square eyes with one top corner drooped down."""
         blink = self._blink_factor()
         y, h = self._blinked(self.eye_y, self.eye_size, blink)
         droop = int(h * 0.35)
@@ -444,27 +588,43 @@ class FridayFace:
             drop_left = (corner == "outer") == is_left
             tl = (lx, y + droop) if drop_left else (lx, y)
             tr = (right, y) if drop_left else (right, y + droop)
-            self._poly([tl, tr, (right, y + h), (lx, y + h)])
+            with self._shape():
+                self._poly([tl, tr, (right, y + h), (lx, y + h)])
 
     def _draw_heart_eyes(self) -> None:
-        """A sharp-edged block heart -- built from rectangles on a 5x5 grid,
-        so it stays in the same flat pixel-art language as everything else:
-        two lobes on top, tapering to a single point at the bottom."""
-        u = self.eye_size // 5
-        spans = (((0, 2), (3, 5)),   # row 0: two lobes with a dip between
-                 ((0, 5),),          # row 1: solid across
-                 ((1, 4),),          # row 2: tapering
-                 ((2, 3),))          # row 3: the point
-        for lx in (self.left_eye_x, self.right_eye_x):
-            for row, row_spans in enumerate(spans):
-                for a, b in row_spans:
-                    self._rect_eye(lx + a * u, self.eye_y + row * u,
-                                   (b - a) * u, u)
+        """The classic symmetric heart silhouette -- two rounded lobes on
+        top meeting a point at the bottom, from the standard parametric
+        heart curve rather than a blocky approximation."""
+        w = int(self.eye_size * 1.12)
+        h = int(self.eye_size * 1.02)
+        cx = self.width // 2
+        for ecx in (cx - self.eye_gap // 2 - self.eye_size // 2,
+                    cx + self.eye_gap // 2 + self.eye_size // 2):
+            pts = []
+            for i in range(97):
+                a = 2 * math.pi * i / 96
+                hx = 16 * math.sin(a) ** 3
+                hy = (13 * math.cos(a) - 5 * math.cos(2 * a)
+                      - 2 * math.cos(3 * a) - math.cos(4 * a))
+                pts.append((ecx + hx * w / 34,
+                            self.eye_y + h / 2 - hy * h / 30))
+            with self._shape(glossy=True):
+                self._poly(pts)
+
+    def _draw_chevron_eyes(self, dy=0) -> None:
+        """Happy closed eyes as angular ^ ^ chevrons -- used by success."""
+        w = int(self.eye_size * 1.0)
+        rise = int(self.eye_size * 0.34)
+        thick = max(5, int(self.eye_size * 0.16))
+        y = self.eye_y + int(self.eye_size * 0.46) + dy
+        for ex in (self.left_eye_x, self.right_eye_x):
+            x0 = ex + (self.eye_size - w) // 2
+            with self._shape():
+                self._thick_polyline([(x0, y), (x0 + w / 2, y - rise),
+                                      (x0 + w, y)], thick)
 
     def _draw_spiral_eyes(self) -> None:
-        """Dizzy: a swirl that actually spins. Drawn as a thick spiral
-        stroke whose start angle advances with time, so the whole swirl
-        rotates."""
+        """Dizzy: a swirl that spins."""
         s = self.eye_size
         thick = max(3, s // 9)
         outer = (s - thick) / 2
@@ -477,82 +637,78 @@ class FridayFace:
                 a = spin + turns * 2 * math.pi * i / steps
                 rad = outer * i / steps
                 pts.append((ecx + rad * math.cos(a), ecy + rad * math.sin(a)))
-            self._thick_polyline(pts, thick)
-
-    def _draw_closed_arc_eyes(self, dy=0) -> None:
-        """Sleeping: each eye closed into a down-turned arc -- peak in the
-        middle, both ends dropping away."""
-        w = int(self.eye_size * 1.05)
-        depth = int(self.eye_size * 0.30)
-        thick = max(4, int(self.eye_size * 0.13))
-        y = self.eye_y + int(self.eye_size * 0.35) + dy
-        for lx in (self.left_eye_x, self.right_eye_x):
-            x0 = lx + (self.eye_size - w) // 2
-            pts = []
-            for i in range(41):                     # dense enough that the
-                u = i / 40 * 2 - 1                  # stamped circles overlap
-                pts.append((x0 + (u + 1) / 2 * w, y + depth * (u * u)))
-            self._thick_polyline(pts, thick)
+            with self._shape(glossy=True):
+                self._thick_polyline(pts, thick)
 
     # --- mouths ------------------------------------------------------
 
-    def _mouth_bar(self, width_mul=1.0, dy=0) -> None:
-        self._rect_c(self.width // 2, self.mouth_y + dy,
-                     int(self.mouth_width * width_mul), self.mouth_thin_h)
+    def _mouth_bar(self, width_mul=1.0, dy=0, width=None) -> None:
+        w = self.mouth_width * width_mul if width is None else width
+        with self._shape():
+            self._rect_c(self.width // 2, self.mouth_y + dy, w,
+                         self.mouth_thin_h)
 
-    def _mouth_open(self, width_mul=1.0, height_mul=1.0) -> None:
-        self._rect_c(self.width // 2, self.mouth_y,
-                     int(self.mouth_width * width_mul),
-                     int(self.mouth_tall_h * height_mul))
+    def _mouth_open(self, width_mul=1.0, height_mul=1.0, width=None) -> None:
+        w = self.mouth_width * width_mul if width is None else width
+        with self._shape():
+            self._rect_c(self.width // 2, self.mouth_y, w,
+                         int(self.mouth_tall_h * height_mul))
 
     def _mouth_speaking(self) -> None:
-        """The mouth-morph: two detuned sines so it never looks periodic."""
+        """The mouth-morph. Baseline width matches the eye span."""
         t = self._elapsed
         wobble = ((math.sin(t * 14) * 0.5 + 0.5) * 0.6
                   + (math.sin(t * 27.3) * 0.5 + 0.5) * 0.4)
         h = int(self.mouth_thin_h
                 + (self.mouth_tall_h - self.mouth_thin_h) * wobble)
-        self._rect_c(self.width // 2, self.mouth_y,
-                     self.mouth_width, max(self.mouth_thin_h, h))
+        with self._shape():
+            self._rect_c(self.width // 2, self.mouth_y,
+                         self.eye_span, max(self.mouth_thin_h, h))
 
     def _mouth_frown(self) -> None:
-        """Two straight segments meeting at a peak -- sad's downturned mouth."""
         cx = self.width // 2
         half_w = self.mouth_width // 2
         drop = int(self.height * 0.05)
-        centre = (cx, self.mouth_y)
-        pygame.draw.line(self.screen, FG_COLOR, centre,
-                         (cx - half_w, self.mouth_y + drop), self.mouth_thin_h)
-        pygame.draw.line(self.screen, FG_COLOR, centre,
-                         (cx + half_w, self.mouth_y + drop), self.mouth_thin_h)
+        with self._shape():
+            self._thick_polyline(
+                [(cx - half_w, self.mouth_y + drop), (cx, self.mouth_y),
+                 (cx + half_w, self.mouth_y + drop)], self.mouth_thin_h)
 
     def _mouth_smile(self) -> None:
-        """Thin, elegant curved smile with a flat-bottomed middle -- the
-        depth profile was measured per-column off the reference photo, so
-        it plateaus across the middle ~30% and eases up through the outer
-        ~35% on each side rather than being a plain circular arc."""
+        """Thin curved smile with a flat-bottomed middle -- the depth
+        profile was measured per-column off the reference photo."""
         cx = self.width // 2
         width = int(self.mouth_width * 0.69)
         depth = int(self.height * 0.05)
-        happy_mouth_drop = int(self.height * 0.15)
-        centre = (cx, self.mouth_y - self.happy_y_shift + happy_mouth_drop)
+        centre = (cx, self.mouth_y - self.happy_y_shift
+                  + int(self.height * 0.15))
         thickness = max(3, int(self.height * 0.014))
-
         corner_frac, steps = 0.35, 20
         points = []
         for i in range(steps + 1):
-            xn = -0.5 + i / steps                  # -0.5 (left tip) -> +0.5
+            xn = -0.5 + i / steps
             corner_t = (0.5 - abs(xn)) / corner_frac
             depth_frac = (1.0 if corner_t >= 1
                           else 2 * corner_t - corner_t * corner_t)
             points.append((centre[0] + xn * width,
                            centre[1] + depth_frac * depth))
-        self._thick_polyline(points, thickness)
+        with self._shape():
+            self._thick_polyline(points, thickness)
+
+    def _mouth_curve(self, width, depth, thickness=None, dy=0) -> None:
+        """A plain parabolic arc. +depth smiles up, -depth frowns down."""
+        cx = self.width // 2
+        thickness = thickness or max(4, int(self.height * 0.016))
+        pts = []
+        for i in range(25):
+            u = i / 24 * 2 - 1
+            pts.append((cx + u * width / 2,
+                        self.mouth_y + dy + depth * (u * u - 1) * -1))
+        with self._shape():
+            self._thick_polyline(pts, thickness)
 
     def _mouth_tilted(self, degrees=-8.5, width_mul=0.22) -> None:
-        """Very short, thin bar tilted counterclockwise (right end raised) --
-        angle measured directly off the reference photo. Built as a rotated
-        filled polygon, not a rotated blit, so the edges stay crisp."""
+        """Very short, thin bar tilted counterclockwise (right end raised)."""
         cx = self.width // 2
         w = int(self.mouth_width * width_mul)
         thickness = max(3, int(self.height * 0.01))
@@ -563,32 +719,25 @@ class FridayFace:
             pts.append((cx + dx * math.cos(angle) - dy * math.sin(angle),
                         self.mouth_y + dx * math.sin(angle)
                         + dy * math.cos(angle)))
-        self._poly(pts)
-
-    def _mouth_o(self, size_mul=1.0) -> None:
-        """A small round open mouth -- surprised."""
-        d = int(self.mouth_tall_h * size_mul)
-        cx, cy = self._xf(self.width // 2, self.mouth_y)
-        pygame.draw.ellipse(self.screen, FG_COLOR,
-                            pygame.Rect(int(cx - d // 2), int(cy - d // 2),
-                                        d, d))
+        with self._shape():
+            self._poly(pts)
 
     def _mouth_smirk(self, width_mul=0.55) -> None:
         """A one-sided half smile -- rises toward the right only."""
         cx = self.width // 2
         w = int(self.mouth_width * width_mul)
-        depth = int(self.height * 0.035)
-        thickness = max(3, int(self.height * 0.012))
+        depth = int(self.height * 0.055)
+        thickness = max(6, int(self.height * 0.019))
         pts = []
-        for i in range(13):
-            u = i / 12                              # 0 .. 1, left -> right
+        for i in range(17):
+            u = i / 16
             pts.append((cx - w / 2 + u * w,
-                        self.mouth_y + depth * (1 - u) * (1 - u) * 1.6
-                        - depth * 0.5))
-        self._thick_polyline(pts, thickness)
+                        self.mouth_y + depth * (1 - u) * (1 - u) * 1.9
+                        - depth * 0.6))
+        with self._shape():
+            self._thick_polyline(pts, thickness)
 
     def _mouth_zigzag(self, width_mul=0.5) -> None:
-        """A sharp sawtooth -- confused / dizzy / scared."""
         cx = self.width // 2
         w = int(self.mouth_width * width_mul)
         amp = max(4, int(self.height * 0.018))
@@ -597,48 +746,81 @@ class FridayFace:
         for i in range(7):
             pts.append((cx - w // 2 + w * i / 6,
                         self.mouth_y + (amp if i % 2 else -amp)))
-        self._thick_polyline(pts, thickness)
+        with self._shape():
+            self._thick_polyline(pts, thickness)
+
+    def _mouth_teeth(self, width=None, teeth=7) -> None:
+        """Bared teeth: a solid band with a sawtooth lower edge."""
+        cx = self.width // 2
+        w = int(width if width is not None else self.eye_span * 0.6)
+        h = int(self.mouth_thin_h * 3.4)
+        x0 = cx - w / 2
+        y0 = self.mouth_y - h / 2
+        pts = [(x0, y0), (x0 + w, y0)]
+        n = teeth * 2
+        for j in range(n + 1):                 # back along the sawtooth
+            x = x0 + w * (1 - j / n)
+            pts.append((x, y0 + (h if j % 2 else h * 0.18)))
+        with self._shape():
+            self._poly(pts)
+
+    def _mouth_o(self, size_mul=1.0) -> None:
+        d = int(self.mouth_tall_h * size_mul)
+        with self._shape():
+            self._ellipse(self.width // 2, self.mouth_y, d, d)
+
+    def _mouth_grin(self, width=None, height_mul=1.0) -> None:
+        """A big open smile: the bottom half of an ellipse, flat on top."""
+        w = int(width if width is not None else self.eye_span * 0.62)
+        h = int(self.mouth_tall_h * height_mul)
+        cx = self.width // 2
+        with self._shape():
+            ox, oy = self._xf(cx, self.mouth_y - h / 2)
+            tall = pygame.Surface((w, h * 2), pygame.SRCALPHA)
+            pygame.draw.ellipse(tall, MASK_WHITE, pygame.Rect(0, 0, w, h * 2))
+            clip = tall.subsurface(pygame.Rect(0, 0, w, h)).copy()
+            r = pygame.Rect(int(ox - w / 2), int(oy), w, h)
+            self._scratch.blit(clip, r.topleft)
+            self._mark(r)
 
     # --- the emotion table -------------------------------------------
 
     def _draw_emotion(self, name: str) -> None:
-        """Draw one emotion's eyes and mouth. The first six reproduce
-        saras_face.py exactly; the rest use the same primitives."""
-
-        # --- the five reference moods, plus speaking ------------------
         if name == "neutral":
             self._plain_eyes()
-            self._mouth_bar()
+            self._mouth_bar(width=self.eye_span)
+
         elif name == "thinking":
             self._draw_thinking_eyes()
             self._mouth_tilted()
+
         elif name == "happy":
             self._draw_happy_eyes()
             self._mouth_smile()
+
         elif name == "sad":
             self._draw_drooped_eyes("outer")
             self._mouth_frown()
+
         elif name == "listening":
             self._bar_eyes(1.35, 0.22, pulse=0.4)
-            self._mouth_bar()
+            self._mouth_bar(width=self.eye_span)
+
         elif name == "speaking":
             self._plain_eyes()
             self._mouth_speaking()
 
-        # --- the rest, same visual language ---------------------------
         elif name == "angry":
             self._draw_drooped_eyes("inner")
-            self._mouth_bar(0.55)
+            self._mouth_teeth()
 
         elif name == "surprised":
-            # bigger and TALLER eyes, small round "o" mouth
             self._plain_eyes(size=int(self.eye_size * 1.15),
                              wide=int(self.eye_size * 0.92),
                              dy=-int(self.eye_size * 0.1))
             self._mouth_o(0.62)
 
         elif name == "confused":
-            # one eye plainly bigger than the other, wavy mouth, floating ?
             blink = self._blink_factor()
             big = int(self.eye_size * 1.18)
             small = int(self.eye_size * 0.72)
@@ -646,165 +828,183 @@ class FridayFace:
                                    big, blink)
             ry, rh = self._blinked(self.eye_y + int(self.eye_size * 0.18),
                                    small, blink)
-            self._rect_eye(self.left_eye_x, ly, big, lh)
-            self._rect_eye(self.right_eye_x, ry, small, rh)
+            with self._shape():
+                self._rect_eye(self.left_eye_x, ly, big, lh)
+            with self._shape():
+                self._rect_eye(self.right_eye_x, ry, small, rh)
             self._mouth_zigzag(0.42)
             bob = self.height * 0.012 * math.sin(2 * math.pi
                                                  * self._elapsed / 1.8)
-            self._glyph("?", self.eye_size * 0.95,
-                        self.right_eye_x + self.eye_size * 1.75,
-                        self.eye_y + bob)
+            with self._shape():
+                self._glyph("?", self.eye_size * 0.95,
+                            self.right_eye_x + self.eye_size * 1.75,
+                            self.eye_y + bob)
 
         elif name == "dizzy":
             self._draw_spiral_eyes()
             self._mouth_zigzag(0.5)
 
         elif name == "success":
-            # short happy squint + big smile + a quick sparkle burst that
-            # fades out shortly after the emotion is set
-            self._draw_happy_eyes()
-            self._mouth_smile()
-            age = self._since_change
-            if age < 1.3:
-                fade = max(0.0, 1.0 - age / 1.3)
-                r = self.eye_size * 0.22
-                for dx, dy in ((-1.45, -0.5), (1.45, -0.62), (0.0, -1.15)):
-                    self._sparkle(self.width / 2 + dx * self.eye_size,
-                                  self.eye_y + dy * self.eye_size,
-                                  r * (0.5 + 0.5 * fade), 255 * fade)
-
-        elif name == "excited":
-            # big wide squares, open smile, sparkles twinkling around
-            self._plain_eyes(size=int(self.eye_size * 1.22))
-            self._mouth_open(0.42, 0.7)
-            for i, (dx, dy) in enumerate(((-2.0, -0.55), (2.0, -0.66),
-                                          (-1.7, 0.75), (1.75, 0.66))):
-                tw = 0.55 + 0.45 * math.sin(2 * math.pi * self._elapsed / 1.1
-                                            + i * 1.7)
+            # Eyes squeezed shut in a grin (^ ^), a big open smile, and a
+            # sparkle crown -- unmistakably "got it right".
+            self._draw_chevron_eyes()
+            self._mouth_grin(height_mul=0.86)
+            for i, (dx, dy) in enumerate(((-1.55, -0.85), (0.0, -1.25),
+                                          (1.55, -0.85))):
+                tw = 0.65 + 0.35 * math.sin(2 * math.pi * self._elapsed / 0.9
+                                            + i * 2.1)
                 self._sparkle(self.width / 2 + dx * self.eye_size,
                               self.eye_y + dy * self.eye_size,
-                              self.eye_size * 0.17 * tw, 255 * tw)
+                              self.eye_size * 0.23 * tw, 255)
+
+        elif name == "excited":
+            # Big wide-open eyes, a huge open grin, sparkles and a bounce.
+            self._plain_eyes(size=int(self.eye_size * 1.32))
+            self._mouth_grin(width=int(self.eye_span * 0.78), height_mul=1.35)
+            # Kept well outside the enlarged eye block -- at 1.32x the
+            # eyes reach ~1.8 eye-widths from centre, so anything nearer
+            # than this lands on top of them.
+            for i, (dx, dy) in enumerate(((-2.7, -0.75), (2.7, -0.85),
+                                          (-2.5, 0.95), (2.5, 0.85),
+                                          (0.0, -1.45))):
+                tw = 0.5 + 0.5 * math.sin(2 * math.pi * self._elapsed / 0.75
+                                          + i * 1.5)
+                self._sparkle(self.width / 2 + dx * self.eye_size,
+                              self.eye_y + dy * self.eye_size,
+                              self.eye_size * 0.2 * tw, 255)
 
         elif name == "wink":
-            # one eye a normal open square, the other closed to a short bar
+            # One normal open square eye, one closed to a short bar, and a
+            # clear upward smile.
             blink = self._blink_factor()
             y, h = self._blinked(self.eye_y, self.eye_size, blink)
-            self._rect_eye(self.left_eye_x, y, self.eye_size, h)
-            bar_h = max(4, int(self.eye_size * 0.18))
-            self._rect_eye(self.right_eye_x,
-                           self.eye_y + (self.eye_size - bar_h) // 2,
-                           self.eye_size, bar_h)
-            self._mouth_smirk(0.5)
+            with self._shape():
+                self._rect_eye(self.left_eye_x, y, self.eye_size, h)
+            bar_h = max(5, int(self.eye_size * 0.17))
+            with self._shape():
+                self._rect_eye(self.right_eye_x,
+                               self.eye_y + (self.eye_size - bar_h) // 2,
+                               self.eye_size, bar_h)
+            self._mouth_curve(self.eye_span * 0.62,
+                              int(self.height * 0.052))
 
         elif name == "love":
             self._draw_heart_eyes()
-            self._mouth_smile()
+            self._mouth_curve(self.eye_span * 0.6, int(self.height * 0.05))
 
         elif name == "curious":
-            # square eyes, one slightly raised, whole head tilted a little
+            # Head cocked, one eye opened wider than the other, and a small
+            # round "oh?" mouth. Tilt comes from _frame_motion().
             blink = self._blink_factor()
-            ly, lh = self._blinked(self.eye_y - int(self.eye_size * 0.16),
+            big = int(self.eye_size * 1.2)
+            ly, lh = self._blinked(self.eye_y - int(self.eye_size * 0.2),
+                                   big, blink)
+            ry, rh = self._blinked(self.eye_y + int(self.eye_size * 0.04),
                                    self.eye_size, blink)
-            ry, rh = self._blinked(self.eye_y, self.eye_size, blink)
-            self._rect_eye(self.left_eye_x, ly, self.eye_size, lh)
-            self._rect_eye(self.right_eye_x, ry, self.eye_size, rh)
-            self._mouth_bar(0.34)
+            with self._shape():
+                self._rect_eye(self.left_eye_x, ly, big, lh)
+            with self._shape():
+                self._rect_eye(self.right_eye_x, ry, self.eye_size, rh)
+            self._mouth_o(0.6)
 
         elif name == "proud":
-            # half-height squares (smug, lids lowered) + a smirk
-            self._plain_eyes(size=int(self.eye_size * 0.5),
-                             wide=self.eye_size,
-                             dy=-int(self.eye_size * 0.05))
+            # Lids lowered to half-height squares sitting high in the eye
+            # box (looking down its nose), chin lifted, and a big smirk.
+            h = int(self.eye_size * 0.58)
+            y = self.eye_y + int(self.eye_size * 0.04)
+            for ex in (self.left_eye_x, self.right_eye_x):
+                with self._shape():
+                    self._rect_eye(ex, y, self.eye_size, h)
             self._mouth_smirk(0.5)
 
         elif name == "bored":
-            # squished to about half height, droopy, flat mouth
             self._plain_eyes(size=int(self.eye_size * 0.46),
                              wide=self.eye_size,
                              dy=int(self.eye_size * 0.3))
             self._mouth_bar(0.34)
 
         elif name == "sleepy":
-            # very thin, nearly closed, tiny mouth, an occasional rising z
             self._bar_eyes(1.05, 0.12, dy=int(self.eye_size * 0.28))
             self._mouth_bar(0.16)
             phase = (self._elapsed / 2.8) % 1.0
             if phase < 0.55:
                 k = phase / 0.55
-                self._glyph("z", self.eye_size * 0.42,
-                            self.right_eye_x + self.eye_size * 1.5
-                            + self.eye_size * 0.2 * k,
-                            self.eye_y - self.eye_size * (0.35 + 0.6 * k),
-                            255 * (1 - k))
+                with self._shape():
+                    self._glyph("z", self.eye_size * 0.42,
+                                self.right_eye_x + self.eye_size * 1.5
+                                + self.eye_size * 0.2 * k,
+                                self.eye_y - self.eye_size * (0.35 + 0.6 * k),
+                                255 * (1 - k))
 
         elif name == "sleeping":
-            # eyes closed as down-arcs, three drifting z's; the gentle
-            # breathing bob is applied in _frame_motion()
-            self._draw_closed_arc_eyes()
+            # Closed eyes are SQUARES -- the same rounded-square identity as
+            # every other mood, just squeezed very short. Not arcs.
+            h = max(5, int(self.eye_size * 0.15))
+            y = self.eye_y + (self.eye_size - h) // 2
+            for ex in (self.left_eye_x, self.right_eye_x):
+                with self._shape():
+                    self._rect_eye(ex, y, self.eye_size, h)
             self._mouth_bar(0.16)
             for i, mul in enumerate((0.34, 0.48, 0.64)):
                 phase = (self._elapsed / 3.2 + i * 0.28) % 1.0
-                self._glyph("z", self.eye_size * mul * (0.7 + 0.4 * phase),
-                            self.right_eye_x + self.eye_size * 1.4
-                            + self.eye_size * 0.5 * phase,
-                            self.eye_y - self.eye_size * (0.2 + 1.2 * phase),
-                            255 * min(1.0, (1 - phase) * 2.2))
+                with self._shape():
+                    self._glyph(
+                        "z", self.eye_size * mul * (0.7 + 0.4 * phase),
+                        self.right_eye_x + self.eye_size * 1.4
+                        + self.eye_size * 0.5 * phase,
+                        self.eye_y - self.eye_size * (0.2 + 1.2 * phase),
+                        255 * min(1.0, (1 - phase) * 2.2))
 
         elif name == "scared":
-            # big eyes with small dark pupils, wavy mouth; shake in
-            # _frame_motion()
             self._plain_eyes(size=int(self.eye_size * 1.26), pupil=0.26)
             self._mouth_zigzag(0.45)
 
-        else:                                  # unreachable, but be safe
+        else:
             self._plain_eyes()
-            self._mouth_bar()
+            self._mouth_bar(width=self.eye_span)
 
     def _draw_yawn(self, amount: float) -> None:
-        """The yawn, following the order in the reference photos: the eyes
-        squeeze down to wide short bars while the mouth pulls in to a small
-        rounded pill, hold, then ease back open to full squares. `amount`
-        runs 0 -> 1 -> 0, so this interpolates the whole way and there is no
-        jump at either end."""
-        # eyes: full square -> wide short bar
+        """Follows the order in the reference photos: the eyes squeeze down
+        to wide short bars while the mouth pulls in to a small rounded pill,
+        hold, then ease back open."""
         w = int(_lerp(self.eye_size, self.eye_size * 1.08, amount))
         h = max(3, int(_lerp(self.eye_size, self.eye_size * 0.17, amount)))
         cx = self.width // 2
         y = self.eye_y + (self.eye_size - h) // 2
-        self._rect_eye(cx - self.eye_gap // 2 - w, y, w, h)
-        self._rect_eye(cx + self.eye_gap // 2, y, w, h)
+        for ex in (cx - self.eye_gap // 2 - w, cx + self.eye_gap // 2):
+            with self._shape():
+                self._rect_eye(ex, y, w, h)
 
-        # mouth: wide thin bar -> small rounded pill, taller than it is wide
-        mw = max(3, int(_lerp(self.mouth_width, self.mouth_width * 0.095,
-                              amount)))
+        mw = max(3, int(_lerp(self.eye_span, self.eye_span * 0.09, amount)))
         mh = max(3, int(_lerp(self.mouth_thin_h, self.mouth_tall_h * 0.62,
                               amount)))
-        mcx, mcy = self._xf(cx, self.mouth_y)
-        rect = pygame.Rect(0, 0, mw, mh)
-        rect.center = (int(mcx), int(mcy))
-        if amount > 0.25:                 # rounded once it has pulled in
-            pygame.draw.ellipse(self.screen, FG_COLOR, rect)
-        else:
-            self._rect_c(cx, self.mouth_y, mw, mh)
+        with self._shape():
+            if amount > 0.25:
+                self._ellipse(cx, self.mouth_y, mw, mh)
+            else:
+                self._rect_c(cx, self.mouth_y, mw, mh)
 
     # --- frame -------------------------------------------------------
 
     def _frame_motion(self, name: str) -> None:
-        """Set this frame's whole-face offset and tilt. _xf() applies them
-        to every shape, so nothing needs to know about them individually."""
         self._off_x = 0.0
         self._off_y = 0.0
         self._tilt = 0.0
         t = self._elapsed
-        if name == "scared":                     # a fast nervous jitter
+        if name == "scared":
             self._off_x = self.width * 0.0022 * math.sin(2 * math.pi * t * 11)
-        elif name == "sleeping":                 # slow breathing rise/fall
+        elif name == "sleeping":
             self._off_y = self.height * 0.011 * math.sin(2 * math.pi * t / 3.4)
-        elif name == "curious":                  # a slight, held head tilt
-            self._tilt = 6.5
-        elif name == "excited":                  # a light bounce
-            self._off_y = -self.height * 0.009 * abs(
-                math.sin(2 * math.pi * t / 0.9))
+        elif name == "curious":
+            self._tilt = 8.0
+        elif name == "proud":
+            self._tilt = -3.0
+        elif name == "excited":
+            self._off_y = -self.height * 0.012 * abs(
+                math.sin(2 * math.pi * t / 0.75))
+        elif name == "success":
+            self._off_y = -self.height * 0.007 * abs(
+                math.sin(2 * math.pi * t / 1.1))
 
     def draw(self) -> None:
         self.screen.fill(BG_COLOR)
@@ -816,10 +1016,8 @@ class FridayFace:
         else:
             self._frame_motion(self._name)
             self._draw_emotion(self._name)
-            self._off_x = self._off_y = self._tilt = 0.0
+        self._off_x = self._off_y = self._tilt = 0.0
 
-        # Cross-fade out of the previous emotion's last frame. The shapes
-        # themselves are never interpolated, so every frame is exact.
         if self._fade_from is not None:
             alpha = int(255 * (1.0 - _ease(self._fade_t)))
             if alpha > 0:
@@ -876,7 +1074,7 @@ class FridayFace:
 # would either do nothing visible or look wrong.
 _NO_BLINK = frozenset({
     "happy", "thinking", "listening", "dizzy", "success", "love",
-    "proud", "bored", "sleepy", "sleeping",
+    "proud", "bored", "sleepy", "sleeping", "wink",
 })
 
 
