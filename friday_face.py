@@ -65,6 +65,10 @@ SMALL_SHAPE_PX = 56               # below this, skip the material entirely
 # and chunky. Only neutral uses this -- every other mood keeps the square.
 NEUTRAL_EYE_W_MUL = 1.2
 
+# How wide the yawn's open mouth gets, as a fraction of ONE eye's width.
+# Measured off the reference photos.
+YAWN_OPEN_W_MUL = 0.7
+
 # =====================================================================
 # TIMING — tune these
 # =====================================================================
@@ -82,9 +86,9 @@ DEMO_HOLD_S = 2.6                 # --demo dwell per emotion
 # whatever emotion is showing, then returns to it. See play_yawn().
 # Paced like someone surfacing from sleep. Four seconds end to end -- this
 # is what plays once on every boot before the face settles to neutral.
-YAWN_IN_S = 1.05
-YAWN_HOLD_S = 1.60
-YAWN_OUT_S = 1.35
+YAWN_IN_S = 1.50
+YAWN_HOLD_S = 1.10
+YAWN_OUT_S = 1.40
 YAWN_TOTAL_S = YAWN_IN_S + YAWN_HOLD_S + YAWN_OUT_S
 
 # The real 7" HDMI TFT panel (EDID "Mediatrix Peripherals Inc MPI7002")
@@ -456,6 +460,20 @@ class FridayFace:
         if w < 1 or h < 1:
             return
         self._rect_eye(cx - w / 2, cy - h / 2, w, h)
+
+    def _round_rect_c(self, cx, cy, w, h, radius) -> None:
+        """A centred rectangle with rounded corners. radius 0 is identical
+        to _rect_c, so a shape can morph between the two."""
+        if w < 1 or h < 1:
+            return
+        if radius < 1 or self._tilt:
+            self._rect_c(cx, cy, w, h)
+            return
+        ox, oy = self._xf(cx - w / 2, cy - h / 2)
+        r = pygame.Rect(int(ox), int(oy), int(w), int(h))
+        pygame.draw.rect(self._scratch, MASK_WHITE, r,
+                         border_radius=int(radius))
+        self._mark(r)
 
     def _poly(self, points) -> None:
         pts = [self._xf(px, py) for px, py in points]
@@ -1074,13 +1092,18 @@ class FridayFace:
             with self._shape():
                 self._rect_eye(ex, y, wide, h)
 
-        # mouth: wide flat bar -> small open square. Quantised so the
-        # material cache still hits while it animates.
-        open_px = self.eye_size * 0.62
+        # Mouth: wide flat bar -> open square. Sized off the eye width, not
+        # the eye height -- measured against the reference photos the open
+        # mouth is ~0.7 of one eye's width, which is a good deal bigger than
+        # the first attempt. Corners round off as it opens (the photos show
+        # a rounded square) and are square again at rest, so it still meets
+        # neutral's sharp bar exactly at amount 0.
+        open_px = wide * YAWN_OPEN_W_MUL
         mw = _q(_lerp(self.eye_gap + 2 * wide, open_px, amount), 6)
         mh = _q(_lerp(self.mouth_thin_h, open_px, amount), 6)
+        radius = int(min(mw, mh) * 0.22 * amount)
         with self._shape():
-            self._rect_c(cx, self.mouth_y, mw, mh)
+            self._round_rect_c(cx, self.mouth_y, mw, mh, radius)
 
     # --- frame -------------------------------------------------------
 
