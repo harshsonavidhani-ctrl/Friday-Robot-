@@ -80,11 +80,11 @@ DEMO_HOLD_S = 2.6                 # --demo dwell per emotion
 # --- yawn overlay ----------------------------------------------------
 # Not one of the 20 emotions -- a transient reflex that plays on top of
 # whatever emotion is showing, then returns to it. See play_yawn().
-# Paced like someone surfacing from sleep: a slow squeeze, a long hold,
-# and an unhurried reopen -- not a quick blink.
-YAWN_IN_S = 0.70
-YAWN_HOLD_S = 1.25
-YAWN_OUT_S = 1.05
+# Paced like someone surfacing from sleep. Four seconds end to end -- this
+# is what plays once on every boot before the face settles to neutral.
+YAWN_IN_S = 1.05
+YAWN_HOLD_S = 1.60
+YAWN_OUT_S = 1.35
 YAWN_TOTAL_S = YAWN_IN_S + YAWN_HOLD_S + YAWN_OUT_S
 
 # The real 7" HDMI TFT panel (EDID "Mediatrix Peripherals Inc MPI7002")
@@ -240,6 +240,17 @@ class FridayFace:
         self._fade_t = 0.0
         self._name = name
         self._since_change = 0.0
+
+    def _prime_state_stamp(self) -> None:
+        """Record the state file's current stamp WITHOUT applying it. On
+        boot the file may still hold whatever was showing before shutdown;
+        priming means the face stays on neutral after the yawn and only
+        moves when something actually writes a new emotion."""
+        try:
+            st = os.stat(EMOTION_FILE)
+            self._file_stamp = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            self._file_stamp = None
 
     def _poll_state_file(self, now: float) -> None:
         if now < self._poll_next:
@@ -820,24 +831,19 @@ class FridayFace:
         with self._shape():
             self._thick_polyline(pts, thickness)
 
-    def _mouth_teeth(self, width=None, teeth=5) -> None:
-        """A bold gritted mouth: one solid block with a horizontal gap and
-        a few vertical gaps punched through it, so it reads as clenched
-        teeth. Earlier versions used pointed sawtooth spikes, which read as
-        a saw blade rather than a face."""
+    def _mouth_teeth(self, width=None, segments=3) -> None:
+        """The angry mouth from the reference photo: ONE solid bar split
+        into three segments by two thin vertical gaps. No upper/lower
+        split, no points -- earlier sawtooth and grid versions both read
+        as something other than a face."""
         cx = self.width // 2
-        w = int(width if width is not None else self.eye_span * 0.52)
-        h = int(self.mouth_thin_h * 3.2)
+        w = int(width if width is not None else self.eye_span * 0.55)
+        h = int(self.mouth_thin_h * 2.0)
         with self._shape():
             self._rect_c(cx, self.mouth_y, w, h)
-
-        # the gaps -- punched through the lit pixels, so they read as the
-        # dark line between upper and lower teeth
-        gap = max(3, int(h * 0.14))
-        self._hole(cx - w / 2, self.mouth_y - gap / 2, w, gap)
-        vgap = max(3, int(w * 0.022))
-        for j in range(1, teeth):
-            self._hole(cx - w / 2 + w * j / teeth - vgap / 2,
+        vgap = max(3, int(w * 0.028))
+        for j in range(1, segments):
+            self._hole(cx - w / 2 + w * j / segments - vgap / 2,
                        self.mouth_y - h / 2, vgap, h)
 
     def _mouth_o(self, size_mul=1.0) -> None:
@@ -1055,25 +1061,26 @@ class FridayFace:
             self._mouth_bar(width=self.eye_span)
 
     def _draw_yawn(self, amount: float) -> None:
-        """Follows the order in the reference photos: the eyes squeeze down
-        to wide short bars while the mouth pulls in to a small rounded pill,
-        hold, then ease back open."""
-        w = int(_lerp(self.eye_size, self.eye_size * 1.08, amount))
-        h = max(3, int(_lerp(self.eye_size, self.eye_size * 0.17, amount)))
+        """Follows the reference photos: the EYES do not change -- they stay
+        the neutral squares the whole way through. Only the mouth moves,
+        drawing in from the wide neutral bar to a small open square and back
+        out again. (Earlier versions squeezed the eyes down to bars, which
+        the photos do not show.)"""
+        wide = int(self.eye_size * NEUTRAL_EYE_W_MUL)
+        blink = self._blink_factor()
+        y, h = self._blinked(self.eye_y, self.eye_size, blink)
         cx = self.width // 2
-        y = self.eye_y + (self.eye_size - h) // 2
-        for ex in (cx - self.eye_gap // 2 - w, cx + self.eye_gap // 2):
+        for ex in (cx - self.eye_gap // 2 - wide, cx + self.eye_gap // 2):
             with self._shape():
-                self._rect_eye(ex, y, w, h)
+                self._rect_eye(ex, y, wide, h)
 
-        mw = max(3, int(_lerp(self.eye_span, self.eye_span * 0.09, amount)))
-        mh = max(3, int(_lerp(self.mouth_thin_h, self.mouth_tall_h * 0.62,
-                              amount)))
+        # mouth: wide flat bar -> small open square. Quantised so the
+        # material cache still hits while it animates.
+        open_px = self.eye_size * 0.62
+        mw = _q(_lerp(self.eye_gap + 2 * wide, open_px, amount), 6)
+        mh = _q(_lerp(self.mouth_thin_h, open_px, amount), 6)
         with self._shape():
-            if amount > 0.25:
-                self._ellipse(cx, self.mouth_y, mw, mh)
-            else:
-                self._rect_c(cx, self.mouth_y, mw, mh)
+            self._rect_c(cx, self.mouth_y, mw, mh)
 
     # --- frame -------------------------------------------------------
 
@@ -1179,11 +1186,20 @@ def main() -> int:
                     help="cycle all 20 emotions and play the yawn once")
     ap.add_argument("--window", action="store_true",
                     help="windowed, for testing over SSH/VNC")
+    ap.add_argument("--boot-yawn", action="store_true",
+                    help="wake up with the yawn, then settle on neutral "
+                         "(what the boot service uses)")
     args = ap.parse_args()
 
     face = FridayFace(fullscreen=not args.window)
     if args.demo:
         face.run_demo()
+    elif args.boot_yawn:
+        # Wake up: ignore whatever emotion.txt happens to hold, yawn once,
+        # and land on neutral. The yawn itself returns to neutral (update()).
+        face._prime_state_stamp()
+        face.play_yawn()
+        face.run()
     else:
         face.set_emotion(get_emotion())
         face.run()
