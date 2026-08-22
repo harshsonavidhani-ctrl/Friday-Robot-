@@ -60,6 +60,10 @@ SHADOW_ALPHA = 235
 SHADOW_OFFSET = (0, 9)
 BLUR_AMOUNT = 4                   # smoothscale down/up divisor -- softness
 
+# Neutral's eyes are drawn wider than tall so the resting face reads bold
+# and chunky. Only neutral uses this -- every other mood keeps the square.
+NEUTRAL_EYE_W_MUL = 1.2
+
 # =====================================================================
 # TIMING — tune these
 # =====================================================================
@@ -77,6 +81,7 @@ DEMO_HOLD_S = 2.6                 # --demo dwell per emotion
 YAWN_IN_S = 0.18
 YAWN_HOLD_S = 0.62
 YAWN_OUT_S = 0.30
+YAWN_TOTAL_S = YAWN_IN_S + YAWN_HOLD_S + YAWN_OUT_S
 
 # The real 7" HDMI TFT panel (EDID "Mediatrix Peripherals Inc MPI7002")
 # reports 1920x1080 as its native mode -- confirmed here via wlr-randr.
@@ -248,6 +253,8 @@ class FridayFace:
         self._yawn_start = self._elapsed
 
     def _yawn_amount(self) -> float:
+        """0 -> 1 -> 0 across the whole yawn. Pure: update() is what ends
+        the yawn and drops the face back to neutral."""
         if self._yawn_start is None:
             return 0.0
         dt = self._elapsed - self._yawn_start
@@ -255,9 +262,8 @@ class FridayFace:
             return _ease(dt / YAWN_IN_S)
         if dt < YAWN_IN_S + YAWN_HOLD_S:
             return 1.0
-        if dt < YAWN_IN_S + YAWN_HOLD_S + YAWN_OUT_S:
+        if dt < YAWN_TOTAL_S:
             return 1.0 - _ease((dt - YAWN_IN_S - YAWN_HOLD_S) / YAWN_OUT_S)
-        self._yawn_start = None
         return 0.0
 
     def _poll_yawn_file(self, now: float) -> None:
@@ -279,6 +285,13 @@ class FridayFace:
     def update(self, dt: float) -> None:
         self._elapsed += dt
         self._since_change += dt
+
+        # The yawn always lands back on neutral, whatever it interrupted.
+        if (self._yawn_start is not None
+                and self._elapsed - self._yawn_start >= YAWN_TOTAL_S):
+            self._yawn_start = None
+            self._name = DEFAULT_EMOTION
+            self._since_change = 0.0
 
         if self._fade_t < 1.0:
             self._fade_t = min(1.0, self._fade_t + dt / TRANSITION_S)
@@ -731,9 +744,10 @@ class FridayFace:
         pts = []
         for i in range(17):
             u = i / 16
+            # level across the left, lifting through the right -- never
+            # dipping below the mouth line, which would read as a droop
             pts.append((cx - w / 2 + u * w,
-                        self.mouth_y + depth * (1 - u) * (1 - u) * 1.9
-                        - depth * 0.6))
+                        self.mouth_y + depth * 0.12 - depth * 1.15 * u ** 1.6))
         with self._shape():
             self._thick_polyline(pts, thickness)
 
@@ -750,7 +764,8 @@ class FridayFace:
             self._thick_polyline(pts, thickness)
 
     def _mouth_teeth(self, width=None, teeth=7) -> None:
-        """Bared teeth: a solid band with a sawtooth lower edge."""
+        """Bared teeth: a solid band with a sawtooth lower edge, closed off
+        by a straight lower lip so it reads as a full mouth."""
         cx = self.width // 2
         w = int(width if width is not None else self.eye_span * 0.6)
         h = int(self.mouth_thin_h * 3.4)
@@ -763,6 +778,9 @@ class FridayFace:
             pts.append((x, y0 + (h if j % 2 else h * 0.18)))
         with self._shape():
             self._poly(pts)
+        with self._shape():                    # the lower lip
+            self._rect_c(cx, y0 + h + self.mouth_thin_h * 1.1,
+                         w, self.mouth_thin_h)
 
     def _mouth_o(self, size_mul=1.0) -> None:
         d = int(self.mouth_tall_h * size_mul)
@@ -787,8 +805,9 @@ class FridayFace:
 
     def _draw_emotion(self, name: str) -> None:
         if name == "neutral":
-            self._plain_eyes()
-            self._mouth_bar(width=self.eye_span)
+            wide = int(self.eye_size * NEUTRAL_EYE_W_MUL)
+            self._plain_eyes(wide=wide)
+            self._mouth_bar(width=self.eye_gap + 2 * wide)
 
         elif name == "thinking":
             self._draw_thinking_eyes()
@@ -848,7 +867,8 @@ class FridayFace:
             # Eyes squeezed shut in a grin (^ ^), a big open smile, and a
             # sparkle crown -- unmistakably "got it right".
             self._draw_chevron_eyes()
-            self._mouth_grin(height_mul=0.86)
+            self._mouth_curve(self.eye_span * 0.66, int(self.height * 0.075),
+                              thickness=max(8, int(self.height * 0.024)))
             for i, (dx, dy) in enumerate(((-1.55, -0.85), (0.0, -1.25),
                                           (1.55, -0.85))):
                 tw = 0.65 + 0.35 * math.sin(2 * math.pi * self._elapsed / 0.9
@@ -859,8 +879,11 @@ class FridayFace:
 
         elif name == "excited":
             # Big wide-open eyes, a huge open grin, sparkles and a bounce.
-            self._plain_eyes(size=int(self.eye_size * 1.32))
-            self._mouth_grin(width=int(self.eye_span * 0.78), height_mul=1.35)
+            self._plain_eyes(size=int(self.eye_size * 1.22))
+            with self._shape():                # wide open, mid-shout
+                self._ellipse(self.width // 2, self.mouth_y,
+                              int(self.eye_span * 0.42),
+                              int(self.mouth_tall_h * 1.15))
             # Kept well outside the enlarged eye block -- at 1.32x the
             # eyes reach ~1.8 eye-widths from centre, so anything nearer
             # than this lands on top of them.
@@ -910,11 +933,16 @@ class FridayFace:
         elif name == "proud":
             # Lids lowered to half-height squares sitting high in the eye
             # box (looking down its nose), chin lifted, and a big smirk.
-            h = int(self.eye_size * 0.58)
+            # Lids down over the top of each eye, cut on a slant so they
+            # narrow toward the nose -- appraising rather than sleepy --
+            # over a bold one-sided smirk. Chin-up tilt in _frame_motion().
+            h = int(self.eye_size * 0.62)
             y = self.eye_y + int(self.eye_size * 0.04)
-            for ex in (self.left_eye_x, self.right_eye_x):
+            wide = int(self.eye_size * 1.1)
+            cx = self.width // 2
+            for ex in (cx - self.eye_gap // 2 - wide, cx + self.eye_gap // 2):
                 with self._shape():
-                    self._rect_eye(ex, y, self.eye_size, h)
+                    self._rect_eye(ex, y, wide, h)
             self._mouth_smirk(0.5)
 
         elif name == "bored":

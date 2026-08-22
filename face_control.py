@@ -11,7 +11,8 @@ can write a file can drive it. No sockets, no server, no imports of pygame.
     python3 face_control.py happy       set it
     python3 face_control.py             print the current emotion
     python3 face_control.py --list      print every valid name
-    python3 face_control.py --yawn      play the yawn overlay once
+    python3 face_control.py yawn        play the yawn, then land on neutral
+    python3 face_control.py --yawn      same as `yawn`
 """
 
 from __future__ import annotations
@@ -31,6 +32,12 @@ EMOTION_FILE = STATE_DIR / "emotion.txt"
 YAWN_FILE = STATE_DIR / "yawn.txt"
 
 DEFAULT_EMOTION = "neutral"
+
+# The yawn is an animation, not a resting state -- it plays once and drops
+# back to neutral by itself. It is accepted as a name here so callers can
+# just say set_emotion("yawn"), but it is deliberately kept OUT of EMOTIONS
+# so the demo cycle and the face's geometry table stay at the 20 emotions.
+YAWN_NAME = "yawn"
 
 # The canonical list. friday_face.py imports this and refuses to start unless
 # it has geometry for every name here, so the two can never drift apart.
@@ -70,9 +77,13 @@ def _write_atomic(path: Path, text: str, prefix: str) -> None:
 def set_emotion(name: str) -> str:
     """Write the emotion atomically. Returns the name that was written."""
     name = name.strip().lower()
+    if name == YAWN_NAME:
+        trigger_yawn()
+        return YAWN_NAME
     if name not in EMOTIONS:
         raise ValueError(
-            f"unknown emotion {name!r}. Valid: {', '.join(EMOTIONS)}"
+            f"unknown emotion {name!r}. "
+            f"Valid: {', '.join(EMOTIONS + (YAWN_NAME,))}"
         )
     _write_atomic(EMOTION_FILE, name + "\n", ".emotion.")
     return name
@@ -99,6 +110,9 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[0] in ("--list", "-l"):
         print("\n".join(EMOTIONS))
+        return 0
+    if argv[0] in ("--all", "-a"):
+        print("\n".join(EMOTIONS + (YAWN_NAME,)))
         return 0
     if argv[0] in ("--yawn", "-y"):
         trigger_yawn()
