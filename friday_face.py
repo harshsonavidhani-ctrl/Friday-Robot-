@@ -173,9 +173,9 @@ EMOTIONS: dict[str, Face] = {
     "neutral": _face(_L, _R, Mouth()),
 
     "happy": _face(
-        # Bottom-inner corner tapered off -- a squinting, smiling-eyes
-        # trapezoid, not a whole-eye rotation.
-        *_eyes(h=120, radius=22, taper=48),
+        # Bottom-inner corner tapered off deep, into a pointed trapezoid --
+        # a squinting, smiling-eyes shape, not a whole-eye rotation.
+        *_eyes(h=124, radius=18, taper=92),
         Mouth("curve", w=250, thickness=16, curve=52),
     ),
 
@@ -212,7 +212,7 @@ EMOTIONS: dict[str, Face] = {
         # plus the dots overlay above.
         _L, _R,
         Mouth("bar", w=130, thickness=12),
-        extras=("dots", "pulse_eyes"),
+        extras=("dots", "think_eyes"),
     ),
 
     "speaking": _face(
@@ -679,8 +679,15 @@ class FridayFace:
         pygame.init()
         pygame.display.set_caption("Friday")
 
-        flags = pygame.FULLSCREEN | pygame.SCALED if fullscreen else 0
-        self.screen = pygame.display.set_mode(size, flags)
+        # Draw everything on a fixed BASE_W x BASE_H canvas, then scale that
+        # onto the real screen ourselves (see _present()). Letting SDL's
+        # FULLSCREEN | SCALED do this under Wayland (labwc) produced a
+        # cropped picture -- its letterboxing didn't come out right on this
+        # panel -- so we do the aspect-preserving fit by hand instead.
+        flags = pygame.FULLSCREEN if fullscreen else 0
+        self.screen = pygame.display.set_mode((0, 0) if fullscreen else size,
+                                              flags)
+        self.canvas = pygame.Surface((BASE_W, BASE_H))
         if fullscreen:
             pygame.mouse.set_visible(False)
 
@@ -819,6 +826,14 @@ class FridayFace:
         if "pulse_eyes" in ex:
             k = 1 + 0.07 * math.sin(2 * math.pi * t / 1.6)
             left, right = replace(left, h=left.h * k), replace(right, h=right.h * k)
+        if "think_eyes" in ex:
+            # A deep, deliberate open/contract squint -- eyes shrink almost
+            # to a flat bar and open back up, much more pronounced than the
+            # subtle pulse_eyes wobble used elsewhere.
+            cyc = (1 + math.sin(2 * math.pi * t / 2.6)) / 2   # 0..1
+            k = 0.32 + 0.68 * cyc
+            left = replace(left, h=left.h * k, radius=left.radius * k)
+            right = replace(right, h=right.h * k, radius=right.radius * k)
         if "pulse" in ex:
             k = 1 + 0.06 * math.sin(2 * math.pi * t / 1.4)
             left = replace(left, w=left.w * k, h=left.h * k)
@@ -870,10 +885,10 @@ class FridayFace:
         if alpha < 255:
             art = art.copy()
             art.set_alpha(alpha)
-        self.screen.blit(art, art.get_rect(center=(int(cx), int(cy))))
+        self.canvas.blit(art, art.get_rect(center=(int(cx), int(cy))))
 
     def draw(self) -> None:
-        self.screen.fill(BG_COLOR)
+        self.canvas.fill(BG_COLOR)
 
         fading = self._t < 1.0
         p = _ease(self._t)
@@ -943,19 +958,19 @@ class FridayFace:
                 alpha = 90 + 165 * math.sin(math.pi * min(1.0, phase * 1.6))
                 dot = _dot_art(22).copy()
                 dot.set_alpha(int(alpha))
-                self.screen.blit(dot, dot.get_rect(
+                self.canvas.blit(dot, dot.get_rect(
                     center=(int(cx + (i - 1) * 52), int(top - 132 - lift))))
 
         if "question" in ex:
             bob = 9 * math.sin(2 * math.pi * t / 1.8)
-            _glyph(self.screen, "?", 170, cx + 312, top - 46 + bob)
+            _glyph(self.canvas, "?", 170, cx + 312, top - 46 + bob)
 
         if "sparkle" in ex:
             spots = ((-330, -96, 26), (318, -110, 30),
                      (-268, 108, 20), (296, 96, 22))
             for i, (dx, dy, r) in enumerate(spots):
                 tw = 0.55 + 0.45 * math.sin(2 * math.pi * t / 1.1 + i * 1.7)
-                _sparkle(self.screen, cx + dx, top + dy, r * tw, 255 * tw)
+                _sparkle(self.canvas, cx + dx, top + dy, r * tw, 255 * tw)
 
         if "sparkle_brief" in ex:
             age = self._since_change
@@ -963,23 +978,35 @@ class FridayFace:
                 fade = max(0.0, 1.0 - age / 1.3)
                 for i, (dx, dy, r) in enumerate(
                         ((-306, -84, 30), (300, -96, 26), (0, -190, 22))):
-                    _sparkle(self.screen, cx + dx, top + dy,
+                    _sparkle(self.canvas, cx + dx, top + dy,
                              r * (0.5 + 0.5 * fade), 255 * fade)
 
         if "z_one" in ex:
             phase = (t / 2.8) % 1.0
             if phase < 0.55:
                 k = phase / 0.55
-                _glyph(self.screen, "z", 58, cx + 268 + 26 * k,
+                _glyph(self.canvas, "z", 58, cx + 268 + 26 * k,
                        top - 60 - 74 * k, 255 * (1 - k))
 
         if "zzz" in ex:
             for i, size in enumerate((44, 62, 82)):
                 phase = (t / 3.2 + i * 0.28) % 1.0
-                _glyph(self.screen, "z", int(size * (0.7 + 0.4 * phase)),
+                _glyph(self.canvas, "z", int(size * (0.7 + 0.4 * phase)),
                        cx + 244 + 66 * phase,
                        top - 34 - 150 * phase,
                        255 * min(1.0, (1 - phase) * 2.2))
+
+    def _present(self) -> None:
+        """Scale the BASE_W x BASE_H canvas to fit the real screen, aspect
+        preserved, and centre it -- done by hand so the whole picture always
+        lands on screen instead of being cropped by SDL/Wayland scaling."""
+        sw, sh = self.screen.get_size()
+        scale = min(sw / BASE_W, sh / BASE_H)
+        w, h = round(BASE_W * scale), round(BASE_H * scale)
+        frame = pygame.transform.smoothscale(self.canvas, (w, h))
+        self.screen.fill(BG_COLOR)
+        self.screen.blit(frame, ((sw - w) // 2, (sh - h) // 2))
+        pygame.display.flip()
 
     # --- loop --------------------------------------------------------
 
@@ -1002,7 +1029,7 @@ class FridayFace:
                 self._poll_yawn_file(now)
             self.update(dt)
             self.draw()
-            pygame.display.flip()
+            self._present()
         pygame.quit()
 
     def run_demo(self, hold: float = DEMO_HOLD_S) -> None:
@@ -1023,7 +1050,7 @@ class FridayFace:
                 self.set_emotion(order[index])
             self.update(dt)
             self.draw()
-            pygame.display.flip()
+            self._present()
         pygame.quit()
 
 
