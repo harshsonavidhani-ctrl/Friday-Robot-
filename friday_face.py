@@ -59,6 +59,7 @@ SHADOW_COLOR = (74, 27, 0)
 SHADOW_ALPHA = 235
 SHADOW_OFFSET = (0, 9)
 BLUR_AMOUNT = 4                   # smoothscale down/up divisor -- softness
+SMALL_SHAPE_PX = 56               # below this, skip the material entirely
 
 # Neutral's eyes are drawn wider than tall so the resting face reads bold
 # and chunky. Only neutral uses this -- every other mood keeps the square.
@@ -72,15 +73,18 @@ TRANSITION_S = 0.28               # cross-fade between emotions
 BLINK_MIN_INTERVAL = 2.0
 BLINK_MAX_INTERVAL = 6.0
 BLINK_DURATION = 0.16
+WINK_PERIOD_S = 3.0               # one full wink of the right eye
 POLL_S = 0.25                     # how often the state files are checked
 DEMO_HOLD_S = 2.6                 # --demo dwell per emotion
 
 # --- yawn overlay ----------------------------------------------------
 # Not one of the 20 emotions -- a transient reflex that plays on top of
 # whatever emotion is showing, then returns to it. See play_yawn().
-YAWN_IN_S = 0.18
-YAWN_HOLD_S = 0.62
-YAWN_OUT_S = 0.30
+# Paced like someone surfacing from sleep: a slow squeeze, a long hold,
+# and an unhurried reopen -- not a quick blink.
+YAWN_IN_S = 0.70
+YAWN_HOLD_S = 1.25
+YAWN_OUT_S = 1.05
 YAWN_TOTAL_S = YAWN_IN_S + YAWN_HOLD_S + YAWN_OUT_S
 
 # The real 7" HDMI TFT panel (EDID "Mediatrix Peripherals Inc MPI7002")
@@ -103,6 +107,13 @@ def _detect_screen_size() -> tuple[tuple[int, int], bool]:
 
 def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
+
+
+def _q(v: float, step: int = 4) -> int:
+    """Snap an animated dimension to a step. Sizes that change every single
+    frame miss the material cache every frame, which is what makes a pulse
+    expensive; quantising costs nothing visible and restores the cache."""
+    return max(step, int(round(v / step)) * step)
 
 
 def _ease(t: float) -> float:
@@ -388,6 +399,18 @@ class FridayFace:
         mask = self._scratch.subsurface(tight).copy()
         size = tight.size
 
+        # Small shapes -- confetti, sparkles, the z's -- get a flat fill
+        # instead of the full material. At this size the gradient and gloss
+        # are invisible anyway, and they tumble/twinkle constantly, so they
+        # would miss the cache on every frame.
+        if size[0] < SMALL_SHAPE_PX and size[1] < SMALL_SHAPE_PX:
+            flat = pygame.Surface(size, pygame.SRCALPHA)
+            flat.fill(FG_COLOR)
+            flat.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+            self.screen.blit(flat, tight.topleft)
+            self._scratch.fill((0, 0, 0, 0), tight)
+            return
+
         # 1. drop shadow -- the silhouette recoloured and offset, laid down
         #    first so the lit shape covers most of it. Hard-edged on
         #    purpose: a blurred shadow all but vanishes against pure black.
@@ -515,6 +538,32 @@ class FridayFace:
             self._scratch.blit(layer, rect.topleft)
             self._mark(rect)
 
+    def _confetti(self, count=12) -> None:
+        """Party-popper fallout: little slips of paper tumbling down past
+        the face. Deterministic per index, so it never needs state."""
+        t = self._elapsed
+        top = self.eye_y - self.eye_size * 1.5
+        fall = self.height * 0.85
+        for i in range(count):
+            # cheap deterministic scatter -- no RNG, no stored particles
+            a = (i * 0.6180339887) % 1.0
+            b = (i * 0.7548776662) % 1.0
+            phase = (t * (0.34 + 0.16 * b) + a) % 1.0
+            x = (self.width / 2 + (a * 2 - 1) * self.eye_span * 0.85
+                 + math.sin(t * (1.1 + b) + i) * self.eye_size * 0.22)
+            y = top + phase * fall
+            if y > self.height:
+                continue
+            s = self.eye_size * (0.075 + 0.045 * b)
+            spin = t * (2.2 + 3.0 * b) + i
+            ca, sa = math.cos(spin), math.sin(spin)
+            # a thin slip: wide in one axis, narrow in the other
+            hw, hh = s * 0.5, s * 0.22
+            pts = [(x + dx * ca - dy * sa, y + dx * sa + dy * ca)
+                   for dx, dy in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))]
+            with self._shape():
+                self._poly(pts)
+
     def _blinked(self, y, size, factor):
         h = max(2, int(size * factor))
         return y + (size - h) // 2, h
@@ -544,7 +593,7 @@ class FridayFace:
         y = self.eye_y + (self.eye_size - h) // 2 + dy
         extra = 0
         if pulse:
-            extra = int((math.sin(self._elapsed * 5) * 0.5 + 0.5) * h * pulse)
+            extra = _q((math.sin(self._elapsed * 5) * 0.5 + 0.5) * h * pulse, 4)
         for ex in (self.left_eye_x, self.right_eye_x):
             with self._shape():
                 self._rect_c(ex + self.eye_size // 2, y + h // 2, w, h + extra)
@@ -604,12 +653,20 @@ class FridayFace:
             with self._shape():
                 self._poly([tl, tr, (right, y + h), (lx, y + h)])
 
+    @staticmethod
+    def _heartbeat(t: float) -> float:
+        """A lub-dub: a strong beat, a softer one just after, then rest."""
+        p = t % 1.15
+        return (math.exp(-((p / 0.085) ** 2))
+                + 0.62 * math.exp(-(((p - 0.26) / 0.085) ** 2)))
+
     def _draw_heart_eyes(self) -> None:
         """The classic symmetric heart silhouette -- two rounded lobes on
         top meeting a point at the bottom, from the standard parametric
-        heart curve rather than a blocky approximation."""
-        w = int(self.eye_size * 1.12)
-        h = int(self.eye_size * 1.02)
+        heart curve. Scales with the heartbeat."""
+        beat = 1.0 + 0.17 * self._heartbeat(self._elapsed)
+        w = _q(self.eye_size * 1.12 * beat, 6)
+        h = _q(self.eye_size * 1.02 * beat, 6)
         cx = self.width // 2
         for ecx in (cx - self.eye_gap // 2 - self.eye_size // 2,
                     cx + self.eye_gap // 2 + self.eye_size // 2):
@@ -763,24 +820,25 @@ class FridayFace:
         with self._shape():
             self._thick_polyline(pts, thickness)
 
-    def _mouth_teeth(self, width=None, teeth=7) -> None:
-        """Bared teeth: a solid band with a sawtooth lower edge, closed off
-        by a straight lower lip so it reads as a full mouth."""
+    def _mouth_teeth(self, width=None, teeth=5) -> None:
+        """A bold gritted mouth: one solid block with a horizontal gap and
+        a few vertical gaps punched through it, so it reads as clenched
+        teeth. Earlier versions used pointed sawtooth spikes, which read as
+        a saw blade rather than a face."""
         cx = self.width // 2
-        w = int(width if width is not None else self.eye_span * 0.6)
-        h = int(self.mouth_thin_h * 3.4)
-        x0 = cx - w / 2
-        y0 = self.mouth_y - h / 2
-        pts = [(x0, y0), (x0 + w, y0)]
-        n = teeth * 2
-        for j in range(n + 1):                 # back along the sawtooth
-            x = x0 + w * (1 - j / n)
-            pts.append((x, y0 + (h if j % 2 else h * 0.18)))
+        w = int(width if width is not None else self.eye_span * 0.52)
+        h = int(self.mouth_thin_h * 3.2)
         with self._shape():
-            self._poly(pts)
-        with self._shape():                    # the lower lip
-            self._rect_c(cx, y0 + h + self.mouth_thin_h * 1.1,
-                         w, self.mouth_thin_h)
+            self._rect_c(cx, self.mouth_y, w, h)
+
+        # the gaps -- punched through the lit pixels, so they read as the
+        # dark line between upper and lower teeth
+        gap = max(3, int(h * 0.14))
+        self._hole(cx - w / 2, self.mouth_y - gap / 2, w, gap)
+        vgap = max(3, int(w * 0.022))
+        for j in range(1, teeth):
+            self._hole(cx - w / 2 + w * j / teeth - vgap / 2,
+                       self.mouth_y - h / 2, vgap, h)
 
     def _mouth_o(self, size_mul=1.0) -> None:
         d = int(self.mouth_tall_h * size_mul)
@@ -864,50 +922,55 @@ class FridayFace:
             self._mouth_zigzag(0.5)
 
         elif name == "success":
-            # Eyes squeezed shut in a grin (^ ^), a big open smile, and a
-            # sparkle crown -- unmistakably "got it right".
+            # Eyes squeezed shut in a grin, a bold smile, and party-popper
+            # confetti tumbling down -- the confetti is what separates this
+            # from happy at a glance.
             self._draw_chevron_eyes()
             self._mouth_curve(self.eye_span * 0.66, int(self.height * 0.075),
                               thickness=max(8, int(self.height * 0.024)))
-            for i, (dx, dy) in enumerate(((-1.55, -0.85), (0.0, -1.25),
-                                          (1.55, -0.85))):
-                tw = 0.65 + 0.35 * math.sin(2 * math.pi * self._elapsed / 0.9
-                                            + i * 2.1)
-                self._sparkle(self.width / 2 + dx * self.eye_size,
-                              self.eye_y + dy * self.eye_size,
-                              self.eye_size * 0.23 * tw, 255)
+            self._confetti()
 
         elif name == "excited":
-            # Big wide-open eyes, a huge open grin, sparkles and a bounce.
-            self._plain_eyes(size=int(self.eye_size * 1.22))
-            with self._shape():                # wide open, mid-shout
-                self._ellipse(self.width // 2, self.mouth_y,
-                              int(self.eye_span * 0.42),
-                              int(self.mouth_tall_h * 1.15))
-            # Kept well outside the enlarged eye block -- at 1.32x the
-            # eyes reach ~1.8 eye-widths from centre, so anything nearer
-            # than this lands on top of them.
+            # Wide eyes and an open shout, both throbbing in time with the
+            # bounce so the whole face reads as buzzing with energy.
+            pulse = 0.5 + 0.5 * math.sin(2 * math.pi * self._elapsed / 0.38)
+            # Kept deliberately modest: at full size the eyes reach almost
+            # to the mouth, and the two shapes collide.
+            self._plain_eyes(size=_q(self.eye_size * (1.06 + 0.10 * pulse), 6))
+            with self._shape():
+                self._ellipse(self.width // 2,
+                              self.mouth_y + self.mouth_tall_h * 0.12,
+                              _q(self.eye_span * (0.36 + 0.06 * pulse), 6),
+                              _q(self.mouth_tall_h * (0.8 + 0.22 * pulse), 6))
             for i, (dx, dy) in enumerate(((-2.7, -0.75), (2.7, -0.85),
                                           (-2.5, 0.95), (2.5, 0.85),
                                           (0.0, -1.45))):
-                tw = 0.5 + 0.5 * math.sin(2 * math.pi * self._elapsed / 0.75
+                tw = 0.5 + 0.5 * math.sin(2 * math.pi * self._elapsed / 0.55
                                           + i * 1.5)
                 self._sparkle(self.width / 2 + dx * self.eye_size,
                               self.eye_y + dy * self.eye_size,
-                              self.eye_size * 0.2 * tw, 255)
+                              self.eye_size * 0.21 * tw, 255)
 
         elif name == "wink":
-            # One normal open square eye, one closed to a short bar, and a
-            # clear upward smile.
-            blink = self._blink_factor()
-            y, h = self._blinked(self.eye_y, self.eye_size, blink)
+            # The left eye stays open; the right one winks on a 3s loop --
+            # briefly open, snap shut, hold the wink, then open again.
+            p = (self._elapsed % WINK_PERIOD_S) / WINK_PERIOD_S
+            if p < 0.10:
+                openness = 1.0
+            elif p < 0.20:
+                openness = 1.0 - _ease((p - 0.10) / 0.10)
+            elif p < 0.86:
+                openness = 0.0
+            else:
+                openness = _ease((p - 0.86) / 0.14)
             with self._shape():
-                self._rect_eye(self.left_eye_x, y, self.eye_size, h)
-            bar_h = max(5, int(self.eye_size * 0.17))
+                self._rect_eye(self.left_eye_x, self.eye_y,
+                               self.eye_size, self.eye_size)
+            h = max(5, _q(self.eye_size * (0.17 + 0.83 * openness), 6))
             with self._shape():
                 self._rect_eye(self.right_eye_x,
-                               self.eye_y + (self.eye_size - bar_h) // 2,
-                               self.eye_size, bar_h)
+                               self.eye_y + (self.eye_size - h) // 2,
+                               self.eye_size, h)
             self._mouth_curve(self.eye_span * 0.62,
                               int(self.height * 0.052))
 
@@ -931,19 +994,19 @@ class FridayFace:
             self._mouth_o(0.6)
 
         elif name == "proud":
-            # Lids lowered to half-height squares sitting high in the eye
-            # box (looking down its nose), chin lifted, and a big smirk.
-            # Lids down over the top of each eye, cut on a slant so they
-            # narrow toward the nose -- appraising rather than sleepy --
-            # over a bold one-sided smirk. Chin-up tilt in _frame_motion().
-            h = int(self.eye_size * 0.62)
-            y = self.eye_y + int(self.eye_size * 0.04)
-            wide = int(self.eye_size * 1.1)
+            # Lids half down over wide eyes, chin lifted (tilt lives in
+            # _frame_motion), and a BOLD closed-mouth smile. The old thin
+            # one-sided smirk kept reading as a droop no matter how it was
+            # curved, so this is symmetric and heavy instead.
+            h = int(self.eye_size * 0.6)
+            y = self.eye_y + int(self.eye_size * 0.06)
+            wide = int(self.eye_size * 1.14)
             cx = self.width // 2
             for ex in (cx - self.eye_gap // 2 - wide, cx + self.eye_gap // 2):
                 with self._shape():
                     self._rect_eye(ex, y, wide, h)
-            self._mouth_smirk(0.5)
+            self._mouth_curve(self.eye_span * 0.5, int(self.height * 0.045),
+                              thickness=max(9, int(self.height * 0.026)))
 
         elif name == "bored":
             self._plain_eyes(size=int(self.eye_size * 0.46),
