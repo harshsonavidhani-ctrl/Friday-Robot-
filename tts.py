@@ -1,13 +1,28 @@
 """tts.py — Friday's voice: Piper through the USB soundcard.
 
-Speaks sentence by sentence, starting on the FIRST one rather than waiting for
-the whole reply to be synthesised. On a Pi that is the difference between a
-reply that feels instant and one that feels broken.
+WHY THIS IS BUILT THE WAY IT IS. Measured on this Pi, 2026-08-23:
+
+    piper CLI, one call          17.3 s  to speak 1.8 s of audio
+      of which model load         9.8 s  paid AGAIN on every single call
+    voice kept loaded in-process  1.14x realtime (low), 1.60x (medium)
+
+So the CLI was spending ten seconds loading a 63 MB model before every
+sentence. The voice is loaded ONCE here and kept, which is the whole
+difference between a robot that answers and one that appears to have hung.
+
+Two more things follow from those numbers:
+
+  * Synthesis is barely faster than realtime, so the first sentence is
+    SYNTHESISED AND PLAYED while the second is still being made. Speaking
+    starts as soon as the first sentence is ready rather than after the whole
+    reply — on a long answer that is the difference between 2 s and 10 s
+    before Friday makes a sound.
+  * preload() exists so the ten-second load happens at start-up, in the
+    background, instead of in front of the first thing Harsh asks.
 
 DEBUG SILENCE. config.DEBUG_SILENT_SPEECH suppresses every word at the lowest
-level in this file, not at the call sites. That placement is deliberate: a
-caller that forgets to check the flag still cannot make the robot talk, so
-testing tool-use flows never means being talked over.
+level in this file, not at the call sites. A caller that forgets to check the
+flag still cannot make the robot talk.
 
 PLAYBACK GOES THROUGH PIPEWIRE. pipewire holds the USB card open exclusively
 while the desktop is running, so aplay on the raw ALSA device fails with
@@ -19,11 +34,13 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import re
 import shutil
 import subprocess
 import tempfile
 import threading
+import wave
 from pathlib import Path
 
 import config
@@ -31,107 +48,111 @@ import config
 log = logging.getLogger("friday.tts")
 
 # Sentence-ish split. Deliberately crude: the goal is to start speaking sooner,
-# not to be a linguist, and an over-eager split costs a short pause while an
-# under-eager one costs seconds of silence.
+# not to be a linguist. Includes the Devanagari danda, because Harsh mixes
+# Hindi and English and a reply can come back with either terminator.
 _SENTENCE_END = re.compile(r"(?<=[.!?।])\s+")
 
 _speak_lock = threading.Lock()      # one voice, one utterance at a time
-_engine: "Engine | None" = None
+_voice = None
+_voice_lock = threading.Lock()
+_voice_error: str | None = None
 
 
 class TTSError(RuntimeError):
     pass
 
 
-class Engine:
-    """A way of turning text into a WAV file."""
+# --- the voice -----------------------------------------------------------
 
-    name = "none"
+def voice():
+    """The Piper voice, loaded once and kept.
 
-    def available(self) -> bool:
-        raise NotImplementedError
-
-    def synthesise(self, text: str, path: Path) -> None:
-        raise NotImplementedError
-
-
-class PiperEngine(Engine):
-    """Piper — the target voice. Natural, local, and fast enough on a Pi."""
-
-    name = "piper"
-
-    def __init__(self) -> None:
-        self.binary = shutil.which("piper") or shutil.which(
-            "piper-tts") or str(Path(config.ROOT) / "venv" / "bin" / "piper")
-        self.voice = config.TTS_VOICE
-
-    def available(self) -> bool:
-        return bool(self.binary and Path(self.binary).exists()
-                    and self.voice and Path(str(self.voice)).exists())
-
-    def synthesise(self, text: str, path: Path) -> None:
-        subprocess.run(
-            [self.binary, "--model", str(self.voice), "--output_file", str(path)],
-            input=text.encode(), check=True, capture_output=True,
-            timeout=config.TTS_TIMEOUT_S)
-
-
-class EspeakEngine(Engine):
-    """espeak-ng — robotic, but it is a voice when Piper has no model yet.
-
-    Kept as a fallback rather than the target: it is intelligible, which is
-    enough to test the pipeline end to end before a Piper voice is downloaded.
+    Loading costs ~9.5 s, so this is guarded by a lock rather than a simple
+    None check: two threads arriving together must not both pay it.
     """
+    global _voice, _voice_error
+    if _voice is not None:
+        return _voice
+    with _voice_lock:
+        if _voice is not None:
+            return _voice
+        model = Path(str(config.TTS_VOICE)) if config.TTS_VOICE else None
+        if model is None or not model.exists():
+            _voice_error = (
+                f"Piper voice not found at {model}. Fetch one with: "
+                f"./venv/bin/python -m piper.download_voices "
+                f"--download-dir assets/models/piper en_US-lessac-low")
+            raise TTSError(_voice_error)
+        try:
+            from piper import PiperVoice
+        except ImportError as exc:
+            _voice_error = f"piper-tts is not installed in the venv ({exc})"
+            raise TTSError(_voice_error) from exc
+        log.info("loading Piper voice %s (takes ~10s)", model.name)
+        _voice = PiperVoice.load(str(model))
+        _voice_error = None
+        log.info("Piper voice ready")
+        return _voice
 
-    name = "espeak-ng"
 
-    def __init__(self) -> None:
-        self.binary = shutil.which("espeak-ng") or shutil.which("espeak")
+def preload() -> threading.Thread:
+    """Start loading the voice in the background. Returns immediately.
 
-    def available(self) -> bool:
-        return bool(self.binary)
+    Called at server start-up so the ten-second model load is over before
+    anyone asks Friday a question, rather than being charged to the first one.
+    """
+    def load() -> None:
+        try:
+            voice()
+        except TTSError as exc:
+            log.warning("TTS preload failed: %s", exc)
 
-    def synthesise(self, text: str, path: Path) -> None:
-        subprocess.run(
-            [self.binary, "-w", str(path), "-s", str(config.TTS_ESPEAK_WPM), text],
-            check=True, capture_output=True, timeout=config.TTS_TIMEOUT_S)
+    thread = threading.Thread(target=load, name="tts-preload", daemon=True)
+    thread.start()
+    return thread
 
 
-def engine() -> Engine:
-    """The best voice available, chosen once and remembered."""
-    global _engine
-    if _engine is not None:
-        return _engine
-    for candidate in (PiperEngine(), EspeakEngine()):
-        if candidate.available():
-            _engine = candidate
-            log.info("TTS engine: %s", candidate.name)
-            return _engine
-    raise TTSError(
-        "no TTS engine available. Piper needs config.TTS_VOICE pointing at a "
-        "downloaded .onnx voice; espeak-ng is not installed either.")
+def ready() -> bool:
+    return _voice is not None
 
 
 def engine_name() -> str:
     """Which voice would be used, without raising if there is none."""
-    try:
-        return engine().name
-    except TTSError as exc:
-        return f"none ({exc})"
+    if _voice is not None:
+        return f"piper {Path(str(config.TTS_VOICE)).stem} (loaded)"
+    if _voice_error:
+        return f"none ({_voice_error})"
+    return f"piper {Path(str(config.TTS_VOICE)).stem} (not loaded yet)"
 
+
+def _synthesis_config():
+    """Speed and volume, from config.
+
+    length_scale is INVERSE to speed — 0.9 is slightly faster than natural —
+    so config carries the intuitive number and it is converted here.
+    """
+    from piper import SynthesisConfig
+    return SynthesisConfig(
+        length_scale=1.0 / max(0.1, config.TTS_SPEED),
+        volume=config.TTS_VOLUME,
+    )
+
+
+# --- playback ------------------------------------------------------------
 
 def play(path: Path) -> None:
     """Play a WAV through the USB soundcard.
 
-    pipewire first, ALSA second. Neither is allowed to hang the caller — a
-    wedged audio device must not be able to freeze the robot.
+    pipewire first, ALSA second. Neither may hang the caller — a wedged audio
+    device must not be able to freeze the robot.
     """
     environment = dict(os.environ)
     environment.setdefault("XDG_RUNTIME_DIR", config.AUDIO_RUNTIME_DIR)
 
     if shutil.which("pw-play"):
         result = subprocess.run(
-            ["pw-play", f"--target={config.SPEAKER_DEVICE}", str(path)],
+            ["pw-play", f"--target={config.SPEAKER_DEVICE}",
+             f"--volume={config.TTS_VOLUME}", str(path)],
             capture_output=True, env=environment, timeout=config.TTS_TIMEOUT_S)
         if result.returncode == 0:
             return
@@ -154,11 +175,22 @@ def sentences(text: str) -> list[str]:
     return parts or ([text.strip()] if text.strip() else [])
 
 
+def _render(chunk: str) -> Path:
+    """One sentence to a temp WAV."""
+    handle, name = tempfile.mkstemp(suffix=".wav")
+    os.close(handle)
+    path = Path(name)
+    with wave.open(str(path), "wb") as out:
+        voice().synthesize_wav(chunk, out, syn_config=_synthesis_config())
+    return path
+
+
 def speak(text: str) -> str:
     """Say something out loud. Returns what actually happened.
 
-    Blocking — it returns when Friday has finished speaking. Silenced entirely
-    when config.DEBUG_SILENT_SPEECH is on.
+    Blocking — returns when Friday has finished speaking. Synthesis of the
+    NEXT sentence overlaps playback of the current one, so the mouth starts
+    moving as soon as the first sentence exists.
     """
     text = (text or "").strip()
     if not text:
@@ -168,36 +200,69 @@ def speak(text: str) -> str:
         log.info("[silent] would say: %s", text)
         return f"[debug silence — not spoken] {text}"
 
-    voice = engine()
-    spoken = 0
+    chunks = sentences(text)
     with _speak_lock:
-        for chunk in sentences(text):
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                path = Path(tmp.name)
+        voice()                         # raises TTSError if unavailable
+        rendered: queue.Queue = queue.Queue(maxsize=2)
+
+        def produce() -> None:
+            for chunk in chunks:
+                try:
+                    rendered.put(_render(chunk))
+                except Exception as exc:            # noqa: BLE001
+                    log.error("synthesis failed for %r: %s", chunk[:40], exc)
+                    rendered.put(None)
+            rendered.put(StopIteration)
+
+        worker = threading.Thread(target=produce, name="tts-synth", daemon=True)
+        worker.start()
+
+        spoken = 0
+        while True:
+            item = rendered.get()
+            if item is StopIteration:
+                break
+            if item is None:
+                continue
             try:
-                voice.synthesise(chunk, path)
-                play(path)
+                play(item)
                 spoken += 1
+            except Exception as exc:                # noqa: BLE001
+                log.error("playback failed: %s", exc)
             finally:
                 try:
-                    path.unlink()
+                    item.unlink()
                 except OSError:
                     pass
-    return f"said {spoken} sentence{'s' if spoken != 1 else ''} via {voice.name}"
+        worker.join(timeout=1.0)
+
+    return (f"said {spoken} sentence{'s' if spoken != 1 else ''} "
+            f"at speed {config.TTS_SPEED}x, volume {config.TTS_VOLUME}")
 
 
 def main() -> int:
     import argparse
+    import time
     ap = argparse.ArgumentParser(description="Speak text through Friday.")
     ap.add_argument("text", nargs="*", default=["Friday online"])
     ap.add_argument("--engine", action="store_true", help="report and exit")
+    ap.add_argument("--bench", action="store_true",
+                    help="time the load and the speech")
     args = ap.parse_args()
 
     if args.engine:
         print(engine_name())
         return 0
     try:
-        print(speak(" ".join(args.text)))
+        started = time.monotonic()
+        voice()
+        loaded = time.monotonic()
+        result = speak(" ".join(args.text))
+        done = time.monotonic()
+        print(result)
+        if args.bench:
+            print(f"  model load {loaded - started:.2f}s, "
+                  f"speech {done - loaded:.2f}s")
     except TTSError as exc:
         print(f"error: {exc}")
         return 1

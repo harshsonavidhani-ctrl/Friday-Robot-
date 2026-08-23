@@ -40,13 +40,21 @@ WAKE_THRESHOLD = None        # TODO: tune on the real mic, in real room noise
 STT_MODEL = "base"           # faster-whisper
 STT_COMPUTE_TYPE = "int8"
 VAD_SILENCE_MS = None        # TODO: tune — how much silence ends an utterance
-# Downloaded 2026-08-23 into assets/models/ (gitignored — 63 MB, fetched with
+# Downloaded 2026-08-23 into assets/models/ (gitignored, fetched with
 # `python -m piper.download_voices --download-dir assets/models/piper NAME`).
-# If this file is missing, tts.py falls back to espeak-ng rather than going
-# silent, so a fresh clone still talks, just badly.
-TTS_VOICE = MODEL_DIR / "piper" / "en_US-lessac-medium.onnx"
+#
+# LOW, not medium, and that is a speed decision measured on this Pi:
+#   low     x1.14 realtime
+#   medium  x1.60 realtime
+# Synthesis is barely faster than speech itself here, so 40% matters far more
+# than the quality difference does through a small robot speaker.
+TTS_VOICE = MODEL_DIR / "piper" / "en_US-lessac-low.onnx"
 TTS_TIMEOUT_S = 20           # a wedged audio device must not freeze the robot
-TTS_ESPEAK_WPM = 165         # espeak fallback pace; Piper ignores this
+
+# Speaking rate as a multiplier: 1.0 is the voice's natural pace, higher is
+# faster. tts.py converts this to Piper's inverse length_scale.
+TTS_SPEED = 1.15
+TTS_VOLUME = 1.0             # 0.0-1.0+; raise if Friday is hard to hear
 
 # --- Audio devices -------------------------------------------------------
 # GeneralPlus USB soundcard (1b3f:2008) — carries BOTH the shotgun mic in and

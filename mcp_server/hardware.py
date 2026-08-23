@@ -19,6 +19,7 @@ import threading
 
 import config
 import sensors
+import tts
 from motor import MotorError, Motors
 
 log = logging.getLogger("friday.mcp.hardware")
@@ -147,6 +148,12 @@ def startup() -> dict[str, str]:
     # so status() read immediately after start() reports a present sensor as
     # absent. Waiting a moment makes the start-up line honest.
     report.update(ranges().wait_ready().status())
+
+    # Start loading the Piper voice NOW, in the background. It takes ~10 s,
+    # and paying that in front of the first thing Harsh says is the difference
+    # between a robot that answers and one that looks broken.
+    tts.preload()
+    report["voice"] = tts.engine_name()
 
     try:
         drive = motors()
