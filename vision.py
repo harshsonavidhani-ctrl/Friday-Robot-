@@ -39,6 +39,7 @@ from PIL import Image, ImageDraw, ImageFont
 import config
 
 BY_ID_DIR = "/dev/v4l/by-id"
+PROC = "/proc"
 
 # Label strip drawn across each half, so the brain can tell which view is
 # which even though they arrive as one image.
@@ -65,6 +66,37 @@ def _font(size: int = 20) -> "ImageFont.ImageFont":
 
 class CameraError(RuntimeError):
     pass
+
+
+def _holder_of(device: str) -> str | None:
+    """Which process currently has this camera open, if any.
+
+    A USB webcam is single-access: while the dashboard is streaming it, the
+    MCP server cannot capture from it, and v4l2 reports only a bare "Error
+    opening input". Naming the holder turns a baffling error into an
+    actionable one — usually "turn the dashboard stream off".
+
+    Scans /proc directly rather than using fuser or lsof: neither is
+    guaranteed installed, and pgrep-style matching on this Pi has a habit of
+    matching the calling shell instead.
+    """
+    try:
+        target = os.path.realpath(device)
+    except OSError:
+        return None
+    for entry in glob.glob(os.path.join(PROC, "[0-9]*")):
+        pid = os.path.basename(entry)
+        try:
+            for handle in glob.glob(os.path.join(entry, "fd", "*")):
+                if os.path.realpath(handle) != target:
+                    continue
+                with open(os.path.join(entry, "cmdline"), "rb") as cmdline:
+                    command = cmdline.read().replace(b"\0", b" ").decode(
+                        errors="replace").strip()
+                return f"pid {pid} ({command[:70]})"
+        except OSError:
+            continue                    # process exited mid-scan; normal
+    return None
 
 
 def _capture_nodes() -> list[str]:
@@ -106,16 +138,33 @@ def capture(device: str, size: tuple[int, int],
         "-video_size", f"{size[0]}x{size[1]}",
         "-i", device, "-frames:v", str(warmup), "-y", pattern,
     ]
-    try:
-        subprocess.run(cmd, check=True, capture_output=True,
-                       timeout=config.CAM_TIMEOUT_S)
-    except subprocess.TimeoutExpired as exc:
-        raise CameraError(f"{device} timed out after "
-                          f"{config.CAM_TIMEOUT_S}s") from exc
-    except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or b"").decode(errors="replace").strip()
-        raise CameraError(f"{device}: {detail.splitlines()[-1] if detail else exc}"
-                          ) from exc
+    # Retry briefly: the dashboard's stream and this capture want the same
+    # single-access device, and a stream that is starting or stopping frees it
+    # within a moment. Only a PERSISTENT conflict is worth reporting.
+    last: Exception | None = None
+    for attempt in range(config.CAM_OPEN_ATTEMPTS):
+        try:
+            subprocess.run(cmd, check=True, capture_output=True,
+                           timeout=config.CAM_TIMEOUT_S)
+            last = None
+            break
+        except subprocess.TimeoutExpired as exc:
+            raise CameraError(f"{device} timed out after "
+                              f"{config.CAM_TIMEOUT_S}s") from exc
+        except subprocess.CalledProcessError as exc:
+            last = exc
+            if attempt + 1 < config.CAM_OPEN_ATTEMPTS:
+                time.sleep(config.CAM_OPEN_RETRY_S)
+    if last is not None:
+        detail = (getattr(last, "stderr", b"") or b"").decode(
+            errors="replace").strip()
+        message = detail.splitlines()[-1] if detail else str(last)
+        holder = _holder_of(device)
+        if holder:
+            message += (f" — the camera is already open by {holder}. A USB "
+                        f"webcam allows one reader at a time; stop that "
+                        f"stream (the dashboard's camera switch) and retry.")
+        raise CameraError(f"{device}: {message}") from last
 
     frames = sorted(config.CAPTURE_DIR.glob(f".grab_{stamp}_*.jpg"))
     if not frames:

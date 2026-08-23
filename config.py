@@ -229,6 +229,19 @@ CALIBRATION_DEFAULTS = {
 # for the brain to route around.
 MCP_SERVER_NAME = "friday-robot"
 
+# Transport. The brain can either spawn the server over stdio, or connect to
+# a long-running one over HTTP; friday-mcp.service runs the HTTP form, because
+# a stdio server running as a daemon has nothing attached to its stdin and is
+# therefore useless as a service.
+#
+# BOUND TO LOOPBACK ON PURPOSE, and do not change this to 0.0.0.0. These tools
+# drive the motors. On 0.0.0.0 anyone on the WiFi could make the robot move,
+# with no authentication in front of it.
+MCP_HTTP_HOST = "127.0.0.1"
+MCP_HTTP_PORT = 8770
+MCP_HTTP_PATH = "/mcp"
+MCP_HTTP_URL = f"http://{MCP_HTTP_HOST}:{MCP_HTTP_PORT}{MCP_HTTP_PATH}"
+
 # DEBUG: silence Friday. speak() still logs and still returns success, it just
 # does not reach the soundcard -- so tool-use flows can be tested without the
 # robot talking over you. Turn OFF for real use.
@@ -251,6 +264,12 @@ CAPTURE_QUALITY = 85         # JPEG quality for saved dual-cam stitches
 # one frame was unusable, ten is enough.
 CAM_WARMUP_FRAMES = 10
 CAM_TIMEOUT_S = 12           # a wedged camera must not hang a tool call
+
+# A USB webcam is single-access, and the dashboard streams the same cameras.
+# Retry briefly so a stream that is mid-start does not fail a capture; a
+# PERSISTENT conflict is reported with the name of the holding process.
+CAM_OPEN_ATTEMPTS = 3
+CAM_OPEN_RETRY_S = 0.7
 
 # --- Motion safety -------------------------------------------------------
 # Enforced inside the MCP server, in code, on every movement -- before it

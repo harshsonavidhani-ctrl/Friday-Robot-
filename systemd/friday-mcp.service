@@ -1,0 +1,33 @@
+[Unit]
+# Friday's own MCP server -- the single doorway to the robot's body.
+#
+# USER-scope on purpose, exactly like friday-face and friday-dashboard. It
+# lives in ~/.config/systemd/user/ and touches nothing in /etc, so it cannot
+# affect dbus, logind, NetworkManager, ssh or the boot path. If this unit is
+# wrong, the MCP server simply does not come up -- the Pi still boots, still
+# connects to WiFi, and still accepts SSH. That containment is the whole
+# reason it is a user unit and not a system one. See CLAUDE.md Part 1.
+Description=Friday's robot MCP server (motors, sensors, cameras, voice)
+# Wants=/After= only DEPEND on a system target. Nothing here modifies one.
+After=network-online.target
+Wants=network-online.target
+# The USB devices are hot-pluggable and at least two of them are known to drop
+# off this Pi's bus mid-session. Restart freely rather than tripping the
+# start-limit and going permanently dead.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/harsh/friday
+# --http, not stdio: a stdio MCP server run as a daemon has nothing attached
+# to its stdin and could never be connected to. The brain talks to
+# config.MCP_HTTP_URL, which is bound to loopback because these tools drive
+# the motors.
+ExecStart=/home/harsh/friday/venv/bin/python -m mcp_server --http
+Restart=always
+RestartSec=5
+# The speak tool plays through pipewire, which needs the user session bus.
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+[Install]
+WantedBy=default.target

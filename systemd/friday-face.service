@@ -1,0 +1,22 @@
+[Unit]
+# Friday's own face renderer. USER-scope on purpose: it cannot affect
+# dbus, logind, networking or the boot path -- if this unit is wrong the
+# face simply does not appear, and the Pi still boots and accepts SSH.
+Description=Friday's face on the 7" display
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/harsh/friday
+Environment=SDL_VIDEODRIVER=wayland
+Environment=WAYLAND_DISPLAY=wayland-0
+# The compositor may not be up yet at login; wait for its socket rather
+# than failing. Gives up after 60s and lets Restart= try again.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -S "$XDG_RUNTIME_DIR/wayland-0" ] && exit 0; sleep 1; done; exit 1'
+ExecStart=/home/harsh/friday/venv/bin/python /home/harsh/friday/friday_face.py --boot-yawn
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

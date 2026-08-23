@@ -7,6 +7,7 @@ sequence, not just the Python functions.
 
     ./venv/bin/python scripts/test_tools.py            # everything but moving
     ./venv/bin/python scripts/test_tools.py --move     # also turns the wheels
+    ./venv/bin/python scripts/test_tools.py --http     # test the RUNNING service
 
 MOVEMENT IS OPT-IN. Without --move nothing spins, so this is safe to run with
 the robot sitting on a desk. With --move, lift the wheels clear first.
@@ -17,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +26,9 @@ sys.path.insert(0, str(ROOT))
 
 from mcp import ClientSession, StdioServerParameters       # noqa: E402
 from mcp.client.stdio import stdio_client                  # noqa: E402
+from mcp.client.streamable_http import streamable_http_client  # noqa: E402
+
+import config                                              # noqa: E402
 
 PASS = "\033[32mPASS\033[0m"
 FAIL = "\033[31mFAIL\033[0m"
@@ -71,16 +76,34 @@ class Report:
         print(f"  {SKIP}  {name}  ({why})")
 
 
-async def run(move: bool) -> int:
-    report = Report()
-    params = StdioServerParameters(
-        command=str(ROOT / "venv" / "bin" / "python"),
-        args=["-m", "mcp_server"],
-        cwd=str(ROOT),
-    )
+@asynccontextmanager
+async def connect(over_http: bool):
+    """Talk to the server, either spawning it or using the running service.
 
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
+    --http is the one that proves friday-mcp.service is genuinely usable, not
+    merely alive: a process can sit there listening and still be broken.
+    """
+    if over_http:
+        async with streamable_http_client(config.MCP_HTTP_URL) as streams:
+            read, write = streams[0], streams[1]
+            yield read, write
+    else:
+        params = StdioServerParameters(
+            command=str(ROOT / "venv" / "bin" / "python"),
+            args=["-m", "mcp_server"],
+            cwd=str(ROOT),
+        )
+        async with stdio_client(params) as (read, write):
+            yield read, write
+
+
+async def run(move: bool, over_http: bool = False) -> int:
+    report = Report()
+
+    async with connect(over_http) as (read, write):
+        if True:
+            session_cm = ClientSession(read, write)
+        async with session_cm as session:
             await session.initialize()
             tools = await session.list_tools()
             names = sorted(t.name for t in tools.tools)
@@ -182,10 +205,13 @@ def main() -> int:
     ap.add_argument("--move", action="store_true",
                     help="also run tools that turn the wheels — lift the "
                          "robot off the ground first")
+    ap.add_argument("--http", action="store_true",
+                    help="test the running friday-mcp.service over HTTP "
+                         "instead of spawning a fresh server over stdio")
     args = ap.parse_args()
     if args.move:
         print("\n⚠  --move will turn the wheels. Wheels clear of the ground?")
-    return asyncio.run(run(args.move))
+    return asyncio.run(run(args.move, args.http))
 
 
 if __name__ == "__main__":

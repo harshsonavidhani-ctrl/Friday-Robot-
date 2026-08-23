@@ -6,9 +6,15 @@ is what makes safety.py's interrupt impossible to route around — there is no
 other path to the motors.
 
 Run it:
-    python -m mcp_server                 # stdio, the way the brain connects
+    python -m mcp_server                 # stdio — the brain spawns it
+    python -m mcp_server --http          # long-running, what the service runs
     python -m mcp_server --list          # what tools exist, and exit
     python -m mcp_server --check         # what hardware answered, and exit
+
+Two transports on purpose. stdio is the normal MCP shape, where the client
+starts the server as a subprocess. But a stdio server run as a systemd daemon
+has nothing attached to its stdin, so friday-mcp.service runs --http instead
+and the brain connects to config.MCP_HTTP_URL.
 
 Adding a tool: see mcp_server/registry.py, or the README. It is one decorated
 function in one file in mcp_server/tools/ — nothing here needs editing.
@@ -87,6 +93,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="list the registered tools and exit")
     ap.add_argument("--check", action="store_true",
                     help="report what hardware answered and exit")
+    ap.add_argument("--http", action="store_true",
+                    help=f"serve over HTTP on {config.MCP_HTTP_URL} instead "
+                         f"of stdio — this is what friday-mcp.service runs")
     args = ap.parse_args(argv)
 
     _setup_logging()
@@ -106,11 +115,18 @@ def main(argv: list[str] | None = None) -> int:
         hardware.shutdown()
         return 0
 
-    log.info("starting %s", config.MCP_SERVER_NAME)
+    log.info("starting %s (%s)", config.MCP_SERVER_NAME,
+             config.MCP_HTTP_URL if args.http else "stdio")
     for key, value in hardware.startup().items():
         log.info("  %s: %s", key, value)
     try:
-        server.run()                       # stdio transport
+        if args.http:
+            server.run("streamable-http",
+                       host=config.MCP_HTTP_HOST,
+                       port=config.MCP_HTTP_PORT,
+                       streamable_http_path=config.MCP_HTTP_PATH)
+        else:
+            server.run()                   # stdio, the brain spawns it
     except KeyboardInterrupt:
         log.info("interrupted")
     finally:

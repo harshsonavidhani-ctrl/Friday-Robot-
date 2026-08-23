@@ -1,0 +1,21 @@
+[Unit]
+# Friday's own dashboard. USER-scope on purpose, exactly like the face unit:
+# it cannot affect dbus, logind, networking or the boot path. If this unit is
+# wrong the dashboard simply does not come up, and the Pi still boots and
+# still accepts SSH.
+Description=Friday's dashboard (live logs, cameras, face control)
+# Wants=/After= only DEPEND on a system target -- nothing here modifies one.
+After=network-online.target
+Wants=network-online.target
+# The cameras are hot-pluggable, so a stream can die when one is unplugged.
+# Restart freely rather than tripping the start-limit and going dead.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/harsh/friday
+ExecStart=/home/harsh/friday/venv/bin/python -m dashboard.server
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=default.target
