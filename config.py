@@ -59,15 +59,15 @@ CAM_C270_MAX = (1280, 720)   # MJPG
 CAM_UP = None                # forward vision, above screen
 CAM_DOWN = None              # floor / cliff / optical flow, above bumper
 
-# The "Generic HD camera" (349c:2317) dropped off the USB bus on 2026-08-20;
-# re-verified present and MJPG-capable on 2026-08-23. Vision code must still
-# treat a second camera as OPTIONAL and degrade cleanly when it is absent.
-# This camera has re-enumerated with different USB descriptor strings before
-# ("HD camera" instead of "Generic HD camera"), which renames its by-id
-# symlink. dashboard/cameras.py therefore treats this as a preference, not a
-# requirement: if the path is missing it takes any other by-id capture node
-# that is not the C270. So a rename or a re-plug fixes itself.
-CAM_SECOND = "/dev/v4l/by-id/usb-Generic_HD_camera_20181212000000-video-index0"
+# The second camera is UNSTABLE on the USB bus. Observed 2026-08-23: it
+# enumerates as "HD camera" (349c:2317) -- NOT the "Generic HD camera"
+# descriptor it used on 2026-08-20 -- and drops off again within a minute.
+# Because the descriptor changes, its /dev/v4l/by-id/ path changes with it,
+# so a hardcoded path here goes stale. None means "auto": pick whichever
+# by-id capture node is not the C270, re-checked on every access, so the
+# camera is found again whenever it comes back without editing this file.
+# Vision code must still treat a second camera as OPTIONAL.
+CAM_SECOND = None
 CAM_SECOND_MAX = (640, 480)  # MJPG
 
 # Which physical position each camera sits in is still unconfirmed, so the
@@ -98,9 +98,32 @@ TOF_COLS = 8
 FTDI_PORT_UNKNOWN = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0"
 
 # --- Drive ---------------------------------------------------------------
-# L298N, 4-motor differential drive. Pins are BCM numbering.
-# TODO: fill from the actual wiring before ANY motor command is sent.
-MOTOR_PINS = None
+# L298N, 4-motor differential drive, wired as Harsh built it (2026-08-23).
+# The Pi does NOT drive these pins -- an Arduino does, running
+# firmware/friday_motors/friday_motors.ino, and the Pi talks to it over USB
+# serial. So these are ARDUINO pin numbers, not BCM.
+#
+#   left side, 2 motors  -> channel A: reds to OUT1, blacks to OUT2
+#   right side, 2 motors -> channel B: reds to OUT3, blacks to OUT4
+MOTOR_PINS = {
+    "ENA": 9,    # PWM, left speed
+    "IN1": 8,    # left direction
+    "IN2": 7,    # left direction
+    "IN3": 6,    # right direction
+    "IN4": 5,    # right direction
+    "ENB": 3,    # PWM, right speed
+}
+
+# Serial port of the Arduino running the motor firmware. None means
+# auto-detect by USB VID:PID (see motor.ARDUINO_IDS).
+#
+# NOT FOUND as of 2026-08-23: the only serial devices on this Pi are a
+# Raspberry Pi Pico (2e8a:000a, the ToF board) and an unidentified FTDI
+# FT232R. Neither is an Uno. motor.py refuses to drive an unidentified
+# board rather than guess -- set this once the Arduino is plugged in and
+# confirmed.
+MOTOR_PORT = None
+
 MOTOR_MAX_DUTY = 0.6         # start conservative; raise only after testing
 MOTOR_WATCHDOG_S = 0.5       # stop if no new command within this window
 

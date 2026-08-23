@@ -203,13 +203,13 @@ function renderCam(which) {
   box.innerHTML = '';
 
   if (!enabled) {
-    box.innerHTML = `<div class="camoff"><b>${which} cam</b>off
-      <span class="why">Switched off. No stream, no CPU used.</span></div>`;
+    box.innerHTML = `<div class="camoff"><b>Off</b>
+      <span class="why">Switched off. No stream, and no CPU used.</span></div>`;
     return;
   }
   if (!present) {
-    box.innerHTML = `<div class="camoff"><b>${which} cam</b>no signal
-      <span class="why">Not on the USB bus. Check the cable — it reappears
+    box.innerHTML = `<div class="camoff"><b>No signal</b>
+      <span class="why">Not on the USB bus. Check the cable — it comes back
       on its own.</span></div>`;
     return;
   }
@@ -217,7 +217,7 @@ function renderCam(which) {
   img.alt = `${which} camera`;
   img.src = `/cam/${which}?t=${Date.now()}`;   // cache-buster per (re)mount
   img.onerror = () => {
-    box.innerHTML = `<div class="camoff"><b>${which} cam</b>stream lost
+    box.innerHTML = `<div class="camoff"><b>Stream lost</b>
       <span class="why">The device went away mid-stream.</span></div>`;
   };
   box.appendChild(img);
