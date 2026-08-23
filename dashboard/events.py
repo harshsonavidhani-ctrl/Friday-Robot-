@@ -1,0 +1,179 @@
+"""The event bus behind the live log.
+
+Anything that wants to appear in the dashboard emits an event here; every
+connected browser is pushed it over SSE. Events are also kept in a bounded
+ring buffer so a browser that connects late still sees recent history
+instead of an empty screen.
+
+The taxonomy is fixed -- session_init, thinking, tool_call, tool_result,
+text, done -- because the UI colours and groups by it. Adding a new type
+means adding a card style to the front end too.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from collections import deque
+from typing import Any
+
+import config
+
+# The card types the front end knows how to render. Anything else is
+# rejected at ingest rather than silently showing up as a blank card.
+EVENT_TYPES = (
+    "session_init",   # model + connected MCP servers, at the start of a turn
+    "thinking",       # the model's reasoning text
+    "tool_call",      # a tool invocation and its arguments
+    "tool_result",    # what the tool returned
+    "text",           # Friday's spoken/written reply (markdown)
+    "done",           # final reply + cost / elapsed / turn count
+)
+
+
+class EventBus:
+    """Fan-out from one producer to many browsers, plus recent history."""
+
+    def __init__(self, history: int = config.DASHBOARD_HISTORY) -> None:
+        self._history: deque[dict] = deque(maxlen=history)
+        self._subscribers: set[asyncio.Queue] = set()
+        self._seq = 0
+
+    # --- producing ---------------------------------------------------
+
+    def emit(self, event: dict) -> dict:
+        """Record and fan out one event. Returns the stored form.
+
+        Never raises on a slow or dead subscriber -- a browser that has
+        stopped reading must not be able to block the robot.
+        """
+        kind = event.get("type")
+        if kind not in EVENT_TYPES:
+            raise ValueError(
+                f"unknown event type {kind!r}. Valid: {', '.join(EVENT_TYPES)}"
+            )
+        self._seq += 1
+        stored = dict(event)
+        stored["seq"] = self._seq
+        stored.setdefault("ts", time.time())
+        self._history.append(stored)
+
+        for queue in list(self._subscribers):
+            try:
+                queue.put_nowait(stored)
+            except asyncio.QueueFull:
+                # Drop for this subscriber only; it will resync on reload.
+                pass
+        return stored
+
+    def clear(self) -> None:
+        self._history.clear()
+
+    # --- consuming ---------------------------------------------------
+
+    def history(self) -> list[dict]:
+        return list(self._history)
+
+    def subscribe(self) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        self._subscribers.add(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        self._subscribers.discard(queue)
+
+    @property
+    def subscriber_count(self) -> int:
+        return len(self._subscribers)
+
+
+def sse_format(event: dict) -> bytes:
+    """One Server-Sent Event frame."""
+    return f"id: {event.get('seq', 0)}\ndata: {json.dumps(event)}\n\n".encode()
+
+
+# =====================================================================
+# Turn tracking -- what fills in the DONE card's footer
+# =====================================================================
+
+# Published per-million-token prices, so the footer shows a real number
+# rather than a placeholder. Update if Anthropic's pricing changes.
+PRICING_USD_PER_MTOK = {
+    "claude-sonnet-5":            {"input": 3.00, "output": 15.00},
+    "claude-opus-5":              {"input": 15.00, "output": 75.00},
+    "claude-haiku-4-5-20251001":  {"input": 1.00, "output": 5.00},
+}
+
+
+def turn_cost_usd(model: str, input_tokens: int, output_tokens: int,
+                  cache_read_tokens: int = 0,
+                  cache_write_tokens: int = 0) -> float:
+    """Dollar cost of one turn from its real token usage.
+
+    Cached reads bill at 10% of the input rate and cache writes at 125%,
+    which is why they are counted separately rather than folded into
+    input_tokens.
+    """
+    price = PRICING_USD_PER_MTOK.get(model)
+    if price is None:
+        return 0.0
+    per_tok_in = price["input"] / 1_000_000
+    per_tok_out = price["output"] / 1_000_000
+    return (input_tokens * per_tok_in
+            + output_tokens * per_tok_out
+            + cache_read_tokens * per_tok_in * 0.10
+            + cache_write_tokens * per_tok_in * 1.25)
+
+
+class Turn:
+    """Accumulates one turn's usage so the DONE card can report it.
+
+        turn = Turn(bus, model=config.MODEL_MAIN)
+        turn.session_init(servers=[...])
+        turn.thinking("...")
+        turn.tool_call("mcp__friday-robot__move", {"direction": "forward"})
+        turn.tool_result("mcp__friday-robot__move", "OK")
+        turn.done("On my way.", input_tokens=..., output_tokens=...)
+    """
+
+    def __init__(self, bus: EventBus, model: str) -> None:
+        self.bus = bus
+        self.model = model
+        self.started = time.monotonic()
+        self.tool_calls = 0
+
+    def session_init(self, servers: list[dict[str, Any]] | None = None) -> None:
+        self.bus.emit({
+            "type": "session_init",
+            "model": self.model,
+            "servers": servers or [],
+        })
+
+    def thinking(self, text: str) -> None:
+        self.bus.emit({"type": "thinking", "text": text})
+
+    def tool_call(self, tool: str, args: dict | None = None) -> None:
+        self.tool_calls += 1
+        self.bus.emit({"type": "tool_call", "tool": tool, "args": args or {}})
+
+    def tool_result(self, tool: str, result: Any,
+                    refs: list[str] | None = None) -> None:
+        self.bus.emit({"type": "tool_result", "tool": tool,
+                       "result": result, "refs": refs or []})
+
+    def text(self, markdown: str) -> None:
+        self.bus.emit({"type": "text", "text": markdown})
+
+    def done(self, markdown: str, input_tokens: int = 0,
+             output_tokens: int = 0, cache_read_tokens: int = 0,
+             cache_write_tokens: int = 0, turns: int | None = None) -> None:
+        self.bus.emit({
+            "type": "done",
+            "text": markdown,
+            "model": self.model,
+            "cost_usd": turn_cost_usd(self.model, input_tokens, output_tokens,
+                                      cache_read_tokens, cache_write_tokens),
+            "elapsed_s": time.monotonic() - self.started,
+            "turns": self.tool_calls if turns is None else turns,
+        })

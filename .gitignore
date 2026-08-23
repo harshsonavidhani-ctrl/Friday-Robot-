@@ -26,3 +26,6 @@ assets/models/
 # runtime state (written by face_control.py)
 state/*.txt
 state/.emotion.*
+certs/
+state/calibration.json
+__pycache__/

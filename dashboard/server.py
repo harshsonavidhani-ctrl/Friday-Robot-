@@ -1,0 +1,376 @@
+"""Friday's dashboard server.
+
+    python3 -m dashboard.server              https + http
+    python3 -m dashboard.server --http-only  plain http (no cert needed)
+    python3 -m dashboard.server --demo       replay a scripted turn, to see
+                                             the log UI without a brain
+
+Serves:
+    GET  /                     the UI
+    GET  /api/stream           Server-Sent Events -- the live log
+    POST /api/events           ingest one event (this is how the brain logs)
+    GET  /api/state            mood + camera + connection status
+    GET  /api/emotions         the 20 emotion names
+    POST /api/mood             {"name": "happy"} -> drives the face
+    GET  /api/calibration      current motor calibration
+    POST /api/calibration      save motor calibration
+    GET  /cam/up  /cam/down    multipart MJPEG
+
+Nothing here talks to the robot directly except through face_control, which
+is the same file everything else uses to drive the face.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import contextlib
+import json
+import os
+import ssl
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+from aiohttp import web
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import config                                          # noqa: E402
+import face_control                                    # noqa: E402
+from dashboard.cameras import BOUNDARY, CameraSet      # noqa: E402
+from dashboard.events import EVENT_TYPES, EventBus, sse_format  # noqa: E402
+
+STATIC = Path(__file__).resolve().parent / "static"
+STARTED = time.time()
+
+
+# =====================================================================
+# API
+# =====================================================================
+
+async def api_stream(request: web.Request) -> web.StreamResponse:
+    """Live log over SSE. Recent history is replayed first so a browser
+    that connects mid-session is not staring at an empty column."""
+    bus: EventBus = request.app["bus"]
+    response = web.StreamResponse(headers={
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    })
+    await response.prepare(request)
+
+    queue = bus.subscribe()
+    try:
+        for event in bus.history():
+            await response.write(sse_format(event))
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=20)
+            except asyncio.TimeoutError:
+                await response.write(b": keepalive\n\n")   # hold the connection
+                continue
+            await response.write(sse_format(event))
+    except (ConnectionResetError, asyncio.CancelledError):
+        pass
+    finally:
+        bus.unsubscribe(queue)
+    return response
+
+
+async def api_events(request: web.Request) -> web.Response:
+    """Ingest. Friday's brain POSTs here; see dashboard_log.py."""
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    events = payload if isinstance(payload, list) else [payload]
+    stored = []
+    for event in events:
+        if not isinstance(event, dict):
+            raise web.HTTPBadRequest(text="each event must be an object")
+        try:
+            stored.append(request.app["bus"].emit(event))
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc))
+    return web.json_response({"ok": True, "accepted": len(stored)})
+
+
+async def api_clear(request: web.Request) -> web.Response:
+    request.app["bus"].clear()
+    return web.json_response({"ok": True})
+
+
+async def api_state(request: web.Request) -> web.Response:
+    cams: CameraSet = request.app["cams"]
+    return web.json_response({
+        "mood": face_control.get_emotion(),
+        "emotions": list(face_control.EMOTIONS),
+        "cameras": cams.status(),
+        "viewers": request.app["bus"].subscriber_count,
+        "uptime_s": time.time() - STARTED,
+        "face_running": _face_is_running(),
+    })
+
+
+async def api_emotions(request: web.Request) -> web.Response:
+    return web.json_response({
+        "emotions": list(face_control.EMOTIONS),
+        "yawn": face_control.YAWN_NAME,
+    })
+
+
+async def api_mood(request: web.Request) -> web.Response:
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    # Accept either key -- "name" matches face_control's own vocabulary,
+    # "mood" matches what the UI calls the control. Being strict here buys
+    # nothing and makes the endpoint annoying to drive by hand.
+    raw = payload.get("name", payload.get("mood", ""))
+    name = str(raw).strip().lower()
+    try:
+        written = face_control.set_emotion(name)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    return web.json_response({"ok": True, "mood": face_control.get_emotion(),
+                              "played": written})
+
+
+# --- calibration -----------------------------------------------------
+
+async def api_calibration_get(request: web.Request) -> web.Response:
+    return web.json_response(config.load_calibration())
+
+
+async def api_calibration_post(request: web.Request) -> web.Response:
+    """Write calibration atomically so a half-written file can never be read
+    by motor code mid-save."""
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+
+    values = config.load_calibration()
+    for key, default in config.CALIBRATION_DEFAULTS.items():
+        if key not in payload:
+            continue
+        try:
+            number = float(payload[key])
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text=f"{key} must be a number")
+        if key in ("move_speed", "turn_speed"):
+            if not 0 <= number <= 255:
+                raise web.HTTPBadRequest(text=f"{key} must be 0-255")
+            number = int(number)
+        elif number < 0:
+            raise web.HTTPBadRequest(text=f"{key} must not be negative")
+        values[key] = number
+
+    path = Path(config.CALIBRATION_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".calib.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(values, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    return web.json_response({"ok": True, **values})
+
+
+# --- cameras ---------------------------------------------------------
+
+async def cam_stream(request: web.Request) -> web.StreamResponse:
+    which = request.match_info["which"]
+    cams: CameraSet = request.app["cams"]
+    camera = cams.get(which)
+    if camera is None:
+        raise web.HTTPNotFound(text=f"no camera {which!r}")
+    if not camera.available:
+        raise web.HTTPServiceUnavailable(
+            text=f"{which} camera not present at {camera.device}")
+
+    response = web.StreamResponse(headers={
+        "Content-Type": f"multipart/x-mixed-replace; boundary={BOUNDARY}",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache",
+    })
+    await response.prepare(request)
+    try:
+        async with camera.subscribe() as queue:
+            while True:
+                frame = await queue.get()
+                await response.write(
+                    b"--" + BOUNDARY.encode() + b"\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(frame)).encode() +
+                    b"\r\n\r\n" + frame + b"\r\n")
+    except (ConnectionResetError, asyncio.CancelledError):
+        pass
+    except FileNotFoundError as exc:
+        return web.Response(status=503, text=str(exc))
+    return response
+
+
+def _face_is_running() -> bool:
+    """Whether friday_face.py is actually up -- the header dot reflects the
+    face process, not just this server."""
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["pgrep", "-f", "friday_face.py"],
+            capture_output=True, text=True, timeout=2)
+        # pgrep -f also matches the shell that launched it, so require a
+        # line that looks like the python process itself.
+        return out.returncode == 0 and bool(out.stdout.strip())
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
+# =====================================================================
+# App
+# =====================================================================
+
+def build_app() -> web.Application:
+    app = web.Application(client_max_size=1024 * 1024)
+    app["bus"] = EventBus()
+    app["cams"] = CameraSet()
+
+    app.router.add_get("/api/stream", api_stream)
+    app.router.add_post("/api/events", api_events)
+    app.router.add_post("/api/clear", api_clear)
+    app.router.add_get("/api/state", api_state)
+    app.router.add_get("/api/emotions", api_emotions)
+    app.router.add_post("/api/mood", api_mood)
+    app.router.add_get("/api/calibration", api_calibration_get)
+    app.router.add_post("/api/calibration", api_calibration_post)
+    app.router.add_get("/cam/{which}", cam_stream)
+
+    async def index(_request: web.Request) -> web.StreamResponse:
+        return web.FileResponse(STATIC / "index.html")
+
+    app.router.add_get("/", index)
+    app.router.add_static("/static/", STATIC, name="static")
+
+    # The service worker must be served from the root to control the whole
+    # scope; the manifest is fetched from the root by convention.
+    async def root_file(request: web.Request) -> web.StreamResponse:
+        return web.FileResponse(STATIC / Path(request.path).name)
+
+    app.router.add_get("/sw.js", root_file)
+    app.router.add_get("/manifest.webmanifest", root_file)
+
+    async def on_cleanup(app: web.Application) -> None:
+        await app["cams"].stop_all()
+
+    app.on_cleanup.append(on_cleanup)
+    return app
+
+
+def ssl_context() -> ssl.SSLContext | None:
+    cert, key = Path(config.DASHBOARD_CERT), Path(config.DASHBOARD_KEY)
+    if not (cert.exists() and key.exists()):
+        return None
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    return ctx
+
+
+async def run(http_only: bool = False, demo: bool = False) -> None:
+    app = build_app()
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    sites = []
+    plain = web.TCPSite(runner, config.DASHBOARD_HOST,
+                        config.DASHBOARD_HTTP_PORT)
+    await plain.start()
+    sites.append(f"http://{config.DASHBOARD_HOST}:{config.DASHBOARD_HTTP_PORT}")
+
+    if not http_only:
+        ctx = ssl_context()
+        if ctx is None:
+            print("[dashboard] no cert yet -- run scripts/make_dashboard_cert.sh "
+                  "for HTTPS (needed to install as a PWA). HTTP only for now.",
+                  file=sys.stderr)
+        else:
+            secure = web.TCPSite(runner, config.DASHBOARD_HOST,
+                                 config.DASHBOARD_PORT, ssl_context=ctx)
+            await secure.start()
+            sites.append(
+                f"https://{config.DASHBOARD_HOST}:{config.DASHBOARD_PORT}")
+
+    for url in sites:
+        print(f"[dashboard] listening on {url}")
+
+    if demo:
+        asyncio.create_task(_demo_loop(app["bus"]))
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.Event().wait()
+    await runner.cleanup()
+
+
+async def _demo_loop(bus: EventBus) -> None:
+    """Replay a realistic turn so the log UI can be checked before Friday's
+    brain exists. Not used in normal operation."""
+    from dashboard.events import Turn
+    await asyncio.sleep(1.0)
+    while True:
+        turn = Turn(bus, config.MODEL_MAIN)
+        turn.session_init([
+            {"name": "friday-robot", "status": "connected"},
+        ])
+        await asyncio.sleep(1.2)
+        turn.thinking("Harsh asked me to look ahead and describe what I see. "
+                      "I'll grab a frame from the up camera first, then "
+                      "answer briefly.")
+        await asyncio.sleep(1.4)
+        turn.tool_call("mcp__friday-robot__capture_image", {})
+        await asyncio.sleep(0.9)
+        turn.tool_result("mcp__friday-robot__capture_image",
+                         {"path": "/tmp/frame.jpg", "width": 640,
+                          "height": 480},
+                         refs=["mcp__friday-robot__see_environment"])
+        await asyncio.sleep(1.1)
+        turn.tool_call("mcp__friday-robot__set_face_expression",
+                       {"mood": "thinking"})
+        await asyncio.sleep(0.8)
+        turn.tool_result("mcp__friday-robot__set_face_expression", "OK thinking")
+        await asyncio.sleep(1.0)
+        turn.text("Looking now…")
+        await asyncio.sleep(1.2)
+        turn.done(
+            "I can see a **desk** ahead with a monitor on it.\n"
+            "- \U0001f4f7 clear path for about a metre\n"
+            "- \U0001f9f1 wall on the left\n",
+            input_tokens=2480, output_tokens=310,
+            cache_read_tokens=1800)
+        await asyncio.sleep(6.0)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Friday's dashboard")
+    ap.add_argument("--http-only", action="store_true",
+                    help="skip HTTPS even if a cert exists")
+    ap.add_argument("--demo", action="store_true",
+                    help="replay a scripted turn into the log")
+    args = ap.parse_args()
+    try:
+        asyncio.run(run(http_only=args.http_only, demo=args.demo))
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

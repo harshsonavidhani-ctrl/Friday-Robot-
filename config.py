@@ -59,10 +59,16 @@ CAM_C270_MAX = (1280, 720)   # MJPG
 CAM_UP = None                # forward vision, above screen
 CAM_DOWN = None              # floor / cliff / optical flow, above bumper
 
-# The second camera ("Generic HD", 349c:2317) dropped off the USB bus on
-# 2026-08-20 and did not re-enumerate. Vision code must treat a second camera
-# as OPTIONAL and degrade cleanly when it is absent.
-CAM_SECOND = None
+# The "Generic HD camera" (349c:2317) dropped off the USB bus on 2026-08-20;
+# re-verified present and MJPG-capable on 2026-08-23. Vision code must still
+# treat a second camera as OPTIONAL and degrade cleanly when it is absent.
+CAM_SECOND = "/dev/v4l/by-id/usb-Generic_HD_camera_20181212000000-video-index0"
+CAM_SECOND_MAX = (640, 480)  # MJPG
+
+# Which physical position each camera sits in is still unconfirmed, so the
+# dashboard shows both and this flag swaps the labels without touching code.
+# Flip it if UP CAM and DOWN CAM are the wrong way round on screen.
+CAM_SWAP_UP_DOWN = False
 
 # --- Range sensors -------------------------------------------------------
 # LDROBOT D500 via CP2102. Verified streaming: LD19-family binary protocol,
@@ -94,9 +100,61 @@ MOTOR_MAX_DUTY = 0.6         # start conservative; raise only after testing
 MOTOR_WATCHDOG_S = 0.5       # stop if no new command within this window
 
 # --- Face ----------------------------------------------------------------
-FACE_DISPLAY_SIZE = (800, 480)   # 7" front display
+# The 7" HDMI panel (EDID "Mediatrix Peripherals Inc MPI7002") reports
+# 1920x1080 natively -- confirmed via wlr-randr 2026-08-23. friday_face.py
+# lays itself out proportionally from the real screen size, so this is
+# informational rather than something it reads.
+FACE_DISPLAY_SIZE = (1920, 1080)  # 7" front display, native mode
 FACE_DEFAULT_EMOTION = "neutral"
 FACE_FPS = 30
+
+
+# --- Dashboard -----------------------------------------------------------
+# Friday's live-log web UI. Served over HTTPS so it can install as a PWA
+# (a service worker needs a secure context); scripts/make_dashboard_cert.sh
+# generates the self-signed cert.
+DASHBOARD_HOST = "0.0.0.0"
+DASHBOARD_PORT = 8443
+DASHBOARD_HTTP_PORT = 8080       # plain HTTP, for localhost / first setup
+DASHBOARD_CERT = ROOT / "certs" / "dashboard.crt"
+DASHBOARD_KEY = ROOT / "certs" / "dashboard.key"
+
+# Camera streams. Both cameras output MJPEG natively, so ffmpeg copies the
+# stream instead of re-encoding -- that is what keeps this off the CPU.
+DASHBOARD_CAM_SIZE = (640, 480)
+DASHBOARD_CAM_FPS = 10
+DASHBOARD_CAM_QUALITY = 6        # ffmpeg -q:v, only used if a re-encode is
+                                 # unavoidable; lower is better quality
+
+# How many recent events a newly-connected browser is replayed.
+DASHBOARD_HISTORY = 300
+
+# Motor calibration the dashboard panel edits. Written to state/, NOT to
+# this file, so config stays declarative and the values survive edits here.
+CALIBRATION_FILE = ROOT / "state" / "calibration.json"
+CALIBRATION_DEFAULTS = {
+    "move_speed": 150,           # 0-255, default straight-line speed
+    "turn_speed": 130,           # 0-255, default pivot speed
+    "forward_cm_per_s": 0.0,     # measured; 0 = not calibrated yet
+    "turn_deg_per_s": 0.0,       # measured; 0 = not calibrated yet
+}
+
+
+def load_calibration() -> dict:
+    """Current motor calibration, falling back to the defaults for any key
+    that is missing or unreadable. Motor code should call this per command
+    rather than caching, so dashboard edits take effect without a restart."""
+    import json
+    values = dict(CALIBRATION_DEFAULTS)
+    try:
+        with open(CALIBRATION_FILE) as handle:
+            stored = json.load(handle)
+        for key in CALIBRATION_DEFAULTS:
+            if key in stored and isinstance(stored[key], (int, float)):
+                values[key] = stored[key]
+    except (OSError, ValueError):
+        pass
+    return values
 
 
 def missing_hardware_settings() -> list[str]:
