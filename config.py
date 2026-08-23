@@ -70,8 +70,24 @@ WAKE_THRESHOLD = None        # TODO(step 2): tune on the real mic, in real room
 WAKE_SOURCE = "both"
 WAKE_WINDOW_S = 4.0          # longest single wake-listen pass
 WAKE_POLL_TIMEOUT_S = 3.0    # how long a pass waits for any speech at all
-STT_MODEL = "base"           # faster-whisper
+# faster-whisper. TINY, not base — measured on this Pi 4 against 1.78 s of
+# speech, WITH Friday's own services running (see the CPU note below):
+#     base    threads=4   x13.3 realtime   (23.6 s — unusable)
+#     tiny    threads=4   x5.3  realtime
+#     tiny.en threads=4   x4.4  realtime   (English only)
+# tiny.en is fastest but monolingual, and Harsh mixes Hindi and English, so
+# "aage jao" needs the multilingual model.
+#
+# ⚠ HINDI IS UNVERIFIED WITH REAL SPEECH. In a loopback test tiny heard
+# "What is the capital of Japan?" perfectly but turned "aage jao" into
+# "odds chill" -- however that test fed it PIPER'S ENGLISH VOICE attempting
+# Hindi, which sounds nothing like Harsh saying it. Test with his actual voice
+# before concluding anything. If Hindi really is poor, "base" is the next step
+# up and costs about 2x the latency.
+STT_MODEL = "tiny"
 STT_COMPUTE_TYPE = "int8"
+# Explicit: ctranslate2's default did not use all four cores (x16.5 vs x13.3).
+STT_CPU_THREADS = 4
 STT_BEAM_SIZE = 1            # 1 is greedy: fastest, and on a Pi that matters
                              # far more than the small accuracy gain from 5
 STT_LANGUAGE = None          # None = auto-detect. Harsh mixes Hindi and

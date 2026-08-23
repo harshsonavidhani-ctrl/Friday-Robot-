@@ -74,6 +74,7 @@ def model():
         _model = WhisperModel(config.STT_MODEL,
                               device="cpu",
                               compute_type=config.STT_COMPUTE_TYPE,
+                              cpu_threads=config.STT_CPU_THREADS,
                               download_root=str(config.MODEL_DIR / "whisper"))
         log.info("faster-whisper ready in %.1fs", time.monotonic() - started)
         return _model
