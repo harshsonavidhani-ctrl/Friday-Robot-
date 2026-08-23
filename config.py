@@ -44,20 +44,47 @@ TTS_VOICE = None             # TODO: choose a Piper voice, then pin it here
 
 # --- Audio devices -------------------------------------------------------
 # GeneralPlus USB soundcard (1b3f:2008) — carries BOTH the shotgun mic in and
-# the speaker out. Addressed by CARD NAME, not index: card indices shift when
-# a USB device drops off the bus (verified 2026-08-20, both directions tested).
-MIC_DEVICE = "plughw:CARD=Device,DEV=0"
-SPEAKER_DEVICE = "plughw:CARD=Device,DEV=0"
+# the speaker out.
+#
+# Addressed as PIPEWIRE NODES, not ALSA devices. This is not a preference:
+# pipewire holds the card open exclusively while the desktop is running, so
+# aplay/arecord on plughw fail with "Device or resource busy" (hit 2026-08-23).
+# Going through pipewire is the fix that changes nothing on the system --
+# touching the audio server itself is off-limits (CLAUDE.md Part 1).
+#
+# These node names come from the USB descriptor, so they are stable across
+# reboots and across card-index shuffles. Both verified 2026-08-23: a tone
+# played out, and a 1.8 s capture came back at peak 4170 / rms 539.
+#   pw-play  --target=$SPEAKER_DEVICE file.wav
+#   pw-cat --record --target=$MIC_DEVICE --rate 16000 --channels 1 --format s16
+MIC_DEVICE = "alsa_input.usb-GeneralPlus_USB_Audio_Device-00.mono-fallback"
+SPEAKER_DEVICE = "alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo"
 MIC_SAMPLE_RATE = 16000      # what faster-whisper and openWakeWord expect
+
+# pipewire needs this to find the user's session bus when Friday runs from a
+# systemd unit rather than from a login shell.
+AUDIO_RUNTIME_DIR = "/run/user/1000"
+
+# The ALSA fallbacks, for the case where pipewire is NOT running (a headless
+# boot with no desktop). Audio code should try the pipewire node first and
+# fall back to these rather than assuming either one.
+MIC_DEVICE_ALSA = "plughw:CARD=Device,DEV=0"
+SPEAKER_DEVICE_ALSA = "plughw:CARD=Device,DEV=0"
 
 # --- Cameras -------------------------------------------------------------
 # by-id paths, not indices — indices are not stable across reboots.
 CAM_C270 = "/dev/v4l/by-id/usb-046d_0825_9B5B4130-video-index0"
 CAM_C270_MAX = (1280, 720)   # MJPG
 
-# TODO: which physical position is the C270 in? Assign once confirmed.
-CAM_UP = None                # forward vision, above screen
-CAM_DOWN = None              # floor / cliff / optical flow, above bumper
+# CONFIRMED 2026-08-23 by capturing a frame and looking at it: the C270 sees
+# the top of the wardrobe, the curtain rail and the window -- a horizon view,
+# not the floor. So the C270 is the UP cam, and the second camera is the DOWN
+# cam by elimination (it was off the bus at the time, so it is inferred, not
+# seen). If a stitched look() ever comes back with the floor on top, flip
+# CAM_SWAP_UP_DOWN rather than editing these.
+CAM_UP = CAM_C270            # forward vision, above screen
+CAM_DOWN = None              # None = "the other one", resolved per access;
+                             # see CAM_SECOND for why it cannot be a fixed path
 
 # The second camera is UNSTABLE on the USB bus. Observed 2026-08-23: it
 # enumerates as "HD camera" (349c:2317) -- NOT the "Generic HD camera"
@@ -76,6 +103,10 @@ CAM_SECOND_MAX = (640, 480)  # MJPG
 CAM_SWAP_UP_DOWN = False
 
 # --- Range sensors -------------------------------------------------------
+# PRESENT and confirmed 2026-08-23 21:49 at /dev/ttyUSB1 (10c4:ea60), matching
+# the by-id path below exactly. It had been unplugged earlier in the session;
+# sensor code must still treat it as OPTIONAL and say so when it is missing,
+# because it clearly does get unplugged.
 # LDROBOT D500 via CP2102. Verified streaming: LD19-family binary protocol,
 # 0x54 header / 0x2C verlen / 12 points per 47-byte packet, ~9.9 Hz.
 LIDAR_PORT = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
@@ -92,10 +123,10 @@ TOF_NO_RETURN_MM = 4000
 TOF_ROWS = 8
 TOF_COLS = 8
 
-# Unidentified: an FTDI FT232R (serial A5069RR4) sits on /dev/ttyUSB1.
-# Do NOT open it until Harsh confirms what it drives — if it reaches the
-# motors, probing it could move the robot.
-FTDI_PORT_UNKNOWN = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0"
+# RESOLVED 2026-08-23: Harsh confirmed the FTDI FT232R (serial A5069RR4) IS
+# the Arduino Uno driving the motors -- an Uno clone using an FT232R instead
+# of the usual CH340. It is no longer unidentified, so the old "never open
+# this" warning no longer applies. See MOTOR_PORT below.
 
 # --- Drive ---------------------------------------------------------------
 # L298N, 4-motor differential drive, wired as Harsh built it (2026-08-23).
@@ -114,15 +145,18 @@ MOTOR_PINS = {
     "ENB": 3,    # PWM, right speed
 }
 
-# Serial port of the Arduino running the motor firmware. None means
-# auto-detect by USB VID:PID (see motor.ARDUINO_IDS).
+# Serial port of the Arduino running the motor firmware.
 #
-# NOT FOUND as of 2026-08-23: the only serial devices on this Pi are a
-# Raspberry Pi Pico (2e8a:000a, the ToF board) and an unidentified FTDI
-# FT232R. Neither is an Uno. motor.py refuses to drive an unidentified
-# board rather than guess -- set this once the Arduino is plugged in and
-# confirmed.
-MOTOR_PORT = None
+# Set EXPLICITLY, and deliberately not left to auto-detect. This Uno clone
+# uses an FT232R (0403:6001), which is a generic USB-serial chip that any
+# number of unrelated adapters also use -- widening motor.ARDUINO_IDS to
+# accept 0403:6001 would let a future FTDI cable be picked as "the motors".
+# The by-id path below carries the board's unique serial number A5069RR4, so
+# it identifies THIS board and no other.
+#
+# motor.py still refuses to drive it unless the firmware answers the "P" ping
+# with FRIDAY-MOTORS, so a wrong board is caught even if this path goes stale.
+MOTOR_PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0"
 
 MOTOR_MAX_DUTY = 0.6         # start conservative; raise only after testing
 MOTOR_WATCHDOG_S = 0.5       # stop if no new command within this window
@@ -171,6 +205,58 @@ CALIBRATION_DEFAULTS = {
 }
 
 
+# --- MCP server ----------------------------------------------------------
+# friday-robot: the ONE place hardware is exposed. The brain calls these tools
+# and nothing else in the project talks to a device directly. That is not a
+# style preference -- it is what makes the safety interrupt below impossible
+# for the brain to route around.
+MCP_SERVER_NAME = "friday-robot"
+
+# DEBUG: silence Friday. speak() still logs and still returns success, it just
+# does not reach the soundcard -- so tool-use flows can be tested without the
+# robot talking over you. Turn OFF for real use.
+DEBUG_SILENT_SPEECH = False
+
+# Decision log: every tool call, its arguments, its result and a timestamp.
+# SQLite rather than a flat file so the dashboard can query it by time or by
+# tool without parsing the whole history.
+DECISION_LOG = ROOT / "state" / "decisions.sqlite3"
+
+# Where capture_image() writes. Gitignored -- these are runtime output.
+CAPTURE_DIR = ROOT / "state" / "captures"
+CAPTURE_KEEP = 200           # newest N kept; older ones deleted on write
+
+# --- Motion safety -------------------------------------------------------
+# Enforced inside the MCP server, in code, on every movement -- before it
+# starts and repeatedly WHILE it runs. The brain cannot disable, raise, or
+# argue with any of these. A prompt can be talked around; this cannot.
+SAFETY_STOP_MM = 250         # stop this far short of anything ahead
+SAFETY_CAUTION_MM = 450      # below this, forward moves are capped slow
+SAFETY_POLL_S = 0.1          # how often clearance is re-checked mid-move
+MAX_MOVE_SECONDS = 5.0       # longest single commanded move
+MAX_SPEED_PERCENT = 100      # set_speed ceiling; scales onto MOTOR_MAX_DUTY,
+                             # so 100% is still only MOTOR_MAX_DUTY of full PWM
+DEFAULT_SPEED_PERCENT = 60
+
+# Backing away from something is allowed closer than driving into it -- the
+# down cam and bumper cannot see behind, so reverse is time-limited instead.
+MAX_REVERSE_SECONDS = 2.0
+
+# Honesty about odometry. The TT gear motors have NO encoders, so distance and
+# angle are timed approximations from state/calibration.json. This is the error
+# margin every distance-based tool must quote back to the brain.
+ODOMETRY_ERROR_PERCENT = 20  # measured; re-measure after changing surface,
+                             # battery level, or MOTOR_MAX_DUTY
+
+# --- Status --------------------------------------------------------------
+# No battery fuel gauge is wired on this robot. get_status() reports battery as
+# unknown rather than inventing a percentage. If a gauge is added, put its
+# device here and get_status() will start reporting it.
+BATTERY_SENSOR = None
+CPU_TEMP_PATH = "/sys/class/thermal/thermal_zone0/temp"
+CPU_TEMP_WARN_C = 75.0
+
+
 def load_calibration() -> dict:
     """Current motor calibration, falling back to the defaults for any key
     that is missing or unreadable. Motor code should call this per command
@@ -190,9 +276,12 @@ def load_calibration() -> dict:
 
 def missing_hardware_settings() -> list[str]:
     """Names of settings still unverified. Modules should check before use."""
+    # CAM_DOWN and CAM_SECOND are deliberately None -- None means "resolve the
+    # other camera on every access", which is the fix for a device whose by-id
+    # path changes. They are not unverified, so they are not listed here.
     required = (
         "WAKE_THRESHOLD", "VAD_SILENCE_MS", "TTS_VOICE",
-        "MIC_DEVICE", "SPEAKER_DEVICE", "CAM_UP", "CAM_DOWN",
+        "MIC_DEVICE", "SPEAKER_DEVICE", "CAM_UP",
         "LIDAR_PORT", "TOF_PORT", "MOTOR_PINS",
     )
     return [name for name in required if globals()[name] is None]

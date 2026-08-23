@@ -19,9 +19,11 @@ SAFETY, and none of it is optional:
 * Every timed move is fed keepalives, and always ends in an explicit stop --
   including when it raises.
 * The port is never guessed. If the board cannot be positively identified,
-  this refuses to send anything. There is an FTDI adapter on this Pi whose
-  purpose is still unknown (config.FTDI_PORT_UNKNOWN); blindly writing to it
-  could drive the robot off a table.
+  this refuses to send anything. This Uno is an FT232R clone, so it is pinned
+  by its unique serial number in config.MOTOR_PORT rather than by VID:PID --
+  0403:6001 is a generic chip and matching on it would let any FTDI cable be
+  picked as "the motors". The firmware handshake below is the second gate:
+  a board that does not answer FRIDAY-MOTORS is never driven.
 * Distances and angles come from state/calibration.json, which the dashboard
   edits. Until those are measured they are 0, and any distance-based move
   raises instead of guessing.
