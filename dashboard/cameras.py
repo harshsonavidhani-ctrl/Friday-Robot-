@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import glob
 import os
 from pathlib import Path
 
@@ -28,9 +29,14 @@ class CameraStream:
     """One camera, one ffmpeg process, many subscribers."""
 
     def __init__(self, device: str, name: str,
-                 size=None, fps: int | None = None) -> None:
+                 size=None, fps: int | None = None,
+                 exclude: str | None = None) -> None:
+        self.configured = device
         self.device = device
         self.name = name
+        # The other camera's path, so auto-resolution never picks it twice.
+        self.exclude = exclude
+        self.enabled = True          # manual on/off from the dashboard
         self.size = size or config.DASHBOARD_CAM_SIZE
         self.fps = fps or config.DASHBOARD_CAM_FPS
         self._proc: asyncio.subprocess.Process | None = None
@@ -39,31 +45,84 @@ class CameraStream:
         self._latest: bytes | None = None
         self._lock = asyncio.Lock()
         self.error: str | None = None
+        self.passthrough = True
+
+    # --- which /dev node is this camera, right now -------------------
+
+    def resolve(self) -> str | None:
+        """Find this camera's device node, re-checking every time.
+
+        The configured by-id path is preferred, but it is not stable: the
+        second camera re-enumerated with different USB descriptor strings
+        ("HD camera" instead of "Generic HD camera"), which renames its
+        by-id symlink and makes a hardcoded path point at nothing. So when
+        the configured path is missing, fall back to any other by-id capture
+        node that is not the other camera. That also means a camera that is
+        unplugged and plugged back in is found again without editing config.
+        """
+        if self.configured and Path(self.configured).exists():
+            self.device = self.configured
+            return self.device
+
+        other = os.path.realpath(self.exclude) if self.exclude else None
+        for path in sorted(glob.glob("/dev/v4l/by-id/*-video-index0")):
+            if os.path.realpath(path) == other:
+                continue
+            if self.configured and os.path.realpath(path) == \
+                    os.path.realpath(self.configured):
+                continue            # already tried above and it is gone
+            self.device = path
+            return path
+
+        self.device = self.configured
+        return None
 
     @property
     def available(self) -> bool:
-        return bool(self.device) and Path(self.device).exists()
+        return self.enabled and self.resolve() is not None
 
     # --- lifecycle ---------------------------------------------------
 
-    async def _spawn(self) -> None:
+    def _ffmpeg_cmd(self, passthrough: bool) -> list[str]:
+        """Passthrough is the cheap path -- the camera's own JPEGs are
+        forwarded untouched. Not every camera offers MJPEG at the size we
+        ask for though, so the fallback takes whatever the camera gives and
+        encodes it here. That costs CPU, which is why it is second."""
         w, h = self.size
-        cmd = [
-            "ffmpeg", "-nostdin", "-loglevel", "error",
-            "-f", "v4l2",
-            "-input_format", "mjpeg",
-            "-video_size", f"{w}x{h}",
-            "-framerate", str(self.fps),
-            "-i", self.device,
-            # copy: the camera already produced JPEGs, so no re-encode
-            "-c:v", "copy",
-            "-f", "mjpeg", "pipe:1",
-        ]
-        self._proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        self._task = asyncio.create_task(self._pump())
+        cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "v4l2"]
+        if passthrough:
+            cmd += ["-input_format", "mjpeg"]
+        cmd += ["-video_size", f"{w}x{h}", "-framerate", str(self.fps),
+                "-i", self.device]
+        if passthrough:
+            cmd += ["-c:v", "copy"]
+        else:
+            cmd += ["-c:v", "mjpeg", "-q:v", str(config.DASHBOARD_CAM_QUALITY)]
+        return cmd + ["-f", "mjpeg", "pipe:1"]
+
+    async def _spawn(self) -> None:
+        device = self.resolve()
+        if device is None:
+            raise FileNotFoundError(f"{self.name}: no capture device found")
+
+        # Try passthrough; if ffmpeg dies straight away, the camera cannot
+        # give us MJPEG at this size, so re-encode instead of showing nothing.
+        for passthrough in (True, False):
+            proc = await asyncio.create_subprocess_exec(
+                *self._ffmpeg_cmd(passthrough),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=1.5)
+            except asyncio.TimeoutError:
+                self._proc = proc                 # still alive: it is working
+                self.passthrough = passthrough
+                self._task = asyncio.create_task(self._pump())
+                return
+            err = (await proc.stderr.read()).decode(errors="replace").strip()
+            self.error = err[:400] or f"ffmpeg exited {proc.returncode}"
+        raise RuntimeError(f"{self.name}: {self.error}")
 
     async def _pump(self) -> None:
         """Split ffmpeg's byte stream back into whole JPEG frames."""
@@ -126,8 +185,10 @@ class CameraStream:
 
     @contextlib.asynccontextmanager
     async def subscribe(self):
-        if not self.available:
-            raise FileNotFoundError(f"{self.name}: no device at {self.device}")
+        if not self.enabled:
+            raise PermissionError(f"{self.name} camera is switched off")
+        if self.resolve() is None:
+            raise FileNotFoundError(f"{self.name}: no capture device found")
         await self._ensure_running()
         queue: asyncio.Queue = asyncio.Queue(maxsize=2)
         if self._latest:
@@ -150,8 +211,8 @@ class CameraSet:
         down_device = config.CAM_SECOND
         if config.CAM_SWAP_UP_DOWN:
             up_device, down_device = down_device, up_device
-        self.up = CameraStream(up_device, "up")
-        self.down = CameraStream(down_device, "down")
+        self.up = CameraStream(up_device, "up", exclude=down_device)
+        self.down = CameraStream(down_device, "down", exclude=up_device)
 
     def get(self, which: str) -> CameraStream | None:
         return {"up": self.up, "down": self.down}.get(which)
@@ -160,10 +221,28 @@ class CameraSet:
         await self.up.stop()
         await self.down.stop()
 
-    def status(self) -> dict:
+    async def set_enabled(self, which: str, on: bool) -> bool:
+        """Manual switch from the dashboard. Turning a camera off releases
+        ffmpeg and the V4L2 handle immediately."""
+        cam = self.get(which)
+        if cam is None:
+            raise KeyError(which)
+        cam.enabled = bool(on)
+        if not cam.enabled:
+            await cam.stop()
+        return cam.enabled
+
+    def _one(self, cam: CameraStream) -> dict:
+        present = cam.resolve() is not None
         return {
-            "up": {"available": self.up.available, "device": self.up.device,
-                   "error": self.up.error},
-            "down": {"available": self.down.available,
-                     "device": self.down.device, "error": self.down.error},
+            "available": cam.enabled and present,
+            "present": present,          # plugged in, regardless of the switch
+            "enabled": cam.enabled,      # the dashboard's on/off switch
+            "device": cam.device,
+            "streaming": cam._proc is not None and cam._proc.returncode is None,
+            "passthrough": cam.passthrough,
+            "error": cam.error,
         }
+
+    def status(self) -> dict:
+        return {"up": self._one(self.up), "down": self._one(self.down)}

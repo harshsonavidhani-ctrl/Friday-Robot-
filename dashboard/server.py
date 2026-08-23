@@ -15,6 +15,9 @@ Serves:
     GET  /api/calibration      current motor calibration
     POST /api/calibration      save motor calibration
     GET  /cam/up  /cam/down    multipart MJPEG
+    GET  /ca.crt               the local CA, to install on a phone once
+    POST /api/camera/{which}   {"on": false} -> switch a camera off
+    GET  /ca.crt               Friday's CA, to install on the phone once
 
 Nothing here talks to the robot directly except through face_control, which
 is the same file everything else uses to drive the face.
@@ -189,12 +192,31 @@ async def api_calibration_post(request: web.Request) -> web.Response:
 
 # --- cameras ---------------------------------------------------------
 
+async def api_camera(request: web.Request) -> web.Response:
+    """Manual on/off. Off releases ffmpeg and the V4L2 handle straight away,
+    so a camera switched off here really is free -- not just hidden."""
+    which = request.match_info["which"]
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    cams: CameraSet = request.app["cams"]
+    try:
+        on = await cams.set_enabled(which, bool(payload.get("on", True)))
+    except KeyError:
+        raise web.HTTPNotFound(text=f"no camera {which!r}")
+    return web.json_response({"ok": True, "which": which, "on": on,
+                              "cameras": cams.status()})
+
+
 async def cam_stream(request: web.Request) -> web.StreamResponse:
     which = request.match_info["which"]
     cams: CameraSet = request.app["cams"]
     camera = cams.get(which)
     if camera is None:
         raise web.HTTPNotFound(text=f"no camera {which!r}")
+    if not camera.enabled:
+        raise web.HTTPConflict(text=f"{which} camera is switched off")
     if not camera.available:
         raise web.HTTPServiceUnavailable(
             text=f"{which} camera not present at {camera.device}")
@@ -254,6 +276,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/calibration", api_calibration_get)
     app.router.add_post("/api/calibration", api_calibration_post)
     app.router.add_get("/cam/{which}", cam_stream)
+    app.router.add_post("/api/camera/{which}", api_camera)
 
     async def index(_request: web.Request) -> web.StreamResponse:
         return web.FileResponse(STATIC / "index.html")
@@ -268,6 +291,26 @@ def build_app() -> web.Application:
 
     app.router.add_get("/sw.js", root_file)
     app.router.add_get("/manifest.webmanifest", root_file)
+
+    async def ca_cert(request: web.Request) -> web.StreamResponse:
+        """Hand out the local CA so a phone can trust the dashboard.
+
+        Served over plain HTTP too, on purpose -- the phone has to be able to
+        fetch this BEFORE it trusts the HTTPS port, otherwise there is no way
+        in without clicking through the warning first.
+        """
+        path = Path(config.DASHBOARD_CA_CERT)
+        if not path.exists():
+            raise web.HTTPNotFound(
+                text="no CA yet -- run ./scripts/make_dashboard_cert.sh")
+        return web.FileResponse(path, headers={
+            # The MIME type Android and iOS both recognise as an installable
+            # certificate. Anything else and they just show it as text.
+            "Content-Type": "application/x-x509-ca-cert",
+            "Content-Disposition": 'attachment; filename="friday-ca.crt"',
+        })
+
+    app.router.add_get("/ca.crt", ca_cert)
 
     async def on_cleanup(app: web.Application) -> None:
         await app["cams"].stop_all()

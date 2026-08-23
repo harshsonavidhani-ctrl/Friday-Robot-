@@ -1,10 +1,11 @@
 /* Friday dashboard front end.
    Everything arrives over SSE; nothing here polls except the light /api/state
-   heartbeat that keeps the header dot and the active mood honest. */
+   heartbeat that keeps the header, the active mood and camera availability
+   honest. */
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const log = $('log'), dot = $('dot');
+const log = $('log'), dot = $('dot'), statustext = $('statustext');
 
 const TYPES = ['session_init', 'thinking', 'tool_call', 'tool_result',
                'text', 'done'];
@@ -13,11 +14,22 @@ const LABEL = {
   tool_result: 'Tool Result', text: 'Text', done: 'Done',
 };
 
-let hidden = new Set(JSON.parse(localStorage.getItem('friday.hidden') || '[]'));
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; }
+              catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+let hidden = new Set(store.get('friday.hidden', []));
 let autoscroll = true;          // suspended while the pointer is over the log
 let activeMood = null;
 let connected = false;          // the dot tracks THIS, nothing else
-let camState = {};              // last known availability, to spot hot-plugs
+/* Camera state comes from the Pi, not from this browser: the on/off switch
+   is a real switch on the robot, so every phone looking at the dashboard
+   sees the same thing. `present` is whether the device is on the USB bus;
+   `enabled` is the switch. */
+let cam = { up: { present: false, enabled: true },
+            down: { present: false, enabled: true } };
 
 /* ---------- helpers ---------- */
 
@@ -27,13 +39,21 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
 const clock = (ts) => new Date((ts || Date.now() / 1000) * 1000)
   .toLocaleTimeString('en-GB', { hour12: false });
 
+let toastTimer = null;
+function toast(msg, bad) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (bad ? ' bad' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast'; }, 2600);
+}
+
 /* Minimal markdown: **bold**, `code`, and - bullet lists. Deliberately not a
    full parser -- everything is escaped first, so no HTML can come through. */
 function md(src) {
-  const lines = String(src ?? '').split('\n');
+  const lines = esc(src).split('\n');
   let out = '', list = false;
-  for (const raw of lines) {
-    const line = esc(raw);
+  for (const line of lines) {
     const bullet = line.match(/^\s*[-*]\s+(.*)$/);
     if (bullet) {
       if (!list) { out += '<ul>'; list = true; }
@@ -108,7 +128,6 @@ function append(ev) {
   const first = log.querySelector('.empty');
   if (first) first.remove();
   log.appendChild(card(ev));
-  while (log.children.length > 400) log.removeChild(log.firstChild);
   if (autoscroll) log.scrollTop = log.scrollHeight;
 }
 
@@ -119,12 +138,12 @@ function buildFilters() {
   bar.innerHTML = '';
   for (const t of TYPES) {
     const b = document.createElement('button');
-    b.className = 'filter' + (hidden.has(t) ? '' : ' on');
     b.textContent = LABEL[t];
+    b.className = hidden.has(t) ? 'off' : '';
     b.onclick = () => {
       hidden.has(t) ? hidden.delete(t) : hidden.add(t);
-      localStorage.setItem('friday.hidden', JSON.stringify([...hidden]));
-      b.classList.toggle('on');
+      store.set('friday.hidden', [...hidden]);
+      b.className = hidden.has(t) ? 'off' : '';
       for (const c of log.querySelectorAll('.card'))
         c.style.display = hidden.has(c.dataset.type) ? 'none' : '';
     };
@@ -146,6 +165,9 @@ async function buildMoods() {
     b.className = 'mood' + (name === data.yawn ? ' yawn' : '');
     b.textContent = name;
     b.dataset.mood = name;
+    b.title = name === data.yawn
+      ? 'Plays the 4s yawn once, then returns to the current mood'
+      : `Show ${name} on the face`;
     b.onclick = async () => {
       b.disabled = true;
       try {
@@ -153,8 +175,10 @@ async function buildMoods() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name }),
         });
-        if (r.ok) { const j = await r.json(); setActive(j.mood); }
-      } finally { b.disabled = false; }
+        if (r.ok) { const j = await r.json(); setActive(j.mood); toast(name); }
+        else toast(await r.text(), true);
+      } catch (e) { toast(String(e), true); }
+      finally { b.disabled = false; }
     };
     grid.appendChild(b);
   }
@@ -163,28 +187,108 @@ async function buildMoods() {
 function setActive(mood) {
   if (mood === activeMood) return;
   activeMood = mood;
+  $('moodnow').textContent = mood || '—';
   for (const b of document.querySelectorAll('.mood'))
     b.classList.toggle('active', b.dataset.mood === mood);
 }
 
-/* ---------- cameras ---------- */
+/* ---------- cameras ----------
+   Switching a camera off POSTs to the Pi, which kills that camera's ffmpeg
+   and releases the V4L2 handle. So the switch really frees the CPU -- it is
+   not just hiding a picture in this one browser. */
 
-function mountCam(which, boxId, available) {
-  camState[which] = available;
-  const box = $(boxId);
+function renderCam(which) {
+  const box = $('box-' + which);
+  const { present, enabled } = cam[which];
   box.innerHTML = '';
-  if (!available) {
-    box.innerHTML = `<div class="camoff">${which.toUpperCase()} CAM<br>not detected</div>`;
+
+  if (!enabled) {
+    box.innerHTML = `<div class="camoff"><b>${which} cam</b>off
+      <span class="why">Switched off. No stream, no CPU used.</span></div>`;
+    return;
+  }
+  if (!present) {
+    box.innerHTML = `<div class="camoff"><b>${which} cam</b>no signal
+      <span class="why">Not on the USB bus. Check the cable — it reappears
+      on its own.</span></div>`;
     return;
   }
   const img = new Image();
   img.alt = `${which} camera`;
-  // cache-buster so a reconnect does not replay a dead stream
-  img.src = `/cam/${which}?t=${Date.now()}`;
+  img.src = `/cam/${which}?t=${Date.now()}`;   // cache-buster per (re)mount
   img.onerror = () => {
-    box.innerHTML = `<div class="camoff">${which.toUpperCase()} CAM<br>stream unavailable</div>`;
+    box.innerHTML = `<div class="camoff"><b>${which} cam</b>stream lost
+      <span class="why">The device went away mid-stream.</span></div>`;
   };
   box.appendChild(img);
+  const live = document.createElement('span');
+  live.className = 'live';
+  live.textContent = 'live';
+  box.appendChild(live);
+}
+
+function paintToggle(which) {
+  const tg = $('tg-' + which);
+  const on = cam[which].enabled;
+  tg.setAttribute('aria-checked', on ? 'true' : 'false');
+  tg.title = on ? `Turn the ${which} camera off`
+                : `Turn the ${which} camera on`;
+}
+
+/* Apply a /api/state or /api/camera cameras block, redrawing only what
+   actually changed so a running stream is never torn down for no reason. */
+function applyCams(cams) {
+  for (const which of ['up', 'down']) {
+    const s = cams[which];
+    if (!s) continue;
+    const before = cam[which];
+    const now = { present: !!s.present, enabled: !!s.enabled };
+    if (now.present !== before.present || now.enabled !== before.enabled) {
+      cam[which] = now;
+      paintToggle(which);
+      renderCam(which);
+    }
+  }
+}
+
+/* The Pi is the authority on both halves: `present` is whether the device is
+   on the USB bus, `enabled` is the switch. Keeping them apart is what lets
+   the box say "switched off" rather than "no signal". */
+function applyCams(cams) {
+  if (!cams) return;
+  for (const which of ['up', 'down']) {
+    const c = cams[which];
+    if (!c) continue;
+    const present = !!c.present;
+    const enabled = c.enabled !== undefined ? !!c.enabled : camOn[which];
+    const changed = present !== camAvail[which] || enabled !== camOn[which];
+    camAvail[which] = present;
+    camOn[which] = enabled;
+    store.set(`friday.cam.${which}`, enabled);
+    if (changed) { paintToggle(which); renderCam(which); }
+  }
+}
+
+function wireCams() {
+  for (const which of ['up', 'down']) {
+    paintToggle(which);
+    $('tg-' + which).onclick = async () => {
+      const tg = $('tg-' + which);
+      const want = !cam[which].enabled;
+      tg.disabled = true;
+      try {
+        const r = await fetch(`/api/camera/${which}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ on: want }),
+        });
+        if (!r.ok) { toast(await r.text(), true); return; }
+        const j = await r.json();
+        applyCams(j.cameras);
+        toast(`${which} cam ${j.on ? 'on' : 'off'}`);
+      } catch (e) { toast(String(e), true); }
+      finally { tg.disabled = false; }
+    };
+  }
 }
 
 /* ---------- calibration ---------- */
@@ -203,23 +307,31 @@ function wireCalibration() {
   for (const btn of document.querySelectorAll('[data-save]')) {
     btn.onclick = async () => {
       const key = btn.dataset.save;
-      const note = $('calnote');
       btn.disabled = true;
       try {
         const r = await fetch('/api/calibration', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ [key]: Number($(key).value) }),
         });
-        note.textContent = r.ok
-          ? `Saved ${key} at ${new Date().toLocaleTimeString()}`
-          : `Could not save ${key}: ${await r.text()}`;
-      } catch (e) { note.textContent = `Could not save ${key}: ${e}`; }
+        r.ok ? toast(`Saved ${key}`) : toast(await r.text(), true);
+      } catch (e) { toast(String(e), true); }
       finally { btn.disabled = false; }
     };
   }
 }
 
 /* ---------- stream ---------- */
+
+function paintDot(faceRunning) {
+  dot.className = 'dot ' + (connected ? 'on' : 'off');
+  statustext.textContent = connected ? 'live' : 'offline';
+  if (faceRunning !== undefined) {
+    $('status').title = connected
+      ? (faceRunning ? 'connected · face running'
+                     : 'connected · face process not running')
+      : 'not connected';
+  }
+}
 
 function connect() {
   const es = new EventSource('/api/stream');
@@ -230,35 +342,30 @@ function connect() {
   };
 }
 
-function paintDot(faceRunning) {
-  dot.className = 'dot ' + (connected ? 'on' : 'off');
-  if (faceRunning !== undefined) {
-    dot.title = connected
-      ? (faceRunning ? 'connected \u00b7 face running'
-                     : 'connected \u00b7 face process not running')
-      : 'not connected';
-  }
-}
-
 async function heartbeat() {
   let s;
   try { s = await (await fetch('/api/state')).json(); }
   catch { connected = false; paintDot(); return; }
   setActive(s.mood);
   paintDot(s.face_running);
-  // Cameras are hot-pluggable, so remount when one appears or disappears
-  // rather than making the page reload to notice.
-  const cams = s.cameras || {};
-  for (const which of ['up', 'down']) {
-    const now = !!cams[which]?.available;
-    if (now !== camState[which]) mountCam(which, 'box-' + which, now);
-  }
+  applyCams(s.cameras || {});     // picks up hot-plugs and other viewers
+}
+
+/* ---------- panes (phone) ---------- */
+
+function showPane(id) {
+  for (const p of ['pane-logs', 'pane-robot'])
+    $(p).classList.toggle('show', p === id);
+  for (const t of document.querySelectorAll('.tab'))
+    t.classList.toggle('active', t.dataset.pane === id);
+  store.set('friday.pane', id);
 }
 
 /* ---------- boot ---------- */
 
 (async function init() {
   buildFilters();
+  wireCams();
   await buildMoods();
   await loadCalibration();
   wireCalibration();
@@ -266,12 +373,20 @@ async function heartbeat() {
   let state = {};
   try { state = await (await fetch('/api/state')).json(); } catch {}
   const cams = state.cameras || {};
-  mountCam('up', 'box-up', cams.up?.available);
-  mountCam('down', 'box-down', cams.down?.available);
+  for (const which of ['up', 'down']) {
+    cam[which] = { present: !!cams[which]?.present,
+                   enabled: cams[which]?.enabled !== false };
+    paintToggle(which);
+    renderCam(which);
+  }
   setActive(state.mood);
 
   connect();
   setInterval(heartbeat, 4000);
+
+  showPane(store.get('friday.pane', 'pane-logs'));
+  for (const t of document.querySelectorAll('.tab'))
+    t.onclick = () => showPane(t.dataset.pane);
 
   // Pause auto-scroll while reading; resume on leave or when scrolled to end.
   log.addEventListener('mouseenter', () => { autoscroll = false; });
@@ -282,8 +397,10 @@ async function heartbeat() {
   });
 
   $('btn-clear').onclick = async () => {
-    await fetch('/api/clear', { method: 'POST' });
-    log.innerHTML = '<p class="empty">Cleared.</p>';
+    try { await fetch('/api/clear', { method: 'POST' }); } catch {}
+    log.innerHTML = `<div class="empty"><span class="pulse"></span>
+      <p>Cleared</p><small>New events will appear here.</small></div>`;
+    toast('Log cleared');
   };
 
   if ('serviceWorker' in navigator) {

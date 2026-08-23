@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#08090c">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Friday">
 <title>Friday · Live Logs</title>
@@ -15,60 +16,113 @@
 </head>
 <body>
 
-<header>
-  <span class="dot" id="dot"></span>
-  <span class="brand">Friday<span class="sep">·</span><span class="sub">Live Logs</span></span>
-  <span class="spacer"></span>
-  <button class="hbtn" id="btn-clear">Clear</button>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"><i></i><i></i><b></b></span>
+    <span class="wordmark">Friday<span class="sep">·</span><span class="sub">Live Logs</span></span>
+  </div>
+  <div class="topright">
+    <span class="status" id="status" title="stream status">
+      <span class="dot" id="dot"></span><span id="statustext">connecting</span>
+    </span>
+    <button class="ghost" id="btn-clear" title="Clear the log">Clear</button>
+  </div>
 </header>
 
 <div class="wrap">
-  <aside>
-    <p class="camlabel">Up Cam</p>
-    <div class="cambox" id="box-up"></div>
 
-    <p class="camlabel">Down Cam</p>
-    <div class="cambox" id="box-down"></div>
+  <aside id="pane-robot">
 
-    <p class="section">Face Mood</p>
-    <div class="moods" id="moods"></div>
-
-    <details class="calib">
-      <summary>Calibration</summary>
-      <div class="calib-body">
-        <div class="calrow">
-          <label for="move_speed">Default move speed</label>
-          <input type="number" id="move_speed" min="0" max="255" step="1">
-          <button data-save="move_speed">Save</button>
-        </div>
-        <div class="calrow">
-          <label for="turn_speed">Default turn speed</label>
-          <input type="number" id="turn_speed" min="0" max="255" step="1">
-          <button data-save="turn_speed">Save</button>
-        </div>
-        <div class="calrow">
-          <label for="forward_cm_per_s">Forward calibration (cm/s)</label>
-          <input type="number" id="forward_cm_per_s" min="0" step="0.1">
-          <button data-save="forward_cm_per_s">Save</button>
-        </div>
-        <div class="calrow">
-          <label for="turn_deg_per_s">Turn calibration (deg/s)</label>
-          <input type="number" id="turn_deg_per_s" min="0" step="0.1">
-          <button data-save="turn_deg_per_s">Save</button>
-        </div>
-        <p class="calnote" id="calnote">Saved to state/calibration.json — motor
-          code reads it per command, so no restart is needed.</p>
+    <section class="panel">
+      <div class="panelhead">
+        <h2>Up Cam</h2>
+        <button class="toggle" id="tg-up" data-cam="up" role="switch"
+                aria-checked="false"><span class="knob"></span></button>
       </div>
-    </details>
+      <div class="cambox" id="box-up"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panelhead">
+        <h2>Down Cam</h2>
+        <button class="toggle" id="tg-down" data-cam="down" role="switch"
+                aria-checked="false"><span class="knob"></span></button>
+      </div>
+      <div class="cambox" id="box-down"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panelhead">
+        <h2>Face Mood</h2>
+        <span class="badge" id="moodnow">—</span>
+      </div>
+      <div class="moods" id="moods"></div>
+    </section>
+
+    <section class="panel">
+      <details class="calib">
+        <summary>
+          <span class="chev" aria-hidden="true"></span>
+          <h2>Calibration</h2>
+        </summary>
+        <div class="calib-body">
+          <div class="calrow">
+            <label for="move_speed">Default move speed</label>
+            <div class="calfield">
+              <input type="number" id="move_speed" min="0" max="255" step="1">
+              <button data-save="move_speed">Save</button>
+            </div>
+          </div>
+          <div class="calrow">
+            <label for="turn_speed">Default turn speed</label>
+            <div class="calfield">
+              <input type="number" id="turn_speed" min="0" max="255" step="1">
+              <button data-save="turn_speed">Save</button>
+            </div>
+          </div>
+          <div class="calrow">
+            <label for="forward_cm_per_s">Forward calibration <span>cm/s</span></label>
+            <div class="calfield">
+              <input type="number" id="forward_cm_per_s" min="0" step="0.1">
+              <button data-save="forward_cm_per_s">Save</button>
+            </div>
+          </div>
+          <div class="calrow">
+            <label for="turn_deg_per_s">Turn calibration <span>deg/s</span></label>
+            <div class="calfield">
+              <input type="number" id="turn_deg_per_s" min="0" step="0.1">
+              <button data-save="turn_deg_per_s">Save</button>
+            </div>
+          </div>
+          <p class="calnote" id="calnote">Written to <code>state/calibration.json</code>.
+            Motor code reads it per command, so nothing needs restarting.</p>
+        </div>
+      </details>
+    </section>
+
   </aside>
 
-  <main>
-    <div class="filters" id="filters"></div>
+  <main id="pane-logs">
+    <div class="filterbar">
+      <div class="filters" id="filters"></div>
+    </div>
     <div class="log" id="log">
-      <p class="empty">Waiting for Friday…</p>
+      <div class="empty">
+        <span class="pulse"></span>
+        <p>Waiting for Friday</p>
+        <small>Events appear here the moment Friday thinks or acts.</small>
+      </div>
     </div>
   </main>
+
 </div>
+
+<nav class="tabbar" id="tabbar">
+  <button class="tab active" data-pane="pane-logs">Logs</button>
+  <button class="tab" data-pane="pane-robot">Robot</button>
+</nav>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="/static/app.js"></script>
 </body>

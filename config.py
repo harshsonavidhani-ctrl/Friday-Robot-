@@ -62,6 +62,11 @@ CAM_DOWN = None              # floor / cliff / optical flow, above bumper
 # The "Generic HD camera" (349c:2317) dropped off the USB bus on 2026-08-20;
 # re-verified present and MJPG-capable on 2026-08-23. Vision code must still
 # treat a second camera as OPTIONAL and degrade cleanly when it is absent.
+# This camera has re-enumerated with different USB descriptor strings before
+# ("HD camera" instead of "Generic HD camera"), which renames its by-id
+# symlink. dashboard/cameras.py therefore treats this as a preference, not a
+# requirement: if the path is missing it takes any other by-id capture node
+# that is not the C270. So a rename or a re-plug fixes itself.
 CAM_SECOND = "/dev/v4l/by-id/usb-Generic_HD_camera_20181212000000-video-index0"
 CAM_SECOND_MAX = (640, 480)  # MJPG
 
@@ -116,6 +121,9 @@ FACE_FPS = 30
 DASHBOARD_HOST = "0.0.0.0"
 DASHBOARD_PORT = 8443
 DASHBOARD_HTTP_PORT = 8080       # plain HTTP, for localhost / first setup
+# The local CA that signs DASHBOARD_CERT. Install it on a phone once and the
+# browser stops calling the dashboard insecure. Served at /ca.crt.
+DASHBOARD_CA_CERT = ROOT / "certs" / "friday-ca.crt"
 DASHBOARD_CERT = ROOT / "certs" / "dashboard.crt"
 DASHBOARD_KEY = ROOT / "certs" / "dashboard.key"
 
