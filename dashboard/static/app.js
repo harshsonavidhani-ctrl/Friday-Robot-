@@ -184,6 +184,79 @@ async function buildMoods() {
   }
 }
 
+/* ---------- drive ----------
+   Nothing here decides whether a move is safe. Every button POSTs to
+   /api/motor, which calls the friday-robot MCP server, which runs the
+   clearance check and the duration cap. A refusal comes back as a normal
+   200 with an honest sentence in it -- that is a working robot, not an
+   error, so it is shown as a note rather than as a failure. */
+
+const DRIVE_STEPS = [0.3, 0.6, 1.0];
+let driveStep = 0.6;
+let driveBusy = false;
+
+function buildDrive() {
+  const seg = $('stepseg');
+  if (!seg) return;
+  seg.innerHTML = '';
+  for (const secs of DRIVE_STEPS) {
+    const b = document.createElement('button');
+    b.className = 'seg' + (secs === driveStep ? ' on' : '');
+    b.textContent = secs + 's';
+    b.onclick = () => {
+      driveStep = secs;
+      for (const o of seg.querySelectorAll('.seg'))
+        o.classList.toggle('on', o === b);
+    };
+    seg.appendChild(b);
+  }
+
+  for (const b of document.querySelectorAll('.dbtn'))
+    b.onclick = () => drive(b.dataset.dir, b);
+
+  const speed = $('drivespeed');
+  if (speed) {
+    speed.oninput = () => { $('speedval').textContent = speed.value + '%'; };
+    speed.onchange = async () => {
+      try {
+        const r = await fetch('/api/motor/speed', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ percent: Number(speed.value) }),
+        });
+        const j = await r.json();
+        note(j.result, !r.ok);
+      } catch (e) { note(String(e), true); }
+    };
+  }
+}
+
+function note(text, bad) {
+  const el = $('drivenote');
+  if (el) { el.textContent = text; el.classList.toggle('bad', !!bad); }
+  $('drivestate').textContent = bad ? 'error' : 'ok';
+}
+
+async function drive(direction, button) {
+  // STOP must never be blocked by an in-flight move -- that is the one
+  // button whose whole purpose is to interrupt.
+  if (driveBusy && direction !== 'stop') return;
+  if (direction !== 'stop') driveBusy = true;
+  button && button.classList.add('firing');
+  try {
+    const r = await fetch('/api/motor', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ direction, seconds: driveStep }),
+    });
+    const j = await r.json();
+    note(j.result, !r.ok);
+  } catch (e) {
+    note(String(e), true);
+  } finally {
+    driveBusy = false;
+    button && button.classList.remove('firing');
+  }
+}
+
 function setActive(mood) {
   if (mood === activeMood) return;
   activeMood = mood;
@@ -352,6 +425,7 @@ function showPane(id) {
   buildFilters();
   wireCams();
   await buildMoods();
+  buildDrive();
   await loadCalibration();
   wireCalibration();
 

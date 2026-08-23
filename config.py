@@ -219,6 +219,14 @@ DASHBOARD_CAM_QUALITY = 6        # ffmpeg -q:v, only used if a re-encode is
 # How many recent events a newly-connected browser is replayed.
 DASHBOARD_HISTORY = 300
 
+# How long the dashboard waits on an MCP tool call before giving up. Generous
+# because a move tool blocks for the whole duration of the move.
+DASHBOARD_ROBOT_TIMEOUT_S = 15.0
+
+# Manual drive presets offered in the dashboard's motor panel, in seconds.
+# Short on purpose -- a tap should nudge, not launch.
+DASHBOARD_MOTOR_STEPS = (0.3, 0.6, 1.0)
+
 # Motor calibration the dashboard panel edits. Written to state/, NOT to
 # this file, so config stays declarative and the values survive edits here.
 CALIBRATION_FILE = ROOT / "state" / "calibration.json"

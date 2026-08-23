@@ -96,7 +96,12 @@ BLINK_MIN_INTERVAL = 2.0
 BLINK_MAX_INTERVAL = 6.0
 BLINK_DURATION = 0.16
 WINK_PERIOD_S = 3.0               # one full wink of the right eye
-POLL_S = 0.25                     # how often the state files are checked
+POLL_S = 0.08                     # how often the state files are checked.
+                                  # It is an os.stat on two small files, so
+                                  # this is nearly free -- and at 0.25 the
+                                  # dashboard felt laggy, because the worst
+                                  # case was a 0.25s wait plus the 0.28s
+                                  # cross-fade before anything moved.
 DEMO_HOLD_S = 2.6                 # --demo dwell per emotion
 
 # --- yawn overlay ----------------------------------------------------

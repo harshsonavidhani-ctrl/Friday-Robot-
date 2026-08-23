@@ -60,6 +60,35 @@
     </section>
 
     <section class="panel">
+      <div class="panelhead">
+        <h2>Drive</h2>
+        <span class="badge" id="drivestate">—</span>
+      </div>
+      <div class="drive">
+        <!-- Every button here goes through the friday-robot MCP server, so
+             manual driving obeys the same clearance interrupt and duration
+             cap as the brain does. There is no "manual override". -->
+        <div class="dpad">
+          <button class="dbtn up"    data-dir="forward"  aria-label="Forward">▲</button>
+          <button class="dbtn left"  data-dir="left"     aria-label="Turn left">◀</button>
+          <button class="dbtn stop"  data-dir="stop"     aria-label="Stop">STOP</button>
+          <button class="dbtn right" data-dir="right"    aria-label="Turn right">▶</button>
+          <button class="dbtn down"  data-dir="backward" aria-label="Backward">▼</button>
+        </div>
+        <div class="driverow">
+          <label>Step</label>
+          <div class="segmented" id="stepseg"></div>
+        </div>
+        <div class="driverow">
+          <label for="drivespeed">Speed <span id="speedval">60%</span></label>
+          <input type="range" id="drivespeed" min="10" max="100" step="5" value="60">
+        </div>
+        <p class="drivenote" id="drivenote">Tap a direction to nudge Friday.
+          Forward stops automatically if anything is close.</p>
+      </div>
+    </section>
+
+    <section class="panel">
       <details class="calib">
         <summary>
           <span class="chev" aria-hidden="true"></span>

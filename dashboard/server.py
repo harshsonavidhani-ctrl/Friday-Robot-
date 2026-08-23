@@ -17,10 +17,13 @@ Serves:
     GET  /cam/up  /cam/down    multipart MJPEG
     GET  /ca.crt               the local CA, to install on a phone once
     POST /api/camera/{which}   {"on": false} -> switch a camera off
+    POST /api/motor            {"direction": "forward", "seconds": 0.5}
     GET  /ca.crt               Friday's CA, to install on the phone once
 
 Nothing here talks to the robot directly except through face_control, which
-is the same file everything else uses to drive the face.
+is the same file everything else uses to drive the face. MOTORS in particular
+go through the friday-robot MCP server (dashboard/robot.py), never through a
+serial port opened here -- see that file for why.
 """
 
 from __future__ import annotations
@@ -37,6 +40,8 @@ import time
 from pathlib import Path
 
 from aiohttp import web
+
+from dashboard import robot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -141,6 +146,62 @@ async def api_mood(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text=str(exc))
     return web.json_response({"ok": True, "mood": face_control.get_emotion(),
                               "played": written})
+
+
+# --- motors ----------------------------------------------------------
+#
+# Deliberately thin. Every limit -- speed cap, duration cap, the clearance
+# interrupt that stops a forward move a few centimetres short of something --
+# lives in the MCP server, so manual control from a phone is governed by
+# exactly the same rules as the brain. Nothing is re-implemented here, because
+# a second copy of a safety rule is a second chance to get it wrong.
+
+MOTOR_DIRECTIONS = ("forward", "backward", "left", "right", "stop")
+
+
+async def api_motor(request: web.Request) -> web.Response:
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+
+    direction = str(payload.get("direction", "")).strip().lower()
+    if direction not in MOTOR_DIRECTIONS:
+        raise web.HTTPBadRequest(
+            text=f"direction must be one of {', '.join(MOTOR_DIRECTIONS)}")
+
+    try:
+        if direction == "stop":
+            result = await robot.call("stop")
+        else:
+            seconds = float(payload.get("seconds", 0.5))
+            result = await robot.call("move", {
+                "direction": direction,
+                "duration_seconds": seconds,
+            })
+    except robot.RobotUnavailable as exc:
+        # 503, not 500: the dashboard is fine, the robot's server is not, and
+        # the UI says so rather than showing a generic failure.
+        return web.json_response({"ok": False, "result": str(exc)}, status=503)
+    except (TypeError, ValueError) as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+
+    # A refusal ("something is 117 mm ahead") is a SUCCESSFUL call with an
+    # honest answer, not an HTTP error. The UI shows the sentence either way.
+    return web.json_response({"ok": True, "result": result})
+
+
+async def api_motor_speed(request: web.Request) -> web.Response:
+    try:
+        payload = await request.json()
+        percent = int(payload.get("percent"))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        raise web.HTTPBadRequest(text='body must be {"percent": 1-100}')
+    try:
+        result = await robot.call("set_speed", {"percent": percent})
+    except robot.RobotUnavailable as exc:
+        return web.json_response({"ok": False, "result": str(exc)}, status=503)
+    return web.json_response({"ok": True, "result": result})
 
 
 # --- calibration -----------------------------------------------------
@@ -277,6 +338,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/calibration", api_calibration_post)
     app.router.add_get("/cam/{which}", cam_stream)
     app.router.add_post("/api/camera/{which}", api_camera)
+    app.router.add_post("/api/motor", api_motor)
+    app.router.add_post("/api/motor/speed", api_motor_speed)
 
     async def index(_request: web.Request) -> web.StreamResponse:
         return web.FileResponse(STATIC / "index.html")

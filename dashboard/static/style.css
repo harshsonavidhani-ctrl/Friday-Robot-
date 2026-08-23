@@ -120,9 +120,18 @@ aside{
   background:var(--bg2);
   padding:14px;
   padding-left:max(14px,env(safe-area-inset-left));
+  padding-bottom:max(14px,env(safe-area-inset-bottom));
   overflow-y:auto;
+  -webkit-overflow-scrolling:touch;   /* momentum scrolling on iOS */
+  overscroll-behavior:contain;        /* don't rubber-band the whole page */
   display:flex;flex-direction:column;gap:12px;
 }
+/* Flex children default to flex-shrink:1, so a tall sidebar SQUASHED its
+   panels instead of scrolling -- and .panel{overflow:hidden} clipped what was
+   squashed out. That is what hid every emotion past the third row. Panels
+   keep their natural height and the sidebar scrolls, which is what was
+   intended all along. */
+aside > *{flex:none}
 
 main{display:flex;flex-direction:column;min-width:0;min-height:0}
 
@@ -138,6 +147,7 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0}
   display:flex;align-items:center;gap:10px;
   padding:10px 12px;
   border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:2;   /* the label stays put while you scroll */
   background:linear-gradient(180deg,var(--panel2),var(--panel));
 }
 .panelhead h2{flex:1;min-width:0}
@@ -381,7 +391,8 @@ details.fold summary:hover{color:var(--dim)}
   aside,main{grid-column:1;grid-row:1}
   aside:not(.show),main:not(.show){display:none}
   .moods{grid-template-columns:repeat(4,1fr)}
-  .mood{padding:11px 3px}
+  .mood{padding:13px 3px;font-size:10.5px}
+  .dbtn{min-height:54px}
 
   .tabbar{
     display:grid;grid-template-columns:1fr 1fr;gap:6px;
@@ -403,4 +414,91 @@ details.fold summary:hover{color:var(--dim)}
   .moods{grid-template-columns:repeat(3,1fr)}
   .wordmark .sub,.wordmark .sep{display:none}
   body{font-size:12.5px}
+}
+
+
+/* ---------- drive ----------
+   Manual control. Every button here calls the MCP server, so it is governed
+   by the same clearance interrupt as the brain -- there is no override. The
+   STOP key is deliberately the biggest, warmest thing on the panel. */
+
+.drive{padding:12px;display:flex;flex-direction:column;gap:12px}
+
+.dpad{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  grid-template-areas:
+    ".    up    ."
+    "left stop  right"
+    ".    down  .";
+  gap:6px;
+}
+.dbtn{
+  border:1px solid var(--line2);
+  background:var(--panel2);
+  color:var(--text);
+  border-radius:var(--r-sm);
+  /* 46px: a thumb target, not a mouse target. This gets used on a phone. */
+  min-height:46px;
+  font-size:15px;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .12s,border-color .12s,transform .06s;
+  -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;          /* no 300ms double-tap delay */
+}
+.dbtn:hover{border-color:var(--accent-dim)}
+.dbtn:active{transform:scale(.95);background:var(--line)}
+.dbtn.firing{border-color:var(--accent);color:var(--accent)}
+.dbtn.up{grid-area:up}
+.dbtn.down{grid-area:down}
+.dbtn.left{grid-area:left}
+.dbtn.right{grid-area:right}
+.dbtn.stop{
+  grid-area:stop;
+  background:rgba(255,95,109,.12);
+  border-color:#5c2630;
+  color:#ffd2d6;
+  font-size:11px;font-weight:700;letter-spacing:.12em;
+}
+.dbtn.stop:active{background:rgba(255,95,109,.26)}
+
+.driverow{display:flex;align-items:center;gap:10px;justify-content:space-between}
+.driverow label{
+  font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--faint);white-space:nowrap;
+}
+.driverow label span{color:var(--accent);letter-spacing:0}
+
+.segmented{display:flex;gap:4px;background:var(--bg2);
+  border:1px solid var(--line);border-radius:var(--r-sm);padding:3px}
+.seg{
+  border:none;background:transparent;color:var(--dim);
+  padding:6px 11px;border-radius:6px;font-size:11px;
+  transition:background .12s,color .12s;
+  touch-action:manipulation;
+}
+.seg.on{background:var(--panel2);color:var(--accent);font-weight:700}
+
+#drivespeed{
+  flex:1;min-width:0;accent-color:var(--accent);height:26px;
+}
+
+.drivenote{
+  margin:0;font-size:10px;line-height:1.7;color:var(--faint);
+  /* Reserve two lines so the panel does not jump every time the robot
+     answers with a longer refusal than the last one. */
+  min-height:2.6em;
+}
+.drivenote.bad{color:#ffd2d6}
+
+/* ---------- app-like touches ---------- */
+
+/* Nothing on a touch screen should show a text cursor or be selectable by a
+   long press -- that is the tell that a web page is not an app. The log is
+   the exception: you want to copy from it. */
+button,.tab,.seg,.mood,.dbtn{user-select:none;-webkit-user-select:none}
+.log,.log *{user-select:text;-webkit-user-select:text}
+
+@media (prefers-reduced-motion:reduce){
+  *{transition-duration:.01ms !important;animation-duration:.01ms !important}
 }
