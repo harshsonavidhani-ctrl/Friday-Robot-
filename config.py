@@ -30,16 +30,65 @@ MAX_REPLY_SENTENCES = 3
 ENABLE_WEB_SEARCH = True
 ENABLE_PROMPT_CACHING = True
 
+# Spoken replies are 1-3 sentences, so this is small on purpose -- it is a
+# ceiling against runaway output, not a target.
+MAX_REPLY_TOKENS = 2048
+
+# Effort controls how hard the model thinks. "low" suits a companion robot
+# answering conversationally; raise it if Friday starts giving shallow answers
+# to things that deserve thought.
+BRAIN_EFFORT = "low"
+
+# How many rounds of tool-calling one turn may take before giving up. Enough
+# for scan -> move -> scan -> speak, not enough to loop forever spending money.
+MAX_TOOL_ROUNDS = 8
+
+# Messages of history kept. Friday is a companion, not a research assistant:
+# old turns cost money on every request. Trimmed from the front so the cached
+# system+tools prefix survives.
+BRAIN_HISTORY_MESSAGES = 20
+
+WEB_SEARCH_MAX_USES = 3
+
 # Cost safety — the brain must refuse to spend past this in a single day.
 DAILY_SPEND_CAP_USD = 2.00
 COST_LOG = LOG_DIR / "spend.jsonl"
 
 # --- Voice pipeline ------------------------------------------------------
 WAKE_WORD_MODEL = MODEL_DIR / "friday.onnx"  # openWakeWord, custom-trained
-WAKE_THRESHOLD = None        # TODO: tune on the real mic, in real room noise
+WAKE_THRESHOLD = None        # TODO(step 2): tune on the real mic, in real room
+                             # noise. Unused until openWakeWord is wired in.
+
+# Which trigger starts a turn: "enter" (press Enter), "voice" (the word
+# "friday" in a short transcript), or "both".
+#
+# "both" is the default deliberately. The voice path is a Step 1 STOPGAP and it
+# is DEAF WHILE IT TRANSCRIBES, so it drops wakes -- exactly the
+# record-transcribe-check loop CLAUDE.md warns about. Keeping Enter alive
+# alongside it means there is always a way in when it misses. openWakeWord
+# replaces the voice half in Step 2.
+WAKE_SOURCE = "both"
+WAKE_WINDOW_S = 4.0          # longest single wake-listen pass
+WAKE_POLL_TIMEOUT_S = 3.0    # how long a pass waits for any speech at all
 STT_MODEL = "base"           # faster-whisper
 STT_COMPUTE_TYPE = "int8"
-VAD_SILENCE_MS = None        # TODO: tune — how much silence ends an utterance
+STT_BEAM_SIZE = 1            # 1 is greedy: fastest, and on a Pi that matters
+                             # far more than the small accuracy gain from 5
+STT_LANGUAGE = None          # None = auto-detect. Harsh mixes Hindi and
+                             # English, so pinning "en" would mangle "aage jao"
+
+# Endpointing. VAD_SILENCE_MS is how long a pause has to last before Friday
+# decides Harsh has finished. Too short and it interrupts him mid-sentence;
+# too long and it feels slow to answer. 700 ms is a normal conversational gap.
+VAD_SILENCE_MS = 700
+VAD_AGGRESSIVENESS = 2       # webrtcvad 0-3; 3 is most aggressive at calling
+                             # things noise, which drops quiet speech
+VAD_START_FRAMES = 3         # consecutive 30 ms voiced frames before Friday
+                             # believes speech started — one frame is a cough
+VAD_PREROLL_MS = 300         # audio kept from BEFORE speech was detected, so
+                             # the first syllable is not clipped off
+MAX_UTTERANCE_S = 20.0       # hard ceiling on one utterance
+LISTEN_START_TIMEOUT_S = 8.0 # give up if nobody speaks after waking
 # Downloaded 2026-08-23 into assets/models/ (gitignored, fetched with
 # `python -m piper.download_voices --download-dir assets/models/piper NAME`).
 #
@@ -54,7 +103,23 @@ TTS_TIMEOUT_S = 20           # a wedged audio device must not freeze the robot
 # Speaking rate as a multiplier: 1.0 is the voice's natural pace, higher is
 # faster. tts.py converts this to Piper's inverse length_scale.
 TTS_SPEED = 1.15
-TTS_VOLUME = 1.0             # 0.0-1.0+; raise if Friday is hard to hear
+TTS_VOLUME = 1.0             # per-stream software gain. Leave at 1.0 -- above
+                             # that it clips rather than getting louder. If
+                             # Friday is quiet, the two settings below are the
+                             # ones that actually matter.
+
+# THE SPEAKER LEVELS. Friday was barely audible because these two INDEPENDENT
+# attenuations multiplied: the pipewire sink sat at 0.40 and the USB card's own
+# hardware gain at 15/30 (-22.5 dB), which is ~20% together. Both are runtime
+# levels that reset, so tts.set_output_volume() asserts them at start-up.
+SPEAKER_SINK_VOLUME = 1.0    # pipewire sink, 0.0-1.0
+SPEAKER_ALSA_CARD = "Device" # the GeneralPlus USB card, BY NAME not index.
+                             # Card indices shift when a USB device drops off
+                             # the bus -- the same reason MIC_DEVICE and the
+                             # camera paths are not indices either. Verified:
+                             # `amixer -c Device sget Speaker` works.
+SPEAKER_ALSA_CONTROL = "Speaker"   # None disables the ALSA step entirely
+SPEAKER_ALSA_PERCENT = 100
 
 # --- Audio devices -------------------------------------------------------
 # GeneralPlus USB soundcard (1b3f:2008) — carries BOTH the shotgun mic in and

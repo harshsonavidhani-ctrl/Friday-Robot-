@@ -95,6 +95,55 @@ def voice():
         return _voice
 
 
+def set_output_volume() -> str:
+    """Turn the speaker up to the level config asks for.
+
+    WHY THIS EXISTS. Friday was barely audible, and the cause was two
+    INDEPENDENT attenuations multiplying: the pipewire sink sat at 0.40 and the
+    USB card's own ALSA gain sat at 15/30 (-22.5 dB). Together that is about
+    20% — and no amount of TTS_VOLUME fixes it, because software gain above 1.0
+    only clips. Both are runtime levels that reset, so Friday asserts them at
+    start-up rather than relying on anyone having set them by hand.
+
+    Turning a volume knob, not touching audio routing or any system config.
+    Best-effort: a failure here must never stop Friday from talking.
+    """
+    environment = dict(os.environ)
+    environment.setdefault("XDG_RUNTIME_DIR", config.AUDIO_RUNTIME_DIR)
+    done = []
+
+    if shutil.which("wpctl"):
+        try:
+            # @DEFAULT_AUDIO_SINK@ rather than a node id: ids are assigned at
+            # enumeration and change when a USB device drops off the bus.
+            subprocess.run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@",
+                            str(config.SPEAKER_SINK_VOLUME)],
+                           check=True, capture_output=True, env=environment,
+                           timeout=5)
+            subprocess.run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"],
+                           check=True, capture_output=True, env=environment,
+                           timeout=5)
+            done.append(f"sink {config.SPEAKER_SINK_VOLUME}")
+        except Exception as exc:                    # noqa: BLE001
+            log.warning("could not set the pipewire sink volume: %s", exc)
+
+    if shutil.which("amixer") and config.SPEAKER_ALSA_CONTROL:
+        try:
+            subprocess.run(
+                ["amixer", "-c", str(config.SPEAKER_ALSA_CARD), "sset",
+                 config.SPEAKER_ALSA_CONTROL,
+                 f"{config.SPEAKER_ALSA_PERCENT}%", "unmute"],
+                check=True, capture_output=True, timeout=5)
+            done.append(f"{config.SPEAKER_ALSA_CONTROL} "
+                        f"{config.SPEAKER_ALSA_PERCENT}%")
+        except Exception as exc:                    # noqa: BLE001
+            log.warning("could not set the ALSA hardware gain: %s", exc)
+
+    result = ", ".join(done) or "no mixer available"
+    log.info("output volume: %s", result)
+    return result
+
+
 def preload() -> threading.Thread:
     """Start loading the voice in the background. Returns immediately.
 
@@ -103,6 +152,7 @@ def preload() -> threading.Thread:
     """
     def load() -> None:
         try:
+            set_output_volume()
             voice()
         except TTSError as exc:
             log.warning("TTS preload failed: %s", exc)
@@ -248,7 +298,13 @@ def main() -> int:
     ap.add_argument("--engine", action="store_true", help="report and exit")
     ap.add_argument("--bench", action="store_true",
                     help="time the load and the speech")
+    ap.add_argument("--volume", action="store_true",
+                    help="reassert the speaker volume and exit")
     args = ap.parse_args()
+
+    if args.volume:
+        print(set_output_volume())
+        return 0
 
     if args.engine:
         print(engine_name())

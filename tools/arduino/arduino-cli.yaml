@@ -1,0 +1,6 @@
+board_manager:
+    additional_urls: []
+directories:
+    data: /home/harsh/friday/tools/arduino/data
+    downloads: /home/harsh/friday/tools/arduino/downloads
+    user: /home/harsh/friday/tools/arduino/user
