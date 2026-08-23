@@ -65,9 +65,27 @@ SMALL_SHAPE_PX = 56               # below this, skip the material entirely
 # and chunky. Only neutral uses this -- every other mood keeps the square.
 NEUTRAL_EYE_W_MUL = 1.2
 
-# How wide the yawn's open mouth gets, as a fraction of ONE eye's width.
-# Measured off the reference photos.
-YAWN_OPEN_W_MUL = 0.7
+# Yawn geometry, measured shape by shape off the reference frames in the
+# order they were given. Each frame's shapes were normalised by that same
+# frame's eye width, so the camera's zoom cancels out:
+#
+#   rest  gap 0.68 x eye,  mouth 2.02 x 0.44
+#   mid   gap 0.42 x eye,  mouth 1.08 x 0.55,  eyes ~17% bigger
+#   peak  gap 0.33 x eye,  mouth 0.67 x 0.58,  eyes bigger again, and the
+#         mouth tucked right up under them
+#
+# So the face draws inward and swells -- it is not a mouth animation.
+YAWN_EYE_GROW = 1.35       # eye scale at full yawn (top edge stays put)
+YAWN_GAP_MUL = 0.33        # eye gap at full yawn, as a fraction of eye width
+YAWN_MOUTH_W_MUL = 0.67    # open mouth, as a fraction of the GROWN eye width
+YAWN_MOUTH_H_MUL = 0.58
+YAWN_MOUTH_CLEAR = 0.02    # clearance under the eyes, fraction of eye span
+YAWN_CORNER = 0.24         # corner radius of the open mouth
+# In the reference frames the mouth and the eye gap are ~74% of the way to
+# their final shape while the eyes are only ~49% grown -- the mouth draws in
+# early and the eyes keep swelling behind it. a ** this exponent reproduces
+# that split from a single 0..1 amount.
+YAWN_MOUTH_LEAD = 0.45
 
 # =====================================================================
 # TIMING — tune these
@@ -86,9 +104,9 @@ DEMO_HOLD_S = 2.6                 # --demo dwell per emotion
 # whatever emotion is showing, then returns to it. See play_yawn().
 # Paced like someone surfacing from sleep. Four seconds end to end -- this
 # is what plays once on every boot before the face settles to neutral.
-YAWN_IN_S = 1.50
-YAWN_HOLD_S = 1.10
-YAWN_OUT_S = 1.40
+YAWN_IN_S = 1.70
+YAWN_HOLD_S = 1.00
+YAWN_OUT_S = 1.30
 YAWN_TOTAL_S = YAWN_IN_S + YAWN_HOLD_S + YAWN_OUT_S
 
 # The real 7" HDMI TFT panel (EDID "Mediatrix Peripherals Inc MPI7002")
@@ -1079,31 +1097,44 @@ class FridayFace:
             self._mouth_bar(width=self.eye_span)
 
     def _draw_yawn(self, amount: float) -> None:
-        """Follows the reference photos: the EYES do not change -- they stay
-        the neutral squares the whole way through. Only the mouth moves,
-        drawing in from the wide neutral bar to a small open square and back
-        out again. (Earlier versions squeezed the eyes down to bars, which
-        the photos do not show.)"""
-        wide = int(self.eye_size * NEUTRAL_EYE_W_MUL)
-        blink = self._blink_factor()
-        y, h = self._blinked(self.eye_y, self.eye_size, blink)
-        cx = self.width // 2
-        for ex in (cx - self.eye_gap // 2 - wide, cx + self.eye_gap // 2):
-            with self._shape():
-                self._rect_eye(ex, y, wide, h)
+        """Rebuilt frame by frame off the reference photos, in their order.
 
-        # Mouth: wide flat bar -> open square. Sized off the eye width, not
-        # the eye height -- measured against the reference photos the open
-        # mouth is ~0.7 of one eye's width, which is a good deal bigger than
-        # the first attempt. Corners round off as it opens (the photos show
-        # a rounded square) and are square again at rest, so it still meets
-        # neutral's sharp bar exactly at amount 0.
-        open_px = wide * YAWN_OPEN_W_MUL
-        mw = _q(_lerp(self.eye_gap + 2 * wide, open_px, amount), 6)
-        mh = _q(_lerp(self.mouth_thin_h, open_px, amount), 6)
-        radius = int(min(mw, mh) * 0.22 * amount)
+        The whole face draws inward and swells: the eyes grow -- downward,
+        their top edge stays put -- and slide toward each other, while the
+        wide neutral bar narrows and thickens into a rounded square that ends
+        up tucked just under them. Animating only the mouth, as the earlier
+        version did, left the open mouth reading as tiny against a face that
+        never moved. Proportions are in the YAWN_* constants above.
+
+        At amount 0 this is pixel-identical to neutral, so the overlay can
+        start and end without a seam. No blink -- the photos show the eyes
+        wide open the whole way through.
+        """
+        a = amount
+        lead = a ** YAWN_MOUTH_LEAD    # mouth + eye gap run ahead of the eyes
+        cx = self.width // 2
+
+        wide = int(self.eye_size * NEUTRAL_EYE_W_MUL)
+        peak_w = wide * YAWN_EYE_GROW
+        peak_h = self.eye_size * YAWN_EYE_GROW
+        ew = _q(_lerp(wide, peak_w, a), 6)
+        eh = _q(_lerp(self.eye_size, peak_h, a), 6)
+        gap = _q(_lerp(self.eye_gap, peak_w * YAWN_GAP_MUL, lead), 6)
+
+        for ex in (cx - gap / 2 - ew, cx + gap / 2):
+            with self._shape():
+                self._rect_eye(ex, self.eye_y, ew, eh)
+
+        mw = _q(_lerp(self.eye_gap + 2 * wide,
+                      peak_w * YAWN_MOUTH_W_MUL, lead), 6)
+        mh = _q(_lerp(self.mouth_thin_h, peak_w * YAWN_MOUTH_H_MUL, lead), 6)
+        peak_cy = (self.eye_y + peak_h
+                   + (peak_w * YAWN_GAP_MUL + 2 * peak_w) * YAWN_MOUTH_CLEAR
+                   + peak_w * YAWN_MOUTH_H_MUL / 2)
+        cy = _lerp(self.mouth_y, peak_cy, lead)
+        radius = int(min(mw, mh) * YAWN_CORNER * lead)
         with self._shape():
-            self._round_rect_c(cx, self.mouth_y, mw, mh, radius)
+            self._round_rect_c(cx, cy, mw, mh, radius)
 
     # --- frame -------------------------------------------------------
 
