@@ -179,29 +179,45 @@ class ToF(_Poller):
 
     def _read_forever(self, port: serial.Serial) -> None:
         port.reset_input_buffer()
+        buf = bytearray()
         while not self._stop.is_set():
-            raw = port.readline()
-            if not raw:
+            # Chunked reads, NOT readline(). pyserial's readline() reads one
+            # byte per syscall; at 8 rows x 15 fps that is ~5400 syscalls a
+            # second and it measured 13% of a core on this Pi. Reading in
+            # blocks and splitting here costs almost nothing.
+            chunk = port.read(port.in_waiting or 1)
+            if not chunk:
                 continue
-            line = raw.decode(errors="replace").strip()
-            # "yN:d0,d1,...,d7,"  — the first line after a connect is usually
-            # a fragment, and has no "yN:" prefix. Dropping it is correct.
-            if not line.startswith("y") or ":" not in line:
-                continue
-            head, _, body = line.partition(":")
-            try:
-                row = int(head[1:])
-            except ValueError:
-                continue
-            values = [int(v) for v in body.split(",") if v.strip().isdigit()]
-            if row < 0 or row >= config.TOF_ROWS or len(values) != config.TOF_COLS:
-                continue
-            self._partial[row] = values
-            if len(self._partial) == config.TOF_ROWS:
-                frame = [self._partial[r] for r in range(config.TOF_ROWS)]
-                self._frame = frame
-                self._frame_at = time.monotonic()
-                self._partial = {}
+            buf.extend(chunk)
+            if len(buf) > 4096:             # a stream with no newlines
+                del buf[:-256]
+            while True:
+                cut = buf.find(b"\n")
+                if cut < 0:
+                    break
+                raw, buf = bytes(buf[:cut]), buf[cut + 1:]
+                self._ingest_line(raw)
+
+    def _ingest_line(self, raw: bytes) -> None:
+        """One "yN:d0,...,d7," line. A whole frame is TOF_ROWS of them."""
+        line = raw.decode(errors="replace").strip()
+        # The first line after a connect is usually a fragment joined
+        # mid-stream, and has no "yN:" prefix. Dropping it is correct.
+        if not line.startswith("y") or ":" not in line:
+            return
+        head, _, body = line.partition(":")
+        try:
+            row = int(head[1:])
+        except ValueError:
+            return
+        values = [int(v) for v in body.split(",") if v.strip().isdigit()]
+        if row < 0 or row >= config.TOF_ROWS or len(values) != config.TOF_COLS:
+            return
+        self._partial[row] = values
+        if len(self._partial) == config.TOF_ROWS:
+            self._frame = [self._partial[r] for r in range(config.TOF_ROWS)]
+            self._frame_at = time.monotonic()
+            self._partial = {}
 
     def latest(self, max_age_s: float = 1.0
                ) -> tuple[list[list[int]], float] | None:

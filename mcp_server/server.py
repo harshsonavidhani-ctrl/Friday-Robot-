@@ -86,6 +86,47 @@ def _setup_logging() -> None:
     )
 
 
+def _check() -> int:
+    """Report what hardware answered.
+
+    Asks the RUNNING service first. The serial devices allow one reader, so a
+    second process opening them reports "multiple access on port" and makes
+    present, working sensors look absent — which is exactly the wrong answer
+    from a diagnostic. Only when nothing is already serving does this open the
+    devices itself.
+    """
+    import asyncio
+
+    async def ask_running() -> dict[str, str] | None:
+        try:
+            from mcp import ClientSession
+            from mcp.client.streamable_http import streamable_http_client
+            async with streamable_http_client(config.MCP_HTTP_URL) as streams:
+                async with ClientSession(streams[0], streams[1]) as session:
+                    await session.initialize()
+                    result = await session.call_tool("get_status", {})
+                    import json
+                    status = json.loads(result.content[0].text)
+                    report = dict(status.get("hardware", {}))
+                    report["voice"] = status.get("voice", "?")
+                    return report
+        except Exception:                   # noqa: BLE001 - nothing running
+            return None
+
+    live = asyncio.run(ask_running())
+    if live is not None:
+        print(f"(from the running server at {config.MCP_HTTP_URL})\n")
+        for key, value in live.items():
+            print(f"{key:16} {value}")
+        return 0
+
+    print("(no server running — opening the devices directly)\n")
+    for key, value in hardware.startup().items():
+        print(f"{key:16} {value}")
+    hardware.shutdown()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Friday's robot MCP server.")
@@ -110,10 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.check:
-        for key, value in hardware.startup().items():
-            print(f"{key:16} {value}")
-        hardware.shutdown()
-        return 0
+        return _check()
 
     log.info("starting %s (%s)", config.MCP_SERVER_NAME,
              config.MCP_HTTP_URL if args.http else "stdio")
