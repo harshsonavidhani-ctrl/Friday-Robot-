@@ -184,6 +184,16 @@ class Motors:
         if reply != "OK":
             raise MotorError(f"stop -> {reply!r}")
 
+    def keepalive(self) -> None:
+        """Pet the Arduino's watchdog without changing the command.
+
+        A bare newline. Deliberately write-only: the firmware sends no reply
+        to a keepalive, so reading one back would block for the full serial
+        timeout and turn a 100 ms safety poll into a 1 s one.
+        """
+        with self._lock:
+            self._write("")
+
     # --- timed moves -------------------------------------------------
 
     def _run_for(self, left: float, right: float, seconds: float) -> None:
@@ -201,8 +211,7 @@ class Motors:
             while time.monotonic() < deadline:
                 time.sleep(min(KEEPALIVE_S, max(0.0,
                                                 deadline - time.monotonic())))
-                with self._lock:
-                    self._write("")          # bare newline pets the watchdog
+                self.keepalive()
         finally:
             self.stop()
 

@@ -1,0 +1,125 @@
+"""server.py — the friday-robot MCP server.
+
+The single doorway to Friday's body. Every physical capability is exposed here
+and nowhere else; the brain calls these tools and never touches a device. That
+is what makes safety.py's interrupt impossible to route around — there is no
+other path to the motors.
+
+Run it:
+    python -m mcp_server                 # stdio, the way the brain connects
+    python -m mcp_server --list          # what tools exist, and exit
+    python -m mcp_server --check         # what hardware answered, and exit
+
+Adding a tool: see mcp_server/registry.py, or the README. It is one decorated
+function in one file in mcp_server/tools/ — nothing here needs editing.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+
+from mcp.server.mcpserver import MCPServer
+
+import config
+from mcp_server import hardware, registry
+
+log = logging.getLogger("friday.mcp")
+
+INSTRUCTIONS = """
+Friday's body. These tools are the ONLY way to move, see, sense or speak.
+
+Before any movement, call scan_environment and read safe_directions. A value
+of null there means "no sensor could measure that direction" — it does not
+mean clear, and it is not safe to drive into.
+
+Movement is guarded by the server itself: forward moves stop automatically if
+something comes within the stop distance, durations are capped, and stop()
+interrupts a move already in progress. These limits cannot be disabled from
+here, and a move that was cut short says so in its result — report that
+honestly rather than assuming the move succeeded.
+
+Distances and angles are TIMED APPROXIMATIONS. These motors have no encoders.
+Say "about" and mean it.
+""".strip()
+
+
+def build_server() -> tuple[MCPServer, list[str]]:
+    """Create the server and register everything under mcp_server/tools/."""
+    modules = registry.load_tool_modules()
+    server = MCPServer(
+        name=config.MCP_SERVER_NAME,
+        instructions=INSTRUCTIONS,
+        version="0.1.0",
+    )
+    for invoke, name, description in registry.REGISTRY:
+        server.tool(
+            name=name,
+            description=description,
+            # Unstructured on purpose: every tool can return either its normal
+            # result or a plain error string, and a declared output schema
+            # would reject the error case exactly when it is most needed.
+            structured_output=False,
+        )(invoke)
+    log.info("registered %d tools from %d modules: %s",
+             len(registry.REGISTRY), len(modules), ", ".join(sorted(modules)))
+    return server, modules
+
+
+def _setup_logging() -> None:
+    config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+        handlers=[
+            # stderr, NEVER stdout: stdout is the MCP protocol channel and a
+            # stray log line there corrupts the session.
+            logging.StreamHandler(sys.stderr),
+            logging.FileHandler(config.LOG_DIR / "mcp_server.log"),
+        ],
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description="Friday's robot MCP server.")
+    ap.add_argument("--list", action="store_true",
+                    help="list the registered tools and exit")
+    ap.add_argument("--check", action="store_true",
+                    help="report what hardware answered and exit")
+    args = ap.parse_args(argv)
+
+    _setup_logging()
+    server, modules = build_server()
+
+    if args.list:
+        print(f"{config.MCP_SERVER_NAME}: {len(registry.REGISTRY)} tools "
+              f"from {', '.join(sorted(modules))}\n")
+        for _, name, description in sorted(registry.REGISTRY,
+                                           key=lambda item: item[1]):
+            print(f"  {name:16} {description.splitlines()[0]}")
+        return 0
+
+    if args.check:
+        for key, value in hardware.startup().items():
+            print(f"{key:16} {value}")
+        hardware.shutdown()
+        return 0
+
+    log.info("starting %s", config.MCP_SERVER_NAME)
+    for key, value in hardware.startup().items():
+        log.info("  %s: %s", key, value)
+    try:
+        server.run()                       # stdio transport
+    except KeyboardInterrupt:
+        log.info("interrupted")
+    finally:
+        # The motors are the part that can hurt. Stop them no matter how the
+        # server is going down.
+        hardware.shutdown()
+        log.info("stopped")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

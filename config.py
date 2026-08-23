@@ -40,7 +40,13 @@ WAKE_THRESHOLD = None        # TODO: tune on the real mic, in real room noise
 STT_MODEL = "base"           # faster-whisper
 STT_COMPUTE_TYPE = "int8"
 VAD_SILENCE_MS = None        # TODO: tune — how much silence ends an utterance
-TTS_VOICE = None             # TODO: choose a Piper voice, then pin it here
+# Downloaded 2026-08-23 into assets/models/ (gitignored — 63 MB, fetched with
+# `python -m piper.download_voices --download-dir assets/models/piper NAME`).
+# If this file is missing, tts.py falls back to espeak-ng rather than going
+# silent, so a fresh clone still talks, just badly.
+TTS_VOICE = MODEL_DIR / "piper" / "en_US-lessac-medium.onnx"
+TTS_TIMEOUT_S = 20           # a wedged audio device must not freeze the robot
+TTS_ESPEAK_WPM = 165         # espeak fallback pace; Piper ignores this
 
 # --- Audio devices -------------------------------------------------------
 # GeneralPlus USB soundcard (1b3f:2008) — carries BOTH the shotgun mic in and
@@ -111,6 +117,17 @@ CAM_SWAP_UP_DOWN = False
 # 0x54 header / 0x2C verlen / 12 points per 47-byte packet, ~9.9 Hz.
 LIDAR_PORT = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
 LIDAR_BAUD = 230400
+
+# Which RAW LiDAR bearing points at the robot's front. NOT MEASURED YET, and
+# None means exactly that: sensors.py refuses to name a direction rather than
+# guessing one, so scan_environment reports left/right/backward as "unknown"
+# instead of confidently wrong. The forward safety stop does not depend on
+# this -- it trusts the ToF, which is bolted to the bumper facing forward.
+#
+# To measure: put a box ~50 cm directly in front of the robot, run
+# `python sensors.py`, and note the bearing whose distance drops. Set that
+# number here and every direction lights up.
+LIDAR_FORWARD_DEG = None
 
 # DFRobot 8x8 ToF, bridged through a Raspberry Pi Pico over USB CDC.
 # NOT on I2C — /dev/i2c-1 is disabled and enabling it is off-limits (see
@@ -224,7 +241,16 @@ DECISION_LOG = ROOT / "state" / "decisions.sqlite3"
 
 # Where capture_image() writes. Gitignored -- these are runtime output.
 CAPTURE_DIR = ROOT / "state" / "captures"
-CAPTURE_KEEP = 200           # newest N kept; older ones deleted on write
+CAPTURE_KEEP = 200           # newest N kept; older ones deleted on write.
+                             # The SD card is what dies on this robot, so the
+                             # capture directory is never allowed to grow.
+CAPTURE_QUALITY = 85         # JPEG quality for saved dual-cam stitches
+
+# A USB webcam's first frame is taken before auto-exposure settles and comes
+# back near-black. Grab this many and keep the last. Measured on the C270:
+# one frame was unusable, ten is enough.
+CAM_WARMUP_FRAMES = 10
+CAM_TIMEOUT_S = 12           # a wedged camera must not hang a tool call
 
 # --- Motion safety -------------------------------------------------------
 # Enforced inside the MCP server, in code, on every movement -- before it
@@ -233,6 +259,8 @@ CAPTURE_KEEP = 200           # newest N kept; older ones deleted on write
 SAFETY_STOP_MM = 250         # stop this far short of anything ahead
 SAFETY_CAUTION_MM = 450      # below this, forward moves are capped slow
 SAFETY_POLL_S = 0.1          # how often clearance is re-checked mid-move
+CAUTION_SPEED_FACTOR = 0.5   # speed multiplier inside the caution band, so
+                             # the stop happens with less momentum to shed
 MAX_MOVE_SECONDS = 5.0       # longest single commanded move
 MAX_SPEED_PERCENT = 100      # set_speed ceiling; scales onto MOTOR_MAX_DUTY,
                              # so 100% is still only MOTOR_MAX_DUTY of full PWM
