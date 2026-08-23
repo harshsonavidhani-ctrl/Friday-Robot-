@@ -29,3 +29,18 @@ state/.emotion.*
 certs/
 state/calibration.json
 __pycache__/
+
+# Arduino toolchain — 429 MB of downloaded compiler and cores. Vendored INSIDE
+# the project (see tools/arduino-env.sh) so flashing needs no system package,
+# but it is a build tool, not source, and must not be committed. The small
+# env script and the sketch itself are.
+tools/arduino/
+tools/arduino-cli
+tools/arduino-cli.tar.gz
+
+# Runtime state, not source. The decision log is the record of what Friday DID
+# on THIS robot -- it grows forever and means nothing in a fresh clone.
+state/*.sqlite3
+state/*.sqlite3-shm
+state/*.sqlite3-wal
+state/captures/
