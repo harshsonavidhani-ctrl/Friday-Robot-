@@ -44,3 +44,9 @@ state/*.sqlite3
 state/*.sqlite3-shm
 state/*.sqlite3-wal
 state/captures/
+
+# arduino-cli's downloaded core and toolchain (~200 MB). The BINARY and the
+# env script are tracked; what they fetch is not.
+tools/arduino/
+tools/arduino-cli
+tools/arduino-cli.tar.gz
