@@ -235,8 +235,11 @@ function paintToggle(which) {
                 : `Turn the ${which} camera on`;
 }
 
-/* Apply a /api/state or /api/camera cameras block, redrawing only what
-   actually changed so a running stream is never torn down for no reason. */
+/* Apply a /api/state or /api/camera cameras block. The Pi is the authority on
+   both halves: `present` is whether the device is on the USB bus, `enabled` is
+   the switch -- keeping them apart is what lets the box say "switched off"
+   rather than "no signal". Redraw only what actually changed, so a running
+   stream is never torn down for no reason. */
 function applyCams(cams) {
   for (const which of ['up', 'down']) {
     const s = cams[which];
@@ -248,24 +251,6 @@ function applyCams(cams) {
       paintToggle(which);
       renderCam(which);
     }
-  }
-}
-
-/* The Pi is the authority on both halves: `present` is whether the device is
-   on the USB bus, `enabled` is the switch. Keeping them apart is what lets
-   the box say "switched off" rather than "no signal". */
-function applyCams(cams) {
-  if (!cams) return;
-  for (const which of ['up', 'down']) {
-    const c = cams[which];
-    if (!c) continue;
-    const present = !!c.present;
-    const enabled = c.enabled !== undefined ? !!c.enabled : camOn[which];
-    const changed = present !== camAvail[which] || enabled !== camOn[which];
-    camAvail[which] = present;
-    camOn[which] = enabled;
-    store.set(`friday.cam.${which}`, enabled);
-    if (changed) { paintToggle(which); renderCam(which); }
   }
 }
 
