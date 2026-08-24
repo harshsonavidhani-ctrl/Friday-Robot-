@@ -258,39 +258,56 @@ def add_body(samples, rate: int):
 
 # --- loudness ------------------------------------------------------------
 
-def louden(samples):
-    """Make speech carry across a room, without clipping it.
+def louden(samples, rate: int):
+    """Make speech carry across a room, without distorting it.
 
-    WHY A COMPRESSOR AND NOT JUST GAIN. The sink and the USB card's hardware
+    WHY GAIN ALONE CANNOT WORK. The pipewire sink and the USB card's hardware
     gain are both already pinned at maximum by set_output_volume(), so there is
     no knob left to turn. And Piper's output already touches full scale on its
-    loudest sample while sitting at only ~-15 dBFS RMS — it is peaky, not loud.
-    Multiplying that by anything just clips the peaks and sounds worse.
+    loudest sample while sitting at only ~-14 dBFS RMS — it is peaky, not loud.
 
-    What actually raises PERCEIVED loudness is closing the gap between the
-    peaks and the body of the speech: apply gain, then soft-limit what would
-    have gone over. A soft knee is used rather than hard clipping because hard
-    clipping on speech sounds like a broken speaker, which is exactly the
-    impression this is meant to remove.
+    ⚠ DO NOT WAVESHAPE. The first version of this applied gain and then bent
+    anything over a knee with tanh, per sample. That is waveshaping: it
+    manufactures harmonics that were never in the voice, and on speech it reads
+    as a buzzy rasp. Measured, it was pushing 3.2% of samples through the bend.
+    Harsh heard it immediately and he was right.
+
+    What works instead is a real compressor. The gain is driven by the signal's
+    ENVELOPE and moves over milliseconds, not per sample, so the waveform keeps
+    its shape and no harmonics are added. Lookahead means the gain is already
+    down before a transient lands, so nothing has to be clipped after the fact.
 
     Takes and returns float32 in [-1, 1].
     """
     import numpy as np
+    from scipy import ndimage, signal
 
     gain = 10.0 ** (config.TTS_GAIN_DB / 20.0)
-    knee = config.TTS_LIMITER_KNEE
-    boosted = samples * gain
+    boosted = np.asarray(samples, dtype=np.float32) * gain
+    if not len(boosted):
+        return boosted
 
-    magnitude = np.abs(boosted)
-    over = magnitude > knee
-    if over.any():
-        # Above the knee, compress the remaining range into what is left below
-        # full scale. tanh is smooth and never exceeds 1, so the result cannot
-        # clip however hard it is driven.
-        excess = (magnitude[over] - knee) / (1.0 - knee)
-        boosted[over] = (np.sign(boosted[over])
-                         * (knee + (1.0 - knee) * np.tanh(excess)))
-    return np.clip(boosted, -1.0, 1.0)
+    ceiling = config.TTS_CEILING
+    look = max(1, int(rate * config.TTS_LOOKAHEAD_MS / 1000))
+
+    # 1. Peak envelope, looking ahead by `look` samples so the gain is already
+    #    down by the time the peak arrives.
+    envelope = ndimage.maximum_filter1d(np.abs(boosted), size=look * 2 + 1,
+                                        mode="nearest")
+
+    # 2. The gain needed to keep that envelope under the ceiling. Never above
+    #    1: this only ever turns things down.
+    needed = np.minimum(1.0, ceiling / np.maximum(envelope, 1e-9))
+
+    # 3. Smooth it. An abrupt gain change is itself a click, so the reduction
+    #    is filtered to a release of TTS_RELEASE_MS. This is the step that
+    #    keeps the result free of the harmonics tanh was adding.
+    release = max(1, int(rate * config.TTS_RELEASE_MS / 1000))
+    kernel = np.ones(release, dtype=np.float32) / release
+    smoothed = signal.fftconvolve(needed, kernel, mode="same")
+    smoothed = np.minimum(smoothed, needed)     # never louder than allowed
+
+    return np.clip(boosted * smoothed, -1.0, 1.0).astype(np.float32)
 
 
 # --- playback ------------------------------------------------------------
@@ -363,8 +380,7 @@ def _shape_wav(path: Path) -> None:
 
     samples = deepen(samples)
     samples = add_body(samples, params.framerate)
-    if config.TTS_GAIN_DB:
-        samples = louden(samples)
+    samples = louden(samples, params.framerate)
 
     out = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
     with wave.open(str(path), "wb") as sink:

@@ -159,7 +159,11 @@ TTS_TIMEOUT_S = 20           # a wedged audio device must not freeze the robot
 
 # Speaking rate as a multiplier: 1.0 is the voice's natural pace, higher is
 # faster. tts.py converts this to Piper's inverse length_scale.
-TTS_SPEED = 1.15
+#
+# BELOW 1.0 DELIBERATELY. This was 1.15 -- chosen when the goal was getting an
+# answer out quickly -- and Harsh found it too fast to listen to. A companion
+# that has to be replayed in your head is not faster in any way that counts.
+TTS_SPEED = 0.95
 
 # LOUDNESS. Both hardware stages below are already pinned at maximum, so there
 # is no knob left -- and Piper's output already touches full scale on its
@@ -177,20 +181,30 @@ TTS_SPEED = 1.15
 #   TTS_BODY_* a low shelf that puts the chest back in the voice.
 #   TTS_AIR_*  a small high shelf; slightly negative keeps the added weight
 #              from reading as harsh.
-TTS_PITCH = 0.95             # ~0.9 semitones down -- balanced, per Harsh
+TTS_PITCH = 0.88             # ~2.2 semitones down. Was 0.95 then 0.91; Harsh
+                             # heavier still. The speed loss from resampling is
+                             # compensated in _synthesis_config, so lowering
+                             # this does NOT slow her down -- TTS_SPEED alone
+                             # controls pace, and the two are independent.
 TTS_BODY_DB = 3.0
 TTS_BODY_HZ = 320
 TTS_AIR_DB = -1.0
 TTS_AIR_HZ = 4500
 
-# ⚠ GAIN IS DELIBERATELY MODEST. +8 dB was tried and rejected: driving this
-# much speech through the soft knee made it buzzy and piercing to listen to.
-# Loudness past the point where it sounds bad is not loudness worth having,
-# and the hardware is already at maximum underneath this.
+# ⚠ GAIN IS DELIBERATELY MODEST. +8 dB was tried and rejected as piercing.
+# The hardware is already at maximum underneath this, so this is the only
+# loudness control there is -- but loudness past the point where it sounds bad
+# is not loudness worth having.
 TTS_GAIN_DB = 4.0
-TTS_LIMITER_KNEE = 0.80      # above this the soft knee starts; below it audio
-                             # passes through untouched. Higher than it was, so
-                             # less of the signal is shaped at all.
+
+# The compressor in tts.louden(). It is an ENVELOPE compressor, not a
+# waveshaper: an earlier tanh soft-knee version added harmonics and Harsh heard
+# it as buzzing. These control how gently it moves.
+TTS_CEILING = 0.89           # never let output exceed this, so nothing clips
+TTS_LOOKAHEAD_MS = 5.0       # see peaks coming and duck before they land
+TTS_RELEASE_MS = 60.0        # how slowly gain returns. Too fast pumps and
+                             # buzzes; too slow and one loud word makes the
+                             # next few quiet.
 
 TTS_VOLUME = 1.0             # per-stream software gain. Leave at 1.0 -- above
                              # that it clips rather than getting louder. If
