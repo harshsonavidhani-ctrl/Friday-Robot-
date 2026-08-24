@@ -366,7 +366,26 @@ MOTOR_PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0"
 MOTOR_INVERT_LEFT = False
 MOTOR_INVERT_RIGHT = True
 
-MOTOR_MAX_DUTY = 0.6         # start conservative; raise only after testing
+# KICKSTART. From rest the motors need more torque to start than to keep
+# going; below that threshold they sit and buzz without moving, which is worst
+# when pivoting because all four wheels scrub sideways at once. A move that
+# starts from a standstill gets a brief pulse at MOTOR_KICKSTART_FLOOR of the
+# duty cap, then settles to the requested speed. Set the duration to 0 to
+# disable. This borrows headroom already permitted by MOTOR_MAX_DUTY -- it
+# cannot exceed it.
+MOTOR_KICKSTART_MS = 130
+MOTOR_KICKSTART_FLOOR = 1.0  # fraction of the duty cap to pulse at
+
+# The hard ceiling on motor output, as a fraction of full PWM. EVERY path is
+# capped by this in motor._clamp, so it is the real limit on how fast Friday
+# can drive regardless of what calibration or set_speed ask for.
+#
+# Raised 0.6 -> 0.75 on 2026-08-25 with Harsh's explicit approval, because
+# turning was weak and 0.6 capped output at 153/255 -- which meant turn_speed
+# above ~180 did nothing at all. Deliberately short of full power: the L298N
+# heats and the battery sags under load, and a brownout mid-drive could reset
+# the Pi. If turning is ever still too weak, ASK before going higher.
+MOTOR_MAX_DUTY = 0.75
 MOTOR_WATCHDOG_S = 0.5       # stop if no new command within this window
 
 # --- Face ----------------------------------------------------------------
@@ -418,6 +437,11 @@ CALIBRATION_DEFAULTS = {
     "turn_speed": 130,           # 0-255, default pivot speed
     "forward_cm_per_s": 0.0,     # measured; 0 = not calibrated yet
     "turn_deg_per_s": 0.0,       # measured; 0 = not calibrated yet
+    # Lives HERE, in the file, rather than in a module global -- it used to be
+    # one, and every restart of friday-mcp silently threw away whatever speed
+    # Harsh had set from the dashboard. Anything the dashboard can change has
+    # to outlive the process that changes it.
+    "speed_percent": 60,         # 1-MAX_SPEED_PERCENT, trims the two above
 }
 
 
@@ -518,6 +542,42 @@ def load_calibration() -> dict:
     except (OSError, ValueError):
         pass
     return values
+
+
+def save_calibration(values: dict) -> dict:
+    """Write calibration atomically. Returns what was written.
+
+    Temp file in the SAME directory then rename, so motor code reading this
+    per command can never catch it half written. Shared by the dashboard's
+    calibration panel and by set_speed, which must agree: they write the same
+    file and there is exactly one source of truth for how fast Friday drives.
+    """
+    import json
+    import os
+    import tempfile
+
+    merged = load_calibration()
+    merged.update({key: values[key] for key in CALIBRATION_DEFAULTS
+                   if key in values})
+
+    path = CALIBRATION_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, tmp = tempfile.mkstemp(dir=path.parent, prefix=".calib.",
+                                   suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w") as out:
+            json.dump(merged, out, indent=2)
+            out.write("\n")
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return merged
 
 
 def missing_hardware_settings() -> list[str]:

@@ -33,10 +33,15 @@ _ranges: sensors.Rangefinders | None = None
 # and module-level so stop() never has to find the object that is moving.
 ABORT = threading.Event()
 
-# Current speed as a percentage, set by the set_speed tool. Percent rather
-# than raw PWM because the brain should not know or care about PWM, and
-# because it lets config.MAX_SPEED_PERCENT cap it in one place.
-_speed_percent = config.DEFAULT_SPEED_PERCENT
+# Speed is a percentage rather than raw PWM because the brain should not know
+# or care about PWM, and because it lets config.MAX_SPEED_PERCENT cap it in one
+# place.
+#
+# ⚠ IT LIVES IN THE CALIBRATION FILE, NOT IN A MODULE GLOBAL. It used to be a
+# global, which meant every restart of friday-mcp silently reset whatever Harsh
+# had set from the dashboard back to the default -- the setting appeared to
+# work, then quietly undid itself. Read per call for the same reason
+# load_calibration() is: a dashboard edit should take effect without a restart.
 
 
 # --- motors --------------------------------------------------------------
@@ -82,16 +87,22 @@ def release_motors() -> None:
 # --- speed ---------------------------------------------------------------
 
 def speed_percent() -> int:
-    with _lock:
-        return _speed_percent
+    """The current drive speed percentage, from the calibration file."""
+    stored = config.load_calibration().get(
+        "speed_percent", config.DEFAULT_SPEED_PERCENT)
+    return max(1, min(int(stored), config.MAX_SPEED_PERCENT))
 
 
 def set_speed_percent(percent: int) -> int:
-    """Clamp and store the drive speed. Returns what was actually set."""
-    global _speed_percent
+    """Clamp and persist the drive speed. Returns what was actually set.
+
+    Persisted, not held in memory: this survives a restart of friday-mcp,
+    which is the whole point -- the dashboard's setting used to vanish every
+    time the service came back.
+    """
     value = max(1, min(int(percent), config.MAX_SPEED_PERCENT))
     with _lock:
-        _speed_percent = value
+        config.save_calibration({"speed_percent": value})
     return value
 
 

@@ -232,24 +232,18 @@ async def api_calibration_post(request: web.Request) -> web.Response:
             if not 0 <= number <= 255:
                 raise web.HTTPBadRequest(text=f"{key} must be 0-255")
             number = int(number)
+        elif key == "speed_percent":
+            if not 1 <= number <= config.MAX_SPEED_PERCENT:
+                raise web.HTTPBadRequest(
+                    text=f"speed_percent must be 1-{config.MAX_SPEED_PERCENT}")
+            number = int(number)
         elif number < 0:
             raise web.HTTPBadRequest(text=f"{key} must not be negative")
         values[key] = number
 
-    path = Path(config.CALIBRATION_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".calib.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as handle:
-            json.dump(values, handle, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    # One atomic writer, shared with set_speed, so the two cannot disagree
+    # about how fast Friday drives.
+    values = config.save_calibration(values)
     return web.json_response({"ok": True, **values})
 
 

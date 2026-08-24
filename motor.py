@@ -105,6 +105,9 @@ class Motors:
         self._lock = threading.Lock()
         self._keepalive: threading.Thread | None = None
         self._stop_keepalive = threading.Event()
+        # Whether the wheels are already turning, so a move that starts from
+        # rest can be given a kickstart and one that is already going is not.
+        self._moving = False
 
     # --- connection --------------------------------------------------
 
@@ -178,14 +181,56 @@ class Motors:
         manual drive -- is corrected by it and none of them has to know. Fixing
         it any higher up would mean fixing it in several places and missing one.
         """
+        self._kickstart(left, right)
+        self._send(left, right)
+
+    def _send(self, left: float, right: float) -> None:
+        """Put one command on the wire, inversion applied."""
         l = self._clamp(left) * (-1 if config.MOTOR_INVERT_LEFT else 1)
         r = self._clamp(right) * (-1 if config.MOTOR_INVERT_RIGHT else 1)
         reply = self._command(f"M{l} {r}")
         if reply != "OK":
             raise MotorError(f"drive({l}, {r}) -> {reply!r}")
+        self._moving = bool(l or r)
+
+    def _kickstart(self, left: float, right: float) -> None:
+        """Break static friction with a brief hard pulse before settling.
+
+        WHY. Starting from rest, the motors need noticeably more torque to get
+        moving than to keep moving. Below that threshold they sit and buzz --
+        energised, audibly humming, going nowhere. Pivoting in place is the
+        worst case on this robot, because all four wheels have to scrub
+        sideways at once.
+
+        So a move that starts from a standstill gets a short pulse at the duty
+        cap first, then drops to the requested speed. It is the same trick as
+        blipping a stalled fan: past the stiction, far less is needed to keep
+        it turning.
+
+        Capped by _clamp like everything else, so this cannot exceed
+        MOTOR_MAX_DUTY -- it borrows the headroom that is already allowed, it
+        does not invent any.
+        """
+        if not config.MOTOR_KICKSTART_MS or self._moving:
+            return
+        if not (left or right):
+            return
+        ceiling = 255 * self.max_duty
+        # Only worth doing when the target is below the pulse level; above it
+        # the move already starts hard enough.
+        if max(abs(left), abs(right)) >= ceiling * config.MOTOR_KICKSTART_FLOOR:
+            return
+        scale = ceiling * config.MOTOR_KICKSTART_FLOOR
+        peak = max(abs(left), abs(right)) or 1.0
+        self._send(left / peak * scale, right / peak * scale)
+        time.sleep(config.MOTOR_KICKSTART_MS / 1000.0)
 
     def stop(self) -> None:
         self._stop_keepalive.set()
+        # Cleared before the write, not after: if the command throws, the
+        # wheels are in an unknown state and the next move must assume it is
+        # starting from rest and kickstart accordingly.
+        self._moving = False
         reply = self._command("S")
         if reply != "OK":
             raise MotorError(f"stop -> {reply!r}")
