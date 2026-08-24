@@ -188,6 +188,43 @@ def _synthesis_config():
     )
 
 
+# --- loudness ------------------------------------------------------------
+
+def louden(samples):
+    """Make speech carry across a room, without clipping it.
+
+    WHY A COMPRESSOR AND NOT JUST GAIN. The sink and the USB card's hardware
+    gain are both already pinned at maximum by set_output_volume(), so there is
+    no knob left to turn. And Piper's output already touches full scale on its
+    loudest sample while sitting at only ~-15 dBFS RMS — it is peaky, not loud.
+    Multiplying that by anything just clips the peaks and sounds worse.
+
+    What actually raises PERCEIVED loudness is closing the gap between the
+    peaks and the body of the speech: apply gain, then soft-limit what would
+    have gone over. A soft knee is used rather than hard clipping because hard
+    clipping on speech sounds like a broken speaker, which is exactly the
+    impression this is meant to remove.
+
+    Takes and returns float32 in [-1, 1].
+    """
+    import numpy as np
+
+    gain = 10.0 ** (config.TTS_GAIN_DB / 20.0)
+    knee = config.TTS_LIMITER_KNEE
+    boosted = samples * gain
+
+    magnitude = np.abs(boosted)
+    over = magnitude > knee
+    if over.any():
+        # Above the knee, compress the remaining range into what is left below
+        # full scale. tanh is smooth and never exceeds 1, so the result cannot
+        # clip however hard it is driven.
+        excess = (magnitude[over] - knee) / (1.0 - knee)
+        boosted[over] = (np.sign(boosted[over])
+                         * (knee + (1.0 - knee) * np.tanh(excess)))
+    return np.clip(boosted, -1.0, 1.0)
+
+
 # --- playback ------------------------------------------------------------
 
 def play(path: Path) -> None:
@@ -226,13 +263,36 @@ def sentences(text: str) -> list[str]:
 
 
 def _render(chunk: str) -> Path:
-    """One sentence to a temp WAV."""
+    """One sentence to a temp WAV, loudened."""
     handle, name = tempfile.mkstemp(suffix=".wav")
     os.close(handle)
     path = Path(name)
     with wave.open(str(path), "wb") as out:
         voice().synthesize_wav(chunk, out, syn_config=_synthesis_config())
+    if config.TTS_GAIN_DB:
+        try:
+            _louden_wav(path)
+        except Exception as exc:                # noqa: BLE001
+            # A failure here must cost volume, never speech.
+            log.warning("could not louden %r: %s", chunk[:30], exc)
     return path
+
+
+def _louden_wav(path: Path) -> None:
+    """Apply louden() to a WAV in place, keeping its format."""
+    import numpy as np
+
+    with wave.open(str(path), "rb") as source:
+        params = source.getparams()
+        raw = source.readframes(source.getnframes())
+    if params.sampwidth != 2 or not raw:
+        return                                  # only 16-bit is expected here
+    samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    processed = louden(samples)
+    out = (processed * 32767.0).astype(np.int16).tobytes()
+    with wave.open(str(path), "wb") as sink:
+        sink.setparams(params)
+        sink.writeframes(out)
 
 
 def speak(text: str) -> str:

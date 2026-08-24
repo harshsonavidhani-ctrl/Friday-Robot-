@@ -154,56 +154,255 @@ class Microphone:
 
         Returns raw 16-bit PCM at config.MIC_SAMPLE_RATE.
         """
-        try:
-            import webrtcvad
-        except ImportError as exc:
-            raise STTError(
-                f"webrtcvad is not installed in the venv ({exc})") from exc
+        return endpoint(self.frames(), max_seconds=max_seconds,
+                        start_timeout=start_timeout)
 
-        max_seconds = max_seconds or config.MAX_UTTERANCE_S
-        start_timeout = start_timeout or config.LISTEN_START_TIMEOUT_S
-        vad = webrtcvad.Vad(config.VAD_AGGRESSIVENESS)
 
-        silence_frames = max(1, int(config.VAD_SILENCE_MS / FRAME_MS))
-        preroll = collections.deque(
-            maxlen=max(1, int(config.VAD_PREROLL_MS / FRAME_MS)))
+# --- endpointing ---------------------------------------------------------
 
-        voiced: list[bytes] = []
-        started = False
-        quiet_run = 0
-        voiced_run = 0
-        began = time.monotonic()
+def endpoint(frames, max_seconds: float | None = None,
+             start_timeout: float | None = None,
+             preroll_frames: list[bytes] | None = None) -> bytes:
+    """Consume 30 ms frames until the speaker stops. Raises Silence if none.
 
-        for frame in self.frames():
-            speech = vad.is_speech(frame, config.MIC_SAMPLE_RATE)
+    Split out of Microphone.listen so the SAME endpointing runs whether the
+    frames come from a private pw-cat or from a subscription to the shared
+    AudioStream. The wake path needs the latter; there must not be two
+    different notions of "he stopped talking".
 
-            if not started:
-                preroll.append(frame)
-                voiced_run = voiced_run + 1 if speech else 0
-                if voiced_run >= config.VAD_START_FRAMES:
-                    started = True
-                    # The pre-roll carries the first syllable, spoken before
-                    # the VAD was convinced. Without it "forward" arrives as
-                    # "orward" and the transcript is wrong in a way that is
-                    # very hard to debug from the text alone.
-                    voiced.extend(preroll)
-                    log.debug("speech started")
-                elif time.monotonic() - began > start_timeout:
-                    raise Silence(
-                        f"nothing said within {start_timeout:.0f}s")
-                continue
+    preroll_frames is audio captured BEFORE this call — the tail end of the
+    shared stream's backlog at the moment the wake fired. It is prepended when
+    speech starts, so "hey friday move forward" said in one breath does not
+    arrive as "ove forward".
+    """
+    try:
+        import webrtcvad
+    except ImportError as exc:
+        raise STTError(
+            f"webrtcvad is not installed in the venv ({exc})") from exc
 
-            voiced.append(frame)
-            quiet_run = 0 if speech else quiet_run + 1
-            if quiet_run >= silence_frames:
-                break
-            if time.monotonic() - began > max_seconds:
-                log.info("hit the %.0fs utterance limit", max_seconds)
-                break
+    max_seconds = max_seconds or config.MAX_UTTERANCE_S
+    start_timeout = start_timeout or config.LISTEN_START_TIMEOUT_S
+    vad = webrtcvad.Vad(config.VAD_AGGRESSIVENESS)
 
-        if not voiced:
-            raise Silence("no speech captured")
-        return b"".join(voiced)
+    silence_frames = max(1, int(config.VAD_SILENCE_MS / FRAME_MS))
+    preroll = collections.deque(
+        maxlen=max(1, int(config.VAD_PREROLL_MS / FRAME_MS)))
+    if preroll_frames:
+        preroll.extend(preroll_frames)
+
+    voiced: list[bytes] = []
+    started = False
+    quiet_run = 0
+    voiced_run = 0
+    began = time.monotonic()
+
+    for frame in frames:
+        speech = vad.is_speech(frame, config.MIC_SAMPLE_RATE)
+
+        if not started:
+            preroll.append(frame)
+            voiced_run = voiced_run + 1 if speech else 0
+            if voiced_run >= config.VAD_START_FRAMES:
+                started = True
+                # The pre-roll carries the first syllable, spoken before
+                # the VAD was convinced. Without it "forward" arrives as
+                # "orward" and the transcript is wrong in a way that is
+                # very hard to debug from the text alone.
+                voiced.extend(preroll)
+                log.debug("speech started")
+            elif time.monotonic() - began > start_timeout:
+                raise Silence(
+                    f"nothing said within {start_timeout:.0f}s")
+            continue
+
+        voiced.append(frame)
+        quiet_run = 0 if speech else quiet_run + 1
+        if quiet_run >= silence_frames:
+            break
+        if time.monotonic() - began > max_seconds:
+            log.info("hit the %.0fs utterance limit", max_seconds)
+            break
+
+    if not voiced:
+        raise Silence("no speech captured")
+    return b"".join(voiced)
+
+
+# --- one microphone, many listeners --------------------------------------
+
+class Subscription:
+    """A consumer's private view of the shared microphone.
+
+    Backed by a bounded deque, so a slow consumer drops its OLDEST audio
+    instead of stalling the reader thread. That trade is deliberate: if the
+    wake detector ever falls behind, the newest audio is the audio that
+    matters, and blocking the reader would stall every other consumer too.
+    """
+
+    def __init__(self, seconds: float, name: str = "sub") -> None:
+        self.name = name
+        self._frames: collections.deque[bytes] = collections.deque(
+            maxlen=max(1, int(seconds * 1000 / FRAME_MS)))
+        self._ready = threading.Condition()
+        self._closed = False
+
+    def offer(self, frame: bytes) -> None:
+        with self._ready:
+            self._frames.append(frame)
+            self._ready.notify()
+
+    def frames(self):
+        """Yield frames as they arrive, forever, until the stream closes."""
+        while True:
+            with self._ready:
+                while not self._frames and not self._closed:
+                    self._ready.wait(0.5)
+                if self._closed and not self._frames:
+                    return
+                yield self._frames.popleft()
+
+    def drain(self) -> list[bytes]:
+        """Take everything buffered right now, leaving the queue empty."""
+        with self._ready:
+            buffered = list(self._frames)
+            self._frames.clear()
+            return buffered
+
+    def clear(self) -> None:
+        with self._ready:
+            self._frames.clear()
+
+    def close(self) -> None:
+        with self._ready:
+            self._closed = True
+            self._ready.notify_all()
+
+
+class AudioStream:
+    """One pw-cat process reading the mic, fanned out to every consumer.
+
+    WHY THIS EXISTS. openWakeWord has to hear the mic continuously, and the
+    VAD capture has to start the instant a wake fires. Two pw-cat processes on
+    one USB card is the single-access trap the ToF, the LiDAR and the cameras
+    have each already sprung on this project. And re-opening the device at wake
+    time would spend a chunk of the latency budget at the worst possible
+    moment — right after Harsh has said "hey Friday" and is waiting.
+
+    So exactly ONE process reads the card, and consumers subscribe:
+
+        stream = AudioStream().start()
+        detector_sub = stream.subscribe(seconds=2.0, name="wake")
+        audio = stream.capture()        # VAD-endpointed, on the same stream
+
+    THE READER RESTARTS ITSELF. A USB mic that is unplugged, or a pipewire
+    node that goes away, must not end Friday's ability to hear for the rest of
+    the session — it retries with a backoff and carries on.
+    """
+
+    def __init__(self, device: str | None = None) -> None:
+        self.device = device or config.MIC_DEVICE
+        self._mic: Microphone | None = None
+        self._subs: list[Subscription] = []
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._capture: Subscription | None = None
+        self.restarts = 0
+
+    # -- lifecycle --
+    def start(self) -> "AudioStream":
+        if self._thread is not None:
+            return self
+        self._capture = self.subscribe(
+            seconds=config.MIC_CAPTURE_BUFFER_S, name="capture")
+        self._thread = threading.Thread(target=self._pump, name="mic-stream",
+                                        daemon=True)
+        self._thread.start()
+        return self
+
+    def close(self) -> None:
+        self._stop.set()
+        with self._lock:
+            for sub in self._subs:
+                sub.close()
+        if self._mic is not None:
+            self._mic.close()
+            self._mic = None
+
+    def __enter__(self) -> "AudioStream":
+        return self.start()
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    # -- subscribers --
+    def subscribe(self, seconds: float = 2.0, name: str = "sub") -> Subscription:
+        sub = Subscription(seconds, name)
+        with self._lock:
+            self._subs.append(sub)
+        return sub
+
+    def unsubscribe(self, sub: Subscription) -> None:
+        with self._lock:
+            if sub in self._subs:
+                self._subs.remove(sub)
+        sub.close()
+
+    # -- the reader --
+    def _pump(self) -> None:
+        backoff = config.MIC_RESTART_BACKOFF_S
+        while not self._stop.is_set():
+            try:
+                self._mic = Microphone(self.device).open()
+                log.info("microphone stream open on %s", self.device)
+                backoff = config.MIC_RESTART_BACKOFF_S
+                for frame in self._mic.frames():
+                    if self._stop.is_set():
+                        return
+                    with self._lock:
+                        subs = list(self._subs)
+                    for sub in subs:
+                        sub.offer(frame)
+                # frames() returning means the process ended — fall through
+                # to the restart path rather than silently going deaf.
+                raise STTError("pw-cat ended")
+            except Exception as exc:                # noqa: BLE001
+                if self._stop.is_set():
+                    return
+                self.restarts += 1
+                log.error("microphone stream died (%s) — restarting in %.1fs",
+                          exc, backoff)
+            finally:
+                if self._mic is not None:
+                    self._mic.close()
+                    self._mic = None
+            if self._stop.wait(backoff):
+                return
+            backoff = min(backoff * 2, config.MIC_RESTART_BACKOFF_MAX_S)
+
+    # -- capture --
+    def capture(self, max_seconds: float | None = None,
+                start_timeout: float | None = None,
+                handover_ms: int | None = None) -> bytes:
+        """VAD-endpoint one utterance from the shared stream.
+
+        The capture subscription exists from start-up and is never drained
+        between turns, so at the moment a wake fires it already holds the last
+        few seconds of audio. The tail of that backlog is handed to the
+        endpointer as pre-roll; the rest is discarded (it is the wake word and
+        whatever came before it).
+        """
+        if self._capture is None:
+            raise STTError("audio stream is not started")
+        handover_ms = (config.WAKE_HANDOVER_MS if handover_ms is None
+                       else handover_ms)
+        keep = max(0, int(handover_ms / FRAME_MS))
+        backlog = self._capture.drain()
+        return endpoint(self._capture.frames(),
+                        max_seconds=max_seconds,
+                        start_timeout=start_timeout,
+                        preroll_frames=backlog[-keep:] if keep else None)
 
 
 # --- transcription -------------------------------------------------------

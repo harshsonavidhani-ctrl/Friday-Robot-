@@ -55,21 +55,56 @@ DAILY_SPEND_CAP_USD = 2.00
 COST_LOG = LOG_DIR / "spend.jsonl"
 
 # --- Voice pipeline ------------------------------------------------------
-WAKE_WORD_MODEL = MODEL_DIR / "friday.onnx"  # openWakeWord, custom-trained
-WAKE_THRESHOLD = None        # TODO(step 2): tune on the real mic, in real room
-                             # noise. Unused until openWakeWord is wired in.
-
-# Which trigger starts a turn: "enter" (press Enter), "voice" (the word
-# "friday" in a short transcript), or "both".
+# --- Wake word (openWakeWord) --------------------------------------------
+# openWakeWord runs a small classifier over a CONTINUOUS 16 kHz stream, so it
+# is never deaf -- unlike the Step 1 record->transcribe->check stopgap it
+# replaced, which spent seconds inside whisper and dropped anything said during
+# that gap. Measured on this Pi: 17 ms per 80 ms chunk, ~21% of one core.
 #
-# "both" is the default deliberately. The voice path is a Step 1 STOPGAP and it
-# is DEAF WHILE IT TRANSCRIBES, so it drops wakes -- exactly the
-# record-transcribe-check loop CLAUDE.md warns about. Keeping Enter alive
-# alongside it means there is always a way in when it misses. openWakeWord
-# replaces the voice half in Step 2.
+# ⚠ WAKE_WORD_MODEL IS A STAND-IN. friday.onnx does not exist yet, so this
+# points at openWakeWord's bundled "hey jarvis" model. Everything else about
+# the pipeline is final -- when the custom model lands, change THIS LINE ONLY.
+WAKE_WORD_MODEL = (ROOT / "venv/lib/python3.13/site-packages/openwakeword"
+                   / "resources/models/hey_jarvis_v0.1.onnx")
+
+# The score above which a frame counts as a wake, 0-1. Higher = fewer false
+# triggers but more misses. Tune against the real room, not in the abstract:
+#   ./venv/bin/python wake_word.py --tune
+WAKE_THRESHOLD = 0.5
+
+# How long after a wake before another one can fire. Stops one "hey Friday"
+# from registering two or three times as the score stays high across frames.
+WAKE_COOLDOWN_S = 2.0
+
+# openWakeWord's own built-in Silero VAD gate, 0-1, or 0 to disable. A frame
+# whose speech probability is below this is never scored, which is what keeps
+# music, fans and door noise from ever reaching the classifier.
+WAKE_VAD_THRESHOLD = 0.5
+
+# Audio kept from before the wake fired and handed to the VAD capture as
+# pre-roll. Covers "hey Friday move forward" said in one breath -- without it
+# the capture starts mid-word and the transcript is wrong.
+WAKE_HANDOVER_MS = 400
+
+WAKE_BEEP = True             # short tone on wake, so Harsh knows it heard him
+                             # without having to look at the face
+WAKE_BEEP_HZ = 880
+WAKE_BEEP_MS = 90
+
+# Which trigger starts a turn: "voice" (openWakeWord), "enter" (press Enter),
+# or "both". "both" keeps a keyboard way in while the wake model is still the
+# stand-in -- it costs nothing and there is always a way to talk to Friday.
 WAKE_SOURCE = "both"
-WAKE_WINDOW_S = 4.0          # longest single wake-listen pass
-WAKE_POLL_TIMEOUT_S = 3.0    # how long a pass waits for any speech at all
+
+# --- Microphone stream ---------------------------------------------------
+# ONE pw-cat process feeds every consumer (see stt.AudioStream). Two readers on
+# one USB card is the single-access trap the ToF, LiDAR and cameras have each
+# already sprung, and re-opening the device at wake time would burn latency at
+# the worst possible moment.
+MIC_CAPTURE_BUFFER_S = 3.0   # how much recent audio the capture subscription
+                             # holds, so a wake can reach back for pre-roll
+MIC_RESTART_BACKOFF_S = 0.5  # first retry delay if the mic stream dies
+MIC_RESTART_BACKOFF_MAX_S = 10.0
 # faster-whisper. TINY, not base — measured on this Pi 4 against 1.78 s of
 # speech, WITH Friday's own services running (see the CPU note below):
 #     base    threads=4   x13.3 realtime   (23.6 s — unusable)
@@ -108,17 +143,35 @@ LISTEN_START_TIMEOUT_S = 8.0 # give up if nobody speaks after waking
 # Downloaded 2026-08-23 into assets/models/ (gitignored, fetched with
 # `python -m piper.download_voices --download-dir assets/models/piper NAME`).
 #
-# LOW, not medium, and that is a speed decision measured on this Pi:
-#   low     x1.14 realtime
-#   medium  x1.60 realtime
-# Synthesis is barely faster than speech itself here, so 40% matters far more
-# than the quality difference does through a small robot speaker.
-TTS_VOICE = MODEL_DIR / "piper" / "en_US-lessac-low.onnx"
+# hfc_female, chosen by ear 2026-08-24 against amy / kathleen / jenny /
+# kristin / ljspeech: American, female, warm and friendly, which is the voice
+# Harsh wants Friday to have. lessac (the old default) was rejected.
+#
+# This IS a medium model, against the earlier speed finding that low is x1.14
+# realtime and medium x1.60. It is affordable here because speaking starts on
+# the FIRST sentence while the rest is still being made, so synthesis only has
+# to beat speech, not finish ahead of it -- and hfc_female measured the fastest
+# of the medium voices tried (6.9s to load and render a full sentence).
+# If Friday ever starts stuttering mid-reply, this is the first thing to
+# suspect, and en_US-amy-low is the fallback.
+TTS_VOICE = MODEL_DIR / "piper" / "en_US-hfc_female-medium.onnx"
 TTS_TIMEOUT_S = 20           # a wedged audio device must not freeze the robot
 
 # Speaking rate as a multiplier: 1.0 is the voice's natural pace, higher is
 # faster. tts.py converts this to Piper's inverse length_scale.
 TTS_SPEED = 1.15
+
+# LOUDNESS. Both hardware stages below are already pinned at maximum, so there
+# is no knob left -- and Piper's output already touches full scale on its
+# loudest sample while sitting at only ~-15 dBFS RMS. It is peaky, not loud, so
+# plain gain would clip the peaks and gain nothing. tts.louden() instead
+# applies this gain and soft-limits what goes over, which raises PERCEIVED
+# loudness. Set TTS_GAIN_DB to 0 to disable the stage entirely.
+TTS_GAIN_DB = 8.0            # measured: +8 dB lifts RMS ~-15.5 -> ~-8 dBFS
+TTS_LIMITER_KNEE = 0.70      # above this the soft knee starts; below it audio
+                             # passes through untouched, so normal speech is
+                             # amplified cleanly and only the peaks are shaped
+
 TTS_VOLUME = 1.0             # per-stream software gain. Leave at 1.0 -- above
                              # that it clips rather than getting louder. If
                              # Friday is quiet, the two settings below are the
