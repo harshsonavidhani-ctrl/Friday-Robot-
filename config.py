@@ -445,6 +445,33 @@ CALIBRATION_DEFAULTS = {
 }
 
 
+# --- Memory --------------------------------------------------------------
+# SQLite for the facts, the event log and the summaries; a TF-IDF index over
+# the facts for recall. See memory.py for why not embeddings -- briefly, this
+# Pi is CPU-bound and a transformer would compete with the wake word and STT
+# for the same cores, making Friday slower at hearing in order to be slightly
+# better at remembering.
+MEMORY_DB = ROOT / "state" / "memory.db"
+
+MEMORY_RECALL_LIMIT = 5      # facts pulled into the prompt per turn. Small on
+                             # purpose: every one costs tokens on every turn
+MEMORY_EXPERIENCE_LIMIT = 3  # past outcomes shown for a similar task
+MEMORY_MIN_SCORE = 0.12      # below this a "match" is coincidence. Tuned so
+                             # an unrelated question recalls nothing at all
+                             # rather than the least-unrelated fact
+# How much of the score comes from WORD overlap vs character n-grams.
+# Characters alone were confidently wrong: "what is the capital of Japan"
+# scored 0.405 against "the kitchen is through the left door" on shared letter
+# sequences. Words carry the meaning and gate the result; characters only
+# forgive typos and Hindi/English mixing.
+MEMORY_WORD_WEIGHT = 0.75
+MEMORY_DUPLICATE_SCORE = 0.82  # at or above this, being told something again
+                             # UPDATES the fact instead of adding a copy
+MEMORY_MAX_FACT_CHARS = 400  # a "fact" longer than this is a transcript
+MEMORY_EVENTS_KEPT = 40      # events kept verbatim; older ones are collapsed
+                             # into a counted summary so context stays bounded
+MEMORY_TURNS_KEPT = 12       # conversation turns held in RAM
+
 # --- MCP server ----------------------------------------------------------
 # friday-robot: the ONE place hardware is exposed. The brain calls these tools
 # and nothing else in the project talks to a device directly. That is not a
@@ -599,3 +626,8 @@ def missing_hardware_settings() -> list[str]:
         "LIDAR_PORT", "TOF_PORT", "MOTOR_PINS",
     )
     return [name for name in required if globals()[name] is None]
+
+# Attach relevant memories to each question automatically. The recall tool
+# still exists for deliberate lookups, but Harsh should not have to ask Friday
+# to consult its own memory any more than a person would.
+MEMORY_IN_CONTEXT = True

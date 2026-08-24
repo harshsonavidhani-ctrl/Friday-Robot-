@@ -43,6 +43,12 @@ tools/arduino-cli.tar.gz
 state/*.sqlite3
 state/*.sqlite3-shm
 state/*.sqlite3-wal
+# Friday's memory is what it learned on THIS robot, in this room, from Harsh.
+# It is personal and it means nothing in a fresh clone -- the schema is in
+# memory.py and rebuilds itself on first use.
+state/*.db
+state/*.db-shm
+state/*.db-wal
 state/captures/
 
 # arduino-cli's downloaded core and toolchain (~200 MB). The BINARY and the

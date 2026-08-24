@@ -218,6 +218,34 @@ class Brain:
             "max_uses": config.WEB_SEARCH_MAX_USES,
         }]
 
+    @staticmethod
+    def _with_memory(text: str) -> str:
+        """The question, with anything Friday already knows about it attached.
+
+        This is what makes memory feel like memory rather than a filing
+        cabinet: Harsh should not have to ask Friday to look something up, any
+        more than a person has to. The recall tool still exists for deliberate
+        checks, but the common case is handled here.
+
+        Nothing is attached when nothing is relevant — an empty "here is what
+        you remember" section every turn would teach the model to ignore the
+        section entirely, and would cost tokens for the privilege.
+
+        Never allowed to fail the turn: memory is an enhancement, and a broken
+        database must not stop Friday from answering.
+        """
+        if not config.MEMORY_IN_CONTEXT:
+            return text
+        try:
+            import memory
+            block = memory.context_block(text)
+        except Exception as exc:                # noqa: BLE001
+            log.warning("memory lookup failed, answering without it: %s", exc)
+            return text
+        if not block:
+            return text
+        return f"{block}\n\n---\n\n{text}"
+
     async def ask(self, text: str,
                   on_sentence: SentenceCallback | None = None,
                   on_tool: Callable[[str, dict], Any] | None = None,
@@ -250,7 +278,11 @@ class Brain:
             tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}
         tools = tools + self._server_tools()
 
-        self.messages.append({"role": "user", "content": text})
+        # Relevant memory rides along with the question rather than going in
+        # the system prompt: the system block is cached as a stable prefix, and
+        # changing it every turn would throw that cache away on every turn.
+        self.messages.append({"role": "user",
+                              "content": self._with_memory(text)})
         self.last_cost_usd = 0.0
         self.last_tools_used = []
         final_text = ""
