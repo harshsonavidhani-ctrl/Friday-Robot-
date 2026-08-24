@@ -9,6 +9,7 @@ not have is worse than one that admits it has no fuel gauge.
 from __future__ import annotations
 
 import json
+import socket
 import time
 
 import psutil
@@ -48,6 +49,41 @@ def _battery() -> str:
     return f"configured at {config.BATTERY_SENSOR} but not implemented yet"
 
 
+def _network() -> dict:
+    """Friday's own address on the LAN, and where the dashboard is.
+
+    WHY THIS IS IN STATUS. The Pi is on DHCP with a 6 hour lease and the campus
+    network registers no name for it, so its address genuinely moves during a
+    day. The dashboard is then unreachable from the phone and nothing on the
+    robot says why. mDNS (Harsh.local) is the textbook answer and does not help
+    here: Android's browser will not resolve .local reliably.
+
+    So the robot that knows the address is the one that should be asked for it.
+    "Friday, what's your IP?" is the intended path back in.
+    """
+    addresses = []
+    try:
+        for name, entries in psutil.net_if_addrs().items():
+            if name == "lo":
+                continue
+            for entry in entries:
+                if entry.family == socket.AF_INET and entry.address:
+                    addresses.append((name, entry.address))
+    except Exception:                           # noqa: BLE001
+        pass
+
+    primary = next((ip for _, ip in addresses), None)
+    return {
+        "addresses": {name: ip for name, ip in addresses} or "no LAN address",
+        "dashboard_url": (f"https://{primary}:{config.DASHBOARD_PORT}/"
+                          if primary else "unavailable — no LAN address"),
+        "dashboard_note": (
+            "Give Harsh the numeric address, not Harsh.local — his phone's "
+            "browser does not resolve .local. The address changes because the "
+            "lease is short, so read it out fresh rather than from memory."),
+    }
+
+
 @tool
 def get_status() -> str:
     """How Friday is doing: power, temperature, load, uptime, and what is
@@ -57,6 +93,10 @@ def get_status() -> str:
     or if Harsh asks how you are. The `hardware` section says which devices
     actually answered just now — that is the thing to look at when a camera or
     the motors are not responding.
+
+    ALSO CALL THIS when Harsh asks for your IP address, or says he cannot reach
+    the dashboard. `network.dashboard_url` is the answer, and it must be read
+    fresh every time: the address is on a short DHCP lease and it moves.
     """
     temperature = _cpu_temperature_c()
     ranges = hardware.ranges()
@@ -78,6 +118,7 @@ def get_status() -> str:
         "mcp_server_uptime": _uptime(time.monotonic() - _STARTED),
         "pi_uptime": _uptime(time.time() - psutil.boot_time()),
         "speed_percent": hardware.speed_percent(),
+        "network": _network(),
         "voice": tts.engine_name(),
         "debug_silent_speech": config.DEBUG_SILENT_SPEECH,
         "hardware": {
