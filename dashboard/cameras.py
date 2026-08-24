@@ -156,10 +156,19 @@ class CameraStream:
         except Exception as exc:                     # noqa: BLE001
             self.error = str(exc)
         finally:
+            # BOUNDED. This read used to be open-ended, and if ffmpeg was still
+            # alive it never returned -- deadlocking anyone awaiting this task.
+            # stop() no longer creates that situation, but the read is capped
+            # anyway: draining a dead process's stderr is a nicety, and it must
+            # never be able to wedge the camera again.
             if self._proc and self._proc.stderr and self.error is None:
-                err = await self._proc.stderr.read()
-                if err:
-                    self.error = err.decode(errors="replace").strip()[:400]
+                with contextlib.suppress(asyncio.TimeoutError, TimeoutError,
+                                         asyncio.CancelledError, Exception):
+                    err = await asyncio.wait_for(self._proc.stderr.read(),
+                                                 timeout=1.0)
+                    if err:
+                        self.error = err.decode(
+                            errors="replace").strip()[:400]
 
     async def _ensure_running(self) -> None:
         async with self._lock:
@@ -169,17 +178,37 @@ class CameraStream:
             await self._spawn()
 
     async def stop(self) -> None:
+        """Release ffmpeg and the V4L2 handle.
+
+        ⚠ ORDER MATTERS: ffmpeg is ended BEFORE the pump task is cancelled.
+        Doing it the other way round deadlocks, and did: _pump's finally awaits
+        a read on ffmpeg's stderr, and that read cannot reach EOF while ffmpeg
+        is still running. stop() then awaited the cancelled task forever while
+        holding the lock, so the camera could never be stopped OR started
+        again, the HTTP request never returned, and ffmpeg kept the camera --
+        which is why look() could not open a camera the dashboard was showing.
+
+        The process is KILLED if it will not terminate. Giving up and setting
+        _proc = None while ffmpeg still lives is what orphaned it holding the
+        device.
+        """
         async with self._lock:
+            proc, self._proc = self._proc, None
+            if proc is not None and proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=3)
+                except (asyncio.TimeoutError, TimeoutError):
+                    proc.kill()
+                    with contextlib.suppress(asyncio.TimeoutError,
+                                             TimeoutError):
+                        await asyncio.wait_for(proc.wait(), timeout=2)
+
             if self._task:
                 self._task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._task
                 self._task = None
-            if self._proc and self._proc.returncode is None:
-                self._proc.terminate()
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(self._proc.wait(), timeout=3)
-            self._proc = None
 
     # --- consuming ---------------------------------------------------
 

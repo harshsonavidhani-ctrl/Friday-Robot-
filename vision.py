@@ -28,7 +28,9 @@ camera answered and says which one was missing.
 
 from __future__ import annotations
 
+import contextlib
 import glob
+import logging
 import os
 import subprocess
 import time
@@ -37,6 +39,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+
+log = logging.getLogger("friday.vision")
 
 BY_ID_DIR = "/dev/v4l/by-id"
 PROC = "/proc"
@@ -125,6 +129,79 @@ def resolve_cameras() -> dict[str, str | None]:
     return {"up": up, "down": down}
 
 
+def _which_camera(device: str) -> str | None:
+    """Is this device the up camera or the down one?"""
+    for name, resolved in resolve_cameras().items():
+        if resolved and resolved == device:
+            return name
+    return None
+
+
+def _dashboard_holds(device: str) -> bool:
+    """Is the process holding this camera the dashboard's stream?"""
+    holder = _holder_of(device) or ""
+    return "ffmpeg" in holder and "v4l2" in holder
+
+
+@contextlib.contextmanager
+def _borrowed_from_dashboard(device: str):
+    """Turn the dashboard's stream off for this camera, then back on.
+
+    WHY THIS EXISTS. A USB webcam allows exactly ONE reader. While the
+    dashboard streams a camera, look() cannot open it — which showed up as
+    Friday being blind to the very camera Harsh could see live on his phone.
+    Telling him to go and flick a switch first is not a fix; the robot should
+    just work.
+
+    So the capture borrows the device through the dashboard's own authoritative
+    on/off endpoint, which releases the V4L2 handle immediately, and restores
+    the previous state afterwards. The stream blinks for well under a second.
+
+    Yields True if the camera was actually released and is ours to read.
+
+    Best-effort by design: if the dashboard is not running, or does not answer,
+    this yields False and the caller reports the original busy error. And the
+    restore runs in a finally, so a failed capture can never leave Harsh's
+    camera switched off behind his back.
+    """
+    which = _which_camera(device)
+    if which is None:
+        yield False
+        return
+
+    url = f"{config.DASHBOARD_LOCAL_URL}/api/camera/{which}"
+    try:
+        _post_json(url, {"on": False})
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not borrow the %s camera: %s", which, exc)
+        yield False
+        return
+
+    # The handle is closed on return, but v4l2 needs a breath before another
+    # process can claim it.
+    time.sleep(config.CAM_BORROW_SETTLE_S)
+    try:
+        yield True
+    finally:
+        try:
+            _post_json(url, {"on": True})
+        except Exception as exc:                # noqa: BLE001
+            log.warning("could not hand the %s camera back to the dashboard: "
+                        "%s — switch it on again in the dashboard", which, exc)
+
+
+def _post_json(url: str, payload: dict, timeout: float = 5.0) -> dict:
+    """Small JSON POST, so vision.py needs no HTTP dependency."""
+    import json as _json
+    import urllib.request
+
+    request = urllib.request.Request(
+        url, data=_json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return _json.loads(response.read().decode())
+
+
 def capture(device: str, size: tuple[int, int],
             warmup: int | None = None) -> Image.Image:
     """One settled frame from one camera, as a PIL image."""
@@ -155,6 +232,19 @@ def capture(device: str, size: tuple[int, int],
             last = exc
             if attempt + 1 < config.CAM_OPEN_ATTEMPTS:
                 time.sleep(config.CAM_OPEN_RETRY_S)
+    if last is not None and _dashboard_holds(device):
+        # The dashboard is streaming this camera. Borrow it: ask the dashboard
+        # to release, grab the frame, then hand it straight back.
+        with _borrowed_from_dashboard(device) as borrowed:
+            if borrowed:
+                try:
+                    subprocess.run(cmd, check=True, capture_output=True,
+                                   timeout=config.CAM_TIMEOUT_S)
+                    last = None
+                except (subprocess.CalledProcessError,
+                        subprocess.TimeoutExpired) as exc:
+                    last = exc
+
     if last is not None:
         detail = (getattr(last, "stderr", b"") or b"").decode(
             errors="replace").strip()

@@ -494,6 +494,14 @@ CAM_TIMEOUT_S = 12           # a wedged camera must not hang a tool call
 CAM_OPEN_ATTEMPTS = 3
 CAM_OPEN_RETRY_S = 0.7
 
+# If retrying is not enough because the dashboard is genuinely streaming that
+# camera, vision.py BORROWS it: it asks the dashboard's own on/off endpoint to
+# release the device, captures, and hands it straight back. Friday was blind to
+# the exact camera Harsh could see live on his phone, and telling him to flick
+# a switch first is not a fix.
+DASHBOARD_LOCAL_URL = f"http://127.0.0.1:{DASHBOARD_HTTP_PORT}"
+CAM_BORROW_SETTLE_S = 0.35   # v4l2 needs a breath between readers
+
 # --- Motion safety -------------------------------------------------------
 # Enforced inside the MCP server, in code, on every movement -- before it
 # starts and repeatedly WHILE it runs. The brain cannot disable, raise, or
