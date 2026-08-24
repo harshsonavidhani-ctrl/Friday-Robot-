@@ -351,6 +351,21 @@ MOTOR_PINS = {
 # with FRIDAY-MOTORS, so a wrong board is caught even if this path goes stale.
 MOTOR_PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0"
 
+# ⚠ THE RIGHT MOTOR IS WIRED BACKWARDS. Measured on the real robot
+# 2026-08-24, wheels off the ground: commanded forward, the left wheel turned
+# forward and the right wheel turned backward. That one fault made every
+# dashboard button wrong in a way that looked baffling until it was written
+# out -- "right" drove forward, "left" drove backward, and forward/backward
+# pivoted, because (+,-) and (-,+) become (+,+) and (-,-) when one side flips.
+#
+# Fixed in software rather than by rewiring: the chassis is glued shut and
+# opening it risks destroying it. motor.drive() applies this at the last point
+# before the serial write, so every caller above is corrected at once.
+#
+# If the motor leads are ever physically corrected, set this back to False.
+MOTOR_INVERT_LEFT = False
+MOTOR_INVERT_RIGHT = True
+
 MOTOR_MAX_DUTY = 0.6         # start conservative; raise only after testing
 MOTOR_WATCHDOG_S = 0.5       # stop if no new command within this window
 

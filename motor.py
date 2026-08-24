@@ -172,8 +172,14 @@ class Motors:
 
         Both sides are capped at max_duty, so this cannot be used to sneak
         past the speed limit.
+
+        THE INVERSION IS APPLIED HERE, at the last point before the wire, so
+        every caller above -- named moves, the MCP tools, the dashboard's
+        manual drive -- is corrected by it and none of them has to know. Fixing
+        it any higher up would mean fixing it in several places and missing one.
         """
-        l, r = self._clamp(left), self._clamp(right)
+        l = self._clamp(left) * (-1 if config.MOTOR_INVERT_LEFT else 1)
+        r = self._clamp(right) * (-1 if config.MOTOR_INVERT_RIGHT else 1)
         reply = self._command(f"M{l} {r}")
         if reply != "OK":
             raise MotorError(f"drive({l}, {r}) -> {reply!r}")
