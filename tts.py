@@ -182,10 +182,78 @@ def _synthesis_config():
     so config carries the intuitive number and it is converted here.
     """
     from piper import SynthesisConfig
+    # The pitch factor is folded in here, not applied afterwards on its own.
+    # deepen() lowers pitch by RESAMPLING, which stretches the audio by the
+    # same factor -- so synthesis has to come out proportionally shorter for
+    # the finished sentence to land at the speed config actually asks for.
     return SynthesisConfig(
-        length_scale=1.0 / max(0.1, config.TTS_SPEED),
+        length_scale=config.TTS_PITCH / max(0.1, config.TTS_SPEED),
         volume=config.TTS_VOLUME,
     )
+
+
+# --- tone ----------------------------------------------------------------
+
+def deepen(samples):
+    """Lower the pitch a little, so the voice sits heavier in the room.
+
+    Piper has no pitch control -- length_scale changes duration only. So the
+    pitch is moved the honest way: resample the audio to play back over a
+    longer span, which lowers every frequency by the same factor, and make up
+    the lost speed at synthesis time (see _synthesis_config).
+
+    Small shifts only. Past roughly 0.85 the formants move far enough that it
+    stops sounding like a lower voice and starts sounding like a slowed tape.
+
+    ⚠ USE A REAL RESAMPLER. The first version of this interpolated linearly
+    (np.interp) and it sounded buzzy and gritty -- linear interpolation is a
+    poor low-pass, so it aliases, and on a voice that reads as a permanent
+    faint rasp. resample_poly filters properly and the artefact is gone.
+    """
+    from fractions import Fraction
+
+    import numpy as np
+    from scipy import signal
+
+    factor = config.TTS_PITCH
+    if factor == 1.0 or len(samples) < 2:
+        return samples
+    # Stretching by 1/factor lowers pitch by factor. A rational ratio keeps the
+    # polyphase filter small; 1/200 resolution is far finer than the ear.
+    ratio = Fraction(1.0 / factor).limit_denominator(200)
+    return np.asarray(
+        signal.resample_poly(samples, ratio.numerator, ratio.denominator),
+        dtype=np.float32)
+
+
+def add_body(samples, rate: int):
+    """Boost the low mids and ease off the top, for weight and clarity.
+
+    A thin voice through a small robot speaker is the usual complaint, and the
+    cause is that the speaker has almost no output below a few hundred Hz while
+    the top end comes through fine. Lifting the low mids puts the chest back in
+    the voice; taking a little off the highs stops that lift reading as harsh.
+
+    A shelf, not a peak: a narrow boost would make it honk on one vowel.
+    """
+    import numpy as np
+    from scipy import signal
+
+    out = samples
+    if config.TTS_BODY_DB:
+        gain = 10.0 ** (config.TTS_BODY_DB / 40.0)
+        w = 2.0 * config.TTS_BODY_HZ / rate
+        # A one-pole low shelf: cheap, phase-gentle, and plenty for this.
+        b, a = signal.butter(2, min(0.99, w), btype="low")
+        low = signal.lfilter(b, a, out)
+        out = out + (gain - 1.0) * low
+    if config.TTS_AIR_DB:
+        gain = 10.0 ** (config.TTS_AIR_DB / 40.0)
+        w = 2.0 * config.TTS_AIR_HZ / rate
+        b, a = signal.butter(2, min(0.99, w), btype="high")
+        high = signal.lfilter(b, a, out)
+        out = out + (gain - 1.0) * high
+    return np.asarray(out, dtype=np.float32)
 
 
 # --- loudness ------------------------------------------------------------
@@ -269,17 +337,21 @@ def _render(chunk: str) -> Path:
     path = Path(name)
     with wave.open(str(path), "wb") as out:
         voice().synthesize_wav(chunk, out, syn_config=_synthesis_config())
-    if config.TTS_GAIN_DB:
-        try:
-            _louden_wav(path)
-        except Exception as exc:                # noqa: BLE001
-            # A failure here must cost volume, never speech.
-            log.warning("could not louden %r: %s", chunk[:30], exc)
+    try:
+        _shape_wav(path)
+    except Exception as exc:                    # noqa: BLE001
+        # A failure here must cost tone, never speech.
+        log.warning("could not shape %r: %s", chunk[:30], exc)
     return path
 
 
-def _louden_wav(path: Path) -> None:
-    """Apply louden() to a WAV in place, keeping its format."""
+def _shape_wav(path: Path) -> None:
+    """Pitch, tone and loudness, applied to a WAV in place.
+
+    In that order deliberately: pitch first because it resamples and would
+    otherwise smear the EQ, tone before loudness because the limiter must see
+    the levels that will actually be played.
+    """
     import numpy as np
 
     with wave.open(str(path), "rb") as source:
@@ -288,10 +360,17 @@ def _louden_wav(path: Path) -> None:
     if params.sampwidth != 2 or not raw:
         return                                  # only 16-bit is expected here
     samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    processed = louden(samples)
-    out = (processed * 32767.0).astype(np.int16).tobytes()
+
+    samples = deepen(samples)
+    samples = add_body(samples, params.framerate)
+    if config.TTS_GAIN_DB:
+        samples = louden(samples)
+
+    out = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
     with wave.open(str(path), "wb") as sink:
-        sink.setparams(params)
+        sink.setnchannels(params.nchannels)
+        sink.setsampwidth(params.sampwidth)
+        sink.setframerate(params.framerate)
         sink.writeframes(out)
 
 

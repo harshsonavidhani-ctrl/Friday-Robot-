@@ -33,7 +33,9 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import ssl
+import subprocess
 import sys
 import tempfile
 import time
@@ -382,10 +384,76 @@ def build_app() -> web.Application:
     return app
 
 
+def current_ips() -> set[str]:
+    """Every IPv4 address the Pi currently answers on."""
+    try:
+        out = subprocess.run(["hostname", "-I"], capture_output=True,
+                             text=True, timeout=5).stdout
+    except Exception:                           # noqa: BLE001
+        return set()
+    return {word for word in out.split()
+            if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", word)}
+
+
+def cert_ips(cert: Path) -> set[str]:
+    """The IP addresses listed in a certificate's SAN."""
+    try:
+        text = subprocess.run(
+            ["openssl", "x509", "-in", str(cert), "-noout", "-text"],
+            capture_output=True, text=True, timeout=5).stdout
+    except Exception:                           # noqa: BLE001
+        return set()
+    return set(re.findall(r"IP Address:(\d+\.\d+\.\d+\.\d+)", text))
+
+
+def refresh_cert_if_moved() -> bool:
+    """Re-issue the server cert if the Pi's IP is not in it.
+
+    WHY. The cert pins the addresses it is valid for, and this Pi gets its
+    address from DHCP -- so a lease change silently breaks HTTPS on the phone
+    with a certificate error, while everything else keeps working. That looks
+    like a dashboard bug and is not one.
+
+    Re-issuing REUSES THE CA, so the phone does not need the certificate
+    installed a second time. Only --new-ca would require that, and this never
+    passes it.
+
+    Best-effort by design: if regeneration fails, the old cert is still there
+    and localhost still works. Never let this stop the dashboard starting.
+    """
+    cert = Path(config.DASHBOARD_CERT)
+    script = config.ROOT / "scripts" / "make_dashboard_cert.sh"
+    if not cert.exists() or not script.exists():
+        return False
+    live = current_ips()
+    if not live or live <= cert_ips(cert):
+        return False                            # nothing new to cover
+    missing = ", ".join(sorted(live - cert_ips(cert)))
+    print(f"[dashboard] the Pi's address ({missing}) is not in the "
+          f"certificate -- re-issuing it. The CA is unchanged, so the phone "
+          f"does not need anything re-installed.", file=sys.stderr)
+    try:
+        done = subprocess.run([str(script)], capture_output=True, text=True,
+                              timeout=60, cwd=str(config.ROOT))
+        if done.returncode != 0:
+            print(f"[dashboard] could not re-issue the certificate: "
+                  f"{done.stderr.strip()[:200]}", file=sys.stderr)
+            return False
+    except Exception as exc:                    # noqa: BLE001
+        print(f"[dashboard] could not re-issue the certificate: {exc}",
+              file=sys.stderr)
+        return False
+    return True
+
+
 def ssl_context() -> ssl.SSLContext | None:
     cert, key = Path(config.DASHBOARD_CERT), Path(config.DASHBOARD_KEY)
     if not (cert.exists() and key.exists()):
         return None
+    try:
+        refresh_cert_if_moved()
+    except Exception as exc:                    # noqa: BLE001
+        print(f"[dashboard] certificate check failed: {exc}", file=sys.stderr)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
     return ctx

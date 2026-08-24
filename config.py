@@ -167,10 +167,30 @@ TTS_SPEED = 1.15
 # plain gain would clip the peaks and gain nothing. tts.louden() instead
 # applies this gain and soft-limits what goes over, which raises PERCEIVED
 # loudness. Set TTS_GAIN_DB to 0 to disable the stage entirely.
-TTS_GAIN_DB = 8.0            # measured: +8 dB lifts RMS ~-15.5 -> ~-8 dBFS
-TTS_LIMITER_KNEE = 0.70      # above this the soft knee starts; below it audio
-                             # passes through untouched, so normal speech is
-                             # amplified cleanly and only the peaks are shaped
+# TONE. hfc_female is warm but sits light, and a light voice through a small
+# robot speaker -- which has almost no output down low -- reads as thin and
+# less clear. Two stages fix that, both in tts.py:
+#   TTS_PITCH  lowers pitch by resampling (Piper has no pitch control).
+#              1.0 is unchanged, lower is heavier. Below ~0.85 it stops
+#              sounding like a lower voice and starts sounding like slowed
+#              tape. The speed loss is compensated at synthesis time.
+#   TTS_BODY_* a low shelf that puts the chest back in the voice.
+#   TTS_AIR_*  a small high shelf; slightly negative keeps the added weight
+#              from reading as harsh.
+TTS_PITCH = 0.95             # ~0.9 semitones down -- balanced, per Harsh
+TTS_BODY_DB = 3.0
+TTS_BODY_HZ = 320
+TTS_AIR_DB = -1.0
+TTS_AIR_HZ = 4500
+
+# ⚠ GAIN IS DELIBERATELY MODEST. +8 dB was tried and rejected: driving this
+# much speech through the soft knee made it buzzy and piercing to listen to.
+# Loudness past the point where it sounds bad is not loudness worth having,
+# and the hardware is already at maximum underneath this.
+TTS_GAIN_DB = 4.0
+TTS_LIMITER_KNEE = 0.80      # above this the soft knee starts; below it audio
+                             # passes through untouched. Higher than it was, so
+                             # less of the signal is shaped at all.
 
 TTS_VOLUME = 1.0             # per-stream software gain. Leave at 1.0 -- above
                              # that it clips rather than getting louder. If
