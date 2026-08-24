@@ -445,6 +445,49 @@ CALIBRATION_DEFAULTS = {
 }
 
 
+# --- Offline fallback ----------------------------------------------------
+# With no internet there is no brain, but there must still be a robot. offline.py
+# handles forward/back/left/right/stop/time locally so a dropped connection
+# costs Friday its conversation, not its ability to be told what to do.
+#
+# A TCP connect, not a ping and not an HTTP request: ICMP is often filtered and
+# an HTTP request costs a round trip and possibly money. Cached, because it is
+# asked once per turn.
+ONLINE_CHECK_HOST = "api.anthropic.com"
+ONLINE_CHECK_PORT = 443
+ONLINE_CHECK_TIMEOUT_S = 2.0
+ONLINE_CHECK_TTL_S = 20.0
+
+# --- Face reactions ------------------------------------------------------
+# face_control.py writes an emotion and friday_face.py tweens between them
+# (TRANSITION_S = 0.28) and blinks on its own. What face_director.py adds is
+# WHEN: which of several competing requests actually reaches the screen.
+FACE_ENABLED = True
+
+# Minimum time an expression is held before anything of the same or lower
+# priority may replace it. Without this a fast turn -- listening, thinking,
+# happy, speaking inside two seconds -- reads as a flicker, not a sequence.
+# Safety expressions are exempt and are never made to wait.
+FACE_MIN_DWELL_S = 0.55
+
+# How long a layer-2 emotion lasts before easing back to neutral. An emotion
+# is a moment, not a state; without an expiry the face stays stuck on the last
+# thing that happened.
+FACE_EMOTION_HOLD_S = 4.0
+
+# How long a safety face (scared/dizzy) is held. Long enough to be seen and
+# understood, short enough not to leave Friday looking frightened of a wall it
+# already stopped for.
+FACE_SAFETY_HOLD_S = 2.5
+
+# Idle drift: with nothing happening the face sinks through these in turn, so
+# a robot sitting alone looks asleep rather than switched off.
+FACE_BORED_AFTER_S = 45.0
+FACE_SLEEPY_AFTER_S = 150.0
+FACE_SLEEPING_AFTER_S = 300.0
+
+FACE_TICK_S = 0.2            # how often decay and idle drift are checked
+
 # --- Memory --------------------------------------------------------------
 # SQLite for the facts, the event log and the summaries; a TF-IDF index over
 # the facts for recall. See memory.py for why not embeddings -- briefly, this

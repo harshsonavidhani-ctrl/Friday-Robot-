@@ -60,24 +60,55 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
 class Face:
     """Friday's expression, as the pipeline sees it.
 
-    Wrapped rather than called directly so that a face process that is down —
-    or a bad emotion name — can never take down a conversation. The face is
-    decoration; the conversation is the point.
+    A thin wrapper over face_director, which does the actual arbitration
+    between what the pipeline is doing, what the brain feels, and what the
+    safety system needs to show. Wrapped rather than called directly so that a
+    face process that is down — or a bad emotion name — can never take down a
+    conversation. The face is decoration; the conversation is the point.
     """
 
     def __init__(self, enabled: bool = True) -> None:
         self.enabled = enabled
-        self._current = ""
+
+    def _director(self):
+        import face_director
+        return face_director.get()
 
     def set(self, emotion: str) -> None:
-        if not self.enabled or emotion == self._current:
+        """A pipeline state: listening, thinking, speaking, success…"""
+        if not self.enabled:
             return
         try:
-            import face_control
-            face_control.set_emotion(emotion)
-            self._current = emotion
+            self._director().pipeline(emotion)
         except Exception as exc:            # noqa: BLE001
             log.debug("could not set the face to %s: %s", emotion, exc)
+
+    def feel(self, emotion: str) -> None:
+        """A felt reaction, which the director may hold back."""
+        if not self.enabled:
+            return
+        try:
+            self._director().emotion(emotion)
+        except Exception as exc:            # noqa: BLE001
+            log.debug("could not show %s: %s", emotion, exc)
+
+    def alarm(self, kind: str = "dizzy") -> None:
+        """Something went wrong. Outranks everything, briefly."""
+        if not self.enabled:
+            return
+        try:
+            self._director().safety(kind)
+        except Exception as exc:            # noqa: BLE001
+            log.debug("could not show the alarm: %s", exc)
+
+    def rest(self) -> None:
+        """Nothing is happening; let the face settle and drift."""
+        if not self.enabled:
+            return
+        try:
+            self._director().rest()
+        except Exception as exc:            # noqa: BLE001
+            log.debug("could not rest the face: %s", exc)
 
 
 class Voice:
@@ -204,16 +235,25 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     except brain_module.SpendCapReached as exc:
         log.warning("spend cap: %s", exc)
         voice.say("I've hit my spending limit for today.")
-        face.set("sad")
+        face.feel("sad")
+        voice.wait_until_quiet()
+        face.rest()
         return ""
     except Exception as exc:                # noqa: BLE001
+        # Every stage failure lands here, flashes dizzy, and the loop carries
+        # on listening. A companion that dies on one bad turn is worse than
+        # one that occasionally admits it lost the thread.
         log.error("the brain failed: %s: %s", type(exc).__name__, exc)
+        face.alarm("dizzy")
         voice.say("Something went wrong in my head just then.")
-        face.set("confused")
+        voice.wait_until_quiet()
+        face.rest()
         return ""
 
     voice.wait_until_quiet()
-    face.set(config.FACE_DEFAULT_EMOTION)
+    if reply.strip():
+        face.set("success")
+    face.rest()
     return reply
 
 
@@ -227,11 +267,18 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     voice = Voice(face).start()
     preload_models()
 
+    # A MISSING API KEY MUST NOT BE FATAL. This runs under systemd with
+    # Restart=always, so exiting here would crash-loop every few seconds and
+    # look, from the outside, exactly like a broken robot. It is also the
+    # normal state before the key is set. Friday comes up deaf to reasoning
+    # but still awake: the wake word works, and the offline keyword handler
+    # still drives, stops, turns and tells the time.
+    brain_obj = None
     try:
         brain_obj = brain_module.Brain()
     except brain_module.BrainError as exc:
-        log.error("%s", exc)
-        return 2
+        log.warning("no brain (%s) — running on the offline handler only. "
+                    "Set ANTHROPIC_API_KEY and restart to enable it.", exc)
 
     async with brain_module.mcp_session() as session:
         listed = await session.list_tools()
@@ -243,66 +290,132 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             voice.close()
             return 0
 
-        source = wake_word.make()
+        # ONE microphone stream, shared by the wake detector and the capture.
+        # Opened here so both get the same one -- see stt.AudioStream for why
+        # a second reader on this USB card is not an option.
+        stream = stt.AudioStream().start()
+        source = wake_word.make(stream=stream)
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
+        face.rest()
 
-        for trigger in source.listen():
-            log.info("woken (%s)", trigger)
-            face.set("listening")
+        try:
+            for trigger in source.listen():
+                log.info("woken (%s)", trigger)
+                # Acknowledge instantly: the face and the beep both land
+                # before any model runs, so Harsh knows he was heard rather
+                # than wondering whether to repeat himself.
+                face.set("listening")
+                if hasattr(source, "beep"):
+                    source.beep()
 
-            # If the wake itself was a spoken sentence, it may already BE the
-            # command -- "friday, aage jao". Re-asking would be obtuse.
-            spoken = _command_from_wake(trigger)
-            if not spoken:
+                spoken = ""
                 try:
-                    audio = await asyncio.to_thread(_record)
+                    # The detector is deaf while Friday listens and answers,
+                    # so her own voice and the beep cannot wake her again.
+                    source.pause()
+                    audio = await asyncio.to_thread(stream.capture)
+                    face.set("thinking")
                     spoken = await asyncio.to_thread(stt.transcribe, audio)
                 except stt.Silence:
                     log.info("nothing said")
-                    face.set(config.FACE_DEFAULT_EMOTION)
+                    face.rest()
                     continue
                 except Exception as exc:    # noqa: BLE001
                     log.error("could not listen: %s", exc)
-                    face.set("confused")
+                    face.alarm("dizzy")
+                    face.rest()
+                    continue
+                finally:
+                    source.resume()
+
+                if not spoken.strip():
+                    log.info("empty transcript")
+                    face.feel("confused")
+                    face.rest()
                     continue
 
-            if not spoken.strip():
-                log.info("empty transcript")
-                face.set(config.FACE_DEFAULT_EMOTION)
-                continue
-
-            await one_turn(brain_obj, session, voice, face, spoken)
-            if once:
-                break
+                await handle(brain_obj, session, voice, face, spoken)
+                if once:
+                    break
+        finally:
+            source.close()
+            stream.close()
 
     voice.close()
     return 0
 
 
-def _record() -> bytes:
-    import stt
-    with stt.Microphone() as mic:
-        return mic.listen()
+async def handle(brain_obj, session, voice: Voice, face: Face,
+                 spoken: str) -> str:
+    """One utterance: reflexes first, then the brain if it can be reached.
 
+    STOP IS CHECKED BEFORE ANYTHING ELSE, online or off. Nothing should stand
+    between Harsh saying stop and the motors halting -- least of all a round
+    trip to a language model.
 
-def _command_from_wake(trigger: str) -> str:
-    """The command carried by a spoken wake, if it carried one.
-
-    "spoken-word: friday aage jao" -> "aage jao". A bare "friday" carries
-    nothing, so Friday listens properly instead.
+    Falls back to the local keyword handler when there is no internet, so a
+    dropped connection costs Friday its conversation but not its ability to be
+    told what to do.
     """
-    if not trigger.startswith("spoken-word:"):
+    import offline
+
+    if offline.is_stop(spoken):
+        log.info("STOP heard — going straight to the motors")
+        await _run_offline(offline.Intent(name="stop", tool="stop",
+                                          say="Stopping."),
+                           session, voice, face)
+        return "stopped"
+
+    # No key is the same situation as no internet, from the robot's point of
+    # view: there is no reasoning available, so fall through to the reflexes
+    # rather than pretending and failing.
+    if brain_obj is None or not offline.online():
+        intent = offline.understand(spoken)
+        if intent is not None:
+            log.info("offline — handling %r locally", intent.name)
+            await _run_offline(intent, session, voice, face)
+            return intent.say
+        log.info("offline and %r is not a local command", spoken[:40])
+        face.feel("sad")
+        voice.say("I can't reach my brain right now. I can still drive, "
+                  "stop, turn and tell you the time.")
+        voice.wait_until_quiet()
+        face.rest()
         return ""
-    heard = trigger.split(":", 1)[1].strip()
-    for word in wake_words():
-        heard = heard.replace(word, " ")
-    heard = heard.strip(" ,.!?")
-    return heard if len(heard.split()) >= 2 else ""
+
+    return await one_turn(brain_obj, session, voice, face, spoken)
 
 
-def wake_words() -> tuple[str, ...]:
-    import wake_word
-    return wake_word.WAKE_WORDS
+async def _run_offline(intent, session, voice: Voice, face: Face) -> None:
+    """Carry out a locally-understood command, still through the MCP server.
+
+    Through MCP even with no internet, because that is where the safety
+    interrupt lives. An offline path that drove the motors directly would be
+    the one way to bypass it.
+    """
+    import memory
+
+    if intent.say:
+        voice.say(intent.say)
+    outcome = "worked"
+    if intent.tool:
+        try:
+            result = await session.call_tool(intent.tool, intent.args)
+            text = result.content[0].text if result.content else ""
+            log.info("  %s -> %s", intent.tool, text[:120])
+            if "STOPPED" in text or "refused" in text:
+                outcome = "partial"
+        except Exception as exc:            # noqa: BLE001
+            log.error("offline command failed: %s", exc)
+            face.alarm("dizzy")
+            outcome = "failed"
+    try:
+        memory.log_event(f"offline: {intent.name}", task=intent.name,
+                         outcome=outcome)
+    except Exception:                       # noqa: BLE001
+        pass
+    voice.wait_until_quiet()
+    face.rest()
 
 
 def main() -> int:

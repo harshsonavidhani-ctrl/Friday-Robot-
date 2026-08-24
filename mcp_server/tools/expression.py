@@ -15,23 +15,52 @@ from mcp_server.registry import tool
 
 @tool
 def set_face(emotion: str) -> str:
-    """Change the expression on Friday's screen.
+    """Show what you feel about what is being said.
 
-    The face is how Harsh reads Friday before a word is spoken, so keep it
-    honest: listening while he talks, thinking while you work, speaking while
-    you talk, neutral when idle. Use the expressive ones when they are true,
-    not as decoration.
+    The face is how Harsh reads you before a word is spoken. Use it when there
+    is something real to show, and let it pass when there is not — a face that
+    reacts to everything reads as noise, not as feeling.
+
+    YOU DO NOT NEED TO SET listening, thinking OR speaking. Those follow what
+    you are doing and are handled for you; setting them by hand only fights
+    the pipeline. Choose from the FEELINGS:
+
+        happy      a greeting, or good news
+        love       thanks, or affection
+        proud      you did something well
+        excited    something genuinely exciting
+        curious    an interesting question
+        surprised  something unexpected
+        sad        bad news
+        wink       you are joking
+        angry      only if Harsh is being very rude, and keep it mild
+        neutral    nothing in particular to show
+
+    Match the strength to the moment: mild for small things, strong for big
+    ones. The expression fades back to neutral on its own after a few seconds,
+    so there is no need to reset it.
+
+    Safety expressions always win. If Friday is about to hit something, the
+    warning face stays up whatever you ask for here — asking for "scared"
+    yourself is treated as a feeling, not as a sensor reading.
 
     Args:
-        emotion: one of neutral, thinking, happy, sad, angry, surprised,
-            listening, speaking, confused, dizzy, success, excited, wink,
-            love, curious, proud, bored, sleepy, sleeping, scared. Also
-            accepts "yawn", which plays once and returns to the current mood.
+        emotion: one of the feelings above. Also accepts "yawn", which plays
+            once and returns to the current mood.
     """
-    try:
-        name = face_control.set_emotion(emotion)
-    except ValueError as exc:
-        return str(exc)
+    name = (emotion or "").strip().lower()
+    if name == face_control.YAWN_NAME:
+        face_control.trigger_yawn()
+        return "yawned"
+    if name not in face_control.EMOTIONS:
+        return (f"unknown expression {name!r}. Valid: "
+                f"{', '.join(face_control.EMOTIONS)}")
+
+    # Through the director, not straight to the file: it arbitrates against
+    # what the pipeline and the safety system are showing, so a cheerful face
+    # can never paint over an obstacle warning.
+    import face_director
+    face_director.get().emotion(name)
     return f"face set to {name}"
 
 

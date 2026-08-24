@@ -1,0 +1,48 @@
+[Unit]
+# Friday's voice loop: wake word -> listen -> think -> speak -> act.
+#
+# ⚠ USER-SCOPE, DELIBERATELY. This is the step that destroyed this Pi once
+# before (CLAUDE.md Part 1): a previous session made Friday start at boot by
+# changing SYSTEM services, dbus failed, and with it went NetworkManager,
+# wpa_supplicant, avahi and systemd-logind -- no WiFi, no SSH, and a login
+# that rejected the correct password. The glued chassis had to be pried open.
+#
+# This unit lives in ~/.config/systemd/user/ and touches NOTHING in /etc. It
+# cannot affect dbus, logind, NetworkManager, ssh or the boot path. If it is
+# wrong, Friday's brain simply does not come up: the Pi still boots, still
+# joins WiFi, and still accepts SSH. That containment is the entire point.
+#
+# It also needs no linger. User units already start at boot here via the
+# graphical autologin -- verified: boot 22:17, friday-mcp active 22:18, with
+# Linger=no. So nothing outside this file had to change to make it autostart.
+Description=Friday's brain — the voice loop
+# Wants=/After= only DEPEND on system targets. Nothing here modifies one.
+After=network-online.target
+Wants=network-online.target
+# The brain talks to the MCP server for every physical action. After= only
+# orders startup; it does not pull it in or modify it, and the loop retries
+# if the server is not up yet.
+After=friday-mcp.service
+# The USB mic and soundcard can drop off this Pi's bus mid-session. Restart
+# freely rather than tripping the start limit and going permanently dead.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/harsh/friday
+ExecStart=/home/harsh/friday/venv/bin/python /home/harsh/friday/main.py
+Restart=always
+RestartSec=5
+# pw-cat (mic) and pw-play (speaker) both need the user session's pipewire.
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# The brain needs the API key. systemd does not read the login shell's
+# environment, so it is passed here from a file that is NOT in git.
+# Create it with:  echo 'ANTHROPIC_API_KEY=sk-ant-...' > ~/friday/.env
+# The dash means "start anyway if the file is missing" -- without a key the
+# loop still runs the offline keyword handler rather than refusing to boot.
+EnvironmentFile=-/home/harsh/friday/.env
+# stdin is not a terminal under systemd, so the Enter-key wake source exits
+# immediately and openWakeWord alone drives it. That is intended.
+
+[Install]
+WantedBy=default.target

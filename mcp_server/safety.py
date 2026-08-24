@@ -127,6 +127,7 @@ def guarded_move(direction: str, seconds: float,
         clearance, source, blocked = check_forward_clearance()
         if blocked:
             log.warning("refused forward: %s", blocked)
+            _show_alarm()
             return MoveResult(direction, seconds, 0.0, True, blocked, clearance)
         if clearance is not None and clearance < config.SAFETY_CAUTION_MM:
             notes.append(f"close quarters ({clearance} mm), moving slowly")
@@ -176,6 +177,7 @@ def guarded_move(direction: str, seconds: float,
                 if blocked:
                     stopped_early = True
                     reason = blocked
+                    _show_alarm()
                     break
 
             # The Arduino stops on its own after config.MOTOR_WATCHDOG_S of
@@ -202,6 +204,24 @@ def guarded_move(direction: str, seconds: float,
         reason = "; ".join(notes + ([reason] if reason else []))
     return MoveResult(direction, seconds, actual, stopped_early, reason,
                       clearance)
+
+
+def _show_alarm(kind: str = "scared") -> None:
+    """Put the alarm on Friday's face when a move is refused or cut short.
+
+    Routed through the face director at SAFETY priority, so it lands even
+    mid-sentence and cannot be painted over by whatever the brain was feeling.
+    Harsh should be able to see that Friday stopped for something without
+    waiting for it to finish a sentence about the weather.
+
+    Never allowed to affect the move: the face is decoration and the stop is
+    the point, so any failure here is swallowed.
+    """
+    try:
+        import face_director
+        face_director.get().safety(kind)
+    except Exception as exc:                # noqa: BLE001
+        log.debug("could not show the alarm face: %s", exc)
 
 
 def emergency_stop() -> str:
