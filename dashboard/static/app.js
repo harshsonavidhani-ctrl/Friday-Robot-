@@ -7,6 +7,36 @@
 const $ = (id) => document.getElementById(id);
 const log = $('log'), dot = $('dot'), statustext = $('statustext');
 
+/* --- opening sequence ------------------------------------------------
+   Six seconds: neutral face, wink, welcome. The CSS runs the whole thing;
+   this only seeds the confetti and makes sure the overlay is REMOVED
+   afterwards -- a full-screen element left lying around would swallow
+   every tap on the dashboard underneath it. */
+(function splash() {
+  const el = $('splash');
+  if (!el) return;
+
+  const field = el.querySelector('.confetti');
+  if (field) {
+    const colours = ['#FF6A00', '#ffb066', '#ffffff', '#7cc4ff', '#ffd84d'];
+    let html = '';
+    for (let i = 0; i < 18; i++) {
+      const left = Math.round(Math.random() * 96);
+      const delay = (Math.random() * 0.5).toFixed(2);
+      const colour = colours[i % colours.length];
+      html += `<i style="left:${left}%;background:${colour};` +
+              `animation-delay:${4.35 + Number(delay)}s"></i>`;
+    }
+    field.innerHTML = html;
+  }
+
+  const done = () => el.classList.add('gone');
+  const timer = setTimeout(done, 6000);
+  // Tapping skips it. Six seconds is pleasant once and tedious on the
+  // fifth reload of the evening.
+  el.addEventListener('click', () => { clearTimeout(timer); done(); });
+})();
+
 const TYPES = ['session_init', 'thinking', 'tool_call', 'tool_result',
                'text', 'done'];
 const LABEL = {
@@ -407,6 +437,15 @@ async function heartbeat() {
   setActive(s.mood);
   paintDot(s.face_running);
   applyCams(s.cameras || {});     // picks up hot-plugs and other viewers
+  paintRobot(s.robot_online);
+}
+
+/* friday-mcp is a separate service from this one, so the dashboard opens and
+   works whether or not the robot is running. Say which half is down rather
+   than letting the drive buttons fail silently. */
+function paintRobot(online) {
+  const badge = $('robotoff');
+  if (badge) badge.hidden = online !== false;
 }
 
 /* ---------- panes (phone) ---------- */
@@ -431,6 +470,7 @@ function showPane(id) {
 
   let state = {};
   try { state = await (await fetch('/api/state')).json(); } catch {}
+  paintRobot(state.robot_online);
   const cams = state.cameras || {};
   for (const which of ['up', 'down']) {
     cam[which] = { present: !!cams[which]?.present,

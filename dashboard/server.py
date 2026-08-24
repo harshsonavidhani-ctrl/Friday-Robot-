@@ -34,6 +34,7 @@ import contextlib
 import json
 import os
 import re
+import socket
 import ssl
 import subprocess
 import sys
@@ -113,6 +114,22 @@ async def api_clear(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+def robot_online() -> bool:
+    """Is friday-mcp accepting connections?
+
+    A bare TCP connect, not an MCP call: this is asked on every heartbeat and
+    a real tool round-trip would be far too heavy for that. The dashboard has
+    to load and stay usable whether or not the robot is running -- the whole
+    point of it being a separate service.
+    """
+    try:
+        with socket.create_connection(
+                (config.MCP_HTTP_HOST, config.MCP_HTTP_PORT), timeout=0.4):
+            return True
+    except OSError:
+        return False
+
+
 async def api_state(request: web.Request) -> web.Response:
     cams: CameraSet = request.app["cams"]
     return web.json_response({
@@ -122,6 +139,7 @@ async def api_state(request: web.Request) -> web.Response:
         "viewers": request.app["bus"].subscriber_count,
         "uptime_s": time.time() - STARTED,
         "face_running": _face_is_running(),
+        "robot_online": robot_online(),
     })
 
 

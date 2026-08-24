@@ -16,12 +16,47 @@
 </head>
 <body>
 
+<!-- Opening sequence: 3 x 2s = 6s, then it removes itself. Friday's own face
+     geometry and colours (#FF6A00 on black), so the app opens as the robot.
+     Skippable by tapping, and hidden entirely for anyone who has asked for
+     reduced motion. -->
+<div id="splash" role="presentation">
+  <div class="splash-stage" id="splash-face">
+    <svg viewBox="0 0 520 300" class="splash-svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="eyeGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"  stop-color="#ff9440"/>
+          <stop offset="100%" stop-color="#d45500"/>
+        </linearGradient>
+      </defs>
+      <!-- neutral: two square eyes and a flat mouth -->
+      <g id="eye-left">
+        <rect x="120" y="70" width="90" height="90" rx="10" fill="url(#eyeGrad)"/>
+        <ellipse cx="152" cy="95" rx="30" ry="18" fill="#ffcb99" opacity=".85"/>
+      </g>
+      <g id="eye-right">
+        <rect x="310" y="70" width="90" height="90" rx="10" fill="url(#eyeGrad)"/>
+        <ellipse cx="342" cy="95" rx="30" ry="18" fill="#ffcb99" opacity=".85"/>
+      </g>
+      <rect id="mouth" x="150" y="212" width="220" height="14" rx="7"
+            fill="url(#eyeGrad)"/>
+    </svg>
+  </div>
+
+  <div class="splash-stage" id="splash-welcome">
+    <div class="poppers" aria-hidden="true"><span>🎉</span><span>🎉</span></div>
+    <div class="confetti" aria-hidden="true"></div>
+    <h1>WELCOME TO<br><b>FRIDAY</b><span>AI ROBOT</span></h1>
+  </div>
+</div>
+
 <header class="topbar">
   <div class="brand">
     <span class="mark" aria-hidden="true"><i></i><i></i><b></b></span>
     <span class="wordmark">Friday<span class="sep">·</span><span class="sub">Live Logs</span></span>
   </div>
   <div class="topright">
+    <span class="robotoff" id="robotoff" hidden>ROBOT OFF</span>
     <span class="status" id="status" title="stream status">
       <span class="dot" id="dot"></span><span id="statustext">connecting</span>
     </span>

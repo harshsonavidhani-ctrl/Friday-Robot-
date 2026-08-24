@@ -540,3 +540,115 @@ aside::-webkit-scrollbar-thumb,.log::-webkit-scrollbar-thumb{
 aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
   background:var(--faint);background-clip:content-box;
 }
+
+/* ==================================================================
+   OPENING SEQUENCE
+   Three 2s beats -- neutral face, wink, welcome -- then it removes
+   itself. Uses Friday's own colours (#FF6A00 on black) so the app
+   opens as the robot rather than as a web page.
+   Everything is a transform/opacity animation so it stays cheap; the
+   Pi is serving this to a phone, but the phone is doing the work.
+   ================================================================== */
+#splash{
+  position:fixed;inset:0;z-index:9999;background:#000;
+  display:flex;align-items:center;justify-content:center;
+  animation:splash-out .45s ease 5.55s forwards;
+}
+#splash.gone{display:none}
+.splash-stage{
+  position:absolute;inset:0;display:flex;align-items:center;
+  justify-content:center;flex-direction:column;opacity:0;
+}
+.splash-svg{width:min(78vw,520px);height:auto}
+
+/* Beat 1+2 (0-4s): the face is on screen for both, and the wink
+   happens within it at 2s. */
+#splash-face{animation:splash-face-io 4.2s ease forwards}
+@keyframes splash-face-io{
+  0%{opacity:0;transform:scale(.94)}
+  10%{opacity:1;transform:scale(1)}
+  88%{opacity:1;transform:scale(1)}
+  100%{opacity:0;transform:scale(1.03)}
+}
+/* The wink: the RIGHT eye squashes to a line at 2s and opens again,
+   which is how friday_face.py does it -- left eye stays open. */
+#eye-right{transform-origin:355px 115px;animation:wink 4.2s ease forwards}
+@keyframes wink{
+  0%,44%{transform:scaleY(1)}
+  50%,60%{transform:scaleY(.08)}
+  66%,100%{transform:scaleY(1)}
+}
+/* The mouth lifts into a small smile as the wink lands. */
+#mouth{transform-origin:260px 219px;animation:mouth-smile 4.2s ease forwards}
+@keyframes mouth-smile{
+  0%,44%{transform:scaleX(1) translateY(0)}
+  56%,100%{transform:scaleX(.82) translateY(-6px)}
+}
+
+/* Beat 3 (4-6s): welcome + party poppers */
+#splash-welcome{animation:splash-welcome-in .5s ease 4.15s forwards}
+@keyframes splash-welcome-in{
+  0%{opacity:0;transform:scale(.9)}
+  100%{opacity:1;transform:scale(1)}
+}
+#splash-welcome h1{
+  margin:0;text-align:center;line-height:1.15;color:#fff;
+  font-weight:800;letter-spacing:.02em;font-size:clamp(22px,7vw,44px);
+}
+#splash-welcome h1 b{display:block;color:#FF6A00;font-size:1.5em;letter-spacing:.04em}
+#splash-welcome h1 span{
+  display:block;font-size:.5em;letter-spacing:.34em;color:#9aa3b2;
+  margin-top:.5em;font-weight:600;
+}
+.poppers{position:absolute;inset:0;pointer-events:none}
+.poppers span{
+  position:absolute;font-size:clamp(34px,11vw,64px);opacity:0;
+  animation:pop .8s ease 4.3s forwards;
+}
+.poppers span:nth-child(1){left:8%;top:26%}
+.poppers span:nth-child(2){right:8%;top:26%;transform:scaleX(-1)}
+@keyframes pop{
+  0%{opacity:0;transform:scale(.4) rotate(0)}
+  60%{opacity:1;transform:scale(1.15) rotate(-12deg)}
+  100%{opacity:1;transform:scale(1) rotate(-6deg)}
+}
+/* Confetti: 18 pieces generated with nth-child, no images, no JS loop. */
+.confetti{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.confetti i{
+  position:absolute;top:-8%;width:9px;height:14px;border-radius:2px;opacity:0;
+  animation:fall 1.9s ease-in 4.35s forwards;
+}
+@keyframes fall{
+  0%{opacity:0;transform:translateY(-10vh) rotate(0)}
+  12%{opacity:1}
+  100%{opacity:0;transform:translateY(105vh) rotate(620deg)}
+}
+@keyframes splash-out{to{opacity:0;visibility:hidden}}
+
+/* Anyone who has asked the OS for less motion gets none of it. */
+@media (prefers-reduced-motion:reduce){
+  #splash{animation:splash-out .2s ease .1s forwards}
+  #splash-face,#eye-right,#mouth,#splash-welcome,.poppers span,.confetti i{
+    animation:none}
+}
+
+/* Robot off: friday-mcp is not running, so motors, sensors and cameras
+   cannot be driven. The dashboard itself is a separate service and stays
+   fully usable -- this says plainly which half is down. */
+.robotoff{
+  display:inline-flex;align-items:center;gap:.4em;
+  padding:.28em .7em;border-radius:999px;
+  background:rgba(220,38,38,.14);border:1px solid rgba(220,38,38,.55);
+  color:#ff6b6b;font-size:12px;font-weight:700;letter-spacing:.08em;
+  white-space:nowrap;
+}
+.robotoff::before{
+  content:"";width:7px;height:7px;border-radius:50%;background:#ff3b3b;
+  box-shadow:0 0 0 0 rgba(255,59,59,.6);animation:offpulse 1.8s ease-out infinite;
+}
+@keyframes offpulse{
+  0%{box-shadow:0 0 0 0 rgba(255,59,59,.55)}
+  70%{box-shadow:0 0 0 7px rgba(255,59,59,0)}
+  100%{box-shadow:0 0 0 0 rgba(255,59,59,0)}
+}
+@media (prefers-reduced-motion:reduce){ .robotoff::before{animation:none} }
