@@ -44,6 +44,25 @@ import math
 import os
 import random
 
+# ⚠ THE FACE MUST NEVER OPEN AN AUDIO DEVICE.
+#
+# `pygame.init()` starts EVERY subsystem, mixer included, and this process
+# never plays a sound -- the ring, the wake beep and Piper all go out through
+# pw-play. That unused mixer stream was measured on 2026-08-26 as the cause of
+# Friday's bad sound: SDL opened the speaker at 44100 Hz (the card runs 48000,
+# so every other stream was resampled on the fly) and asked for a 128-frame
+# buffer. pipewire runs its graph at the SMALLEST buffer any connected client
+# asks for, so one silent stream pinned the whole graph to 2.67 ms periods on
+# a Pi already at load average 4+ -- and it burned ~4.8 xruns PER SECOND with
+# nothing playing at all. Every one of those is a discontinuity in the
+# waveform, which is exactly the buzzing/bursting Harsh could hear on
+# everything, including tones far too quiet to be clipping.
+#
+# So SDL is told there is no audio driver before pygame is imported, and only
+# the subsystems the face actually uses are started below. Nothing outside
+# this project changes; pipewire itself is untouched.
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+
 import pygame
 
 import apps
@@ -184,7 +203,12 @@ class FridayFace:
 
     def __init__(self, fullscreen: bool | None = True,
                  screen_size: tuple[int, int] | None = None) -> None:
-        pygame.init()
+        # Only what the face draws with -- see the SDL_AUDIODRIVER note above
+        # for why this is not pygame.init().
+        pygame.display.init()
+        pygame.font.init()
+        if pygame.mixer.get_init():          # belt and braces if SDL ignored us
+            pygame.mixer.quit()
         pygame.display.set_caption("Friday")
 
         detected, is_real_panel = _detect_screen_size()
