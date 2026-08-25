@@ -392,16 +392,46 @@ CAM_SWAP_UP_DOWN = False
 LIDAR_PORT = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
 LIDAR_BAUD = 230400
 
-# Which RAW LiDAR bearing points at the robot's front. NOT MEASURED YET, and
-# None means exactly that: sensors.py refuses to name a direction rather than
-# guessing one, so scan_environment reports left/right/backward as "unknown"
-# instead of confidently wrong. The forward safety stop does not depend on
-# this -- it trusts the ToF, which is bolted to the bumper facing forward.
+# Which RAW LiDAR bearing points at the robot's front.
 #
-# To measure: put a box ~50 cm directly in front of the robot, run
-# `python sensors.py`, and note the bearing whose distance drops. Set that
-# number here and every direction lights up.
-LIDAR_FORWARD_DEG = None
+# MEASURED 2026-08-26: 51.8 degrees, by driving 250 mm and scan-matching the
+# sweep before against the sweep after (`scripts/calibrate_lidar.py --drive`).
+# The direction she travelled IS forward, by definition, so this is a
+# measurement rather than an inference. Match score 0.22 with a peak-to-median
+# confidence of 13.9x, and the peak held at 47-54 degrees across a six-fold
+# range of matcher blur, which is what makes it believable.
+#
+# ⚠ DO NOT re-measure with the object method. The LiDAR plane is at leg
+# height: a box on the floor is BELOW it and never appears at all (three
+# attempts), and a person appears as TWO returns 12 degrees apart -- left leg
+# and right leg -- whose midpoint is a guess worth several degrees. That
+# method is why this sat at None for so long. See the module docstring in
+# scripts/calibrate_lidar.py.
+LIDAR_FORWARD_DEG = 51.8
+
+# ⚠ FRIDAY CAN SEE HERSELF. Raw bearings 90-97 return a rock-steady 210-220 mm
+# with a standard deviation UNDER 2 mm -- that is not a room, it is part of her
+# own chassis sitting in the LiDAR's plane. Proved 2026-08-26 by pivoting 45
+# degrees in place: the return did not move by a single degree, while
+# everything else in the room did.
+#
+# It has to be masked or it poisons everything downstream. It is permanently
+# the nearest thing in any sweep, so it makes every omnidirectional clearance
+# check fail; and for SLAM it would be integrated into the map as an obstacle
+# that orbits with the robot, which is exactly the input that makes a scan
+# matcher diverge.
+#
+# Inclusive ranges of RAW bearings, widened by one degree either side of the
+# solid run because 89, 97 and 98 flicker between the chassis and the wall
+# behind it (stdev 796, 306 and 177 mm respectively, against under 2 mm inside
+# the run). 10 of 360 bearings, so 2.8% of the sweep is blind -- re-measure
+# with scripts/lidar_self_mask.py if anything is ever bolted to the dome.
+LIDAR_SELF_MASK = ((89, 98),)
+
+# The D500 is specified to 12 m, but indoors a long return is usually a
+# doorway or a window rather than a wall, and those are the points that drag a
+# scan match. Anything past this is dropped for mapping.
+LIDAR_MAX_RANGE_MM = 6000
 
 # DFRobot 8x8 ToF, bridged through a Raspberry Pi Pico over USB CDC.
 # NOT on I2C — /dev/i2c-1 is disabled and enabling it is off-limits (see
@@ -541,6 +571,24 @@ MOTOR_KICKSTART_FLOOR = 1.0  # fraction of the duty cap to pulse at
 # the Pi. If turning is ever still too weak, ASK before going higher.
 MOTOR_MAX_DUTY = 0.75
 MOTOR_WATCHDOG_S = 0.5       # stop if no new command within this window
+
+# ⚠ NOTHING ON THE MOTOR LINK MAY BLOCK FOREVER. THE STOP DEPENDS ON IT.
+#
+# Found 2026-08-26 with py-spy, on a server where every `stop` call hung: the
+# front thread was parked in serial.flush() -> tcdrain(), with four more
+# stacked behind it waiting for the port lock. tcdrain waits for the UART to
+# physically drain and HAS NO TIMEOUT -- write_timeout does not apply to it --
+# so when the FTDI stopped draining (the whole USB hub had re-enumerated
+# minutes earlier) the emergency stop blocked indefinitely. During a move,
+# guarded_move's finally-block stop() would hang exactly the same way and the
+# wheels would keep turning until the Arduino's own watchdog cut them. That is
+# the most likely explanation for Friday bumping something.
+MOTOR_WRITE_TIMEOUT_S = 0.5  # a write that cannot go out fails instead of hanging
+
+# How long any one caller waits for the port. A wedged command must not be
+# able to hold the emergency stop out of the port forever -- better to fail
+# fast and let the Arduino watchdog cut the motors than to queue behind it.
+MOTOR_LOCK_TIMEOUT_S = 1.0
 
 # --- Face ----------------------------------------------------------------
 # The 7" HDMI panel (EDID "Mediatrix Peripherals Inc MPI7002") reports
@@ -970,3 +1018,73 @@ def missing_hardware_settings() -> list[str]:
 # still exists for deliberate lookups, but Harsh should not have to ask Friday
 # to consult its own memory any more than a person would.
 MEMORY_IN_CONTEXT = True
+
+
+# =====================================================================
+# SLAM — the room map
+# =====================================================================
+# Pure Python on numpy/scipy. ROS2 was evaluated and rejected: there are no
+# ROS2 binaries for Debian 13 (trixie), so it would mean a third-party apt
+# repo or a source build -- exactly the class of change CLAUDE.md Part 1
+# forbids -- and slam_toolbox alone wants about a core on a Pi that is already
+# at load 2.3 of 4. Harsh approved this approach on 2026-08-26.
+
+# Map resolution. 5 cm is fine enough to plan a path through a doorway and
+# coarse enough that a 12 x 12 m room is only 240 x 240 cells.
+SLAM_CELL_M = 0.05
+
+# How far the likelihood field is smeared. This is the matcher's tolerance for
+# "nearly right": too small and the score is a field of spikes with nothing to
+# optimise, too large and every pose looks equally good. Two to three cells is
+# the usual choice.
+SLAM_BLUR_M = 0.12
+
+# The matcher searches at SLAM_BLUR_M and then reads the answer out at this
+# much finer resolution. A blur wide enough for a safe global search is also
+# wide enough to make a 25 cm move look plausible in almost any direction --
+# measured on the real robot, 127 of 360 bearings within 75% of the peak at
+# 12 cm blur, versus a 13.6x peak-to-median ratio at 2 cm on the same data.
+SLAM_FINE_CELL_M = 0.01
+SLAM_FINE_BLUR_M = 0.02
+
+# A match scoring below this is not believed, and the odometry prior is used
+# unchanged rather than being corrected by a bad answer.
+SLAM_MIN_SCORE = 0.15
+
+# And a peak this many times the median across all candidates, or the geometry
+# did not really constrain the answer however high the peak looked.
+SLAM_MIN_CONFIDENCE = 5.0
+
+
+# =====================================================================
+# ANTI-BUMP — the backstops that do not depend on knowing which way is forward
+# =====================================================================
+# ⚠ FRIDAY BUMPED SOMETHING ON 2026-08-26 WHILE THE ToF SAID 4000 mm CLEAR.
+# Both halves of that are true and neither was a lie:
+#
+#  - The bumper ToF has a BLIND BAND from ~0.31 m to ~0.75 m for anything not
+#    tall enough to reach its ahead-rows (see TOF_FLOOR_FROM_ROW). Its
+#    down-rows hit floor nearer than that; its ahead-rows look over it. An
+#    intact floor with nothing above it legitimately reports "clear".
+#  - Reversing is completely blind. There is no rear sensor at all.
+#
+# So neither the ToF nor the movement gate could have prevented it, and the
+# fix cannot live in either. These two backstops run during EVERY translation
+# and need no knowledge of LIDAR_FORWARD_DEG, which is the point -- they had
+# to work before the bearing was measured, not after.
+
+# 1. PROXIMITY. Anything this close in ANY direction stops a translation. The
+# LiDAR sees 360 degrees, so this does not care where the nose is. It can only
+# ever stop a move sooner -- it never permits one the gate refused. Turns are
+# exempt on purpose: a pivot sweeps only the robot's own footprint, and
+# blocking turns on side clearance would leave a robot facing a wall with no
+# legal way out of the room.
+LIDAR_BUMP_STOP_MM = 200
+
+# 2. STALL. If the wheels are turning but the world is not moving past the
+# LiDAR, Friday is pushing against something -- which is exactly what a bump
+# looks like from the inside, and it catches obstacles NEITHER sensor can see.
+# At 18.5 cm/s she covers ~9 cm in half a second, which moves ranges by far
+# more than the D500's few millimetres of jitter.
+SAFETY_STALL_AFTER_S = 0.5   # give the motors time to actually start
+SAFETY_STALL_MM = 15         # median range change below this means stuck

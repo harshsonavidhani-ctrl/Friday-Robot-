@@ -224,6 +224,11 @@ async def run(move: bool, over_http: bool = False) -> int:
             # Calibrated at 18.5 cm/s and 92 deg/s, so these convert to a
             # duration rather than refusing. Either outcome is correct here:
             # a real move, a safety stop, or an honest motor-board error.
+            # Look again first. The camera tests above take longer than an
+            # observation stays fresh (12s), so without this the gate
+            # correctly refuses and the next two checks fail for a reason
+            # that has nothing to do with what they are testing.
+            await call("observe")
             text = await call("move_distance", cm=30)
             report.check("move_distance", "cannot do distances" in text
                          or "STOPPED" in text or "Travelled" in text

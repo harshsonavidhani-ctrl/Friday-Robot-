@@ -119,7 +119,12 @@ class Motors:
                 + "\nPlug the Arduino in, or pass port= explicitly once you "
                   "have confirmed which device drives the motors.")
 
-        self.serial = serial.Serial(self.port, self.baud, timeout=1.0)
+        # write_timeout matters as much as timeout: without it a write to a
+        # port that has stopped draining blocks forever, and that port is how
+        # the robot is told to stop. See config.MOTOR_WRITE_TIMEOUT_S.
+        self.serial = serial.Serial(
+            self.port, self.baud, timeout=1.0,
+            write_timeout=config.MOTOR_WRITE_TIMEOUT_S)
         time.sleep(RESET_SETTLE_S)
         self.serial.reset_input_buffer()
 
@@ -154,15 +159,48 @@ class Motors:
     # --- the wire ----------------------------------------------------
 
     def _write(self, line: str) -> None:
+        """Put a line on the wire. Never blocks indefinitely.
+
+        ⚠ THERE IS NO flush() HERE ON PURPOSE. serial.flush() calls tcdrain(),
+        which waits for the UART to physically empty and honours NO timeout at
+        all -- not write_timeout, not anything. When the FTDI stopped draining
+        after a USB re-enumeration, that one call hung every `stop` on the
+        robot indefinitely (found with py-spy; five threads stacked behind it).
+        The write itself is enough: it hands the bytes to the kernel, which
+        sends them, and write_timeout bounds even that. For _command the
+        readline that follows is the real synchronisation anyway.
+        """
         if self.serial is None or not self.serial.is_open:
             raise MotorError("not connected -- call connect() first")
-        self.serial.write((line + "\n").encode())
-        self.serial.flush()
+        try:
+            self.serial.write((line + "\n").encode())
+        except serial.SerialTimeoutException as exc:
+            raise MotorError(
+                f"the motor link would not accept a write within "
+                f"{config.MOTOR_WRITE_TIMEOUT_S}s ({exc}). The Arduino "
+                f"watchdog cuts the motors after "
+                f"{config.MOTOR_WATCHDOG_S}s of silence.") from exc
 
     def _command(self, line: str) -> str:
-        with self._lock:
+        """Send a line and read the reply, under a lock that can be lost.
+
+        The lock is acquired WITH A TIMEOUT rather than unconditionally: one
+        wedged command must not be able to hold the port against an emergency
+        stop for the rest of the process's life. Failing fast is strictly
+        better here, because the Arduino cuts the motors on its own after
+        MOTOR_WATCHDOG_S of silence -- so losing the port fails safe, while
+        waiting on it does not.
+        """
+        if not self._lock.acquire(timeout=config.MOTOR_LOCK_TIMEOUT_S):
+            raise MotorError(
+                f"the motor link is busy and did not free up within "
+                f"{config.MOTOR_LOCK_TIMEOUT_S}s. The Arduino watchdog cuts "
+                f"the motors after {config.MOTOR_WATCHDOG_S}s of silence.")
+        try:
             self._write(line)
             return self.serial.readline().decode(errors="replace").strip()
+        finally:
+            self._lock.release()
 
     # --- raw drive ---------------------------------------------------
 
@@ -242,8 +280,12 @@ class Motors:
         to a keepalive, so reading one back would block for the full serial
         timeout and turn a 100 ms safety poll into a 1 s one.
         """
-        with self._lock:
+        if not self._lock.acquire(timeout=config.MOTOR_LOCK_TIMEOUT_S):
+            raise MotorError("the motor link is busy; skipping a keepalive")
+        try:
             self._write("")
+        finally:
+            self._lock.release()
 
     # --- timed moves -------------------------------------------------
 

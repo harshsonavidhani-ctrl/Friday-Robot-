@@ -106,6 +106,40 @@ def check_forward_clearance() -> tuple[int | None, str, str | None]:
     return distance, source, None
 
 
+def check_proximity() -> tuple[int | None, str | None]:
+    """Is anything close in ANY direction? Refusal text, or None to continue.
+
+    The 360-degree backstop. Friday bumped something while the bumper ToF
+    correctly reported 4000 mm clear -- the object sat in the ToF's blind band
+    (~0.31 m to 0.75 m for anything short) and no forward-looking sensor could
+    have caught it. The LiDAR can, and it does not need to know which way the
+    nose points to do it.
+
+    This only ever STOPS a move sooner. It never makes one permissible.
+    """
+    lidar = hardware.ranges().lidar
+    nearest = lidar.nearest_mm()
+    if nearest is None:
+        return None, None                  # cannot see: the gate handles that
+    if nearest < config.LIDAR_BUMP_STOP_MM:
+        return nearest, (f"something is {nearest} mm away — inside the "
+                         f"{config.LIDAR_BUMP_STOP_MM} mm bump guard (LiDAR)")
+    return nearest, None
+
+
+def _scan_movement_mm(before: dict[int, int], now: dict[int, int]) -> float | None:
+    """Median absolute range change between two sweeps, over shared bearings.
+
+    How much the world has moved past the LiDAR. A median, not a mean, so a
+    person walking through the scan cannot mask a robot that is stuck.
+    """
+    shared = [abs(now[b] - before[b]) for b in before if b in now]
+    if len(shared) < 40:
+        return None
+    shared.sort()
+    return float(shared[len(shared) // 2])
+
+
 def guarded_move(direction: str, seconds: float,
                  speed_pwm: float | None = None) -> MoveResult:
     """Run one movement under the interrupt. The only way tools may move.
@@ -165,6 +199,12 @@ def guarded_move(direction: str, seconds: float,
 
     hardware.ABORT.clear()
     hardware.MOVING.set()               # the reflex loop watches this
+
+    # A turn does not carry Friday anywhere, so the bump guard and the stall
+    # check apply to forward and backward only.
+    translating = is_forward or direction in REVERSE_WORDS
+    scan_at_start = (hardware.ranges().lidar.scan() if translating else None)
+
     started = time.monotonic()
     deadline = started + requested
     stopped_early = False
@@ -191,6 +231,34 @@ def guarded_move(direction: str, seconds: float,
                     reason = blocked
                     _show_alarm()
                     break
+
+            # THE TWO BACKSTOPS. Translations only -- a pivot sweeps the
+            # robot's own footprint, and blocking turns on side clearance
+            # would leave a robot facing a wall unable to turn away from it.
+            if translating:
+                near, too_close = check_proximity()
+                if too_close:
+                    stopped_early = True
+                    reason = too_close
+                    _show_alarm()
+                    break
+
+                # Wheels turning but the world not moving past the LiDAR
+                # means Friday is pushing on something. This is the only
+                # check that catches what no sensor can see.
+                if (scan_at_start is not None
+                        and now - started >= config.SAFETY_STALL_AFTER_S):
+                    moved_mm = _scan_movement_mm(
+                        scan_at_start, hardware.ranges().lidar.scan())
+                    if (moved_mm is not None
+                            and moved_mm < config.SAFETY_STALL_MM):
+                        stopped_early = True
+                        reason = (f"not actually moving — the room has "
+                                  f"shifted only {moved_mm:.0f} mm in "
+                                  f"{now - started:.1f}s, so something is "
+                                  f"in the way")
+                        _show_alarm()
+                        break
 
             # The Arduino stops on its own after config.MOTOR_WATCHDOG_S of
             # silence, so the loop has to keep talking to it. A bare newline
