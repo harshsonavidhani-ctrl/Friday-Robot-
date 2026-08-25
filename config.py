@@ -526,6 +526,12 @@ CALIBRATION_DEFAULTS = {
     # Harsh had set from the dashboard. Anything the dashboard can change has
     # to outlive the process that changes it.
     "speed_percent": 60,         # 1-MAX_SPEED_PERCENT, trims the two above
+    # Per-side balance: multiplies the commanded PWM for that side alone, to
+    # correct a physical mismatch (worn brushes, gearing) between the two
+    # motors that no amount of equal-speed commands can fix. 1.0 = no
+    # correction. Tune by driving straight and nudging the slower side up.
+    "trim_left": 1.0,
+    "trim_right": 1.0,
 }
 
 
