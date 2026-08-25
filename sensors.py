@@ -233,19 +233,79 @@ class ToF(_Poller):
         return (frame, age) if age <= max_age_s else None
 
     def forward_mm(self, max_age_s: float = 1.0) -> int | None:
-        """Nearest real return anywhere in the frame, in mm.
+        """Nearest real thing IN THE WAY, in mm. None means cannot see.
 
         Nearest rather than centre-average on purpose: a chair leg that fills
         one cell is exactly the thing worth stopping for, and averaging it
         against seven cells of open air hides it.
+
+        ⚠ THE BOTTOM ROWS LOOK AT THE GROUND, and this used to take the
+        nearest return anywhere in the frame -- so it always answered with the
+        floor about 12 cm in front of the bumper, in every room, forever.
+        check_forward_clearance() therefore never reported more than ~115 mm
+        and Friday could not drive forward at all. See the measured row
+        profile in config.py (TOF_FLOOR_FROM_ROW).
+
+        So the frame is read as two different sensors:
+
+        - The rows ABOVE the horizon look ahead. Any return there is a thing.
+        - The rows BELOW it look at the floor, and are read as a DIFFERENCE
+          from the floor profile: a cell reading much shorter than the floor
+          should be at that angle is something standing on the floor, and its
+          range counts. A cell reading the floor is not an obstacle.
+
+        With nothing in the way at all, an intact floor is positive evidence
+        that the near path is clear -- the beam reached the ground at 30 cm,
+        so nothing is standing in front of it -- and this answers
+        TOF_NO_RETURN_MM, "nothing within range", rather than None. If the
+        floor is NOT intact the answer is None, because a floor that stopped
+        reading is what a cliff looks like, and None is never treated as
+        clear.
         """
         got = self.latest(max_age_s)
         if got is None:
             return None
         frame, _ = got
-        real = [v for row in frame for v in row
-                if 0 < v < config.TOF_NO_RETURN_MM]
-        return min(real) if real else None
+        horizon = config.TOF_FLOOR_FROM_ROW
+
+        # Rows that look ahead: every return is a thing in the way -- except
+        # in the row immediately above the horizon, which occasionally echoes
+        # the very strong floor return from the row below it at the SAME
+        # range. That is crosstalk between adjacent cells in the SPAD array,
+        # not an object: it appears in about one frame in ten, always within a
+        # few mm of the first ground row's floor distance, and it was enough
+        # to make forward clearance flicker down to 296 mm in an empty room.
+        # A real object at that range still shows up, because it also occludes
+        # the floor in the ground rows below.
+        echo = config.TOF_FLOOR_PROFILE_MM[0] if config.TOF_FLOOR_PROFILE_MM else None
+        hits = []
+        for index, row in enumerate(frame[:horizon]):
+            is_horizon = index == horizon - 1
+            for value in row:
+                if not 0 < value < config.TOF_NO_RETURN_MM:
+                    continue
+                if (is_horizon and echo is not None
+                        and abs(value - echo) <= config.TOF_FLOOR_INTACT_MM):
+                    continue
+                hits.append(value)
+
+        # Rows that look at the floor: only shortfalls against the profile.
+        floor_intact = True
+        for offset, row in enumerate(frame[horizon:]):
+            if offset >= len(config.TOF_FLOOR_PROFILE_MM):
+                break
+            expected = config.TOF_FLOOR_PROFILE_MM[offset]
+            for value in row:
+                if not 0 < value < config.TOF_NO_RETURN_MM:
+                    floor_intact = False          # the floor stopped
+                    continue
+                if value < expected - config.TOF_FLOOR_OBSTACLE_MM:
+                    hits.append(value)
+                elif abs(value - expected) > config.TOF_FLOOR_INTACT_MM:
+                    floor_intact = False          # further than floor: a drop
+        if hits:
+            return min(hits)
+        return config.TOF_NO_RETURN_MM if floor_intact else None
 
     def floor_gap_mm(self, max_age_s: float = 1.0) -> int | None:
         """Nearest return in the BOTTOM rows — the floor just ahead.

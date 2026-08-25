@@ -414,6 +414,45 @@ TOF_NO_RETURN_MM = 4000
 TOF_ROWS = 8
 TOF_COLS = 8
 
+# ⚠ THE BOTTOM HALF OF THE ToF LOOKS AT THE GROUND, NOT AHEAD.
+#
+# The sensor is tilted down on the bumper, and it matters more than it sounds
+# like it should. Measured 2026-08-26 over 120 frames in an empty room with
+# nothing in front of the robot:
+#
+#   row  cells returning   median    spread across the 8 columns
+#    0      3.7 / 8         1812 mm      +/-142      <- the room ahead
+#    1      2.2 / 8         1693 mm      +/-381      <- sparse and ragged,
+#    2      3.3 / 8         1580 mm      +/-417         because far surfaces
+#    3      0.1 / 8         1763 mm      +/-1871        return weakly
+#    4      8.0 / 8          295 mm      +/-27       <- THE FLOOR. every cell,
+#    5      8.0 / 8          223 mm      +/-8           every frame, and the
+#    6      8.0 / 8          161 mm      +/-6           spread collapses to
+#    7      8.0 / 8          120 mm      +/-3           a few millimetres
+#
+# forward_mm() used to take the nearest return ANYWHERE in the frame, so it
+# always returned row 7 -- the ground about 12 cm in front of the bumper. That
+# made check_forward_clearance() answer "115 mm" permanently, in any room, and
+# FRIDAY COULD NEVER DRIVE FORWARD AT ALL: every move was refused as too close
+# to something, and the something was the floor she was standing on. It read
+# exactly like a box in the way, which is how it survived this long.
+TOF_FLOOR_FROM_ROW = 4       # rows at or below this index look at the ground
+
+# What each of those ground rows reads when the floor ahead is empty, in the
+# same order (row 4 first). Re-measure with scripts/calibrate_tof_floor.py if
+# the bumper is ever re-seated or the sensor's angle changes.
+TOF_FLOOR_PROFILE_MM = (295, 223, 161, 120)
+
+# A ground row reading this much SHORTER than its floor distance is something
+# standing on the floor, not the floor. Comfortably above the +/-27 mm of
+# noise on the worst row, so an empty floor never reads as an obstacle.
+TOF_FLOOR_OBSTACLE_MM = 45
+
+# How far a ground row may drift from its profile before the floor is no
+# longer considered intact. Beyond this the answer is "cannot see", never
+# "clear" -- a floor that stopped reading is what a cliff looks like.
+TOF_FLOOR_INTACT_MM = 70
+
 # RESOLVED 2026-08-23: Harsh confirmed the FTDI FT232R (serial A5069RR4) IS
 # the Arduino Uno driving the motors -- an Uno clone using an FT232R instead
 # of the usual CH340. It is no longer unidentified, so the old "never open
