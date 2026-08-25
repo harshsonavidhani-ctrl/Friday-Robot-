@@ -250,7 +250,11 @@ async def run(move: bool, over_http: bool = False) -> int:
             # Look first, or the observation gate refuses the move before the
             # duration cap is ever reached -- correct behaviour, but it would
             # test the gate a second time instead of testing the cap.
-            await call("observe")
+            # scan_environment, not observe: it records an observation the same
+            # way but takes 0.1s instead of 4.6s, and observe()'s camera work is
+            # slow enough under load that the reading it just took can age out
+            # of the gate before the next call is made.
+            await call("scan_environment")
             text = await call("move", direction="forward",
                               duration_seconds=999)
             report.check("duration is capped",
