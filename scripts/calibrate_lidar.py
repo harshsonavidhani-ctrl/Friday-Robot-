@@ -50,6 +50,7 @@ the robot confident about directions it cannot actually see.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import statistics
 import sys
@@ -88,39 +89,33 @@ def sweep(lidar: sensors.Lidar, seconds: float) -> dict[int, int]:
 
 def fit_forward(before: dict[int, int], after: dict[int, int],
                 travelled_mm: float) -> tuple[int, float, int]:
-    """Find the bearing that best explains the whole sweep's change.
+    """Which raw bearing points at Friday's nose, by matching the two sweeps.
 
-    Driving forward by D changes the range at bearing theta by
-    -D * cos(theta - forward). Rather than search for a peak, project the
-    measured deltas onto cos and sin and read the phase straight off -- that
-    is a least-squares fit of exactly this model, in two dot products.
+    ⚠ THIS USED TO FIT A COSINE TO THE RANGE DELTAS AND IT WAS WRONG. Moving
+    the robot by t does NOT change the reading at bearing theta by -t.u:
+    after moving, the beam at that bearing lands somewhere else on the
+    surface entirely, and the range changes by (t.n)/(u.n) for a surface with
+    normal n. That equals t.u only where the surface faces the beam squarely,
+    which almost nothing in a room does. On the real robot the cosine fit
+    explained 12% of the variance and returned a confident, wrong number.
 
-    Bearings whose delta is far larger than D are thrown out first. Those are
-    not the room moving relative to the robot, they are a surface the beam
-    slid off or a doorway it found, and a handful of them would drag the fit.
+    Matching the point clouds assumes nothing about the surfaces. Both sweeps
+    are in the LiDAR's own frame and the robot did not rotate, so there is
+    exactly one unknown -- the bearing it travelled along -- and slam.core
+    searches it exhaustively. That bearing IS forward, by definition.
+
+    Returns (bearing, score, points_used); score is 1.0 for a match as good
+    as a scan against itself.
     """
-    shared = sorted(set(before) & set(after))
-    limit = travelled_mm * 2.5
-    used = [b for b in shared if abs(after[b] - before[b]) <= limit]
-    if len(used) < 60:
-        raise RuntimeError(f"only {len(used)} bearings agreed with a "
-                           f"{travelled_mm:.0f} mm move -- did she actually "
-                           f"move, and did the room stay still?")
+    from slam.core import match_translation, points_from_scan   # noqa: PLC0415
 
-    # delta = -D cos(theta - phi) = -D cos(theta) cos(phi) - D sin(theta) sin(phi)
-    cos_sum = sum((after[b] - before[b]) * math.cos(math.radians(b)) for b in used)
-    sin_sum = sum((after[b] - before[b]) * math.sin(math.radians(b)) for b in used)
-    forward = math.degrees(math.atan2(-sin_sum, -cos_sum)) % 360.0
-
-    # How much of the change the fit actually explains. A good fit on real
-    # geometry sits well above 0.5; near zero means the sweep did not move
-    # like a translation at all and the answer is meaningless.
-    amplitude = math.hypot(cos_sum, sin_sum) * 2.0 / len(used)
-    model = [-amplitude * math.cos(math.radians(b - forward)) for b in used]
-    actual = [after[b] - before[b] for b in used]
-    ss_res = sum((a - m) ** 2 for a, m in zip(actual, model))
-    ss_tot = sum((a - statistics.fmean(actual)) ** 2 for a in actual) or 1.0
-    return int(round(forward)) % 360, max(0.0, 1.0 - ss_res / ss_tot), len(used)
+    first = points_from_scan(before)
+    second = points_from_scan(after)
+    if len(first) < 60 or len(second) < 60:
+        raise RuntimeError(f"not enough points to match "
+                           f"({len(first)} before, {len(second)} after)")
+    bearing, score = match_translation(first, second, travelled_mm / 1000.0)
+    return int(round(bearing)) % 360, score, min(len(first), len(second))
 
 
 def drive_method() -> int:
@@ -170,7 +165,7 @@ def drive_method() -> int:
         # Record before reversing, or the gate refuses the retreat and she is
         # left parked wherever she stopped -- which is what happened the first
         # time this aborted.
-        embodiment.record(clearance_mm={"backward": None},
+        embodiment.record(clearance_mm={"backward": max(1, int(travelled_mm))},
                           source="calibrate_lidar")
         print(f"  returning: {safety.guarded_move('backward', out.actual_s).as_text()}")
         return 1
@@ -178,10 +173,34 @@ def drive_method() -> int:
     time.sleep(SETTLE_S)
     after = sweep(lidar, SWEEP_S * 2)
     print(f"  sweep after:  {len(after)} bearings")
-    print(f"  travelled ~{travelled_mm:.0f} mm\n")
+    print(f"  travelled ~{travelled_mm:.0f} mm")
+
+    # Written before anything is fitted. Driving needs a cleared room and a
+    # person standing by; re-analysing should need neither, and the first
+    # time this ran the sweeps were thrown away and the drive had to be
+    # repeated to try a different fit.
+    record = config.ROOT / "state" / "lidar_calib"
+    record.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    (record / f"{stamp}.json").write_text(json.dumps({
+        "travelled_mm": travelled_mm,
+        "requested_cm": DRIVE_CM,
+        "actual_s": out.actual_s,
+        "before": {str(k): v for k, v in before.items()},
+        "after": {str(k): v for k, v in after.items()},
+    }))
+    print(f"  sweeps saved to state/lidar_calib/{stamp}.json\n")
 
     # Put her back where she started before anything else can go wrong.
-    embodiment.record(clearance_mm={"backward": None}, source="calibrate_lidar")
+    #
+    # Friday has no rear sensor, so backward clearance is normally unknown --
+    # and unknown is refused, which left her parked 25 cm downrange on the
+    # first two runs. The honest measurement here is not a guess: she
+    # physically OCCUPIED that space a second and a half ago, so there is at
+    # least `travelled_mm` of room behind her. Nothing further than that is
+    # claimed, and she is only asked to reverse exactly that far.
+    embodiment.record(clearance_mm={"backward": int(travelled_mm)},
+                      source="calibrate_lidar")
     back = safety.guarded_move("backward", out.actual_s)
     print(f"  returning: {back.as_text()}\n")
 
@@ -193,14 +212,15 @@ def drive_method() -> int:
 
     print("=" * 62)
     print(f"  Forward is raw bearing {forward}°")
-    print(f"  (cosine fit over {used} bearings, explains "
-          f"{quality * 100:.0f}% of the change)")
+    print(f"  (scan match over {used} points, score {quality:.2f} "
+          f"where 1.0 is a scan matching itself)")
     print("=" * 62)
-    if quality < 0.4:
-        print("\n⚠ THAT FIT IS TOO POOR TO TRUST. The sweep did not change")
-        print("  the way a translation makes it change -- something in the")
-        print("  room moved, or she did not really go where she was told.")
-        print("  Do not paste this number in. Run it again in a still room.")
+    if quality < config.SLAM_MIN_SCORE:
+        print("\n⚠ THAT MATCH IS TOO POOR TO TRUST. The two sweeps do not")
+        print("  overlap the way a pure translation makes them overlap --")
+        print("  something in the room moved, or she did not go where she")
+        print("  was told. Do not paste this number in; the sweeps are saved")
+        print("  under state/lidar_calib/ if you want to look at them.")
         return 1
     print()
     print("Put this in config.py:")

@@ -474,16 +474,39 @@ class Lidar(_Poller):
             with self._points_lock:
                 self._points.update(fresh)
 
+    @staticmethod
+    def _masked(bearing: int) -> bool:
+        """Is this bearing looking at Friday's own body?
+
+        See config.LIDAR_SELF_MASK. Bearings 90-97 return a rock-steady
+        210-220 mm with under 2 mm of jitter and do not move when the robot
+        pivots -- that is chassis, not room.
+        """
+        for low, high in config.LIDAR_SELF_MASK:
+            if low <= high:
+                if low <= bearing <= high:
+                    return True
+            elif bearing >= low or bearing <= high:    # a range that wraps 0
+                return True
+        return False
+
     def scan(self, max_age_s: float = 1.0) -> dict[int, int]:
         """Bearing (raw degrees) -> distance mm, for recent points only.
 
         Stale bearings are dropped rather than kept: a rotating sensor that
         has stopped rotating would otherwise keep reporting the last sweep
         forever, which reads as a perfectly clear room.
+
+        Bearings that look at Friday's own chassis are dropped too, HERE
+        rather than in each caller, so that nothing downstream can forget:
+        the self-return is permanently the nearest thing in the sweep, and
+        every clearance check and every map built from raw points would
+        otherwise be wrong in the same way.
         """
         cutoff = time.monotonic() - max_age_s
         with self._points_lock:
-            return {a: d for a, (d, at) in self._points.items() if at >= cutoff}
+            return {a: d for a, (d, at) in self._points.items()
+                    if at >= cutoff and not self._masked(a)}
 
     def nearest_mm(self, max_age_s: float = 1.0) -> int | None:
         points = self.scan(max_age_s)
