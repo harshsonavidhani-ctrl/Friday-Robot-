@@ -181,21 +181,29 @@ TTS_SPEED = 0.95
 #   TTS_BODY_* a low shelf that puts the chest back in the voice.
 #   TTS_AIR_*  a small high shelf; slightly negative keeps the added weight
 #              from reading as harsh.
-TTS_PITCH = 0.88             # ~2.2 semitones down. Was 0.95 then 0.91; Harsh
-                             # heavier still. The speed loss from resampling is
-                             # compensated in _synthesis_config, so lowering
-                             # this does NOT slow her down -- TTS_SPEED alone
-                             # controls pace, and the two are independent.
-TTS_BODY_DB = 3.0
+TTS_PITCH = 1.03             # SLIGHTLY UP. This ran 0.95 -> 0.91 -> 0.88 while
+                             # the complaint was that Friday sounded thin, and
+                             # it overshot: on 2026-08-25 Harsh said she sounds
+                             # "manly" and asked for cute and warm. Pitching a
+                             # female voice ~2.2 semitones DOWN is precisely how
+                             # you get manly, so the whole chain is reversed
+                             # here -- up a little, no chest boost, air added
+                             # back. The speed loss from resampling is
+                             # compensated in _synthesis_config, so this does
+                             # NOT change her pace; TTS_SPEED alone does.
+TTS_BODY_DB = 0.0            # was +3.0. The low shelf was there to add chest,
+                             # which is the opposite of what is wanted now.
 TTS_BODY_HZ = 320
-TTS_AIR_DB = -1.0
+TTS_AIR_DB = 2.0             # was -1.0. Air is the brightness that reads as
+                             # light and friendly; cutting it was part of what
+                             # made her sound heavy.
 TTS_AIR_HZ = 4500
 
 # ⚠ GAIN IS DELIBERATELY MODEST. +8 dB was tried and rejected as piercing.
 # The hardware is already at maximum underneath this, so this is the only
 # loudness control there is -- but loudness past the point where it sounds bad
 # is not loudness worth having.
-TTS_GAIN_DB = 4.0
+TTS_GAIN_DB = 3.5
 
 # The compressor in tts.louden(). It is an ENVELOPE compressor, not a
 # waveshaper: an earlier tanh soft-knee version added harmonics and Harsh heard
@@ -215,6 +223,56 @@ TTS_VOLUME = 1.0             # per-stream software gain. Leave at 1.0 -- above
 # attenuations multiplied: the pipewire sink sat at 0.40 and the USB card's own
 # hardware gain at 15/30 (-22.5 dB), which is ~20% together. Both are runtime
 # levels that reset, so tts.set_output_volume() asserts them at start-up.
+# ⚠ PLAYBACK BUFFER. Harsh heard the speaker "buzzing, like something bursts".
+# It was not the signal -- every preset measures 0.0% clipped. It is BUFFER
+# UNDERRUN. The sink runs an ALSA period of 64 frames (~1.3 ms) while this Pi
+# sits at load average 4.5 on 4 cores with the face alone eating ~96% of one,
+# at 79 degC with the throttle bits already set. A 1.3 ms buffer on a CPU that
+# starved cannot be refilled in time, and each miss is a discontinuity in the
+# waveform -- which is exactly what a burst or a buzz sounds like.
+#
+# pw-play's --latency asks for a bigger buffer FOR FRIDAY'S OWN STREAM. It is a
+# per-stream request, so nothing about the audio server or any other client
+# changes: no pipewire config is edited, no device property is touched. Raise
+# it if the bursting is still there; the cost is only that speech starts this
+# much later, which at 200 ms is not perceptible in conversation.
+# ⚠⚠ THE BUZZING IS A USB PROBLEM, AND THE REAL FIX IS PHYSICAL ⚠⚠
+#
+# Diagnosed 2026-08-25 with scripts/audio_doctor.py. Harsh heard buzzing on
+# EVERY test tone equally, including a -30 dBFS sine. That single fact rules
+# out almost everything software can cause: a -30 dBFS sine cannot overdrive an
+# analog stage, it is not loud enough to clip, the sweep would have buzzed in
+# one band only if it were mechanical resonance, and the 22050 vs 48000 test
+# would have separated a resampler fault. If a perfectly quiet perfect sine
+# buzzes, the waveform is being corrupted in TRANSPORT, before the driver.
+#
+# The topology says why (lsusb -t):
+#
+#   hub Dev 006 (4 ports)
+#     |__ port 3: the GeneralPlus USB audio card   12 Mbps  (full speed)
+#     |__ port 4: the Logitech C270 webcam        480 Mbps  (high speed)
+#
+# The two share one hub, and that camera had been reset TWENTY-ONE times
+# ("reset high-speed USB device number 10 using xhci_hcd"). USB audio is
+# ISOCHRONOUS: it needs a guaranteed slot every millisecond and has no
+# retransmission. A camera storming the hub delays those slots, and every
+# missed slot is a discontinuity in the waveform -- which is what the buzz is.
+# The audio card itself was seen disconnecting once too (1-1.1.2.3).
+#
+# THE FIX IS TO MOVE THE AUDIO CARD ONTO A DIFFERENT HUB FROM THE CAMERAS,
+# ideally straight into a Pi port. Nothing in this file can repair a bus that
+# is dropping packets; the settings below only make Friday more tolerant of it.
+# Stopping friday-dashboard.service (which streams the cameras) is the quick
+# way to confirm: the resets stop immediately when the camera is released.
+AUDIO_PLAY_LATENCY = "200ms"
+
+# Piper renders at 22050 Hz and the sink runs at 48000, so every playback was
+# resampling in real time on a CPU that has none to spare. tts.py now resamples
+# ONCE while shaping -- off the realtime path, with scipy, which is already
+# imported for the tone stages -- so pw-play gets audio at the rate the device
+# already wants and has nothing left to do but hand it over.
+AUDIO_SINK_RATE = 48000
+
 SPEAKER_SINK_VOLUME = 1.0    # pipewire sink, 0.0-1.0
 SPEAKER_ALSA_CARD = "Device" # the GeneralPlus USB card, BY NAME not index.
                              # Card indices shift when a USB device drops off

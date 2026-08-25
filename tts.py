@@ -324,7 +324,10 @@ def play(path: Path) -> None:
     if shutil.which("pw-play"):
         result = subprocess.run(
             ["pw-play", f"--target={config.SPEAKER_DEVICE}",
-             f"--volume={config.TTS_VOLUME}", str(path)],
+             f"--volume={config.TTS_VOLUME}",
+             # A bigger buffer for THIS STREAM only. The sink's own period is
+             # ~1.3 ms, which this CPU cannot keep fed -- see config.
+             f"--latency={config.AUDIO_PLAY_LATENCY}", str(path)],
             capture_output=True, env=environment, timeout=config.TTS_TIMEOUT_S)
         if result.returncode == 0:
             return
@@ -382,12 +385,40 @@ def _shape_wav(path: Path) -> None:
     samples = add_body(samples, params.framerate)
     samples = louden(samples, params.framerate)
 
+    # Resample to the sink's native rate HERE, once, rather than leaving it to
+    # pw-play to do on every playback in real time. The tone stages already pay
+    # for scipy, this happens while the next sentence is still being spoken,
+    # and it takes the last piece of realtime work off a CPU that is the reason
+    # the audio was breaking up in the first place.
+    rate = params.framerate
+    if config.AUDIO_SINK_RATE and rate != config.AUDIO_SINK_RATE:
+        samples, rate = _resample(samples, rate, config.AUDIO_SINK_RATE)
+
     out = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
     with wave.open(str(path), "wb") as sink:
         sink.setnchannels(params.nchannels)
         sink.setsampwidth(params.sampwidth)
-        sink.setframerate(params.framerate)
+        sink.setframerate(rate)
         sink.writeframes(out)
+
+
+def _resample(samples, from_rate: int, to_rate: int):
+    """Resample with a real polyphase filter. Returns (samples, rate).
+
+    Same reasoning as deepen(): a proper filter, never linear interpolation,
+    which aliases and reads as a permanent faint rasp on a voice.
+    """
+    from fractions import Fraction
+
+    import numpy as np
+    from scipy import signal
+
+    if from_rate == to_rate or len(samples) < 2:
+        return samples, from_rate
+    ratio = Fraction(to_rate, from_rate).limit_denominator(1000)
+    resampled = signal.resample_poly(samples, ratio.numerator,
+                                     ratio.denominator)
+    return np.asarray(resampled, dtype=np.float32), to_rate
 
 
 def speak(text: str) -> str:
