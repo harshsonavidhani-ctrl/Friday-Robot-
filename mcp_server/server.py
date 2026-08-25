@@ -28,7 +28,7 @@ import sys
 from mcp.server.mcpserver import MCPServer
 
 import config
-from mcp_server import hardware, registry
+from mcp_server import hardware, reflex, registry
 
 log = logging.getLogger("friday.mcp")
 
@@ -157,6 +157,12 @@ def main(argv: list[str] | None = None) -> int:
              config.MCP_HTTP_URL if args.http else "stdio")
     for key, value in hardware.startup().items():
         log.info("  %s: %s", key, value)
+
+    # The fast loop comes up with the server and stays up for its whole life.
+    # Started here rather than lazily on the first move: a reflex that only
+    # exists once something has already gone right is not much of a reflex.
+    reflex.start()
+
     try:
         if args.http:
             server.run("streamable-http",
@@ -170,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         # The motors are the part that can hurt. Stop them no matter how the
         # server is going down.
+        reflex.stop()
         hardware.shutdown()
         log.info("stopped")
     return 0

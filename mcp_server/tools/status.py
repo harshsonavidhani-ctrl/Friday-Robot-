@@ -18,7 +18,7 @@ import config
 import face_control
 import tts
 import vision
-from mcp_server import embodiment, hardware
+from mcp_server import embodiment, reflex, hardware
 from mcp_server.registry import tool
 
 _STARTED = time.monotonic()
@@ -122,6 +122,10 @@ def get_status() -> str:
         # not. Surfaced here so "why won't you move?" is answerable without
         # having to trip the refusal first.
         "observation": embodiment.status(),
+        # The fast loop. Reported so the brain can SEE that something else is
+        # holding the brake -- and so a trip shows up in conversation rather
+        # than as an unexplained refusal to move.
+        "reflex": reflex.status(),
         "network": _network(),
         "voice": tts.engine_name(),
         "debug_silent_speech": config.DEBUG_SILENT_SPEECH,

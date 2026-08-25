@@ -33,6 +33,13 @@ _ranges: sensors.Rangefinders | None = None
 # and module-level so stop() never has to find the object that is moving.
 ABORT = threading.Event()
 
+# Set while the wheels are actually turning, cleared the moment they stop. The
+# reflex loop watches this so it only intervenes when there is something to
+# intervene in -- a hazard in front of a stationary robot is not an emergency,
+# it is just a wall. guarded_move owns it, in a finally, so it cannot be left
+# set by an exception.
+MOVING = threading.Event()
+
 # Speed is a percentage rather than raw PWM because the brain should not know
 # or care about PWM, and because it lets config.MAX_SPEED_PERCENT cap it in one
 # place.

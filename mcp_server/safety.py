@@ -164,6 +164,7 @@ def guarded_move(direction: str, seconds: float,
                          f"backward, left, right or stop")
 
     hardware.ABORT.clear()
+    hardware.MOVING.set()               # the reflex loop watches this
     started = time.monotonic()
     deadline = started + requested
     stopped_early = False
@@ -204,6 +205,7 @@ def guarded_move(direction: str, seconds: float,
             hardware.ABORT.wait(min(config.SAFETY_POLL_S,
                                     max(0.0, deadline - time.monotonic())))
     finally:
+        hardware.MOVING.clear()
         # Unconditional. Every early return, every exception, every Ctrl-C.
         try:
             drive.stop()

@@ -203,14 +203,14 @@ TTS_AIR_HZ = 4500
 # The hardware is already at maximum underneath this, so this is the only
 # loudness control there is -- but loudness past the point where it sounds bad
 # is not loudness worth having.
-TTS_GAIN_DB = 3.5
+TTS_GAIN_DB = 6.5
 
 # The compressor in tts.louden(). It is an ENVELOPE compressor, not a
 # waveshaper: an earlier tanh soft-knee version added harmonics and Harsh heard
 # it as buzzing. These control how gently it moves.
-TTS_CEILING = 0.89           # never let output exceed this, so nothing clips
+TTS_CEILING = 0.93           # never let output exceed this, so nothing clips
 TTS_LOOKAHEAD_MS = 5.0       # see peaks coming and duck before they land
-TTS_RELEASE_MS = 60.0        # how slowly gain returns. Too fast pumps and
+TTS_RELEASE_MS = 90.0        # how slowly gain returns. Too fast pumps and
                              # buzzes; too slow and one loud word makes the
                              # next few quiet.
 
@@ -273,14 +273,32 @@ AUDIO_PLAY_LATENCY = "200ms"
 # already wants and has nothing left to do but hand it over.
 AUDIO_SINK_RATE = 48000
 
-SPEAKER_SINK_VOLUME = 1.0    # pipewire sink, 0.0-1.0
+# ⚠ BOTH OF THESE WERE AT MAXIMUM AND THAT IS WHAT BUZZES. Harsh confirmed on
+# 2026-08-25 that the speaker did not do this before the levels were raised.
+# That is the decisive clue, and it explains the one thing the USB theory could
+# not: why even a -30 dBFS sine buzzed. A quiet signal cannot overdrive an amp
+# -- but an amp already pinned at maximum gain distorts and hisses on
+# EVERYTHING it is handed, quiet material included. The card is a cheap
+# GeneralPlus part and its output stage is simply not clean at full tilt.
+#
+# So the analog gain comes down and the loudness is made up digitally, where
+# there is a real limiter (tts.louden) and measurable headroom. This is the
+# normal way round: set the analog stage where it sounds clean, then drive it.
+# If Friday is too quiet now, raise TTS_GAIN_DB first, not these.
+SPEAKER_SINK_VOLUME = 0.95   # pipewire sink, 0.0-1.0. Was 1.0, then 0.75
+                             # which Harsh found too quiet. Still short of
+                             # the maximum that was buzzing.
 SPEAKER_ALSA_CARD = "Device" # the GeneralPlus USB card, BY NAME not index.
                              # Card indices shift when a USB device drops off
                              # the bus -- the same reason MIC_DEVICE and the
                              # camera paths are not indices either. Verified:
                              # `amixer -c Device sget Speaker` works.
 SPEAKER_ALSA_CONTROL = "Speaker"   # None disables the ALSA step entirely
-SPEAKER_ALSA_PERCENT = 100
+SPEAKER_ALSA_PERCENT = 85    # was 100 (30/30, its ceiling) which buzzed,
+                             # then 70 which was too quiet. The output stage is
+                             # the thing that distorts, so it stays off its
+                             # ceiling -- loudness is made up digitally below,
+                             # where there is a real limiter.
 
 # --- Audio devices -------------------------------------------------------
 # GeneralPlus USB soundcard (1b3f:2008) — carries BOTH the shotgun mic in and
@@ -647,6 +665,25 @@ DEFAULT_SPEED_PERCENT = 60
 # Backing away from something is allowed closer than driving into it -- the
 # down cam and bumper cannot see behind, so reverse is time-limited instead.
 MAX_REVERSE_SECONDS = 2.0
+
+# --- The fast loop (mcp_server/reflex.py) --------------------------------
+# Friday's spinal cord: a local thread that watches for hazards while the
+# wheels turn and stops the motors itself. It does not ask the brain, cannot be
+# overruled by it, and keeps working with the network down -- which is the
+# whole point of splitting fast from slow. There is deliberately NO off switch.
+REFLEX_HZ = 20.0             # how often the reflex checks. 50 ms is well
+                             # inside the distance covered at these speeds,
+                             # and cheap: it is a dict lookup off the sensor
+                             # pollers, not a serial round trip.
+
+# A CLIFF IS THE HAZARD NOTHING ELSE CATCHES. The LiDAR sits on the top dome
+# and reads a staircase as clear air; the bumper ToF looks ahead, not down. Its
+# bottom rows see the floor a few hundred mm out, so when the nearest return
+# from those rows suddenly gets FURTHER than the floor should be, the floor has
+# ended. Measured on this robot's ride height -- re-measure if the chassis or
+# the ToF mounting angle changes, because it is geometry, not a preference.
+CLIFF_DROP_MM = 400          # floor further than this = a drop, stop now.
+                             # 0 disables the cliff check (it should not be 0)
 
 # --- Embodied reasoning --------------------------------------------------
 # "Look before you move", enforced in code rather than asked for in the prompt.
