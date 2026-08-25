@@ -124,8 +124,13 @@ async def run(move: bool, over_http: bool = False) -> int:
             text = await call("get_face")
             report.check("get_face", text.strip() == "happy", text)
             text = await call("set_face", emotion="not_a_feeling")
+            # The refusal wording is "unknown expression"; accept either noun
+            # so a phrasing change is not a test failure. What matters is that
+            # a bad name is refused in words rather than raising.
             report.check("set_face rejects nonsense",
-                         "unknown emotion" in text.lower(), text,
+                         "unknown" in text.lower()
+                         and ("emotion" in text.lower()
+                              or "expression" in text.lower()), text,
                          "should refuse, not crash")
             await call("set_face", emotion="neutral")
 

@@ -122,6 +122,89 @@ def look(camera: str = "both") -> str:
 
 
 @tool
+def observe(camera: str = "both") -> str:
+    """Look and measure at the same moment. USE THIS BEFORE YOU MOVE.
+
+    One atomic observation: the camera frame AND the range readings, taken
+    together. That matters more than it sounds. look() and scan_environment()
+    called separately can be seconds apart, and in those seconds the robot or
+    the world can move — so the picture and the numbers end up describing
+    different moments, and a plan built on both is built on a contradiction.
+
+    HOW TO USE IT, and this is the whole point:
+
+      1. observe() — see the scene and the distances together.
+      2. Say what you actually see, and what you intend to do about it.
+         Name the obstacle, not just the number: "there's a chair leg about
+         30 cm ahead and slightly left" beats "forward clearance 310 mm".
+      3. Act in ONE SMALL INCREMENT. A short move, then stop. Not the whole
+         distance in one command — you cannot correct a move that has already
+         finished, and a small error repeated is recoverable while a large one
+         is a collision.
+      4. observe() AGAIN and check the world changed the way you predicted.
+         If it did not, say so and rethink rather than repeating the move.
+      5. If you are unsure — the view is ambiguous, a direction reads null,
+         the numbers and the picture disagree — ASK HARSH. Do not guess.
+         A question costs a moment; a wrong guess costs the robot.
+
+    A direction reported as null means NOT MEASURABLE, never "probably fine".
+    Do not drive a direction that reports null.
+
+    Args:
+        camera: "both" (default, room + floor), "up" for the room, "down" for
+            the floor immediately ahead — use "down" when checking for a drop
+            or something low that the top-mounted LiDAR cannot see.
+    """
+    ranges = hardware.ranges()
+    clearance = ranges.clearance_mm()
+    forward = clearance.get("forward")
+
+    reading = {
+        "clearance_mm": {key: clearance.get(key) for key in (
+            "forward", "forward_left", "forward_right", "left", "right",
+            "backward", "bumper", "nearest_any")},
+        "safe_to_move": {
+            "forward": _safe(forward),
+            "backward": _safe(clearance.get("backward")),
+            "left": _safe(clearance.get("left")),
+            "right": _safe(clearance.get("right")),
+        },
+        "stop_threshold_mm": config.SAFETY_STOP_MM,
+        "sensors": ranges.status(),
+    }
+
+    note_parts = [json.dumps(reading, indent=2)]
+    if forward is None:
+        note_parts.append(
+            "\nFORWARD IS UNMEASURABLE right now. Treat it as blocked, not as "
+            "clear. Say so and ask rather than driving into what you cannot "
+            "see.")
+    elif forward < config.SAFETY_STOP_MM:
+        note_parts.append(
+            f"\nFORWARD IS BLOCKED at {forward} mm — inside the "
+            f"{config.SAFETY_STOP_MM} mm stop distance. The server will refuse "
+            f"a forward move. Look at the image and say WHAT is in the way.")
+
+    try:
+        image, camera_note = vision.look(camera)
+        buffer = io.BytesIO()
+        image.save(buffer, "JPEG", quality=config.CAPTURE_QUALITY)
+        note_parts.append(f"\ncameras: {camera_note}")
+        return ToolResult(Image(data=buffer.getvalue(), format="jpeg"),
+                          "".join(note_parts))
+    except Exception as exc:                    # noqa: BLE001
+        # The ranges are the safety-critical half and they already succeeded.
+        # A dead camera must not cost Friday the numbers too -- it should
+        # degrade to "measuring but not seeing", and SAY that, rather than
+        # failing the whole observation.
+        note_parts.append(
+            f"\n⚠ NO CAMERA IMAGE this time ({type(exc).__name__}: {exc}). "
+            f"You are measuring but not seeing. Be correspondingly more "
+            f"cautious, and say that you cannot see.")
+        return "".join(note_parts)
+
+
+@tool
 def capture_image(camera: str = "both") -> str:
     """Save a photo from Friday's cameras to disk and return the file path.
 
