@@ -66,3 +66,7 @@ state/captures/
 tools/arduino/
 tools/arduino-cli
 tools/arduino-cli.tar.gz
+
+# Local repo bundles. A safety net against a corrupted .git, NOT an
+# off-card backup -- an SD failure takes these with it. See README.
+backup/
