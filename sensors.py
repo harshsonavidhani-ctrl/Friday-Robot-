@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import struct
 import threading
+import collections
+import statistics
 import time
 from typing import Iterable
 
@@ -176,6 +178,11 @@ class ToF(_Poller):
         self._frame: list[list[int]] | None = None
         self._frame_at = 0.0
         self._partial: dict[int, list[int]] = {}
+        # The last few complete frames, newest last. forward_mm() takes a
+        # median across them so that one bad frame cannot stop the robot --
+        # see the note there.
+        self._recent: collections.deque = collections.deque(
+            maxlen=config.TOF_CORROBORATE_FRAMES)
 
     def _read_forever(self, port: serial.Serial) -> None:
         port.reset_input_buffer()
@@ -217,6 +224,7 @@ class ToF(_Poller):
         if len(self._partial) == config.TOF_ROWS:
             self._frame = [self._partial[r] for r in range(config.TOF_ROWS)]
             self._frame_at = time.monotonic()
+            self._recent.append((self._frame, self._frame_at))
             self._partial = {}
 
     def latest(self, max_age_s: float = 1.0
@@ -232,7 +240,7 @@ class ToF(_Poller):
         age = time.monotonic() - at
         return (frame, age) if age <= max_age_s else None
 
-    def forward_mm(self, max_age_s: float = 1.0) -> int | None:
+    def _forward_from_frame(self, frame: list[list[int]]) -> int | None:
         """Nearest real thing IN THE WAY, in mm. None means cannot see.
 
         Nearest rather than centre-average on purpose: a chair leg that fills
@@ -262,10 +270,6 @@ class ToF(_Poller):
         reading is what a cliff looks like, and None is never treated as
         clear.
         """
-        got = self.latest(max_age_s)
-        if got is None:
-            return None
-        frame, _ = got
         horizon = config.TOF_FLOOR_FROM_ROW
 
         # Rows that look ahead: every return is a thing in the way -- except
@@ -290,11 +294,36 @@ class ToF(_Poller):
                 hits.append(value)
 
         # Rows that look at the floor: only shortfalls against the profile.
+        #
+        # ⚠ NORMALISED FOR PITCH FIRST. The chassis noses down a couple of
+        # degrees as the motors take up, which swings the whole downward-
+        # looking half of the sensor and makes EVERY ground row read short at
+        # once. Un-normalised, that read as an object 246 mm ahead and stopped
+        # the robot 0.2 s into its first move -- a robot braking for its own
+        # acceleration, which it would have done on every move forever.
+        #
+        # Pitch and an object look different, and that is what separates them:
+        # pitch scales all four ground rows together, while an object only
+        # shortens the rows whose beams it actually intercepts. So the common
+        # scale factor is estimated as the MEDIAN ratio across every ground
+        # cell -- a couple of short rows cannot move a median -- and the
+        # profile is stretched by it before anything is called an obstacle.
+        # It is clamped, so a surface big enough to occlude the whole lower
+        # field of view can still never normalise itself into being the floor.
+        profile = config.TOF_FLOOR_PROFILE_MM
+        ground = list(frame[horizon:horizon + len(profile)])
+        ratios = [value / profile[offset]
+                  for offset, row in enumerate(ground) for value in row
+                  if 0 < value < config.TOF_NO_RETURN_MM]
+        pitch = 1.0
+        if len(ratios) >= 8:
+            pitch = min(max(statistics.median(ratios),
+                            config.TOF_FLOOR_PITCH_MIN),
+                        config.TOF_FLOOR_PITCH_MAX)
+
         floor_intact = True
-        for offset, row in enumerate(frame[horizon:]):
-            if offset >= len(config.TOF_FLOOR_PROFILE_MM):
-                break
-            expected = config.TOF_FLOOR_PROFILE_MM[offset]
+        for offset, row in enumerate(ground):
+            expected = profile[offset] * pitch
             for value in row:
                 if not 0 < value < config.TOF_NO_RETURN_MM:
                     floor_intact = False          # the floor stopped
@@ -303,9 +332,68 @@ class ToF(_Poller):
                     hits.append(value)
                 elif abs(value - expected) > config.TOF_FLOOR_INTACT_MM:
                     floor_intact = False          # further than floor: a drop
+        # ⚠ THE INTACT FLOOR IS PROOF THE NEAR PATH IS EMPTY.
+        #
+        # About one frame in seven carries a spurious 200-400 mm return in the
+        # centre cells of the rows just above the horizon -- multipath off the
+        # very strong floor echo a few centimetres below them. It is not rare
+        # enough to filter by taking a median over frames (measured: it comes
+        # in runs, not singles), and a single one of them braked Friday 0.2 s
+        # into her first move.
+        #
+        # It is rejected on physics instead. If the ground rows are still
+        # reading clean floor out to row 4's intercept, then nothing solid is
+        # STANDING on the floor nearer than that -- an object there would have
+        # occluded those rows first. So an ahead-row return closer than the
+        # floor Friday can still see is not a thing; it is an echo.
+        #
+        # The trade: something OVERHANGING, high enough to miss the ground
+        # rows and closer than ~30 cm, would also be discarded. The bumper is
+        # only a few cm tall so there is very little room for that, anything
+        # that low and that close is already inside SAFETY_STOP_MM, and the
+        # LiDAR sees overhangs at dome height. Worth it to have a robot that
+        # can move at all.
+        if floor_intact and hits:
+            reach = profile[0] * pitch if profile else 0.0
+            hits = [v for v in hits if v >= reach]
         if hits:
             return min(hits)
         return config.TOF_NO_RETURN_MM if floor_intact else None
+
+    def forward_mm(self, max_age_s: float = 1.0) -> int | None:
+        """Nearest real thing in the way, corroborated across frames.
+
+        ⚠ ONE FRAME IS NOT ENOUGH TO STOP THE ROBOT. About 0.7% of frames
+        carry a spurious short return of 250-315 mm in the centre cells of the
+        rows just above the horizon -- multipath off the very strong floor
+        echo a few centimetres below them. Measured 2026-08-26: 4 frames in
+        598 on a completely clear path. One of those was enough to brake
+        Friday 0.2 s into a move, and at 15 fps it would have happened every
+        ten seconds or so, forever.
+
+        So the answer is the MEDIAN of the last few frames rather than the
+        newest one. A real object is in all of them and comes straight
+        through; a one-frame artefact cannot move a median. The cost is that a
+        genuinely new obstacle takes two frames to be believed -- about 130 ms,
+        or 2.4 cm at Friday's 18.5 cm/s -- which is inside the margin
+        SAFETY_STOP_MM already leaves.
+
+        A frame too old to trust is dropped rather than counted, and if
+        nothing recent is left the answer is None: cannot see, which is never
+        treated as clear.
+        """
+        now = time.monotonic()
+        answers = [self._forward_from_frame(frame)
+                   for frame, at in self._recent if now - at <= max_age_s]
+        if not answers:
+            return None
+        # None means "cannot see" and must not be averaged away, so if that is
+        # the majority view it is the answer.
+        blind = answers.count(None)
+        if blind * 2 > len(answers):
+            return None
+        seen = sorted(a for a in answers if a is not None)
+        return seen[len(seen) // 2]
 
     def floor_gap_mm(self, max_age_s: float = 1.0) -> int | None:
         """Nearest return in the BOTTOM rows — the floor just ahead.

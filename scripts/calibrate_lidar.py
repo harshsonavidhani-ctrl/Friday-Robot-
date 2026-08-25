@@ -167,7 +167,12 @@ def drive_method() -> int:
     travelled_mm = out.actual_s * config.load_calibration()["forward_cm_per_s"] * 10
     if out.stopped_early or travelled_mm < 80:
         print("She did not travel far enough to fit anything to. Aborting.")
-        safety.guarded_move("backward", out.actual_s)
+        # Record before reversing, or the gate refuses the retreat and she is
+        # left parked wherever she stopped -- which is what happened the first
+        # time this aborted.
+        embodiment.record(clearance_mm={"backward": None},
+                          source="calibrate_lidar")
+        print(f"  returning: {safety.guarded_move('backward', out.actual_s).as_text()}")
         return 1
 
     time.sleep(SETTLE_S)

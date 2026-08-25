@@ -443,10 +443,27 @@ TOF_FLOOR_FROM_ROW = 4       # rows at or below this index look at the ground
 # the bumper is ever re-seated or the sensor's angle changes.
 TOF_FLOOR_PROFILE_MM = (295, 223, 161, 120)
 
-# A ground row reading this much SHORTER than its floor distance is something
-# standing on the floor, not the floor. Comfortably above the +/-27 mm of
-# noise on the worst row, so an empty floor never reads as an obstacle.
+# A ground row reading this much SHORTER than its (pitch-corrected) floor
+# distance is something standing on the floor, not the floor. Comfortably
+# above the +/-27 mm of noise on the worst row, so an empty floor never reads
+# as an obstacle.
 TOF_FLOOR_OBSTACLE_MM = 45
+
+# How far the common pitch factor may stretch the floor profile. The chassis
+# noses down as the motors take up and every ground row reads short together;
+# without this, Friday braked 0.2 s into her first move for a 246 mm "object"
+# that was her own floor seen at a slightly steeper angle. Clamped so that a
+# surface large enough to fill the whole lower field of view can never
+# normalise itself into looking like the floor.
+TOF_FLOOR_PITCH_MIN = 0.80
+TOF_FLOOR_PITCH_MAX = 1.25
+
+# How many recent frames forward_mm() takes its median over. About 0.7% of
+# frames carry a spurious 250-315 mm return in the centre cells just above the
+# horizon -- multipath off the floor echo below them -- and a single one of
+# those braked the robot mid-move. Three frames is ~200 ms of history at 15
+# fps; a real obstacle is in all of them, an artefact is in one.
+TOF_CORROBORATE_FRAMES = 3
 
 # How far a ground row may drift from its profile before the floor is no
 # longer considered intact. Beyond this the answer is "cannot see", never
