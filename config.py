@@ -52,6 +52,14 @@ WEB_SEARCH_MAX_USES = 3
 
 # Cost safety — the brain must refuse to spend past this in a single day.
 DAILY_SPEND_CAP_USD = 2.00
+
+# Friday's self-development (mcp_server/tools/dev.py). A dev_task runs Claude
+# Code headless, which costs real money and takes real time, so both are
+# bounded. The estimate is deliberately rough and deliberately high: the point
+# of the cap is to stop a runaway loop, not to do accounting.
+DEV_TASK_TIMEOUT_S = 600     # a change that takes longer than 10 minutes has
+                             # gone wrong; it is stopped and the branch dropped
+DEV_TASK_EST_USD = 0.25      # charged against the daily cap per task
 COST_LOG = LOG_DIR / "spend.jsonl"
 
 # --- Voice pipeline ------------------------------------------------------
