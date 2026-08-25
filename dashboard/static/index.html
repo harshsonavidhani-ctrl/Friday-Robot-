@@ -96,37 +96,6 @@
 
     <section class="panel">
       <div class="panelhead">
-        <h2>Screen</h2>
-        <span class="badge" id="screennow">face</span>
-      </div>
-      <div class="screen">
-        <!-- The panel is the face by default; these put an app on it. Alarms
-             and timers set here are the SAME rows Friday sets by voice, so
-             either can cancel the other. -->
-        <div class="segmented" id="screenapps"></div>
-
-        <div class="screenrow">
-          <label for="alarmtime">Alarm</label>
-          <div class="calfield">
-            <input type="time" id="alarmtime">
-            <input type="text" id="alarmlabel" placeholder="label" maxlength="28">
-            <button id="setalarm">Set</button>
-          </div>
-        </div>
-
-        <div class="screenrow">
-          <label>Timer</label>
-          <div class="segmented" id="timerseg"></div>
-        </div>
-
-        <ul class="pending" id="pending"></ul>
-        <p class="drivenote" id="screennote">Alarms ring on the speaker and
-          survive a reboot. Say “stop” or touch the panel to dismiss one.</p>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panelhead">
         <h2>Drive</h2>
         <span class="badge" id="drivestate">—</span>
       </div>
@@ -151,6 +120,60 @@
         </div>
         <p class="drivenote" id="drivenote">Tap a direction to nudge Friday.
           Forward stops automatically if anything is close.</p>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-screen">
+      <div class="panelhead">
+        <h2>Screen</h2>
+        <span class="badge" id="screennow">face</span>
+      </div>
+      <div class="screen">
+        <!-- Sits AFTER Drive on purpose: this is the other half of "control
+             Friday from the phone". The panel is the face by default; these
+             put an app on it. Alarms and timers set here are the SAME rows
+             Friday sets by voice and the same rows app_control.py writes from
+             the CLI, so any of the three can cancel what another set. -->
+
+        <!-- A ringing alarm takes the panel over everything, so it takes this
+             panel over too -- there is no point offering Weather to someone
+             whose alarm is going off in the next room. -->
+        <div class="ringing" id="ringing" hidden>
+          <span class="ringdot" aria-hidden="true"></span>
+          <span class="ringtext" id="ringtext">Alarm ringing</span>
+          <button id="dismissring">Stop</button>
+        </div>
+
+        <div class="segmented" id="screenapps"></div>
+
+        <div class="screenrow">
+          <label for="alarmtime">Alarm</label>
+          <div class="calfield">
+            <input type="time" id="alarmtime">
+            <input type="text" id="alarmlabel" placeholder="label" maxlength="28">
+            <button id="setalarm">Set</button>
+          </div>
+        </div>
+
+        <div class="screenrow">
+          <label>Timer</label>
+          <div class="segmented" id="timerseg"></div>
+        </div>
+
+        <div class="screenrow">
+          <label for="timermins">Custom</label>
+          <div class="calfield">
+            <input type="number" id="timermins" min="1" max="600" step="1"
+                   placeholder="min">
+            <input type="text" id="timerlabel" placeholder="label" maxlength="28">
+            <button id="settimer">Start</button>
+          </div>
+        </div>
+
+        <ul class="pending" id="pending"></ul>
+        <p class="drivenote" id="screennote">Alarms ring on the speaker and
+          survive a reboot. Say “stop”, touch the panel, or hit Stop
+          here to dismiss one.</p>
       </div>
     </section>
 

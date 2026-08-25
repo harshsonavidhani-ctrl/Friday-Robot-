@@ -684,3 +684,22 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
   line-height:1;cursor:pointer;padding:0 2px}
 .pending .kill:hover{color:var(--accent)}
 .pending .none{color:var(--faint);border-style:dashed;justify-content:center}
+
+/* A ringing alarm. Loud on purpose -- this is the one control on the panel
+   that someone is looking for in a hurry, so it does not share the look of
+   the rows that merely schedule things. */
+.ringing{display:flex;align-items:center;gap:9px;margin-bottom:10px;
+  padding:9px 11px;border-radius:var(--r-sm);
+  background:rgba(255,171,77,.10);border:1px solid rgba(255,171,77,.42)}
+.ringing[hidden]{display:none}
+.ringdot{width:8px;height:8px;border-radius:50%;background:var(--c-call);
+  flex:none;animation:ringpulse 1s ease-in-out infinite}
+.ringtext{flex:1;font-size:12px;color:var(--text);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.ringing button{flex:none;padding:5px 14px;border-radius:999px;
+  background:var(--c-call);border:0;color:#1a1204;font-weight:700;
+  font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer}
+.ringing button:hover{filter:brightness(1.12)}
+.badge.urgent{color:var(--c-call);border-color:rgba(255,171,77,.5)}
+@keyframes ringpulse{0%,100%{opacity:1}50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){ .ringdot{animation:none} }

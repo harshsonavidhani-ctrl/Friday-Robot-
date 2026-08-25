@@ -221,25 +221,27 @@ async function buildMoods() {
    same row Friday can cancel by voice, and vice versa. */
 
 const TIMER_STEPS = [1, 5, 10, 20];
+
+/* Titles for the apps the Pi reports in /api/state.screen.apps. The LIST is
+   the robot's, not the dashboard's -- adding a file to apps/ has to make the
+   button appear here without anyone editing this file, which is the whole
+   point of the apps/ directory. This map only supplies nicer labels, and an
+   app missing from it still gets a button. */
+const APP_TITLES = { clock: 'Clock', timer: 'Timer',
+                     alarm: 'Alarm', weather: 'Weather' };
+
+/* Apps that are a VIEW of something scheduled rather than something you can
+   just put on the screen. Launching "timer" with no timer running shows an
+   empty timer, which reads as a bug -- so they are offered only when there is
+   one to look at. */
+const SCHEDULED_APPS = new Set(['timer', 'alarm']);
+
 let screenApp = null;
+let screenApps = [];          // what the Pi says it has, verbatim
+let screenKinds = new Set();  // kinds currently on the schedule
 
 function buildScreen() {
-  const apps = $('screenapps');
-  if (!apps) return;
-
-  // The face is the resting state, so it is the first choice, not a
-  // "cancel" hidden somewhere else.
-  const buttons = [['face', 'Face'], ['clock', 'Clock']];
-  apps.innerHTML = '';
-  for (const [name, text] of buttons) {
-    const b = document.createElement('button');
-    b.className = 'seg';
-    b.dataset.app = name;
-    b.textContent = text;
-    b.onclick = () => screenPost(name === 'face'
-      ? { action: 'dismiss' } : { action: 'launch', app: name });
-    apps.appendChild(b);
-  }
+  if (!$('screenapps')) return;
 
   const seg = $('timerseg');
   seg.innerHTML = '';
@@ -257,6 +259,47 @@ function buildScreen() {
     if (!time) { toast('Pick a time first', true); return; }
     screenPost({ action: 'alarm', time, label: $('alarmlabel').value });
   };
+
+  $('settimer').onclick = () => {
+    const mins = Number($('timermins').value);
+    if (!mins || mins < 1) { toast('How many minutes?', true); return; }
+    screenPost({ action: 'timer', duration: mins + ' minutes',
+                 label: $('timerlabel').value });
+  };
+
+  $('dismissring').onclick = () => screenPost({ action: 'dismiss' });
+}
+
+/* The app row is rebuilt from the robot's own list, so it has to survive that
+   list changing under it. */
+function paintApps() {
+  const row = $('screenapps');
+  if (!row) return;
+
+  // The face is the resting state, so it is the first choice, not a "cancel"
+  // hidden somewhere else.
+  const wanted = [['face', 'Face']];
+  for (const name of screenApps) {
+    if (SCHEDULED_APPS.has(name) && !screenKinds.has(name)) continue;
+    wanted.push([name, APP_TITLES[name] || name]);
+  }
+
+  const key = wanted.map((w) => w[0]).join(',');
+  if (row.dataset.key !== key) {
+    row.dataset.key = key;
+    row.innerHTML = '';
+    for (const [name, text] of wanted) {
+      const b = document.createElement('button');
+      b.className = 'seg';
+      b.dataset.app = name;
+      b.textContent = text;
+      b.onclick = () => screenPost(name === 'face'
+        ? { action: 'dismiss' } : { action: 'launch', app: name });
+      row.appendChild(b);
+    }
+  }
+  for (const b of row.children)
+    b.classList.toggle('on', b.dataset.app === (screenApp || 'face'));
 }
 
 async function screenPost(body) {
@@ -269,6 +312,8 @@ async function screenPost(body) {
     const j = await r.json();
     toast(j.result);
     $('alarmlabel').value = '';
+    $('timerlabel').value = '';
+    $('timermins').value = '';
     paintScreen(j);
   } catch (e) { toast(String(e), true); }
 }
@@ -276,12 +321,27 @@ async function screenPost(body) {
 function paintScreen(state) {
   if (!state) return;
   screenApp = state.app || null;
-  $('screennow').textContent = screenApp || 'face';
-  for (const b of document.querySelectorAll('#screenapps .seg'))
-    b.classList.toggle('on', b.dataset.app === (screenApp || 'face'));
+  screenApps = state.apps || [];
+  const items = state.pending || [];
+  screenKinds = new Set(items.map((i) => i.kind));
+  $('screennow').textContent = state.urgent ? 'ringing' : (screenApp || 'face');
+  $('screennow').classList.toggle('urgent', !!state.urgent);
+
+  // An alarm going off is the one thing on this panel that is time-critical,
+  // so it gets its own row rather than being another badge to notice.
+  const ring = $('ringing');
+  if (ring) {
+    ring.hidden = !state.urgent;
+    if (state.urgent) {
+      const live = items.find((i) => i.kind === screenApp) || items[0];
+      $('ringtext').textContent = (live && live.label)
+        ? `${screenApp || 'Alarm'} — ${live.label}` : 'Alarm ringing';
+    }
+  }
+
+  paintApps();
 
   const list = $('pending');
-  const items = state.pending || [];
   if (!items.length) {
     list.innerHTML = '<li class="none">Nothing set</li>';
     return;
