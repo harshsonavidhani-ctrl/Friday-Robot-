@@ -28,10 +28,13 @@ apps/            one file per screen app: clock, timer, alarm, weather
 motor.py         L298N over an Arduino, with a firmware watchdog
 sensors.py       LiDAR + 8x8 ToF, on background pollers
 vision.py        both cameras, stitched into one image
+slam/            the room map: scan matching and the occupancy grid
+  core.py        points, the likelihood field, and the scan matcher
 
 dashboard/       the phone-facing web UI (live log, cameras, face, drive)
 firmware/        the Arduino sketch
 scripts/         hardware survey, tool tests, LiDAR calibration
+backup/          git bundles (gitignored) — NOT an off-card backup, see below
 systemd/         Friday's own units, kept under git as well as installed
 ```
 
@@ -194,6 +197,43 @@ There is deliberately no override.
   `scan_environment` reports left/right/backward as `null`. Forward still works
   — it trusts the bumper ToF. Fix it in 30 seconds:
   `./venv/bin/python scripts/calibrate_lidar.py`
+
+## The map (step 9, in progress)
+
+`slam/` is pure numpy/scipy — ROS2 was evaluated and rejected because Debian 13
+has no ROS2 packages at all, so it would need a third-party apt repo or a
+source build, which CLAUDE.md Part 1 forbids outright.
+
+```bash
+./venv/bin/python scripts/test_slam.py               # matcher vs a known answer
+./venv/bin/python scripts/calibrate_lidar.py --drive # measure LIDAR_FORWARD_DEG
+```
+
+Both of the LiDAR's own quirks are already handled in `sensors.Lidar.scan()`
+and `config.py`, and both cost hours to find:
+
+- **Friday can see herself.** Raw bearings 90-97 read a rock-steady 210 mm.
+  Masked via `LIDAR_SELF_MASK`, or it is permanently the nearest thing in every
+  sweep and gets mapped as an obstacle that follows the robot.
+- **The forward bearing must be measured by DRIVING**, not by putting an object
+  in front. The LiDAR plane is at leg height: a box on the floor is below it
+  and never appears, and a person appears as two returns twelve degrees apart,
+  one per leg.
+
+## Backups — read this
+
+**There is no git remote.** CLAUDE.md requires one and the Pi cannot create one
+alone (no `gh`, no push keys, no removable storage). Until that is fixed, the
+whole project exists only on this SD card. To take a copy off the Pi:
+
+```bash
+git bundle create backup/friday-$(date +%Y%m%d).bundle --all   # on the Pi
+scp harsh@Harsh.local:/home/harsh/friday/backup/*.bundle .     # from a laptop
+git clone friday-20260826.bundle friday                        # to restore
+```
+
+`./scripts/rollback.sh` returns to the `known-good` tag; `--mark` declares the
+current (tested, committed) state good.
 
 ## Hardware notes that cost time to learn
 
