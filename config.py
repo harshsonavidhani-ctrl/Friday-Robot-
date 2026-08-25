@@ -610,17 +610,63 @@ APP_ALARM_GRACE_S = 300.0
 # How long an alarm rings before it gives up and returns the screen.
 APP_ALARM_MAX_RING_S = 120.0
 
-# The ring itself. A two-note phrase repeated with a gap -- deliberately not a
-# klaxon; this is a companion, not a fire panel. Generated as a WAV on first
-# use and played through pipewire (pw-play), the same path as the wake beep.
+# The ring itself. Generated as a WAV on first use and played through pipewire
+# (pw-play), the same path as the wake beep. Deliberately not a klaxon; this is
+# a companion, not a fire panel.
+#
+# ⚠ IT USED TO BE TWO PURE SINE TONES, AND THAT IS WHY IT SOUNDED LIKE A
+# MICROWAVE. A sine has no partials, so the ear gets no material to identify
+# -- it reads as "a beep", never as "a note". A phone ringtone is recognisable
+# because it is a STRUCK instrument: a fundamental plus a stack of partials
+# that each decay at their own rate, the high ones dying first. That decay
+# profile is the whole trick. So the synthesis below is additive, per-partial,
+# and the phrase is a real arpeggio rather than two tones.
 APP_RING_FILE = ROOT / "state" / "ring.wav"
-APP_RING_NOTES_HZ = (784.0, 1046.5)   # G5, C6
-APP_RING_NOTE_MS = 220
+
+# Rendered AT THE SINK'S RATE ON PURPOSE. It was 44100 while the card runs
+# 48000, so every single repeat was resampled in realtime on a Pi that has no
+# CPU to spare -- the same class of fault as the face's phantom mixer stream.
+APP_RING_RATE = AUDIO_SINK_RATE
+
+# The phrase, as note names. "-" is a rest. C6-E6-G6-E6 is a plain major
+# arpeggio: it rises, it resolves, and it is unmistakable through a wall
+# without being shrill. Keep it short -- the gap is what makes it a ring
+# rather than a song.
+APP_RING_PHRASE = ("C6", "E6", "G6", "E6", "-", "G6", "C7", "-")
+APP_RING_NOTE_MS = 165       # how often a new note is STRUCK, not how long it
+                             # sounds -- notes ring on into the next through
+                             # APP_RING_DECAY_S, which is what makes it sound
+                             # like an instrument instead of a sequence.
+APP_RING_DECAY_S = 0.62      # how long one struck note takes to fade out
 APP_RING_GAP_MS = 900        # silence after the phrase, before it repeats
-APP_RING_VOLUME = 0.55       # 0-1, before the sink's own volume. Was
-                             # 0.35, which Harsh could not hear from the
-                             # next room. The WAV is rebuilt whenever
-                             # any of these four values change.
+
+# The timbre, as (frequency ratio, amplitude, decay multiplier) per partial.
+# The ratios are slightly INHARMONIC above the octave -- real bells and bars
+# are, and exact integer ratios are what make additive synthesis sound like a
+# cheap organ. The decay multiplier is the important column: 6.0 on the top
+# partial means it is gone in a tenth of the time the fundamental takes, and
+# that fast-dying shimmer is heard as "struck".
+APP_RING_PARTIALS = (
+    (1.00, 1.00, 1.0),
+    (2.00, 0.42, 1.9),
+    (3.01, 0.20, 3.1),
+    (4.17, 0.11, 4.5),
+    (5.43, 0.055, 6.0),
+)
+APP_RING_STRIKE_MS = 4.0     # attack. Not zero -- a square edge on a sine is a
+                             # click, and a click reads as a fault.
+APP_RING_SPREAD_HZ = 0.7     # a second voice detuned by this much, panned the
+                             # other way. Gives the ring a little width and
+                             # stops it sounding like it is inside a box.
+
+APP_RING_VOLUME = 0.55       # 0-1, before the sink's own volume. Was 0.35,
+                             # which Harsh could not hear from the next room.
+                             # The finished phrase is PEAK-NORMALISED to this,
+                             # so raising it makes the ring genuinely louder
+                             # instead of just adding partials on top of each
+                             # other until they clip.
+APP_RING_CEILING = 0.93      # hard cap on that normalisation, whatever
+                             # APP_RING_VOLUME says. Same value as TTS_CEILING.
 
 # Screensaver: with nothing else on screen and the face asleep this long, the
 # clock comes up on its own. Any new expression or command takes it straight
