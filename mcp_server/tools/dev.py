@@ -74,20 +74,30 @@ Keep the change as small as it can be and still be right.
 """.strip()
 
 
-def _run_git(*args: str, check: bool = True) -> str:
+def _run_git(*args: str, check: bool = True, strip: bool = True) -> str:
     result = subprocess.run(("git",) + args, cwd=REPO, capture_output=True,
                             text=True)
     if check and result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)}: {result.stderr.strip()}")
-    return result.stdout.strip()
+    # ⚠ strip=False MATTERS FOR PORCELAIN. `git status --porcelain` puts the
+    # status in columns 0-1 and the path from column 3, so an unstaged change
+    # reads " M path". Stripping the output eats that leading space and every
+    # subsequent slice cuts one character into the FILENAME -- which turned
+    # " M mcp_server/safety.py" into "p_server/safety.py", matched nothing in
+    # devguard's protected list, and would have let an edit to the safety
+    # interrupt through the review. Found by a stray "onfig.py" in a refusal
+    # message that was otherwise working perfectly.
+    return result.stdout.strip() if strip else result.stdout
 
 
 def _changed_files() -> list[str]:
     """Every path touched relative to the branch point, staged or not."""
-    out = _run_git("status", "--porcelain")
+    out = _run_git("status", "--porcelain", strip=False)
     files = []
     for line in out.splitlines():
-        path = line[3:].strip()
+        if len(line) < 4:
+            continue
+        path = line[3:].strip().strip('"')
         if " -> " in path:                      # a rename reports both sides
             files.extend(p.strip() for p in path.split(" -> "))
         elif path:

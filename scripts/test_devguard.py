@@ -124,6 +124,34 @@ allowed("a clean diff", devguard.review_diff(["modules/battery.py",
 approval("a diff touching motor.py",
          devguard.review_diff(["motor.py"]))
 
+print("\nPORCELAIN PARSING — the bug that would have let safety.py through\n")
+# `git status --porcelain` puts the path at column 3, so an unstaged change
+# reads " M path" WITH A LEADING SPACE. Stripping git's output before slicing
+# eats that space and cuts a character off the filename -- which silently
+# turned "mcp_server/safety.py" into "p_server/safety.py", a path that matches
+# nothing protected and sails through review_diff. Guard the parse itself.
+sys.path.insert(0, str(ROOT))
+from mcp_server.tools import dev                            # noqa: E402
+
+_PORCELAIN = (
+    (" M mcp_server/safety.py", "mcp_server/safety.py"),
+    ("M  config.py", "config.py"),
+    ("?? modules/new.py", "modules/new.py"),
+    ("A  scripts/test_x.py", "scripts/test_x.py"),
+    ("MM mcp_server/reflex.py", "mcp_server/reflex.py"),
+)
+for line, expected in _PORCELAIN:
+    got = line[3:].strip().strip('"')
+    ok = got == expected
+    _r.append(ok)
+    print(f"  {PASS if ok else FAIL}  {line!r} parses to {expected}")
+    if not ok:
+        print(f"        got {got!r}")
+
+# And the whole path: a dirty protected file must be refused.
+blocked("an unstaged edit to safety.py, parsed from real porcelain",
+        devguard.review_diff([" M mcp_server/safety.py"[3:].strip()]))
+
 passed = sum(_r)
 print(f"\n{passed} passed, {len(_r) - passed} failed")
 raise SystemExit(0 if all(_r) else 1)
