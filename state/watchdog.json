@@ -1,0 +1,21 @@
+{
+  "date": "2026-08-25",
+  "fixes_today": 0,
+  "units": {
+    "friday-mcp": {
+      "restarts": 0,
+      "last_seen": 1787671075.1602454,
+      "consecutive_failures": 0
+    },
+    "friday-dashboard": {
+      "restarts": 0,
+      "last_seen": 1787671075.1933236,
+      "consecutive_failures": 0
+    },
+    "friday-face": {
+      "restarts": 0,
+      "last_seen": 1787671075.2339437,
+      "consecutive_failures": 0
+    }
+  }
+}

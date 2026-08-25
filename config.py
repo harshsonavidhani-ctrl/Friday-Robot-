@@ -60,6 +60,20 @@ DAILY_SPEND_CAP_USD = 2.00
 DEV_TASK_TIMEOUT_S = 600     # a change that takes longer than 10 minutes has
                              # gone wrong; it is stopped and the branch dropped
 DEV_TASK_EST_USD = 0.25      # charged against the daily cap per task
+
+# The self-healing watchdog (scripts/friday_watchdog.py). Restraint is the hard
+# part: an automatic fixer that reacts to everything burns money, churns the
+# code, and can turn one broken service into a broken robot. Most crashes are a
+# one-off -- a USB device that dropped, a camera that was busy -- and systemd's
+# own restart has already fixed them by the time anyone looks.
+WATCHDOG_INTERVAL_S = 60
+WATCHDOG_FAILURES_BEFORE_FIX = 3   # must fail this many passes in a row first
+WATCHDOG_FIXES_PER_DAY = 3         # over and above dev_task's spend cap
+WATCHDOG_COOLDOWN_S = 1800         # no retry of the same unit inside this
+WATCHDOG_MAX_ATTEMPTS_PER_UNIT = 2 # after this it STOPS and asks for Harsh.
+                                   # Two fixes that did not hold means the
+                                   # problem is not one it understands, and
+                                   # continuing is just damage with a schedule.
 COST_LOG = LOG_DIR / "spend.jsonl"
 
 # --- Voice pipeline ------------------------------------------------------

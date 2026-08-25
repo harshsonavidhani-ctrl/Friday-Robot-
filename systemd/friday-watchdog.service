@@ -1,0 +1,33 @@
+[Unit]
+# Friday's self-healing watchdog. Watches her OWN services and, when one keeps
+# failing, asks dev_task to diagnose and fix it on a branch behind the smoke
+# tests.
+#
+# ⚠ DELIBERATELY NOT ENABLED BY DEFAULT. This unit invokes Claude Code
+# unattended, which CLAUDE.md's cost-safety section says never to leave running
+# in a loop. Every guard is in place -- 3 consecutive failures before it acts,
+# 3 attempts a day, a 30 minute cooldown, 2 attempts per unit before it gives
+# up and asks for Harsh, and dev_task's own spend cap on top -- but the
+# decision to let the robot fix itself while nobody is watching is Harsh's to
+# make, not something to switch on for him.
+#
+# Install it, when you want it, with:
+#   cp systemd/friday-watchdog.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now friday-watchdog
+# Stop it again with:
+#   systemctl --user disable --now friday-watchdog
+Description=Friday's self-healing watchdog (diagnoses her own crashes)
+After=friday-mcp.service
+Wants=friday-mcp.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/harsh/friday
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/home/harsh/friday/venv/bin/python /home/harsh/friday/scripts/friday_watchdog.py
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
