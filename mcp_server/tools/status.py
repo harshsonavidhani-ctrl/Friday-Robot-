@@ -18,7 +18,7 @@ import config
 import face_control
 import tts
 import vision
-from mcp_server import hardware
+from mcp_server import embodiment, hardware
 from mcp_server.registry import tool
 
 _STARTED = time.monotonic()
@@ -118,6 +118,10 @@ def get_status() -> str:
         "mcp_server_uptime": _uptime(time.monotonic() - _STARTED),
         "pi_uptime": _uptime(time.time() - psutil.boot_time()),
         "speed_percent": hardware.speed_percent(),
+        # Whether Friday is currently allowed to move, and why not if it is
+        # not. Surfaced here so "why won't you move?" is answerable without
+        # having to trip the refusal first.
+        "observation": embodiment.status(),
         "network": _network(),
         "voice": tts.engine_name(),
         "debug_silent_speech": config.DEBUG_SILENT_SPEECH,

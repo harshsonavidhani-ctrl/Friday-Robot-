@@ -590,6 +590,33 @@ DEFAULT_SPEED_PERCENT = 60
 # down cam and bumper cannot see behind, so reverse is time-limited instead.
 MAX_REVERSE_SECONDS = 2.0
 
+# --- Embodied reasoning --------------------------------------------------
+# "Look before you move", enforced in code rather than asked for in the prompt.
+# A movement tool refuses unless the robot has actually observed the world
+# within OBSERVATION_TTL_S. The point is not politeness: a plan built on a
+# reading from a minute ago is a plan about a room that may no longer exist,
+# and the model has no way to know the difference. observe() and
+# scan_environment() are what refresh it.
+#
+# This also buys "verify by looking again" for free. Because the freshness
+# clock keeps running while the robot drives, a second move needs a second
+# observation -- so the loop is forced to be observe -> move -> observe ->
+# move, which is exactly the discipline wanted. It is not possible to chain
+# blind moves.
+REQUIRE_OBSERVATION_BEFORE_MOVING = True
+OBSERVATION_TTL_S = 12.0     # how long an observation is trusted for
+OBSERVATION_TTL_MOVING_S = 6.0   # ...and after the robot itself has moved,
+                             # which invalidates a view faster than the world
+                             # changing on its own does
+
+# Act in small increments. A long blind commitment is the failure mode: you
+# cannot correct a move that has already finished, and a small error repeated
+# is recoverable where one large one is a collision. Anything longer is not
+# refused -- it is CLIPPED to the increment and reported as partial, so the
+# model re-observes and continues rather than being stonewalled.
+MAX_INCREMENT_CM = 40.0      # longest single forward/backward step
+MAX_INCREMENT_DEGREES = 90.0 # largest single pivot
+
 # Honesty about odometry. The TT gear motors have NO encoders, so distance and
 # angle are timed approximations from state/calibration.json. This is the error
 # margin every distance-based tool must quote back to the brain.

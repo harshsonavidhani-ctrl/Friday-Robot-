@@ -36,7 +36,7 @@ import time
 from dataclasses import dataclass
 
 import config
-from mcp_server import hardware
+from mcp_server import embodiment, hardware
 
 log = logging.getLogger("friday.mcp.safety")
 
@@ -115,6 +115,17 @@ def guarded_move(direction: str, seconds: float,
     """
     direction = direction.strip().lower()
     is_forward = direction in FORWARD_WORDS
+
+    # LOOK BEFORE YOU MOVE, enforced here rather than asked for in the prompt.
+    # This sits above the clearance check on purpose: clearance answers "is
+    # there something there right now", the gate answers "has anyone actually
+    # looked" -- and a robot driving on a minute-old picture is unsafe even
+    # when that picture said clear. See mcp_server/embodiment.py.
+    blind = embodiment.check(direction)
+    if blind:
+        log.warning("refused %s: no fresh observation", direction)
+        return MoveResult(direction, seconds, 0.0, True, blind, None)
+
     requested, cap_note = clamp_duration(direction, seconds)
     notes = [cap_note] if cap_note else []
 
@@ -200,6 +211,10 @@ def guarded_move(direction: str, seconds: float,
             log.error("STOP FAILED after %s: %s", direction, exc)
 
     actual = time.monotonic() - started
+    # The wheels turned, so whatever Friday last saw now describes a place it
+    # is no longer in. Ages the observation; the next move will need a new one.
+    if actual > 0:
+        embodiment.note_moved()
     if notes:
         reason = "; ".join(notes + ([reason] if reason else []))
     return MoveResult(direction, seconds, actual, stopped_early, reason,

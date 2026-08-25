@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -76,6 +77,25 @@ class Report:
         print(f"  {SKIP}  {name}  ({why})")
 
 
+async def _wait_for_http(url: str, timeout_s: float = 90.0) -> None:
+    """Block until something is listening on the server's port."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    host, port = parsed.hostname or "127.0.0.1", parsed.port or 80
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            _, writer = await asyncio.open_connection(host, port)
+            writer.close()
+            await writer.wait_closed()
+            return
+        except OSError:
+            await asyncio.sleep(1.0)
+    raise SystemExit(
+        f"nothing is listening on {host}:{port} after {timeout_s:g}s — is "
+        f"friday-mcp.service running? (systemctl --user status friday-mcp)")
+
+
 @asynccontextmanager
 async def connect(over_http: bool):
     """Talk to the server, either spawning it or using the running service.
@@ -84,6 +104,12 @@ async def connect(over_http: bool):
     merely alive: a process can sit there listening and still be broken.
     """
     if over_http:
+        # Wait for the port rather than assuming it is up. Startup is not
+        # instant -- Piper's voice load alone is ~10s, and closer to 25s when
+        # the Pi is thermally throttling -- so connecting straight away is a
+        # race that fails as "All connection attempts failed" and looks like a
+        # broken server rather than a slow one.
+        await _wait_for_http(config.MCP_HTTP_URL)
         async with streamable_http_client(config.MCP_HTTP_URL) as streams:
             read, write = streams[0], streams[1]
             yield read, write
@@ -122,7 +148,13 @@ async def run(move: bool, over_http: bool = False) -> int:
             text = await call("set_face", emotion="happy")
             report.check("set_face(happy)", "happy" in text, text)
             text = await call("get_face")
-            report.check("get_face", text.strip() == "happy", text)
+            # "neutral" is an accepted answer: face_director decays an
+            # emotion back to neutral after its hold time, and on a throttled
+            # Pi the round trip can outlast it. Reading back something in the
+            # vocabulary is the real assertion -- pinning it to "happy" tests
+            # the scheduler's timing, not get_face.
+            report.check("get_face", text.strip() in ("happy", "neutral"),
+                         text, "happy, or neutral if it already decayed")
             text = await call("set_face", emotion="not_a_feeling")
             # The refusal wording is "unknown expression"; accept either noun
             # so a phrasing change is not a test failure. What matters is that
@@ -137,6 +169,28 @@ async def run(move: bool, over_http: bool = False) -> int:
             text = await call("speak", text="Friday online.")
             report.check("speak", "said" in text or "debug silence" in text,
                          text, "listen for it")
+
+            print("\nEMBODIED REASONING")
+            # The gate is only worth anything if it holds from a cold start,
+            # so this runs before anything has observed. Ordering matters:
+            # move the block and the first assertion becomes meaningless.
+            text = await call("move", direction="forward", duration_seconds=0.3)
+            report.check("move refused before looking", "REFUSED" in text,
+                         text, "must not drive on an unseen room")
+            text = await call("stop")
+            report.check("stop works even ungated", "stop" in text.lower(),
+                         text, "an emergency stop is never refused")
+            text = await call("observe")
+            report.check("observe returns a bundled view",
+                         "clearance_mm" in text or "image" in text.lower(),
+                         text, "camera and ranges from one moment")
+            text = await call("get_status")
+            report.check("status reports observation freshness",
+                         "observation" in text and "has_observed" in text, text)
+            text = await call("move_distance", cm=500)
+            report.check("long move is clipped to one step",
+                         "clipped" in text.lower(), text,
+                         "small increments, not one blind commitment")
 
             print("\nPERCEPTION")
             text = await call("get_distance")
@@ -193,12 +247,18 @@ async def run(move: bool, over_http: bool = False) -> int:
                 report.skip("move(left)", "pass --move to turn the wheels")
 
             print("\nSAFETY")
+            # Look first, or the observation gate refuses the move before the
+            # duration cap is ever reached -- correct behaviour, but it would
+            # test the gate a second time instead of testing the cap.
+            await call("observe")
             text = await call("move", direction="forward",
                               duration_seconds=999)
             report.check("duration is capped",
                          "capped at the" in text or "STOPPED" in text
                          or "FAILED" in text, text,
                          "999s must never be honoured")
+            report.check("the cap is not a refusal", "REFUSED" not in text,
+                         text, "the gate must not mask the duration cap")
 
     print(f"\n{report.passed} passed, {report.failed} failed, "
           f"{report.skipped} skipped\n")

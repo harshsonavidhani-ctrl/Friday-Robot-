@@ -14,7 +14,7 @@ carries its error margin, and the brain is expected to say "about" out loud.
 from __future__ import annotations
 
 import config
-from mcp_server import hardware, safety
+from mcp_server import embodiment, hardware, safety
 from mcp_server.registry import tool
 
 DIRECTIONS = ("forward", "backward", "left", "right", "stop")
@@ -32,7 +32,10 @@ def _margin(centre: float, unit: str) -> str:
 def move(direction: str, duration_seconds: float = 1.0) -> str:
     """Drive Friday in a direction for a number of seconds.
 
-    Call scan_environment first if you have not looked recently. Forward moves
+    YOU MUST CALL observe() FIRST. Forward and backward moves are refused
+    outright unless Friday has looked at the world within the last few
+    seconds, and moving ages that look — so a second step needs a second
+    observe(). This is enforced by the server, not by convention. Forward moves
     are checked against the range sensors before starting and continuously
     while running: if something comes within the stop distance, the motors cut
     out immediately and this reports how long it actually ran. Believe that
@@ -49,6 +52,9 @@ def move(direction: str, duration_seconds: float = 1.0) -> str:
                 f"{', '.join(DIRECTIONS)}.")
     if direction == "stop":
         return safety.emergency_stop()
+    blind = embodiment.check(direction)          # see move_distance
+    if blind:
+        return blind
     return safety.guarded_move(direction, duration_seconds).as_text()
 
 
@@ -82,14 +88,26 @@ def move_distance(cm: float) -> str:
                 "move(direction, duration_seconds) instead, or calibrate in "
                 "the dashboard by driving a measured distance for a known "
                 "time. Refusing to guess.")
+    cm, clip_note = embodiment.clip_increment(
+        cm, config.MAX_INCREMENT_CM, "cm")
     direction = "backward" if cm < 0 else "forward"
+    # Asked here as well as inside guarded_move so that a refusal reads as a
+    # refusal. Routed through the mover it comes back wrapped in "STOPPED after
+    # 0.0s ... got about 0 cm", which buries the one sentence that says what to
+    # do next. The gate in safety.py is still the backstop that cannot be
+    # bypassed; this is only about the wording the model reads.
+    blind = embodiment.check(direction)
+    if blind:
+        return blind
     seconds = abs(cm) / rate
     result = safety.guarded_move(direction, seconds)
     if result.stopped_early:
         travelled = result.actual_s * rate
-        return (f"{result.as_text()}. Got {_margin(round(travelled, 1), 'cm')} "
+        text = (f"{result.as_text()}. Got {_margin(round(travelled, 1), 'cm')} "
                 f"of the {abs(cm):g} cm asked for.")
-    return f"{result.as_text()}. Travelled {_margin(abs(cm), 'cm')}."
+    else:
+        text = f"{result.as_text()}. Travelled {_margin(abs(cm), 'cm')}."
+    return f"{text} ({clip_note})" if clip_note else text
 
 
 @tool
@@ -109,14 +127,21 @@ def turn_degrees(degrees: float) -> str:
                 "nobody has measured how fast Friday pivots. Use "
                 "move('left'|'right', duration_seconds) instead, or time a "
                 "full 360 and set it in the dashboard. Refusing to guess.")
+    degrees, clip_note = embodiment.clip_increment(
+        degrees, config.MAX_INCREMENT_DEGREES, "degrees")
     direction = "left" if degrees < 0 else "right"
+    blind = embodiment.check(direction)          # see move_distance
+    if blind:
+        return blind
     seconds = abs(degrees) / rate
     result = safety.guarded_move(direction, seconds)
     if result.stopped_early:
         turned = result.actual_s * rate
-        return (f"{result.as_text()}. Turned {_margin(round(turned), 'degrees')} "
+        text = (f"{result.as_text()}. Turned {_margin(round(turned), 'degrees')} "
                 f"of the {abs(degrees):g} asked for.")
-    return f"{result.as_text()}. Turned {_margin(abs(degrees), 'degrees')}."
+    else:
+        text = f"{result.as_text()}. Turned {_margin(abs(degrees), 'degrees')}."
+    return f"{text} ({clip_note})" if clip_note else text
 
 
 @tool

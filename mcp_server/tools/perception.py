@@ -19,7 +19,7 @@ from mcp.server.mcpserver import Image
 
 import config
 import vision
-from mcp_server import hardware
+from mcp_server import embodiment, hardware
 from mcp_server.registry import ToolResult, tool
 
 
@@ -78,6 +78,9 @@ def scan_environment() -> str:
         "stop_threshold_mm": config.SAFETY_STOP_MM,
         "sensors": ranges.status(),
     }
+    # Counts as having looked -- numbers without a picture, but a real reading
+    # of the world at a known moment, which is what the movement gate needs.
+    embodiment.record(clearance, source="scan_environment", saw_image=False)
     return json.dumps(report, indent=2)
 
 
@@ -173,6 +176,11 @@ def observe(camera: str = "both") -> str:
         "sensors": ranges.status(),
     }
 
+    # Recorded before the camera is touched: if the camera is dead the range
+    # readings are still a genuine observation, and losing a lens must not
+    # also cost Friday the right to move carefully.
+    embodiment.record(clearance, source="observe", saw_image=False)
+
     note_parts = [json.dumps(reading, indent=2)]
     if forward is None:
         note_parts.append(
@@ -189,7 +197,15 @@ def observe(camera: str = "both") -> str:
         image, camera_note = vision.look(camera)
         buffer = io.BytesIO()
         image.save(buffer, "JPEG", quality=config.CAPTURE_QUALITY)
+        # Re-recorded now the frame is actually in hand: the observation
+        # that gates movement should say it SAW, not merely measured.
+        embodiment.record(clearance, source="observe", saw_image=True)
         note_parts.append(f"\ncameras: {camera_note}")
+        note_parts.append(
+            f"\n\nThis observation is good for about "
+            f"{config.OBSERVATION_TTL_S:.0f}s, less once you have moved. "
+            f"Move ONE small step, then observe() again to check the world "
+            f"changed the way you expected.")
         return ToolResult(Image(data=buffer.getvalue(), format="jpeg"),
                           "".join(note_parts))
     except Exception as exc:                    # noqa: BLE001
