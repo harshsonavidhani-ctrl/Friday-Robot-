@@ -214,6 +214,101 @@ async function buildMoods() {
   }
 }
 
+/* ---------- the 7" panel ----------
+   The dashboard does not draw on the panel and does not keep its own copy of
+   the schedule. Everything here POSTs to /api/screen, which writes the same
+   state files the voice path writes -- so an alarm set from the phone is the
+   same row Friday can cancel by voice, and vice versa. */
+
+const TIMER_STEPS = [1, 5, 10, 20];
+let screenApp = null;
+
+function buildScreen() {
+  const apps = $('screenapps');
+  if (!apps) return;
+
+  // The face is the resting state, so it is the first choice, not a
+  // "cancel" hidden somewhere else.
+  const buttons = [['face', 'Face'], ['clock', 'Clock']];
+  apps.innerHTML = '';
+  for (const [name, text] of buttons) {
+    const b = document.createElement('button');
+    b.className = 'seg';
+    b.dataset.app = name;
+    b.textContent = text;
+    b.onclick = () => screenPost(name === 'face'
+      ? { action: 'dismiss' } : { action: 'launch', app: name });
+    apps.appendChild(b);
+  }
+
+  const seg = $('timerseg');
+  seg.innerHTML = '';
+  for (const mins of TIMER_STEPS) {
+    const b = document.createElement('button');
+    b.className = 'seg';
+    b.textContent = mins + 'm';
+    b.onclick = () => screenPost({ action: 'timer',
+                                   duration: mins + ' minutes' });
+    seg.appendChild(b);
+  }
+
+  $('setalarm').onclick = () => {
+    const time = $('alarmtime').value;
+    if (!time) { toast('Pick a time first', true); return; }
+    screenPost({ action: 'alarm', time, label: $('alarmlabel').value });
+  };
+}
+
+async function screenPost(body) {
+  try {
+    const r = await fetch('/api/screen', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { toast(await r.text(), true); return; }
+    const j = await r.json();
+    toast(j.result);
+    $('alarmlabel').value = '';
+    paintScreen(j);
+  } catch (e) { toast(String(e), true); }
+}
+
+function paintScreen(state) {
+  if (!state) return;
+  screenApp = state.app || null;
+  $('screennow').textContent = screenApp || 'face';
+  for (const b of document.querySelectorAll('#screenapps .seg'))
+    b.classList.toggle('on', b.dataset.app === (screenApp || 'face'));
+
+  const list = $('pending');
+  const items = state.pending || [];
+  if (!items.length) {
+    list.innerHTML = '<li class="none">Nothing set</li>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="kind">${esc(item.kind)}</span>` +
+      `<span class="when">${esc(item.kind === 'timer'
+        ? countdown(item.in_s) : item.when)}</span>` +
+      `<span class="lbl">${esc(item.label || '')}</span>`;
+    const kill = document.createElement('button');
+    kill.className = 'kill';
+    kill.title = 'Cancel';
+    kill.textContent = '×';
+    kill.onclick = () => screenPost({ action: 'cancel', id: item.id });
+    li.appendChild(kill);
+    list.appendChild(li);
+  }
+}
+
+const countdown = (secs) => {
+  const total = Math.max(0, Math.round(secs));
+  const m = Math.floor(total / 60), s = total % 60;
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}:${String(s).padStart(2, '0')}`;
+};
+
 /* ---------- drive ----------
    Nothing here decides whether a move is safe. Every button POSTs to
    /api/motor, which calls the friday-robot MCP server, which runs the
@@ -438,6 +533,7 @@ async function heartbeat() {
   paintDot(s.face_running);
   applyCams(s.cameras || {});     // picks up hot-plugs and other viewers
   paintRobot(s.robot_online);
+  paintScreen(s.screen);          // rides the same beat; no extra request
 }
 
 /* friday-mcp is a separate service from this one, so the dashboard opens and
@@ -464,6 +560,7 @@ function showPane(id) {
   buildFilters();
   wireCams();
   await buildMoods();
+  buildScreen();
   buildDrive();
   await loadCalibration();
   wireCalibration();
@@ -479,6 +576,7 @@ function showPane(id) {
     renderCam(which);
   }
   setActive(state.mood);
+  paintScreen(state.screen);
 
   connect();
   setInterval(heartbeat, 4000);

@@ -18,6 +18,9 @@ Serves:
     GET  /ca.crt               the local CA, to install on a phone once
     POST /api/camera/{which}   {"on": false} -> switch a camera off
     POST /api/motor            {"direction": "forward", "seconds": 0.5}
+    GET  /api/screen           what is on the 7" panel, and what is scheduled
+    POST /api/screen           {"action": "alarm"|"timer"|"launch"|"dismiss"|
+                                          "cancel", ...}
     GET  /ca.crt               Friday's CA, to install on the phone once
 
 Nothing here talks to the robot directly except through face_control, which
@@ -48,6 +51,7 @@ from dashboard import robot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import app_control                                     # noqa: E402
 import config                                          # noqa: E402
 import face_control                                    # noqa: E402
 from dashboard.cameras import BOUNDARY, CameraSet      # noqa: E402
@@ -140,6 +144,7 @@ async def api_state(request: web.Request) -> web.Response:
         "uptime_s": time.time() - STARTED,
         "face_running": _face_is_running(),
         "robot_online": robot_online(),
+        "screen": screen_state(),
     })
 
 
@@ -265,6 +270,70 @@ async def api_calibration_post(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, **values})
 
 
+# --- the 7" panel ----------------------------------------------------
+#
+# Same shape as the mood control: this writes app_control's state files and
+# the face process picks them up. The dashboard never draws on the panel and
+# never keeps its own copy of the schedule -- an alarm set from the phone and
+# one set by voice are the same row in the same file, which is why one can
+# cancel the other.
+
+def screen_state() -> dict:
+    """What is on the panel and what is still to come."""
+    status = app_control.status()
+    now = time.time()
+    pending = [{
+        "id": item["id"],
+        "kind": item["kind"],
+        "at": item["at"],
+        "in_s": max(0.0, item["at"] - now),
+        "when": app_control.say_time(item["at"]),
+        "label": item.get("label", ""),
+    } for item in app_control.pending()]
+    return {"app": status.get("app"), "urgent": bool(status.get("urgent")),
+            "apps": list(app_control.APP_NAMES), "pending": pending}
+
+
+async def api_screen_get(request: web.Request) -> web.Response:
+    return web.json_response(screen_state())
+
+
+async def api_screen_post(request: web.Request) -> web.Response:
+    """One endpoint, five actions. Every one of them is a file write, so it
+    answers immediately whether or not the face process is up."""
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+
+    action = str(payload.get("action", "")).strip().lower()
+    label = str(payload.get("label", ""))
+    try:
+        if action == "alarm":
+            alarm = app_control.add_alarm(str(payload.get("time", "")), label)
+            said = f"alarm set for {app_control.say_time(alarm['at'])}"
+        elif action == "timer":
+            timer = app_control.add_timer(str(payload.get("duration", "")),
+                                          label)
+            app_control.launch("timer", timer_id=timer["id"])
+            said = f"timer set for {app_control.say_duration(timer['seconds'])}"
+        elif action == "launch":
+            said = app_control.launch(str(payload.get("app", "")))
+        elif action == "dismiss":
+            said = app_control.dismiss()
+        elif action == "cancel":
+            said = app_control.cancel(str(payload.get("id", "")))
+        else:
+            raise web.HTTPBadRequest(
+                text="action must be alarm, timer, launch, dismiss or cancel")
+    except app_control.ScheduleError as exc:
+        # A time Friday could not read is the phone's fault, not a fault in
+        # the robot -- and the message is written to be shown as-is.
+        raise web.HTTPBadRequest(text=str(exc))
+
+    return web.json_response({"ok": True, "result": said, **screen_state()})
+
+
 # --- cameras ---------------------------------------------------------
 
 async def api_camera(request: web.Request) -> web.Response:
@@ -354,6 +423,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/camera/{which}", api_camera)
     app.router.add_post("/api/motor", api_motor)
     app.router.add_post("/api/motor/speed", api_motor_speed)
+    app.router.add_get("/api/screen", api_screen_get)
+    app.router.add_post("/api/screen", api_screen_post)
 
     async def index(_request: web.Request) -> web.StreamResponse:
         return web.FileResponse(STATIC / "index.html")

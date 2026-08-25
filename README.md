@@ -22,7 +22,9 @@ stt.py           faster-whisper + webrtcvad endpointing
 brain.py         Claude + the MCP tool loop
 tts.py           Piper through the USB soundcard
 face_control.py  drives friday_face.py via a state file
-friday_face.py   the 20-emotion face on the 7" panel
+friday_face.py   the 20-emotion face on the 7" panel — also hosts the apps
+app_control.py   drives the screen apps and holds the alarm/timer schedule
+apps/            one file per screen app: clock, timer, alarm, weather
 motor.py         L298N over an Arduino, with a firmware watchdog
 sensors.py       LiDAR + 8x8 ToF, on background pollers
 vision.py        both cameras, stitched into one image
@@ -106,6 +108,65 @@ That's it. The decorator already gave you:
   process, one connection per device.
 - **Anything that moves goes through `safety.guarded_move()`.** Never call
   `motor.py` from a tool. That is the rule the whole design rests on.
+
+## Adding a screen app — one file
+
+The 7" panel shows Friday's face by default. An app takes it while it has
+something to say and hands it straight back. Drop a file in `apps/`:
+
+```python
+import apps
+from apps.base import App
+
+@apps.register
+class Battery(App):
+    NAME = "battery"
+
+    def setup(self, percent: float = 100.0):
+        self.percent = percent
+
+    def draw(self, surface):
+        surface.fill((0, 0, 0))
+        self.paint.text(surface, f"{round(self.percent)}%",
+                        self.paint.px(0.30),
+                        (self.width // 2, self.height // 2))
+```
+
+The file existing is the registration — same as `mcp_server/tools/`. Launch it
+with `app_control.launch("battery", percent=61)`, or add a `@tool` in
+`mcp_server/tools/screen.py` so the brain can. `App.paint` carries the face's
+finish (gradient, gloss, drop shadow) so a new app matches without copying any
+of it; sizes go through `paint.px(fraction)` so they hold on any panel.
+
+### The rules apps live under
+
+- **The face is the resting state.** An app that has said its piece sets
+  `self.done` and disappears; it does not sit there.
+- **A safety expression outranks any app.** `scared` and `dizzy` are drawn
+  over whatever is up. The single exception is an alarm actually ringing,
+  which sets `URGENT = True` — it is already the thing demanding attention.
+- **Touch anywhere means stop.** The default `handle_event` dismisses.
+- **Nothing is drawn from another process.** Everything goes through
+  `app_control.py`, which writes state files the face polls — the same
+  pattern as `face_control.py`, and for the same reason: the face process
+  owns the only window on the panel.
+
+## Alarms and timers
+
+```bash
+./venv/bin/python app_control.py alarm "8 am" school
+./venv/bin/python app_control.py timer "10 minutes" pasta
+./venv/bin/python app_control.py --list
+./venv/bin/python app_control.py --cancel alarm1
+./venv/bin/python scripts/test_apps.py --render      # PNGs, no panel needed
+```
+
+They live in `state/schedule.json` and are watched by the **face** process, so
+they ring after a restart of anything else and after a power cut. Something due
+while the Pi was off still rings if it is less than `APP_ALARM_GRACE_S` late.
+The same rows are set from the brain (`set_alarm`, `set_timer`), from the
+dashboard's **Screen** panel on the phone, and from the CLI above — so any of
+the three can cancel what another one set.
 
 ## The safety interrupt
 

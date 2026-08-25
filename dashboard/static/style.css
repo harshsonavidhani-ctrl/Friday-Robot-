@@ -652,3 +652,35 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
   100%{box-shadow:0 0 0 0 rgba(255,59,59,0)}
 }
 @media (prefers-reduced-motion:reduce){ .robotoff::before{animation:none} }
+
+
+/* ---------- screen apps ----------
+   Deliberately built from the calibration and drive furniture already here:
+   the same field row, the same segmented control, the same note line. A new
+   panel that invents its own controls makes the app look like two apps. */
+.screen{display:flex;flex-direction:column;gap:12px}
+.screenrow label{display:block;font-size:11px;color:var(--dim);margin-bottom:5px}
+.screenrow input[type=time],
+.screenrow input[type=text]{
+  flex:1;min-width:0;background:var(--bg2);border:1px solid var(--line);
+  border-radius:8px;color:var(--text);padding:8px 10px;font:inherit;font-size:13px
+}
+.screenrow input:focus{border-color:var(--accent-dim);outline:none}
+.screenrow button{
+  background:var(--bg2);border:1px solid var(--line);border-radius:8px;
+  color:var(--dim);padding:8px 12px;font:inherit;font-size:12px;cursor:pointer
+}
+.screenrow button:hover{border-color:var(--accent-dim);color:var(--text)}
+.pending{list-style:none;margin:0;padding:0;display:flex;
+  flex-direction:column;gap:6px}
+.pending li{display:flex;align-items:center;gap:8px;background:var(--bg2);
+  border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px}
+.pending .kind{color:var(--accent);text-transform:uppercase;font-size:10px;
+  letter-spacing:.08em}
+.pending .when{color:var(--text)}
+.pending .lbl{color:var(--dim);flex:1;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.pending .kill{background:none;border:0;color:var(--faint);font-size:16px;
+  line-height:1;cursor:pointer;padding:0 2px}
+.pending .kill:hover{color:var(--accent)}
+.pending .none{color:var(--faint);border-style:dashed;justify-content:center}

@@ -8,6 +8,15 @@ Nothing drives this directly. It watches state/emotion.txt (and
 state/yawn.txt for the yawn trigger) and switches to whatever it finds
 there; use face_control.py to write those files.
 
+IT ALSO HOSTS THE SCREEN APPS. This process owns the only window on the
+panel, so the clock, the timer, the alarm and the weather card run inside
+it -- see apps/ for the views and app_control.py for the doorway. The face
+is the default view and the resting state; an app takes the screen while it
+has something to say. A SAFETY EXPRESSION OUTRANKS ANY APP: if Friday is
+about to hit something, the warning face is drawn over whatever was up. The
+one exception is an alarm actually ringing, which outranks even that,
+because it is already the thing demanding attention.
+
 Block geometry on a pure black screen, finished to read as raised,
 polished orange plastic: every shape gets a strong vertical gradient
 (lighter at the top, deeper at the bottom), a glossy highlight near its
@@ -30,14 +39,18 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import logging
 import math
 import os
 import random
 
 import pygame
 
+import apps
+import config
 from face_control import (EMOTIONS as EMOTION_NAMES, DEFAULT_EMOTION,
                           EMOTION_FILE, YAWN_FILE, get_emotion)
+from face_director import SAFETY_FACES
 
 # =====================================================================
 # COLOURS — tune these
@@ -222,6 +235,18 @@ class FridayFace:
         self._mat_cache: dict = {}
         self._shadow_cache: dict = {}
 
+        # The screen apps. None when they are switched off in config, and
+        # every use of it below is guarded -- the face must still run if the
+        # apps package is broken or missing.
+        self.apps = None
+        self._screensaver = False
+        self._idle_since = 0.0
+        if config.APPS_ENABLED:
+            try:
+                self.apps = apps.Manager((self.width, self.height))
+            except Exception as exc:            # noqa: BLE001
+                print(f"screen apps unavailable: {exc}")
+
     # --- geometry ----------------------------------------------------
 
     def _layout(self) -> None:
@@ -296,6 +321,10 @@ class FridayFace:
         except (OSError, UnicodeDecodeError):
             return
         if name in EMOTION_NAMES:
+            if name != self._name:
+                # Something is happening. A screensaver clock that stayed up
+                # through it would hide the one thing worth showing.
+                self._end_screensaver()
             self.set_emotion(name)
 
     def play_yawn(self) -> None:
@@ -1163,7 +1192,62 @@ class FridayFace:
             self._off_y = -self.height * 0.007 * abs(
                 math.sin(2 * math.pi * t / 1.1))
 
+    # --- screen apps -------------------------------------------------
+
+    def _poll_apps(self, now: float, dt: float) -> None:
+        """Let the manager watch its command file and the schedule, then run
+        whatever is up. Swallows everything: an app must never be able to
+        take the face down with it."""
+        if self.apps is None:
+            return
+        try:
+            self.apps.poll(now)
+            self.apps.update(dt)
+            self._poll_screensaver(dt)
+        except Exception as exc:                # noqa: BLE001
+            print(f"screen apps: {exc}")
+
+    def _poll_screensaver(self, dt: float) -> None:
+        """With the face asleep and nothing else on screen, put the clock up.
+        A robot alone in a dark room showing the time is doing something; the
+        same robot showing closed eyes for an hour looks switched off."""
+        after = config.APP_CLOCK_SCREENSAVER_AFTER_S
+        if not after:
+            return
+        if self._name != "sleeping":
+            self._idle_since = 0.0
+            return
+        if self.apps.running is not None:
+            return
+        self._idle_since += dt
+        if self._idle_since >= after:
+            self._idle_since = 0.0
+            self.apps.launch("clock", screensaver=True)
+            self._screensaver = True
+
+    def _end_screensaver(self) -> None:
+        if self._screensaver and self.apps is not None:
+            self._screensaver = False
+            self.apps.dismiss()
+
+    def _draw_app(self) -> bool:
+        """True if an app took the frame.
+
+        The rule the whole feature turns on: a safety expression is drawn
+        over any app, and an alarm that is actually ringing is drawn over
+        even that. Everything else yields to whatever is on screen.
+        """
+        if self.apps is None or self.apps.running is None:
+            return False
+        if self._name in SAFETY_FACES and not self.apps.urgent:
+            return False
+        return self.apps.draw(self.screen)
+
     def draw(self) -> None:
+        if self._draw_app():
+            pygame.display.flip()
+            return
+
         self.screen.fill(BG_COLOR)
 
         yawn = self._yawn_amount()
@@ -1192,6 +1276,12 @@ class FridayFace:
             elif event.type == pygame.KEYDOWN and event.key in (
                     pygame.K_ESCAPE, pygame.K_q):
                 self.running = False
+            elif self.apps is not None and self.apps.running is not None:
+                # A touch on the panel goes to the app first -- on a 7"
+                # screen in front of you, touching a ringing alarm means
+                # stop, and it should not need a spoken word.
+                if self.apps.handle_event(event):
+                    self._screensaver = False
 
     def run(self, follow_file: bool = True) -> None:
         now = 0.0
@@ -1202,6 +1292,7 @@ class FridayFace:
             if follow_file:
                 self._poll_state_file(now)
                 self._poll_yawn_file(now)
+                self._poll_apps(now, dt)
             self.update(dt)
             self.draw()
         pygame.quit()
@@ -1240,6 +1331,12 @@ _NO_BLINK = frozenset({
 # =====================================================================
 
 def main() -> int:
+    # The apps log through the logging module; without this their errors go
+    # nowhere and a misbehaving app looks like a blank screen with no clue.
+    # stderr is what systemd captures into the journal.
+    logging.basicConfig(level=logging.INFO,
+                        format="%(name)s %(levelname)s %(message)s")
+
     ap = argparse.ArgumentParser(description="Friday's face")
     ap.add_argument("--demo", action="store_true",
                     help="cycle all 20 emotions and play the yawn once")

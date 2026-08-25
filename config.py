@@ -586,6 +586,56 @@ FACE_SLEEPING_AFTER_S = 300.0
 
 FACE_TICK_S = 0.2            # how often decay and idle drift are checked
 
+# --- Screen apps ---------------------------------------------------------
+# Small full-screen views -- clock, timer, alarm, weather -- that take the 7"
+# panel for as long as they have something to say and hand it straight back to
+# the face. They run INSIDE the face process (it owns the only pygame window);
+# everything else drives them by writing state files, exactly like emotion.txt.
+# See app_control.py for the doorway and apps/ for the views themselves.
+APPS_ENABLED = True
+
+# The command channel and the schedule. Written atomically by app_control.py,
+# polled by the face at APP_POLL_S. The schedule holds alarms and timers, so
+# both survive a restart of the face, the MCP server, or the whole Pi.
+APP_COMMAND_FILE = ROOT / "state" / "app_command.json"
+APP_STATUS_FILE = ROOT / "state" / "app_status.json"
+APP_SCHEDULE_FILE = ROOT / "state" / "schedule.json"
+APP_POLL_S = 0.08            # same as the face's own state poll -- an os.stat
+
+# An alarm that came due while the Pi was off still rings if it is no more
+# than this late. Older than that and it is marked missed rather than going
+# off at breakfast for something wanted at midnight.
+APP_ALARM_GRACE_S = 300.0
+
+# How long an alarm rings before it gives up and returns the screen.
+APP_ALARM_MAX_RING_S = 120.0
+
+# The ring itself. A two-note phrase repeated with a gap -- deliberately not a
+# klaxon; this is a companion, not a fire panel. Generated as a WAV on first
+# use and played through pipewire (pw-play), the same path as the wake beep.
+APP_RING_FILE = ROOT / "state" / "ring.wav"
+APP_RING_NOTES_HZ = (784.0, 1046.5)   # G5, C6
+APP_RING_NOTE_MS = 220
+APP_RING_GAP_MS = 900        # silence after the phrase, before it repeats
+APP_RING_VOLUME = 0.55       # 0-1, before the sink's own volume. Was
+                             # 0.35, which Harsh could not hear from the
+                             # next room. The WAV is rebuilt whenever
+                             # any of these four values change.
+
+# Screensaver: with nothing else on screen and the face asleep this long, the
+# clock comes up on its own. Any new expression or command takes it straight
+# back down. 0 disables.
+APP_CLOCK_SCREENSAVER_AFTER_S = 90.0
+
+# 12- or 24-hour clock, everywhere a time is shown or spoken back.
+APP_CLOCK_24H = False
+
+# A timer or alarm label is drawn under the digits; anything longer is cut.
+APP_LABEL_MAX_CHARS = 28
+
+# How long a weather card stays up before handing the screen back.
+APP_WEATHER_HOLD_S = 30.0
+
 # --- Memory --------------------------------------------------------------
 # SQLite for the facts, the event log and the summaries; a TF-IDF index over
 # the facts for recall. See memory.py for why not embeddings -- briefly, this

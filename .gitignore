@@ -26,6 +26,16 @@ assets/models/
 # runtime state (written by face_control.py)
 state/*.txt
 state/.emotion.*
+
+# runtime state (written by app_control.py and the screen apps)
+state/app_command.json
+state/app_status.json
+state/schedule.json
+state/ring.wav
+state/ring.json
+state/.appcmd.*
+state/.appstat.*
+state/.sched.*
 certs/
 state/calibration.json
 __pycache__/
