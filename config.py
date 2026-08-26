@@ -641,6 +641,23 @@ MISSION_MIN_TURN_DEG = 10.0
 # turns away and re-plans instead of giving up where she stands. Capped:
 # a robot that backs off and re-plans forever in a corner it cannot leave has
 # hung, and should say so rather than look busy.
+# ⚠ HOW FAR SHE MAY DRIVE IN ONE GO, AND WHY IT IS SHORT.
+#
+# Friday bumped something during an autonomous run on 2026-08-27. Nothing
+# failed: the object sat in the ToF's documented blind band (0.31-0.75 m for
+# anything short) AND below the LiDAR's plane, which is on the top dome at leg
+# height. So forward clearance could not see it, the 200 mm LiDAR proximity
+# backstop could not see it either, and the first thing that noticed was the
+# reflex at SIXTEEN MILLIMETRES -- after contact. The stall backstop catches
+# it too, but only after SAFETY_STALL_AFTER_S of pushing, which is ~9 cm.
+#
+# Software cannot give her an eye she does not have. What it can do is stop
+# her building up a long unsupervised run into space nothing has confirmed:
+# a short leg means she re-observes, re-plans and re-checks far more often,
+# and any push is a short one. It is a mitigation, not a fix. THE FIX IS
+# PHYSICAL -- a contact bumper, or a sensor that can see low and near.
+MISSION_MAX_LEG_M = 0.25
+
 MISSION_MAX_RECOVERIES = 4
 MISSION_RECOVER_TURN_DEG = 60.0   # comfortably above the measured 10 deg floor
 

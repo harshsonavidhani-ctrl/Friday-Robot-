@@ -32,6 +32,7 @@ SAFETY, and none of it is optional:
 from __future__ import annotations
 
 import threading
+import logging
 import time
 
 import serial
@@ -57,6 +58,8 @@ ARDUINO_IDS = {
 
 # The Arduino's watchdog window. The keepalive interval must be comfortably
 # shorter, or a long move stutters as the watchdog trips and is re-armed.
+log = logging.getLogger("friday.motor")
+
 WATCHDOG_MS = int(config.MOTOR_WATCHDOG_S * 1000)
 KEEPALIVE_S = config.MOTOR_WATCHDOG_S / 3.0
 
@@ -197,6 +200,15 @@ class Motors:
                 f"{config.MOTOR_LOCK_TIMEOUT_S}s. The Arduino watchdog cuts "
                 f"the motors after {config.MOTOR_WATCHDOG_S}s of silence.")
         try:
+            # ⚠ DRAIN FIRST. The firmware sends an UNSOLICITED "WATCHDOG" line
+            # whenever it cuts the motors on its own, and nothing was reading
+            # it. One of those sitting in the buffer means the next command
+            # reads it as its own reply, and every reply after that is offset
+            # by one -- so `stop` reports failure while the robot is fine, or
+            # reports success while it is not. Every exchange here is
+            # request/response under this lock, and keepalives are write-only,
+            # so there is never a legitimate pending reply to lose.
+            self.serial.reset_input_buffer()
             self._write(line)
             return self.serial.readline().decode(errors="replace").strip()
         finally:
@@ -291,14 +303,51 @@ class Motors:
             time.sleep(fall_dt)
 
     def stop(self) -> None:
+        """Stop the motors. Retries, and reopens the port, before giving up.
+
+        ⚠ AN EMERGENCY STOP THAT NEEDS A SERVICE RESTART IS NOT ONE. Observed
+        on the robot after a bump: every `stop` came back with an empty reply
+        -- the Arduino had gone quiet -- and it only recovered when
+        friday-mcp.service was restarted, which reopens the port and drains
+        it. The motors were safe throughout, because the firmware watchdog
+        cuts them after MOTOR_WATCHDOG_S of silence, but the software could
+        not command a stop, and relying on the watchdog for that is relying on
+        the backstop instead of the brake.
+
+        So: one plain retry (a desynced buffer is fixed by the drain in
+        _command), then a reconnect and a third attempt. Only then does it
+        raise -- and it raises rather than returning quietly, because a stop
+        that did not take must never look like one that did.
+        """
         self._stop_keepalive.set()
         # Cleared before the write, not after: if the command throws, the
         # wheels are in an unknown state and the next move must assume it is
         # starting from rest and kickstart accordingly.
         self._moving = False
-        reply = self._command("S")
-        if reply != "OK":
-            raise MotorError(f"stop -> {reply!r}")
+
+        last = ""
+        for attempt in range(3):
+            if attempt == 2:
+                # Last resort: the link itself is wedged, not just the buffer.
+                try:
+                    self.close()
+                    self.connect()
+                except Exception as exc:                # noqa: BLE001
+                    raise MotorError(
+                        f"stop failed and the link could not be reopened "
+                        f"({exc}). The Arduino watchdog cuts the motors "
+                        f"within {config.MOTOR_WATCHDOG_S}s of silence.")
+            try:
+                last = self._command("S")
+            except Exception as exc:                    # noqa: BLE001
+                last = f"{type(exc).__name__}: {exc}"
+                continue
+            if last == "OK":
+                if attempt:
+                    log.warning("stop took %d attempts (last reply %r)",
+                                attempt + 1, last)
+                return
+        raise MotorError(f"stop -> {last!r} after 3 attempts")
 
     def keepalive(self) -> None:
         """Pet the Arduino's watchdog without changing the command.

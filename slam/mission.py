@@ -206,6 +206,11 @@ class Mission:
                         break
                     await self._fold(mapper, 0.0, math.radians(turn_deg))
 
+                # Clamped, never skipped: the planner may want a 2 m run and
+                # she may only take it a bit at a time. See MISSION_MAX_LEG_M
+                # -- there are things on this floor that nothing on this robot
+                # can see until it is touching them.
+                forward_m = min(forward_m, config.MISSION_MAX_LEG_M)
                 if forward_m > 0.01:
                     if self.robot.stopped():
                         stopped_because = "stop was called"
