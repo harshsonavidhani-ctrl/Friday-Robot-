@@ -260,8 +260,31 @@ class Motors:
             return
         scale = ceiling * config.MOTOR_KICKSTART_FLOOR
         peak = max(abs(left), abs(right)) or 1.0
-        self._send(left / peak * scale, right / peak * scale)
-        time.sleep(config.MOTOR_KICKSTART_MS / 1000.0)
+        kick_l, kick_r = left / peak * scale, right / peak * scale
+
+        # RAMPED, not slammed. Same peak, same total time; the torque simply
+        # arrives over several steps rather than on one edge. See config.
+        steps = max(1, int(config.MOTOR_RAMP_STEPS))
+        window = config.MOTOR_KICKSTART_MS / 1000.0
+        if steps == 1:                       # the old behaviour, on request
+            self._send(kick_l, kick_r)
+            time.sleep(window)
+            return
+
+        rising = max(1, round(steps * config.MOTOR_RAMP_RISE))
+        falling = max(1, steps - rising)
+        rise_dt = window * config.MOTOR_RAMP_RISE / rising
+        fall_dt = window * (1.0 - config.MOTOR_RAMP_RISE) / falling
+
+        for i in range(1, rising + 1):       # 0 -> the pulse level
+            f = i / rising
+            self._send(kick_l * f, kick_r * f)
+            time.sleep(rise_dt)
+        for i in range(1, falling + 1):      # pulse level -> the target
+            f = i / falling
+            self._send(kick_l + (left - kick_l) * f,
+                       kick_r + (right - kick_r) * f)
+            time.sleep(fall_dt)
 
     def stop(self) -> None:
         self._stop_keepalive.set()

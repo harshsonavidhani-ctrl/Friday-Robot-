@@ -596,6 +596,27 @@ MOTOR_INVERT_RIGHT = True
 MOTOR_KICKSTART_MS = 130
 MOTOR_KICKSTART_FLOOR = 1.0  # fraction of the duty cap to pulse at
 
+# ...BUT DELIVERED AS A RAMP, NOT A SLAM. The pulse above used to go 0 -> full
+# cap in one write, hold, then drop straight to the requested speed: two
+# near-instant torque steps, which is felt as a jerk and is worst on a pivot
+# where all four wheels break traction together. Harsh reported exactly that.
+#
+# The same total time and the same peak, split into steps: rise to the pulse
+# level, then settle to the target. Stiction still gets broken -- the peak is
+# unchanged and it is still reached inside the same window -- but the torque
+# arrives over several steps instead of one edge.
+#
+# Cost is MOTOR_RAMP_STEPS extra serial writes inside MOTOR_KICKSTART_MS. The
+# Arduino watchdog is MOTOR_WATCHDOG_S, far longer, so the extra traffic
+# cannot starve it. Set to 1 for the old single-slam behaviour.
+#
+# ⚠ THIS RAMPS STARTING ONLY. stop() is untouched and must stay untouched:
+# an emergency stop that eases off is not an emergency stop. Same reason the
+# ramp is here in Python and not in the firmware, where it would share a code
+# path with S.
+MOTOR_RAMP_STEPS = 6
+MOTOR_RAMP_RISE = 0.6        # fraction of the window spent rising to the peak
+
 # The hard ceiling on motor output, as a fraction of full PWM. EVERY path is
 # capped by this in motor._clamp, so it is the real limit on how fast Friday
 # can drive regardless of what calibration or set_speed ask for.
