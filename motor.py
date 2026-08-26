@@ -276,8 +276,12 @@ class Motors:
         rise_dt = window * config.MOTOR_RAMP_RISE / rising
         fall_dt = window * (1.0 - config.MOTOR_RAMP_RISE) / falling
 
-        for i in range(1, rising + 1):       # 0 -> the pulse level
-            f = i / rising
+        # From MOTOR_RAMP_FLOOR, not from zero: everything below that is a
+        # dead band where the motors buzz and the robot does not move. See the
+        # config note -- starting at zero cost two pivots that never happened.
+        floor = config.MOTOR_RAMP_FLOOR
+        for i in range(1, rising + 1):       # the floor -> the pulse level
+            f = floor + (1.0 - floor) * i / rising
             self._send(kick_l * f, kick_r * f)
             time.sleep(rise_dt)
         for i in range(1, falling + 1):      # pulse level -> the target

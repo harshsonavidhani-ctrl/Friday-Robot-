@@ -136,6 +136,27 @@ async def sweep(client) -> dict[int, int]:
     return {int(b): int(mm) for b, mm in data.get("bearings_mm", {}).items()}
 
 
+def scan_moved_mm(before: dict[int, int], after: dict[int, int]) -> float | None:
+    """How much the world moved past the LiDAR between two sweeps.
+
+    Median absolute range change over shared bearings -- the same measure
+    safety.py uses to catch a stalled drive, and the ONLY thing here that can
+    tell a turn that happened from a turn that did not. The estimator cannot:
+    when the robot fails to move, odometry still claims +30 degrees, the
+    matcher searches +/-12 around that, the truth 30 degrees away is outside
+    the window, and it accepts the lie. This test reported six good turns
+    while Harsh watched the first two not happen.
+
+    A median, not a mean, so one person walking through the sweep cannot
+    manufacture movement that did not occur.
+    """
+    shared = [abs(after[b] - before[b]) for b in before if b in after]
+    if len(shared) < 40:
+        return None
+    shared.sort()
+    return float(shared[len(shared) // 2])
+
+
 async def settle(client, mapper: Mapper, sweeps: int, turned_rad: float = 0.0,
                  log: list | None = None):
     """Fold sweeps in, attributing the turn to the FIRST one only.
@@ -214,10 +235,12 @@ async def main() -> int:
         mark = last_decision_id()
         print(f"\npivoting {sum(abs(d) for d in plan):.0f} degrees in "
               f"{len(plan)} steps, finishing where it started")
+        moved_each = []
         for degrees in plan:
             # Counts as having looked, and is what the gate wants. Cheap --
             # range sensors only, no camera.
             await client.call_tool("scan_environment", {})
+            before = await sweep(client)
             said = text_of(await client.call_tool("turn_degrees",
                                                   {"degrees": degrees}))
 
@@ -243,13 +266,22 @@ async def main() -> int:
             actual = math.copysign(float(done.group(1)), degrees)
             commanded += actual
 
+            # BEFORE folding anything in: did the world actually move?
+            # Asked of the raw sweeps, not of the estimator, because the
+            # estimator will happily agree with odometry about a turn that
+            # never happened.
+            settled = await sweep(client)
+            shifted = scan_moved_mm(before, settled)
+            moved_each.append(shifted)
+
             await settle(client, mapper, SWEEP_EACH_STEP,
                          math.radians(actual), log=log)
             heading = math.degrees(mapper.pose[2])
             drift = math.hypot(mapper.pose[0], mapper.pose[1])
             print(f"  asked {degrees:+.0f}deg, turned {actual:+.0f} -> "
                   f"total {commanded:+.0f}, estimator says {heading:+.1f}, "
-                  f"apparent shift {drift * 100:.0f} cm")
+                  f"apparent shift {drift * 100:.0f} cm, "
+                  f"world moved {'?' if shifted is None else f'{shifted:.0f} mm'}")
             if "stopped" in said.lower():
                 print(f"    cut short: {said}")
 
@@ -260,6 +292,22 @@ async def main() -> int:
 
         print("\nback where it started, so both of these should be near zero")
         ok = True
+        # THE GATE THAT WOULD HAVE CAUGHT THE RAMP. A 30 degree pivot sweeps
+        # every bearing onto new geometry, so the median range change is large;
+        # a turn that did not happen leaves it near sensor noise. Checked per
+        # step, because two dead turns out of six still averages to "fine".
+        real = [m for m in moved_each if m is not None]
+        stalled = [i + 1 for i, m in enumerate(moved_each)
+                   if m is not None and m < config.PIVOT_MIN_SCAN_SHIFT_MM]
+        good_motion = bool(real) and not stalled
+        print(f"  {'PASS' if good_motion else 'FAIL'}  every turn actually "
+              f"moved the robot: median scan shift per step "
+              f"{', '.join(f'{m:.0f}' for m in real)} mm "
+              f"(want each over {config.PIVOT_MIN_SCAN_SHIFT_MM})")
+        if stalled:
+            print(f"        turns {stalled} did not move the robot -- the "
+                  f"motors were commanded and nothing happened")
+        ok &= good_motion
         # A pivot does not translate. Anything here is estimator error, and
         # 15 cm is already more than the cell size by a factor of three.
         good_drift = drift < 0.15

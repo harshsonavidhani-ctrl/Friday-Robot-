@@ -593,7 +593,7 @@ MOTOR_INVERT_RIGHT = True
 # duty cap, then settles to the requested speed. Set the duration to 0 to
 # disable. This borrows headroom already permitted by MOTOR_MAX_DUTY -- it
 # cannot exceed it.
-MOTOR_KICKSTART_MS = 130
+MOTOR_KICKSTART_MS = 150   # 130 before the ramp; see MOTOR_RAMP_FLOOR
 MOTOR_KICKSTART_FLOOR = 1.0  # fraction of the duty cap to pulse at
 
 # ...BUT DELIVERED AS A RAMP, NOT A SLAM. The pulse above used to go 0 -> full
@@ -614,8 +614,43 @@ MOTOR_KICKSTART_FLOOR = 1.0  # fraction of the duty cap to pulse at
 # an emergency stop that eases off is not an emergency stop. Same reason the
 # ramp is here in Python and not in the firmware, where it would share a code
 # path with S.
-MOTOR_RAMP_STEPS = 6
+# A pivot that happened moves every bearing onto new geometry. A pivot that
+# was commanded and did not happen leaves the sweep where it was. This is the
+# line between them, in median absolute range change across shared bearings.
+# Sensor noise on this LiDAR is single-digit mm; a real 30 degree turn moves
+# it by hundreds. Anything in between is a turn that partly stalled.
+PIVOT_MIN_SCAN_SHIFT_MM = 40
+
+# ⚠ SET TO 1 = THE OLD SINGLE SLAM, WHICH IS WHERE THIS SITS UNTIL THE
+# STICTION THRESHOLD IS MEASURED. Ramping is worth having -- Harsh feels the
+# slam as a jerk -- but two attempts at it have now produced turns that were
+# commanded and did not happen, and a robot whose turns silently fail is worse
+# than a robot that turns roughly. The second attempt moved strongly for three
+# pivots (123, 141, 84 mm of scan shift) and faded over the next three (50,
+# 26, 25), which is the signature of an impulse sitting right on the threshold
+# rather than clearly above it.
+#
+# What is missing is a NUMBER: the lowest PWM at which these motors actually
+# break free, on this floor, with this battery. Guessing at it has cost two
+# runs. Measure it, then set MOTOR_RAMP_FLOOR just above it and raise this
+# back to 6.
+MOTOR_RAMP_STEPS = 1
 MOTOR_RAMP_RISE = 0.6        # fraction of the window spent rising to the peak
+
+# ⚠ THE RAMP MUST NOT START AT ZERO, and the first attempt did. Below the
+# stiction threshold these motors produce NO motion -- they buzz. Ramping up
+# from 0 therefore spends its first steps in a dead band, contributing nothing
+# but noise, and the impulse that actually reaches the wheels came out at
+# roughly 73% of the old single slam. On the robot the first two pivots of a
+# six-pivot test did not turn at all, and NOTHING in software noticed: the
+# estimator agreed with odometry about a turn that never happened, because the
+# truth was 30 degrees outside its search window. Harsh saw it; the test did
+# not. scripts/pivot_test.py now has a gate for exactly this.
+#
+# So the ramp starts at a fraction of the pulse level that is already past the
+# dead band and climbs from there. It is gentler than a single edge to the
+# cap, and it does not waste any of the window below the threshold.
+MOTOR_RAMP_FLOOR = 0.6       # ramp starts here, as a fraction of the pulse
 
 # The hard ceiling on motor output, as a fraction of full PWM. EVERY path is
 # capped by this in motor._clamp, so it is the real limit on how fast Friday
