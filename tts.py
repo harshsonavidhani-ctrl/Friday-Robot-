@@ -32,6 +32,7 @@ ALSA fallback is only for a headless boot with no audio server.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import queue
@@ -421,6 +422,43 @@ def _resample(samples, from_rate: int, to_rate: int):
     return np.asarray(resampled, dtype=np.float32), to_rate
 
 
+@contextlib.contextmanager
+def _mouth_moving():
+    """Show the speaking face for as long as she is actually speaking.
+
+    The panel has a "speaking" expression and nothing was ever switching to
+    it, so Friday talked with a neutral face -- which reads as a stuck screen
+    rather than a robot with something to say.
+
+    WHAT IT RESTORES MATTERS. The previous emotion, not neutral: if she was
+    pleased about something before she said it, she should still be pleased
+    afterwards. Forcing neutral would make every sentence flatten her.
+
+    BEST-EFFORT, ALWAYS. The face is a separate process and may not be
+    running. Losing the animation must never cost the words, so every call
+    here is wrapped and failures are logged, not raised -- and the restore is
+    in a finally, so a synthesis error cannot leave her stuck mid-sentence
+    wearing a talking face forever.
+    """
+    import face_control                  # local: face_control imports nothing
+
+    previous = None
+    try:
+        previous = face_control.get_emotion()
+        face_control.set_emotion("speaking")
+    except Exception as exc:                        # noqa: BLE001
+        log.debug("could not show the speaking face: %s", exc)
+    try:
+        yield
+    finally:
+        if previous is not None:
+            try:
+                face_control.set_emotion(previous)
+            except Exception as exc:                # noqa: BLE001
+                log.warning("could not restore the %s face after speaking: %s",
+                            previous, exc)
+
+
 def speak(text: str) -> str:
     """Say something out loud. Returns what actually happened.
 
@@ -437,7 +475,7 @@ def speak(text: str) -> str:
         return f"[debug silence — not spoken] {text}"
 
     chunks = sentences(text)
-    with _speak_lock:
+    with _speak_lock, _mouth_moving():
         voice()                         # raises TTSError if unavailable
         rendered: queue.Queue = queue.Queue(maxsize=2)
 

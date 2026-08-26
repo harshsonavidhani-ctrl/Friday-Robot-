@@ -37,6 +37,8 @@ from __future__ import annotations
 import json
 import logging
 
+import anyio.to_thread
+
 import config
 import tts
 from mcp_server import hardware
@@ -49,21 +51,31 @@ log = logging.getLogger("friday.tools.explore")
 
 
 class _Robot:
-    """The mission's view of the real robot: five calls, no shortcuts."""
+    """The mission's view of the real robot: five calls, no shortcuts.
+
+    ⚠ EVERY TOOL CALL GOES THROUGH A WORKER THREAD, and that is a safety
+    requirement rather than a performance one. registry.tool leaves the plain
+    SYNCHRONOUS function callable and only the registered wrapper is async --
+    so calling movement.turn_degrees() directly here would run a blocking
+    serial move on the event loop, and stop() could not be answered until it
+    finished. The whole point of hardware.ABORT is that it interrupts rather
+    than queues. anyio.to_thread.run_sync is what the registry itself does,
+    for exactly this reason.
+    """
 
     async def sweep(self) -> dict[int, int]:
-        return mapping._sweep()
+        return await anyio.to_thread.run_sync(mapping._sweep)
 
     async def observe(self) -> None:
         # Cheap -- range sensors only, no camera -- and it is what the
         # movement gate wants before it will allow anything to move.
-        await perception.scan_environment()
+        await anyio.to_thread.run_sync(perception.scan_environment)
 
     async def turn(self, degrees: float) -> str:
-        return await movement.turn_degrees(degrees)
+        return await anyio.to_thread.run_sync(movement.turn_degrees, degrees)
 
     async def forward(self, cm: float) -> str:
-        return await movement.move_distance(cm)
+        return await anyio.to_thread.run_sync(movement.move_distance, cm)
 
     def say(self, text: str) -> None:
         try:
