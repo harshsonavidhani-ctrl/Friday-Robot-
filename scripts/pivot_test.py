@@ -96,6 +96,15 @@ async def settle(client, mapper: Mapper, sweeps: int, turned_rad: float = 0.0,
     the mapper the robot turned again on every subsequent stationary sweep
     would be a straightforward lie and would drag the estimate round with it.
     """
+    # LET THE CLOUD CLEAR BEFORE READING IT. A scan is a rolling window, so
+    # the instant a turn ends the newest revolution still contains bearings
+    # measured while the robot was rotating. Folding those in transforms
+    # points captured at several headings by a single pose, which is what
+    # smeared the map. One full revolution of settling and every point in the
+    # window postdates the stop. Costs 120 ms per step; it bought the map back.
+    if turned_rad:
+        await asyncio.sleep(config.LIDAR_SWEEP_MAX_AGE_S)
+
     for index in range(sweeps):
         scan = await sweep(client)
         if scan:

@@ -508,6 +508,22 @@ class Lidar(_Poller):
             return {a: d for a, (d, at) in self._points.items()
                     if at >= cutoff and not self._masked(a)}
 
+    def scan_ages(self, max_age_s: float = 1.0) -> dict[int, float]:
+        """Bearing -> how many seconds ago that bearing was measured.
+
+        The companion to scan(). Same points, same filtering; what comes back
+        is the AGE of each one rather than its distance. This exists because
+        scan() looks like a sweep and is not: it is a rolling window, and each
+        bearing independently holds whatever the last revolution to reach it
+        wrote. On a stationary robot that is invisible. On a turning one the
+        spread of these ages is the angle the cloud is smeared over.
+        """
+        now = time.monotonic()
+        cutoff = now - max_age_s
+        with self._points_lock:
+            return {a: now - at for a, (d, at) in self._points.items()
+                    if at >= cutoff and not self._masked(a)}
+
     def nearest_mm(self, max_age_s: float = 1.0) -> int | None:
         points = self.scan(max_age_s)
         return min(points.values()) if points else None

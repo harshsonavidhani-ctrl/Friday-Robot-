@@ -35,8 +35,16 @@ from slam.grid import OccupancyGrid
 from slam.mapper import Mapper
 
 
-def _sweep(max_age_s: float = 1.0) -> dict[int, int]:
-    """One sweep from the running LiDAR, self-mask and stale bearings gone."""
+def _sweep(max_age_s: float | None = None) -> dict[int, int]:
+    """One sweep from the running LiDAR, self-mask and stale bearings gone.
+
+    Defaults to config.LIDAR_SWEEP_MAX_AGE_S, NOT to the 1.0 s that
+    Lidar.scan() uses for clearance. Mapping and clearance want opposite
+    things from that window: a clearance check wants anything seen recently,
+    and mapping wants one coherent instant. See the config note.
+    """
+    if max_age_s is None:
+        max_age_s = config.LIDAR_SWEEP_MAX_AGE_S
     return hardware.ranges().lidar.scan(max_age_s=max_age_s)
 
 
@@ -82,7 +90,18 @@ def lidar_sweep(full: bool = False) -> str:
         inside = [scan[b] for b in bearings if start <= b < start + 15]
         sectors[f"{start:03d}"] = min(inside) if inside else None
 
-    body = {"bearings_mm": {str(b): scan[b] for b in bearings}} if full else {}
+    # Ages too, because a "scan" is NOT a sweep -- Lidar.scan() hands back a
+    # rolling window in which every bearing carries its own capture time, and
+    # how far those times spread is exactly how much a moving robot smears the
+    # cloud it folds into the map. Measuring it needs the port, so it has to
+    # come from here.
+    body = {}
+    if full:
+        ages = hardware.ranges().lidar.scan_ages(
+            max_age_s=config.LIDAR_SWEEP_MAX_AGE_S)
+        body = {"bearings_mm": {str(b): scan[b] for b in bearings},
+                "ages_ms": {str(b): round(ages[b] * 1000.0, 1)
+                            for b in bearings if b in ages}}
     return json.dumps({
         **body,
         "beams": len(scan),

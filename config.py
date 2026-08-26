@@ -431,6 +431,24 @@ LIDAR_SELF_MASK = ((89, 98),)
 # The D500 is specified to 12 m, but indoors a long return is usually a
 # doorway or a window rather than a wall, and those are the points that drag a
 # scan match. Anything past this is dropped for mapping.
+# ⚠ A "scan" IS NOT A SWEEP, AND MAPPING MUST NOT TREAT IT AS ONE.
+# Lidar.scan() returns a rolling window: every bearing independently holds
+# whatever the last revolution to reach it wrote. Standing still that is
+# invisible and the wide window is a virtue -- a clearance check wants
+# anything seen recently. Turning, it is the bug that wrecked the map: the
+# spread of capture times inside one cloud measured 95-130 ms typically and
+# 658 ms at worst, and slam/ transforms the whole cloud by ONE pose. At the
+# measured 92 deg/s that is 9 degrees of smear normally and 60 at worst.
+#
+# 120 ms is one revolution of the LD19, and it is measured, not chosen: it
+# keeps 347-349 of 350 bearings, where 100 ms keeps 314-349 and 80 ms only
+# 265-281. Going wider buys no bearings at all and only more smear.
+#
+# This is the cap on how BLENDED a mapping cloud may be. It does not make a
+# cloud captured mid-turn safe -- for that the caller must also let the robot
+# settle a full revolution before sweeping, so no point predates the stop.
+LIDAR_SWEEP_MAX_AGE_S = 0.12
+
 LIDAR_MAX_RANGE_MM = 6000
 
 # DFRobot 8x8 ToF, bridged through a Raspberry Pi Pico over USB CDC.
