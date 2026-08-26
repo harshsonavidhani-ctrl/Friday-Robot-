@@ -248,10 +248,26 @@ class Mapper:
         if len(reference) < config.SLAM_MATCH_MIN_CELLS:
             return None
         field = LikelihoodField(reference)
+        # ⚠ THE PRIORS MUST BE PASSED, AND MUST BE WIDE. Without them
+        # match_pose falls back to SLAM_POSE_PRIOR_FLOOR_M / _DEG -- 4 cm and
+        # 3 degrees -- which are the right numbers for correcting one 25 cm
+        # hop and exactly the wrong ones here. This search is nominally a
+        # metre wide, but a 4 cm sigma gives a candidate 31 cm away a weight
+        # of about 1e-13, so the wide window was decorative: the answer came
+        # back at the current pose every time, scored ~0.31 there, and failed
+        # the 0.45 gate. 29 of 57 attempts died that way on a 120 m run.
+        #
+        # Loop closure exists precisely BECAUSE odometry is not to be trusted
+        # over that distance, so the prior is flattened to the window itself:
+        # still a mild preference for staying put, enough only to break ties.
+        # The strict score, sharpness and minimum-error gates below are what
+        # guard against a false closure -- not the prior.
         pose, score, sharpness = match_pose(
             field, self.last_points, self.pose,
             window_m=config.SLAM_LOOP_WINDOW_M,
-            window_deg=config.SLAM_LOOP_WINDOW_DEG)
+            window_deg=config.SLAM_LOOP_WINDOW_DEG,
+            prior_m=config.SLAM_LOOP_WINDOW_M,
+            prior_deg=config.SLAM_LOOP_WINDOW_DEG)
 
         if score < config.SLAM_LOOP_MIN_SCORE:
             return None
