@@ -53,6 +53,9 @@ class Mapper:
         self.home = tuple(self.pose)
         self.updates = 0
         self.pose_trusted = True
+        # Has the robot already sat out one update without being asked to
+        # move? See _locate.
+        self._parked = False
         self.travelled_m = 0.0
         # pose plus the sweep taken there, for loop closure and rebuilds
         self.keyframes: list[dict] = []
@@ -76,8 +79,11 @@ class Mapper:
 
         pose, score, sharpness, reason = self._locate(local, prior,
                                                      moved_m, turned_rad)
+        self._parked = (moved_m == 0.0 and turned_rad == 0.0)
         self.pose = pose
-        self.pose_trusted = reason == "matched" or self.updates == 0
+        # "matched (angle held: parked)" is still a match -- startswith, not
+        # equality, so pinning the angle does not read as a failure to match.
+        self.pose_trusted = reason.startswith("matched") or self.updates == 0
         self.travelled_m += abs(moved_m)
 
         world = transform(local, pose[0], pose[1], pose[2])
@@ -134,6 +140,8 @@ class Mapper:
         """
         if len(local) == 0:
             return prior, 0.0, 1.0, "no beams"
+        hold_angle = (config.SLAM_HOLD_WHEN_STILL and self._parked
+                      and moved_m == 0.0 and turned_rad == 0.0)
         field = self._map_field()
         if field is None:
             return prior, 0.0, 1.0, "map too thin"
@@ -147,6 +155,14 @@ class Mapper:
             return prior, score, sharpness, "score too low"
         if sharpness < config.SLAM_POSE_MIN_SHARPNESS:
             return prior, score, sharpness, "geometry ambiguous"
+        if hold_angle:
+            # ANGLE ONLY. Holding the whole pose while parked also throws
+            # away the position refinement that repeated still sweeps give,
+            # and that cost 7.3 cm -> 25.0 cm on the simulated drive. The
+            # ratchet is purely rotational, so only rotation is pinned:
+            # x and y still correct, theta keeps the prior.
+            return ((pose[0], pose[1], prior[2]), score, sharpness,
+                    "matched (angle held: parked)")
         return pose, score, sharpness, "matched"
 
     def _map_field(self) -> LikelihoodField | None:

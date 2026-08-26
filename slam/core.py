@@ -424,7 +424,8 @@ def match_pose(field: LikelihoodField, query: np.ndarray,
     # AND independent of the recent trajectory. Neither of those was.
     cx, cy, cth = best
     offsets = np.arange(-field.cell, field.cell + 1e-9, field.cell / 3.0)
-    for dth in np.radians(np.arange(-3.0, 3.0 + 1e-9, 1.0)):
+    fine_step = config.SLAM_FINE_STEP_DEG
+    for dth in np.radians(np.arange(-3.0, 3.0 + 1e-9, fine_step)):
         rotated = transform(query, cx, cy, cth + dth)
         for dx in offsets:
             shifted_x = rotated[:, 0] + dx

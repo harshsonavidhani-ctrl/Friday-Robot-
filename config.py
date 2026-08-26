@@ -1152,6 +1152,44 @@ SLAM_TRANSIENT_TTL_S = 4.0
 SLAM_POSE_WINDOW_M = 0.20
 SLAM_POSE_WINDOW_DEG = 12.0
 
+# How fine the refinement pass may answer in ANGLE. It was hardcoded at 1.0,
+# and a whole degree is not a rounding detail here: the matcher can then only
+# answer 0 or +/-1, it is not unbiased between them, and every +1 it picks is
+# written into the map -- which then leans a degree, which makes the next +1
+# look right. Twelve sweeps of that with the robot BOLTED TO THE FLOOR came
+# out as +5 degrees. At 3 m a degree is 5 cm, one whole cell, which is also
+# enough to spread a wall across two cells and break it into fragments.
+#
+# ⚠ LOWERING THIS WAS TRIED AND IS WORSE. 0.25 deg, replayed over three
+# recorded pivot runs: heading error 3.3 -> 3.7 deg, map fit 0.69 -> 0.64,
+# and 117 -> 245 ms per sweep on this Pi. Finer answers are not better
+# answers -- the field is blurred over SLAM_BLUR_M = 12 cm, and at 3 m a
+# quarter degree moves a point 1.3 cm, so the extra candidates are reading
+# the smoothing rather than the room. It is left configurable so the next
+# person can re-measure rather than re-argue, but 1.0 is the measured best.
+#
+# The ratchet it was meant to fix is fixed by SLAM_HOLD_WHEN_STILL instead.
+SLAM_FINE_STEP_DEG = 1.0
+
+# Do not let the matcher correct a pose the robot was never told to change.
+#
+# Standing still, the correction the matcher wants is smaller than the step
+# it can express, so it answers 0 or +/-1 degree -- and it is not unbiased
+# between them. Each +1 is written into the map, the map then leans a degree,
+# and the next +1 looks right. Twelve stationary sweeps ratcheted +5 degrees
+# with the robot bolted to the floor.
+#
+# Measured over three recorded pivot runs: heading error 3.3 -> 0.7 deg, and
+# it wins on EVERY run (5/2/3 -> 1/1/0). Map fit is unchanged within noise
+# (0.69 vs 0.64, against a 0.15 run-to-run spread). It is also CHEAPER --
+# 117 -> 71 ms per sweep -- because a stationary sweep skips the search.
+#
+# THE TRADE: if something shoves Friday while she is not driving, she will
+# not notice until her next commanded move. That is the right way round --
+# an unbidden shove is rare, and inventing rotation every single sweep is
+# not. Transient obstacles are still tracked either way.
+SLAM_HOLD_WHEN_STILL = True
+
 # Matching against the accumulated MAP rather than the previous sweep is what
 # stops drift compounding: the previous sweep has already drifted, the map has
 # been averaged over many. Rebuilding the map's likelihood field costs a blur
