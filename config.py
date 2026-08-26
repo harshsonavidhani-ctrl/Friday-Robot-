@@ -619,6 +619,25 @@ MOTOR_KICKSTART_FLOOR = 1.0  # fraction of the duty cap to pulse at
 # line between them, in median absolute range change across shared bearings.
 # Sensor noise on this LiDAR is single-digit mm; a real 30 degree turn moves
 # it by hundreds. Anything in between is a turn that partly stalled.
+# --- Missions (step 9: the loop that drives) -----------------------------
+# THREE budgets, and any one of them ending stops the run. A loop that
+# explores "until finished" is one bad frontier away from running until the
+# battery dies. Conservative on purpose -- these are what a caller gets if it
+# does not choose, and the caller can always ask for less.
+MISSION_BUDGET_M = 8.0        # metres driven
+MISSION_BUDGET_S = 180.0      # wall clock
+MISSION_MAX_CYCLES = 40       # decisions
+MISSION_SETTLE_SWEEPS = 8     # sweeps before deciding anything, standing still
+# Below this a "turn" is not worth the stop-start, and is folded into the
+# drive instead.
+MISSION_MIN_TURN_DEG = 4.0
+
+# --- Places (step 9 section 5) -------------------------------------------
+# How close counts as "at" a named place. Roughly an arm's length past the
+# robot's own body radius: close enough that "I am in the kitchen" is true,
+# far enough that it does not flicker as she shuffles.
+PLACE_RADIUS_M = 0.75
+
 # --- Narration (step 9 section 4) ----------------------------------------
 # How talkative Friday is while exploring. The explorer emits a line every
 # cycle and a cycle is a couple of seconds; saying all of them is a stuck

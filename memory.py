@@ -72,8 +72,21 @@ CREATE TABLE IF NOT EXISTS summaries (
     event_count  INTEGER NOT NULL,
     created_at   REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS places (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    x           REAL NOT NULL,
+    y           REAL NOT NULL,
+    radius_m    REAL NOT NULL DEFAULT 0.75,
+    kind        TEXT NOT NULL DEFAULT 'place',
+    note        TEXT,
+    created_at  REAL NOT NULL,
+    last_seen   REAL,
+    visits      INTEGER NOT NULL DEFAULT 0
+);
 CREATE INDEX IF NOT EXISTS events_task ON events(task);
 CREATE INDEX IF NOT EXISTS events_created ON events(created_at);
+CREATE INDEX IF NOT EXISTS places_name ON places(name);
 """
 
 OUTCOMES = ("worked", "failed", "partial")
