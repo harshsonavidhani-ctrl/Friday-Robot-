@@ -14,6 +14,7 @@ against recorded sweeps with no robot attached.
 
 from slam.core import (LikelihoodField, match_confidence,
                        match_translation, points_from_scan, transform)
+from slam.grid import OccupancyGrid
 
-__all__ = ["LikelihoodField", "match_confidence", "match_translation",
-           "points_from_scan", "transform"]
+__all__ = ["LikelihoodField", "OccupancyGrid", "match_confidence",
+           "match_translation", "points_from_scan", "transform"]

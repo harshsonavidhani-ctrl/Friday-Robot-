@@ -1056,6 +1056,40 @@ SLAM_MIN_SCORE = 0.15
 SLAM_MIN_CONFIDENCE = 5.0
 
 
+# --- The occupancy map ---------------------------------------------------
+# The map is kept in LOG-ODDS, not in probabilities. Two reasons, and the
+# second is the one that matters on a robot: adding is cheaper than the
+# Bayes product, and clamping the total is what lets the map CHANGE ITS MIND.
+# A cell seen as a wall two hundred times would otherwise need two hundred
+# contradicting looks to become free again -- so a chair that moved would stay
+# on the map as a wall for the rest of the day.
+SLAM_MAP_FILE = ROOT / "state" / "map.npz"
+
+# One observation's worth of evidence. Deliberately asymmetric: a hit is
+# stronger evidence than a pass-through, because a beam that goes past a cell
+# only proves nothing was there IN THAT INSTANT at that exact height, while a
+# return is a surface. p_occupied = 0.7, p_free = 0.4.
+SLAM_LOGODDS_HIT = 0.85
+SLAM_LOGODDS_MISS = -0.40
+
+# The clamp. About four consistent looks either way saturates a cell. Measured
+# in scripts/test_slam.py: an obstacle mapped from six poses and then taken
+# away is gone from the map after TWELVE sweeps of it -- rather than never.
+SLAM_LOGODDS_MIN = -2.0
+SLAM_LOGODDS_MAX = 3.5
+
+# Reading the map back out. Between the two it is UNCERTAIN, and uncertain is
+# never treated as driveable -- the same rule as a null clearance in the
+# safety interrupt, for the same reason.
+SLAM_P_OCCUPIED = 0.65
+SLAM_P_FREE = 0.35
+
+# A hard cap on how far the map may grow from where it started, so a bad pose
+# estimate or a mirrored corridor cannot allocate the Pi to death. 24 m square
+# at 5 cm is 480 x 480 cells -- under a megabyte, and larger than the flat.
+SLAM_MAP_MAX_M = 24.0
+
+
 # =====================================================================
 # ANTI-BUMP — the backstops that do not depend on knowing which way is forward
 # =====================================================================

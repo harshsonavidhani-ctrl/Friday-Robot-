@@ -205,9 +205,31 @@ has no ROS2 packages at all, so it would need a third-party apt repo or a
 source build, which CLAUDE.md Part 1 forbids outright.
 
 ```bash
-./venv/bin/python scripts/test_slam.py               # matcher vs a known answer
+./venv/bin/python scripts/test_slam.py               # matcher AND map vs known answers
+./venv/bin/python scripts/test_slam.py --show        # print the map it built
 ./venv/bin/python scripts/calibrate_lidar.py --drive # measure LIDAR_FORWARD_DEG
 ```
+
+`slam/core.py` answers *how did the robot move between these two sweeps*;
+`slam/grid.py` answers *what is where*, and unlike the matcher it remembers —
+one log-odds array in `state/map.npz` that survives a restart and a power cut.
+Folding a 350-beam sweep in costs **24 ms**, and a full-size 24 m map is
+0.9 MB, so mapping at 1 Hz is a few percent of one core.
+
+Three decisions in the map are worth knowing before trusting it:
+
+- **Log-odds, clamped.** Not for the arithmetic — so the map can *change its
+  mind*. Unclamped, a cell seen as a wall two hundred times needs two hundred
+  contradicting looks to come free, so a chair moved this morning is still a
+  wall tonight. Clamped, it clears in twelve sweeps; the test measures exactly
+  that by taking the pillar away and counting.
+- **A missing bearing carves nothing.** An absent bearing is either "nothing
+  within six metres" or "a black jacket that returned no signal", and the
+  LiDAR does not say which. So an open doorway beyond range stays *unknown*
+  rather than being mapped as floor.
+- **Unknown is never driveable.** `free_mask` needs positive evidence of empty
+  space — the same rule the safety interrupt already applies to a null
+  clearance, and for the same reason.
 
 Both of the LiDAR's own quirks are already handled in `sensors.Lidar.scan()`
 and `config.py`, and both cost hours to find:
