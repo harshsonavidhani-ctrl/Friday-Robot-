@@ -20,6 +20,19 @@ from pathlib import Path
 
 import config
 
+
+def _serial_of(node: str) -> str:
+    """The serial out of a by-id capture node's name, or "".
+
+    Mirrors vision._serial_of; kept here so the dashboard does not import the
+    MCP server's vision module just for one string split.
+    """
+    name = os.path.basename(node)
+    if name.startswith("usb-"):
+        name = name[4:]
+    name = name.split("-video-index")[0]
+    return name.rsplit("_", 1)[-1] if "_" in name else name
+
 JPEG_SOI = b"\xff\xd8"          # start of image
 JPEG_EOI = b"\xff\xd9"          # end of image
 BOUNDARY = "fridayframe"
@@ -30,12 +43,15 @@ class CameraStream:
 
     def __init__(self, device: str, name: str,
                  size=None, fps: int | None = None,
-                 exclude: str | None = None) -> None:
+                 exclude: str | None = None,
+                 serial: str | None = None) -> None:
         self.configured = device
         self.device = device
         self.name = name
         # The other camera's path, so auto-resolution never picks it twice.
         self.exclude = exclude
+        # The stable half of the by-id name; see resolve().
+        self.serial = serial
         self.enabled = True          # manual on/off from the dashboard
         self.size = size or config.DASHBOARD_CAM_SIZE
         self.fps = fps or config.DASHBOARD_CAM_FPS
@@ -52,27 +68,29 @@ class CameraStream:
     def resolve(self) -> str | None:
         """Find this camera's device node, re-checking every time.
 
-        The configured by-id path is preferred, but it is not stable: the
+        MATCHED ON SERIAL. The configured by-id path is not stable -- the
         second camera re-enumerated with different USB descriptor strings
         ("HD camera" instead of "Generic HD camera"), which renames its
-        by-id symlink and makes a hardcoded path point at nothing. So when
-        the configured path is missing, fall back to any other by-id capture
-        node that is not the other camera. That also means a camera that is
-        unplugged and plugged back in is found again without editing config.
+        symlink and makes a hardcoded path point at nothing. udev builds
+        those names from the descriptor strings; only the trailing serial
+        survives, so that is what is matched.
+
+        ⚠ The old fallback was "any other by-id node that is not the other
+        camera", and it could hand this stream the WRONG camera: when the
+        other camera re-enumerates, `exclude` stops matching it, so it stops
+        being excluded and gets adopted here instead. The dashboard would
+        show one camera in both panes, or the down pane showing the ceiling,
+        with nothing logged. An unrecognised node is now left alone.
         """
+        if self.serial:
+            for path in sorted(glob.glob("/dev/v4l/by-id/*-video-index0")):
+                if _serial_of(path) == self.serial:
+                    self.device = path
+                    return path
+
         if self.configured and Path(self.configured).exists():
             self.device = self.configured
             return self.device
-
-        other = os.path.realpath(self.exclude) if self.exclude else None
-        for path in sorted(glob.glob("/dev/v4l/by-id/*-video-index0")):
-            if os.path.realpath(path) == other:
-                continue
-            if self.configured and os.path.realpath(path) == \
-                    os.path.realpath(self.configured):
-                continue            # already tried above and it is gone
-            self.device = path
-            return path
 
         self.device = self.configured
         return None
@@ -240,8 +258,13 @@ class CameraSet:
         down_device = config.CAM_SECOND
         if config.CAM_SWAP_UP_DOWN:
             up_device, down_device = down_device, up_device
-        self.up = CameraStream(up_device, "up", exclude=down_device)
-        self.down = CameraStream(down_device, "down", exclude=up_device)
+        up_serial, down_serial = config.CAM_UP_SERIAL, config.CAM_DOWN_SERIAL
+        if config.CAM_SWAP_UP_DOWN:
+            up_serial, down_serial = down_serial, up_serial
+        self.up = CameraStream(up_device, "up", exclude=down_device,
+                               serial=up_serial)
+        self.down = CameraStream(down_device, "down", exclude=up_device,
+                                 serial=down_serial)
 
     def get(self, which: str) -> CameraStream | None:
         return {"up": self.up, "down": self.down}.get(which)

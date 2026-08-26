@@ -112,18 +112,49 @@ def _capture_nodes() -> list[str]:
     return sorted(glob.glob(os.path.join(BY_ID_DIR, "*-video-index0")))
 
 
+def _serial_of(node: str) -> str:
+    """The serial out of a by-id capture node's name, or "".
+
+    udev names these `usb-<descriptor strings>_<serial>-video-index0`. The
+    descriptor strings are the unstable part; the serial is not.
+    """
+    name = os.path.basename(node)
+    if name.startswith("usb-"):
+        name = name[4:]
+    name = name.split("-video-index")[0]
+    return name.rsplit("_", 1)[-1] if "_" in name else name
+
+
 def resolve_cameras() -> dict[str, str | None]:
     """Which /dev path is the up cam and which is the down cam, right now.
 
-    The up cam is pinned (config.CAM_UP, the C270 — confirmed by looking
-    through it). The down cam is "whichever other capture node exists",
-    which is what makes it survive the descriptor changing.
+    Matched on SERIAL, re-read every call. This used to pin the up cam to
+    config.CAM_UP and hand the down cam "whichever other capture node
+    exists", which has a silent failure mode: when the C270 itself
+    re-enumerates under different descriptor strings its by-id path stops
+    matching CAM_UP, so it lands in "whichever other node" and becomes the
+    DOWN camera. Nothing raises. look("down") simply returns the ceiling.
+    That is worse than being blind, and with only one camera on the bus --
+    which is the normal state while the down cam is off it -- it is one
+    rename away at all times.
+
+    A node whose serial matches neither camera is left unassigned. Guessing
+    is what caused the bug.
     """
     nodes = _capture_nodes()
-    up = config.CAM_UP if config.CAM_UP in nodes else None
-    others = [n for n in nodes if n != config.CAM_UP]
-    down = config.CAM_SECOND if config.CAM_SECOND in nodes else (
-        others[0] if others else None)
+    by_serial = {_serial_of(n): n for n in nodes}
+    up = by_serial.get(config.CAM_UP_SERIAL)
+    down = by_serial.get(config.CAM_DOWN_SERIAL)
+
+    # Fall back to the configured paths only for a camera the serials did not
+    # place, and never onto a node already claimed by the other role.
+    if up is None and config.CAM_UP in nodes and config.CAM_UP != down:
+        up = config.CAM_UP
+    if down is None and config.CAM_SECOND in nodes and config.CAM_SECOND != up:
+        down = config.CAM_SECOND
+
+    if up is not None and up == down:       # cannot happen; costs nothing
+        down = None
     if config.CAM_SWAP_UP_DOWN:
         up, down = down, up
     return {"up": up, "down": down}

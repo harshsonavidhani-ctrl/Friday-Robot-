@@ -377,6 +377,24 @@ CAM_DOWN = None              # None = "the other one", resolved per access;
 CAM_SECOND = None
 CAM_SECOND_MAX = (640, 480)  # MJPG
 
+# THE SERIAL IS THE ONE PART OF A by-id NAME THAT SURVIVES RE-ENUMERATION.
+# udev builds those names from the USB descriptor STRINGS, which is exactly
+# what changes on this camera -- "Generic_HD_camera_20181212000000" became
+# "HD_camera_20181212000000" and the configured path went stale. The trailing
+# serial did not change, and neither did the C270's.
+#
+# Matching on it kills a bug that "pick whichever node is not the C270" could
+# not avoid: when the C270 ITSELF renames, it stops matching CAM_UP, and the
+# down camera then resolves to the up camera's node. Nothing errors. look()
+# just quietly returns the ceiling and calls it the floor -- which for §5
+# semantic mapping means furniture logged at the wrong place forever.
+#
+# An unrecognised camera is left UNASSIGNED rather than guessed at. Being
+# blind is recoverable; being confidently wrong about which way you are
+# looking is not.
+CAM_UP_SERIAL = "9B5B4130"              # Logitech C270, 046d:0825
+CAM_DOWN_SERIAL = "20181212000000"      # the down cam, 349c:2317
+
 # Which physical position each camera sits in is still unconfirmed, so the
 # dashboard shows both and this flag swaps the labels without touching code.
 # Flip it if UP CAM and DOWN CAM are the wrong way round on screen.
