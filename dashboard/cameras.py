@@ -62,6 +62,7 @@ class CameraStream:
         self._lock = asyncio.Lock()
         self.error: str | None = None
         self.passthrough = True
+        self._linger: asyncio.Task | None = None
 
     # --- which /dev node is this camera, right now -------------------
 
@@ -247,6 +248,10 @@ class CameraStream:
 
     @contextlib.asynccontextmanager
     async def subscribe(self):
+        # Someone is back before the linger expired: keep the stream we have
+        # rather than letting it be torn down under them.
+        if self._linger and not self._linger.done():
+            self._linger.cancel()
         if not self.enabled:
             raise PermissionError(f"{self.name} camera is switched off")
         if self.resolve() is None:
@@ -260,9 +265,31 @@ class CameraStream:
             yield queue
         finally:
             self._subscribers.discard(queue)
-            # Last viewer left: release the camera rather than idling ffmpeg.
+            # Last viewer left. DO NOT release the device immediately: a page
+            # refresh is a viewer leaving and another arriving a moment later,
+            # and each of those used to be a full open/close on the camera.
+            # The down camera dies during exactly that -- it left the USB bus
+            # the instant its stream was released. Linger instead, so a
+            # refresh finds the stream still running. See config.
             if not self._subscribers:
-                await self.stop()
+                self._schedule_release()
+
+    def _schedule_release(self) -> None:
+        """Stop ffmpeg after the linger, unless someone comes back first."""
+        if not config.DASHBOARD_CAM_LINGER_S:
+            self._linger = asyncio.create_task(self.stop())
+            return
+        if self._linger and not self._linger.done():
+            return                          # already counting down
+        self._linger = asyncio.create_task(self._release_later())
+
+    async def _release_later(self) -> None:
+        try:
+            await asyncio.sleep(config.DASHBOARD_CAM_LINGER_S)
+        except asyncio.CancelledError:
+            return
+        if not self._subscribers:           # nobody came back
+            await self.stop()
 
 
 class CameraSet:
@@ -278,8 +305,11 @@ class CameraSet:
             up_serial, down_serial = down_serial, up_serial
         self.up = CameraStream(up_device, "up", exclude=down_device,
                                serial=up_serial)
+        # The down camera offers only 25 and 30 fps; asking it for the shared
+        # default of 10 is asking for an interval it does not have. See config.
         self.down = CameraStream(down_device, "down", exclude=up_device,
-                                 serial=down_serial)
+                                 serial=down_serial,
+                                 fps=config.CAM_SECOND_FPS)
 
     def get(self, which: str) -> CameraStream | None:
         return {"up": self.up, "down": self.down}.get(which)

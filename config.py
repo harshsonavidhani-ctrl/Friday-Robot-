@@ -619,6 +619,16 @@ MOTOR_KICKSTART_FLOOR = 1.0  # fraction of the duty cap to pulse at
 # line between them, in median absolute range change across shared bearings.
 # Sensor noise on this LiDAR is single-digit mm; a real 30 degree turn moves
 # it by hundreds. Anything in between is a turn that partly stalled.
+# --- Narration (step 9 section 4) ----------------------------------------
+# How talkative Friday is while exploring. The explorer emits a line every
+# cycle and a cycle is a couple of seconds; saying all of them is a stuck
+# record. Events (a loop closed, finished, stuck, a room opening up) ignore
+# this floor -- see slam/narration.py.
+NARRATION_MIN_GAP_S = 12.0
+# A gain this big in one cycle is a room opening up rather than a corridor
+# creeping forward, and is worth interrupting for.
+NARRATION_ROOM_M2 = 4.0
+
 PIVOT_MIN_SCAN_SHIFT_MM = 40
 
 # ⚠ SET TO 1 = THE OLD SINGLE SLAM, WHICH IS WHERE THIS SITS UNTIL THE
@@ -709,6 +719,29 @@ DASHBOARD_KEY = ROOT / "certs" / "dashboard.key"
 # stream instead of re-encoding -- that is what keeps this off the CPU.
 DASHBOARD_CAM_SIZE = (640, 480)
 DASHBOARD_CAM_FPS = 10
+
+# ⚠ ASK THE CAMERA FOR AN INTERVAL IT ACTUALLY OFFERS. The down camera
+# (349c:2317) enumerates ONLY 30 and 25 fps, at 640x480 or 320x240, in both
+# YUYV and MJPG -- v4l2-ctl --list-formats-ext says so. Asking it for 10
+# means asking for a frame interval it does not have; v4l2 does not
+# necessarily refuse, it negotiates something else, and this is a device that
+# has spent the evening dropping off the USB bus. Give it one of its own
+# numbers instead. 25 rather than 30 because it is the cheaper of the two and
+# this Pi is CPU-bound.
+CAM_SECOND_FPS = 25
+
+# HOW LONG ffmpeg STAYS ALIVE AFTER THE LAST VIEWER LEAVES.
+#
+# It used to be zero: the last viewer closing the page killed ffmpeg, and the
+# next one starting it re-opened the device. Every page refresh, tab switch or
+# dropped mobile connection was therefore a full open/close cycle on a UVC
+# device -- and this camera dies during exactly those. Measured: it vanished
+# from the bus THE INSTANT its stream was released, 0 seconds later.
+#
+# Lingering costs one idle ffmpeg for half a minute and removes most of the
+# churn, because a refresh reconnects inside the window and finds the stream
+# still running. Set to 0 for the old behaviour.
+DASHBOARD_CAM_LINGER_S = 30.0
 DASHBOARD_CAM_QUALITY = 6        # ffmpeg -q:v, only used if a re-encode is
                                  # unavoidable; lower is better quality
 

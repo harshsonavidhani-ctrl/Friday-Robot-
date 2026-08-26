@@ -35,6 +35,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import config                                                    # noqa: E402
 from slam.frontier import choose, describe, find                 # noqa: E402
 from slam.mapper import Mapper                                   # noqa: E402
+from slam.narration import Narrator                              # noqa: E402
 from slam.plan import DistanceField, path_to_moves               # noqa: E402
 from test_slam import drive, report, robot_sweep                 # noqa: E402
 
@@ -161,6 +162,11 @@ def explore(rng, budget_m: float = 120.0, show: bool = False):
 
     log = [(truth[0], truth[1])]
     said, unreachable = [], set()
+    # Narration goes through the same editor the real robot uses, so the
+    # suite measures what she would ACTUALLY say rather than every line
+    # the planner produced. See slam/narration.py.
+    narrator = Narrator()
+    prev_area = free_m2(mapper)
     finished, stalled, stopped_short = False, 0, 0
     closures = []
     while True:
@@ -174,8 +180,13 @@ def explore(rng, budget_m: float = 120.0, show: bool = False):
         # route planned on a stretched map is a route to the wrong place.
         closed = mapper.try_loop_closure()
         if closed:
-            said.append(closed["say"])
             closures.append(closed)
+        gained = free_m2(mapper) - prev_area
+        prev_area += gained
+        spoken = narrator.consider(closure=closed, gained_m2=gained,
+                                   now=clock[0])
+        if spoken:
+            said.append(spoken)
 
         field = DistanceField(mapper.grid, mapper.pose[:2],
                               extra_blocked=mapper.unmapped_obstacles(clock[0]))
@@ -207,7 +218,10 @@ def explore(rng, budget_m: float = 120.0, show: bool = False):
                 break
             continue
 
-        said.append(describe(target, mapper.pose))
+        spoken = narrator.consider(say=describe(target, mapper.pose),
+                                   now=clock[0])
+        if spoken:
+            said.append(spoken)
         # Only the first couple of legs, then re-plan: the map changes as it
         # is driven through, and a route computed from a stale map is wrong
         # exactly where it matters, at the far end.
