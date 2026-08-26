@@ -282,7 +282,8 @@ class ToF(_Poller):
         # A real object at that range still shows up, because it also occludes
         # the floor in the ground rows below.
         echo = config.TOF_FLOOR_PROFILE_MM[0] if config.TOF_FLOOR_PROFILE_MM else None
-        hits = []
+        ahead_hits: list[int] = []
+        ground_hits: list[int] = []
         for index, row in enumerate(frame[:horizon]):
             is_horizon = index == horizon - 1
             for value in row:
@@ -291,7 +292,7 @@ class ToF(_Poller):
                 if (is_horizon and echo is not None
                         and abs(value - echo) <= config.TOF_FLOOR_INTACT_MM):
                     continue
-                hits.append(value)
+                ahead_hits.append(value)
 
         # Rows that look at the floor: only shortfalls against the profile.
         #
@@ -329,7 +330,7 @@ class ToF(_Poller):
                     floor_intact = False          # the floor stopped
                     continue
                 if value < expected - config.TOF_FLOOR_OBSTACLE_MM:
-                    hits.append(value)
+                    ground_hits.append(value)
                 elif abs(value - expected) > config.TOF_FLOOR_INTACT_MM:
                     floor_intact = False          # further than floor: a drop
         # ⚠ THE INTACT FLOOR IS PROOF THE NEAR PATH IS EMPTY.
@@ -353,9 +354,27 @@ class ToF(_Poller):
         # that low and that close is already inside SAFETY_STOP_MM, and the
         # LiDAR sees overhangs at dome height. Worth it to have a robot that
         # can move at all.
-        if floor_intact and hits:
+        # ⚠ THE ECHO FILTER APPLIES TO THE AHEAD ROWS ONLY, and applying it to
+        # the ground rows as well is what let Friday drive into something on
+        # 2026-08-27 until the reflex caught it at SIXTEEN MILLIMETRES.
+        #
+        # The reasoning above is right: an object standing on the floor nearer
+        # than row 4's intercept WOULD occlude the ground rows first. What the
+        # old code then did was throw that evidence away -- an occluding object
+        # makes those cells read SHORT, which lands them in the hit list, while
+        # floor_intact stays True because nothing read LONG. So every genuine
+        # near obstacle was filtered out by the very rule that predicted it.
+        #
+        # A ground row reading short IS the occlusion, directly measured. It
+        # cannot be the multipath this filter exists for: that crosstalk is an
+        # ahead-row cell echoing the strong floor return from the row beneath
+        # it, and a ground row looking AT the floor is not echoing anything.
+        # Pitch is already normalised out above, which is the other thing that
+        # makes ground rows read short for innocent reasons.
+        if floor_intact and ahead_hits:
             reach = profile[0] * pitch if profile else 0.0
-            hits = [v for v in hits if v >= reach]
+            ahead_hits = [v for v in ahead_hits if v >= reach]
+        hits = ahead_hits + ground_hits
         if hits:
             return min(hits)
         return config.TOF_NO_RETURN_MM if floor_intact else None
