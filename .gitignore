@@ -70,3 +70,8 @@ tools/arduino-cli.tar.gz
 # Local repo bundles. A safety net against a corrupted .git, NOT an
 # off-card backup -- an SD failure takes these with it. See README.
 backup/
+
+# The occupancy map of THIS room, rebuilt by slam/ every run. Runtime state,
+# not source -- like state/*.db it means nothing in a fresh clone, and a stale
+# one committed here would be silently loaded over a real survey.
+state/map.npz

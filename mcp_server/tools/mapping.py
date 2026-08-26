@@ -41,8 +41,17 @@ def _sweep(max_age_s: float = 1.0) -> dict[int, int]:
 
 
 @tool
-def lidar_sweep() -> str:
+def lidar_sweep(full: bool = False) -> str:
     """The LiDAR's raw 360° sweep, for checking the sensor before trusting it.
+
+    ⚠ THE BRAIN SHOULD NEVER PASS full=True. It adds the complete per-degree
+    table — 350-odd numbers — which is a wall of tokens that says less than
+    the sector summary below it. It exists for scripts that need to feed real
+    sweeps into slam/ (scripts/pivot_test.py), because the MCP server owns the
+    LiDAR port and is the only thing that may read it.
+
+    Args:
+        full: include the complete {bearing: mm} table. Scripts only.
 
     Returns JSON: how many bearings answered, the nearest and furthest return,
     the widest gap in coverage, and a coarse 24-sector summary in millimetres
@@ -73,7 +82,9 @@ def lidar_sweep() -> str:
         inside = [scan[b] for b in bearings if start <= b < start + 15]
         sectors[f"{start:03d}"] = min(inside) if inside else None
 
+    body = {"bearings_mm": {str(b): scan[b] for b in bearings}} if full else {}
     return json.dumps({
+        **body,
         "beams": len(scan),
         "nearest_mm": min(scan.values()),
         "furthest_mm": max(scan.values()),
