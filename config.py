@@ -630,7 +630,19 @@ MISSION_MAX_CYCLES = 40       # decisions
 MISSION_SETTLE_SWEEPS = 8     # sweeps before deciding anything, standing still
 # Below this a "turn" is not worth the stop-start, and is folded into the
 # drive instead.
-MISSION_MIN_TURN_DEG = 4.0
+# 10, because that is the smallest angle MEASURED to turn reliably
+# (scripts/calibrate_turn.py: 10 deg moves the world 84-100 mm, and every
+# angle from 10 to 60 moved on both sides, 14 pivots without a stall).
+# Anything below it is untested, and an untested turn on a chassis that
+# sometimes does not turn is not worth the risk of a false heading.
+MISSION_MIN_TURN_DEG = 10.0
+
+# A safety trip is the reflex doing its job, not the mission failing, so she
+# turns away and re-plans instead of giving up where she stands. Capped:
+# a robot that backs off and re-plans forever in a corner it cannot leave has
+# hung, and should say so rather than look busy.
+MISSION_MAX_RECOVERIES = 4
+MISSION_RECOVER_TURN_DEG = 60.0   # comfortably above the measured 10 deg floor
 
 # --- Places (step 9 section 5) -------------------------------------------
 # How close counts as "at" a named place. Roughly an arm's length past the

@@ -48,6 +48,9 @@ class FakeRobot:
         self.calls = 0
         self.said: list[str] = []
         self.refusals = 0
+        self.trips = 0
+        self.trip_every = None      # trip the reflex every Nth forward
+        self.forwards = 0
 
     async def sweep(self):
         return robot_sweep(self.truth, self.rng, room=TWO_ROOMS)
@@ -70,11 +73,20 @@ class FakeRobot:
         if clearance(ahead[:2]) < config.NAV_ROBOT_RADIUS_M:
             self.refusals += 1
             return "REFUSED: something is close ahead"
+        self.forwards += 1
+        if self.trip_every and self.forwards % self.trip_every == 0:
+            # The reflex fired: she moved part of the way and was cut short.
+            self.trips += 1
+            self.truth = drive(self.truth, cm / 200.0, 0.0)
+            return f"forward STOPPED after 0.4s — something is close."
         self.truth = ahead
         return f"forward for 1.0s. Travelled about {cm:.0f} cm."
 
     def say(self, text: str) -> None:
         self.said.append(text)
+
+    def reflex_trips(self) -> int:
+        return self.trips
 
     def stopped(self) -> bool:
         return (self.stop_after is not None
@@ -123,6 +135,47 @@ async def main() -> int:
     failures += not report("and it says so out loud",
                            any("turning" in s for s in out2["said"]),
                            f"{out2['said'][-1]!r}" if out2["said"] else "(silent)")
+
+    print("\nthe first turn attempt stalls, the retry works")
+    class Sticky(FakeRobot):
+        def __init__(self):
+            super().__init__(seed=5)
+            self.attempts = 0
+        async def turn(self, degrees):
+            self.attempts += 1
+            if self.attempts % 2 == 1:
+                self.calls += 1
+                return "right for 0.3s. Turned about 30 degrees."   # a lie
+            return await FakeRobot.turn(self, degrees)
+    sticky = Sticky()
+    mapper5 = Mapper(pose=START, forward_deg=0.0)
+    out5 = await Mission(sticky).run(mapper5, budget_m=3.0, budget_s=120.0)
+    failures += not report("a stalled turn is retried once and recovered",
+                           out5["driven_m"] > 0.5
+                           and "did not turn" not in out5["stopped_because"],
+                           f"drove {out5['driven_m']} m, stopped on "
+                           f"{out5['stopped_because']!r}")
+    failures += not report("and the retry is recorded, not hidden",
+                           any(t.get("retried") for t in out5["turns"]),
+                           f"{sum(1 for t in out5['turns'] if t.get('retried'))}"
+                           f" of {len(out5['turns'])} turns retried")
+
+    print("\nthe reflex keeps firing -- she should recover, not give up")
+    tripping = FakeRobot(seed=3)
+    tripping.trip_every = 2
+    mapper4 = Mapper(pose=START, forward_deg=0.0)
+    out4 = await Mission(tripping).run(mapper4, budget_m=6.0, budget_s=120.0)
+    print(f"        {out4['cycles']} cycles, {out4['recoveries']} recoveries, "
+          f"stopped on {out4['stopped_because']!r}")
+    failures += not report("a safety trip is recovered from, not fatal",
+                           out4["recoveries"] >= 1,
+                           f"{out4['recoveries']} recoveries")
+    failures += not report("but it gives up rather than loop forever",
+                           out4["recoveries"] <= config.MISSION_MAX_RECOVERIES + 1,
+                           f"capped at {config.MISSION_MAX_RECOVERIES}")
+    failures += not report("and a trip is never reported as a human stop",
+                           out4["stopped_because"] != "stop was called",
+                           out4["stopped_because"])
 
     print("\nand stop() ends it wherever it is")
     halted = FakeRobot(stop_after=3)

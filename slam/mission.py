@@ -11,7 +11,8 @@ a small interface rather than against the hardware:
     robot.turn(degrees)         -> str         (what the tool said)
     robot.forward(cm)           -> str
     robot.say(text)             -> None
-    robot.stopped()             -> bool        (has someone hit stop)
+    robot.stopped()             -> bool        (has a HUMAN hit stop)
+    robot.reflex_trips()        -> int         (safety interrupts so far)
 
 So the whole mission is testable with a simulated robot and no motors, and the
 real one is a thin adapter in mcp_server/tools/. slam/ still knows nothing
@@ -35,6 +36,17 @@ of millimetres; a pivot that did not happen leaves it at sensor noise. If the
 wheels did not turn, the mission STOPS. It does not retry harder, and it does
 not carry on hoping -- a robot navigating on a heading it only believes in is
 exactly the thing that drives into furniture.
+
+A SAFETY TRIP IS NOT THE SAME AS BEING TOLD TO STOP, and conflating them
+ended the first real run after one cycle. The reflex loop fires when something
+is inside the stop distance ahead; that is the robot working, not the mission
+failing, and the right answer is to turn away and re-plan rather than give up
+where it stands. A human calling stop() means stop, always, immediately, and
+is never recovered from. reflex.trips_since_start is what tells them apart.
+
+Recoveries are capped. A robot that backs away and re-plans forever in a
+corner it cannot leave is a robot that has hung, so after
+MISSION_MAX_RECOVERIES it says so and stops.
 
 BUDGETS ARE HARD AND THERE ARE THREE. Distance, wall-clock, and cycles. Any
 one of them ending stops the run. A loop that explores "until finished" is one
@@ -97,6 +109,8 @@ class Mission:
         started = time.monotonic()
         driven = 0.0
         cycles = 0
+        recoveries = 0
+        trips = self.robot.reflex_trips()
         stopped_because = "budget"
 
         # A map to match against before deciding anything. Standing still, so
@@ -147,14 +161,44 @@ class Mission:
                         break
                     after = await self.robot.sweep()
                     shift = scan_shift_mm(before, after)
+                    retried = False
+
+                    # ONE VERIFIED RETRY. Measured on the real robot: a turn
+                    # straight after a forward drive is the one that stalls.
+                    # Fourteen pivots back to back in
+                    # scripts/calibrate_turn.py never missed, including 45 and
+                    # 60 degrees; two autonomous runs both stalled on the turn
+                    # that followed a drive (-27.7 deg moved 0 mm, -52.1 deg
+                    # moved 1 mm) right after a large turn had worked fine.
+                    #
+                    # A retry is only safe BECAUSE it is verified. If the
+                    # first attempt genuinely did nothing -- and 0 or 1 mm is
+                    # nothing -- then turning again lands the commanded angle
+                    # exactly once, not twice. Without the sweep check this
+                    # would be a coin flip on the heading, which is worse than
+                    # stopping. Exactly one retry: a chassis that needs two is
+                    # not a chassis to keep asking.
+                    if (shift is not None
+                            and shift < config.PIVOT_MIN_SCAN_SHIFT_MM):
+                        retried = True
+                        await self.robot.observe()
+                        before = await self.robot.sweep()
+                        said = await self.robot.turn(turn_deg)
+                        if "REFUSED" in said.upper():
+                            stopped_because = f"refused: {said}"
+                            break
+                        after = await self.robot.sweep()
+                        shift = scan_shift_mm(before, after)
+
                     self.events.append({"turn_deg": turn_deg,
-                                        "scan_shift_mm": shift})
+                                        "scan_shift_mm": shift,
+                                        "retried": retried})
                     if (shift is not None
                             and shift < config.PIVOT_MIN_SCAN_SHIFT_MM):
                         # The wheels did not turn. Everything after this would
                         # be planned from a heading that is not true.
-                        stopped_because = ("the wheels did not turn -- "
-                                           f"the world moved {shift:.0f} mm "
+                        stopped_because = ("the wheels did not turn, twice "
+                                           f"-- the world moved {shift:.0f} mm "
                                            f"for a {turn_deg:+.0f} degree "
                                            "command")
                         self._say("something is stopping me turning, "
@@ -180,19 +224,46 @@ class Mission:
                         break
                     await self.robot.observe()
                     said = await self.robot.forward(forward_m * 100.0)
+                    now_trips = self.robot.reflex_trips()
                     if "REFUSED" in said.upper():
                         stopped_because = f"refused: {said}"
                         break
+                    # Something got close and the reflex stopped her. She
+                    # moved SOME of the way, so the odometry claim is now a
+                    # guess -- fold the sweep in with no motion claimed and
+                    # let the matcher place her, rather than asserting a
+                    # distance the interrupt cut short.
+                    if now_trips > trips:
+                        trips = now_trips
+                        recoveries += 1
+                        await self._fold(mapper)
+                        if recoveries > config.MISSION_MAX_RECOVERIES:
+                            stopped_because = ("boxed in -- the safety "
+                                               "interrupt keeps firing")
+                            self._say("I keep finding things in the way, "
+                                      "so I am going to stop here")
+                            break
+                        self._say("something is close, backing off and "
+                                  "trying another way")
+                        await self.robot.observe()
+                        away = await self.robot.turn(
+                            config.MISSION_RECOVER_TURN_DEG)
+                        if "REFUSED" not in away.upper():
+                            await self._fold(mapper, 0.0, math.radians(
+                                config.MISSION_RECOVER_TURN_DEG))
+                        break            # re-plan from where she actually is
                     driven += forward_m
                     await self._fold(mapper, forward_m, 0.0)
-            else:
-                gained = (mapper.grid.free_mask().sum() * mapper.grid.cell ** 2
-                          - before_area)
-                self.explorer.note(mapper, gained)
-                self._say(self.narrator.consider(gained_m2=gained,
-                                                 now=time.monotonic()))
-                continue
-            break                        # a break inside the moves loop ends it
+            gained = (mapper.grid.free_mask().sum() * mapper.grid.cell ** 2
+                      - before_area)
+            self.explorer.note(mapper, gained)
+            self._say(self.narrator.consider(gained_m2=gained,
+                                             now=time.monotonic()))
+            # A recovery is not a reason to end the run -- it is a reason to
+            # re-plan, which is what the next cycle does. Only a real stop
+            # reason ends it.
+            if stopped_because not in ("budget",):
+                break
 
         return {
             "stopped_because": stopped_because,
@@ -203,6 +274,7 @@ class Mission:
                               * mapper.grid.cell ** 2, 1),
             "wall_cells": int(mapper.grid.occupied_mask().sum()),
             "closures": mapper.closures,
+            "recoveries": recoveries,
             "said": self.said,
             "turns": self.events,
         }
