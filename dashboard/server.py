@@ -199,6 +199,20 @@ async def api_motor(request: web.Request) -> web.Response:
         if direction == "stop":
             result = await robot.call("stop")
         else:
+            # LOOK FIRST. mcp_server/embodiment.py refuses to move at all
+            # unless Friday has actually observed the world inside the last
+            # OBSERVATION_TTL_S -- 12 s, and only 6 s once a move has spent
+            # that look. The dashboard never took one, so every press after
+            # the first few seconds came back REFUSED and manual control
+            # looked broken. It was the gate doing its job with nobody
+            # feeding it.
+            #
+            # This is NOT a bypass, and must never become one: it satisfies
+            # the gate the way the gate wants to be satisfied, by taking a
+            # real observation immediately before the move. scan_environment
+            # is the cheap one -- range sensors only, no camera -- so a held
+            # button still feels responsive.
+            await robot.call("scan_environment")
             seconds = float(payload.get("seconds", 0.5))
             result = await robot.call("move", {
                 "direction": direction,

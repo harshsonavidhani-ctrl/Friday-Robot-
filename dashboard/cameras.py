@@ -136,6 +136,7 @@ class CameraStream:
             except asyncio.TimeoutError:
                 self._proc = proc                 # still alive: it is working
                 self.passthrough = passthrough
+                self.error = None                 # a working stream has none
                 self._task = asyncio.create_task(self._pump())
                 return
             err = (await proc.stderr.read()).decode(errors="replace").strip()
@@ -143,12 +144,22 @@ class CameraStream:
         raise RuntimeError(f"{self.name}: {self.error}")
 
     async def _pump(self) -> None:
-        """Split ffmpeg's byte stream back into whole JPEG frames."""
-        assert self._proc and self._proc.stdout
+        """Split ffmpeg's byte stream back into whole JPEG frames.
+
+        ⚠ BIND THE PIPE ONCE. This used to read self._proc.stdout on every
+        iteration, and stop() sets self._proc = None -- so an ordinary
+        shutdown raced the loop and raised "'NoneType' object has no attribute
+        'stdout'", which the handler below then stored as this camera's error.
+        A healthy camera sat in /api/state wearing a permanent failure message
+        it had earned by being switched off normally.
+        """
+        proc = self._proc
+        assert proc and proc.stdout
+        stdout = proc.stdout
         buf = bytearray()
         try:
             while True:
-                chunk = await self._proc.stdout.read(65536)
+                chunk = await stdout.read(65536)
                 if not chunk:
                     break
                 buf.extend(chunk)
@@ -172,7 +183,11 @@ class CameraStream:
         except asyncio.CancelledError:
             raise
         except Exception as exc:                     # noqa: BLE001
-            self.error = str(exc)
+            # Only blame the camera if this pump is still the live one. If
+            # stop() has already moved on, whatever went wrong here is the
+            # teardown, not the hardware, and must not be reported as it.
+            if self._proc is proc:
+                self.error = str(exc)
         finally:
             # BOUNDED. This read used to be open-ended, and if ffmpeg was still
             # alive it never returned -- deadlocking anyone awaiting this task.
