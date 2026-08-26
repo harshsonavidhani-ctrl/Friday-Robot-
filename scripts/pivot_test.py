@@ -42,6 +42,7 @@ import copy
 import json
 import math
 import re
+import sqlite3
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -63,6 +64,53 @@ from slam.mapper import Mapper                                   # noqa: E402
 # flawless pose tracking, so the gentler test is the less honest one.
 STEP_DEG = 30.0
 SWEEP_EACH_STEP = 3
+
+
+MOTOR_TOOLS = ("turn_degrees", "move", "move_distance", "stop",
+               "emergency_stop")
+
+
+def motor_calls_since(row_id: int) -> dict[str, int]:
+    """Which motor tools have been called since row_id, and how many times.
+
+    ⚠ THIS TEST IS NOT THE ONLY THING THAT CAN DRIVE THIS ROBOT. The MCP
+    server is a shared doorway: a second Claude session, the dashboard's
+    manual drive, or Friday's own brain can all command a turn while this is
+    running, and the mapper is told about none of them. It then folds sweeps
+    taken at a heading it does not know about, which is indistinguishable
+    from the pose tracking being broken.
+
+    That is not hypothetical. Two sessions ran this test 44 seconds apart on
+    2026-08-26 -- for a test that takes five minutes -- and produced 0.60x and
+    0.77x for the same fix, each one's turns corrupting the other's map. Both
+    numbers were reported as results. Neither meant anything.
+
+    The decision log records every tool call the server executes, whoever
+    asked, so counting is enough: this test knows exactly how many turns IT
+    commanded, and anything beyond that came from somewhere else.
+    """
+    counts: dict[str, int] = {}
+    try:
+        db = sqlite3.connect(f"file:{config.DECISION_LOG}?mode=ro", uri=True)
+        with db:
+            for tool, n in db.execute(
+                    "SELECT tool, COUNT(*) FROM decisions WHERE id > ? "
+                    "GROUP BY tool", (row_id,)):
+                if tool in MOTOR_TOOLS:
+                    counts[tool] = n
+    except sqlite3.Error:
+        return {}                       # no log is not a reason to fail a run
+    return counts
+
+
+def last_decision_id() -> int:
+    try:
+        db = sqlite3.connect(f"file:{config.DECISION_LOG}?mode=ro", uri=True)
+        with db:
+            row = db.execute("SELECT COALESCE(MAX(id), 0) FROM decisions").fetchone()
+        return int(row[0])
+    except sqlite3.Error:
+        return 0
 
 
 @asynccontextmanager
@@ -163,6 +211,7 @@ async def main() -> int:
 
         plan = [STEP_DEG] * 3 + [-STEP_DEG] * 3
         commanded = 0.0
+        mark = last_decision_id()
         print(f"\npivoting {sum(abs(d) for d in plan):.0f} degrees in "
               f"{len(plan)} steps, finishing where it started")
         for degrees in plan:
@@ -251,6 +300,27 @@ async def main() -> int:
         # The window is deliberately wide. A timed 180 degrees at +/-20% can
         # leave the robot tens of degrees from where it started, and scoring
         # at a prior of zero would blame the map for that.
+        # WAS THIS RUN ALONE ON THE ROBOT? Asked before the map is judged,
+        # because if it was not then none of the numbers above describe this
+        # fix -- they describe two callers fighting over one chassis.
+        seen = motor_calls_since(mark)
+        mine = {"turn_degrees": len(plan)}
+        stray = {t: n - mine.get(t, 0) for t, n in seen.items()
+                 if n > mine.get(t, 0)}
+        if stray:
+            print("\n⚠ SOMETHING ELSE DROVE THIS ROBOT DURING THE RUN")
+            for tool, n in sorted(stray.items()):
+                print(f"    {n} extra {tool} call(s) this test did not make")
+            print("  The mapper was never told about those, so it folded "
+                  "sweeps in\n  at headings it does not know about. That is "
+                  "indistinguishable\n  from broken pose tracking, and it is "
+                  "not what this test measures.")
+            print("\n  NOT REPORTING A RESULT. Run it again with nothing "
+                  "else driving.")
+            return 1
+        print(f"\nalone on the robot: {seen.get('turn_degrees', 0)} turns "
+              f"commanded, all of them mine")
+
         print("\ndoes a real sweep still fit the map the pivot built?")
         fresh = core.points_from_scan(await sweep(client),
                                       forward_deg=config.LIDAR_FORWARD_DEG)
