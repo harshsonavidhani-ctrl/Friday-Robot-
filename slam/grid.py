@@ -162,12 +162,21 @@ class OccupancyGrid:
         return self.integrate(world, (pose[0], pose[1]))
 
     def integrate(self, points: np.ndarray,
-                  origin_xy: tuple[float, float]) -> int:
+                  origin_xy: tuple[float, float],
+                  occupied: np.ndarray | None = None) -> int:
         """Fold in a cloud already in world metres, seen from origin_xy.
 
         Every beam carves the cells it passed through towards free and marks
         the cell it stopped in towards occupied. Returns how many beams were
         used.
+
+        `occupied` is the subset of `points` allowed to leave a MARK, for the
+        caller that will not put a return on the permanent map until it has
+        been confirmed across several sweeps (see slam/transient.py). Every
+        beam still carves, and every endpoint is still protected from being
+        carved by its neighbours -- an unconfirmed return is not evidence of
+        a wall, but it is certainly not evidence of floor either. Default:
+        every point marks, which is plain occupancy mapping.
 
         Each cell is updated AT MOST ONCE per sweep, however many beams cross
         it. A single sweep is one observation, not four hundred: without the
@@ -195,6 +204,13 @@ class OccupancyGrid:
             return 0
 
         free_flat, occ_flat = self._trace(origin, points)
+        if occupied is not None:
+            marks = np.atleast_2d(np.asarray(occupied, dtype=np.float64))
+            if marks.size and self.inside(marks).any():
+                mx, my = self.cells_of(marks[self.inside(marks)])
+                occ_flat = np.unique(mx * self.shape[1] + my)
+            else:
+                occ_flat = np.empty(0, dtype=np.int64)
         self._apply(free_flat, config.SLAM_LOGODDS_MISS)
         self._apply(occ_flat, config.SLAM_LOGODDS_HIT)
 

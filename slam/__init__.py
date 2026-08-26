@@ -12,9 +12,11 @@ as sensors.Lidar.scan() returns them, so every part of this is testable
 against recorded sweeps with no robot attached.
 """
 
-from slam.core import (LikelihoodField, match_confidence,
+from slam.core import (LikelihoodField, match_confidence, match_pose,
                        match_translation, points_from_scan, transform)
 from slam.grid import OccupancyGrid
+from slam.transient import TransientLayer
 
-__all__ = ["LikelihoodField", "OccupancyGrid", "match_confidence",
-           "match_translation", "points_from_scan", "transform"]
+__all__ = ["LikelihoodField", "OccupancyGrid", "TransientLayer",
+           "match_confidence", "match_pose", "match_translation",
+           "points_from_scan", "transform"]

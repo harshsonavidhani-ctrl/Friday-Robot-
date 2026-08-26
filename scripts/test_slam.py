@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import binary_dilation
+from scipy.ndimage import binary_dilation, distance_transform_edt
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 import config                                              # noqa: E402
 from slam.core import match_translation, points_from_scan  # noqa: E402
 from slam.grid import OccupancyGrid                         # noqa: E402
+from slam.mapper import Mapper                              # noqa: E402
 
 # (x0, y0, x1, y1) segments in metres. A skewed room with a pillar in it.
 ROOM = [
@@ -140,6 +141,187 @@ def report(name: str, ok: bool, detail: str = "") -> bool:
     print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f": {detail}" if detail else ""))
     return ok
 
+
+def robot_sweep(pose: tuple[float, float, float],
+                rng: np.random.Generator,
+                room: list | None = None) -> dict[int, int]:
+    """A sweep as the ROBOT sees it -- bearings relative to its own nose.
+
+    The synthetic `sweep` casts in world bearings, which is right for the
+    matcher tests but wrong here: a LiDAR bolted to a robot turns with it, so
+    a sweep taken at heading theta reports everything theta degrees earlier.
+    Getting this backwards makes pose tracking look broken in a way that is
+    very hard to see, so it is done once, here.
+
+    Bearings are rounded to whole degrees on the way out, exactly as
+    sensors.Lidar._ingest does, collisions and all.
+    """
+    x, y, theta = pose
+    out = {}
+    for bearing, mm in sweep((x, y), rng=rng, room=room).items():
+        out[int(round((bearing - math.degrees(theta)) % 360.0)) % 360] = mm
+    return out
+
+
+def drive(pose: tuple[float, float, float], forward: float,
+          turn_deg: float) -> tuple[float, float, float]:
+    turn = math.radians(turn_deg)
+    mid = pose[2] + turn / 2.0
+    return (pose[0] + forward * math.cos(mid),
+            pose[1] + forward * math.sin(mid), pose[2] + turn)
+
+
+def clear_spot(mapper: Mapper, clear_m: float = 0.5,
+               from_m: float = 0.8, within_m: float = 2.5) -> tuple[float, float]:
+    """Somewhere the robot has MAPPED as open, to stand a person in.
+
+    Not a hard-coded coordinate. Where the drive ends depends on noise that
+    every earlier test in this file has already drawn from the same generator,
+    so a fixed spot is visible on some runs and behind the pillar on others --
+    which produces a test that fails for a reason that has nothing to do with
+    the code under test. This asks the map instead: the nearest cell that is
+    known free, half a metre clear of anything solid, and close enough to be
+    seen well.
+    """
+    occupied = mapper.grid.occupied_mask()
+    room = distance_transform_edt(~occupied) * mapper.grid.cell
+    cells = np.argwhere(mapper.grid.free_mask() & (room >= clear_m))
+    if not len(cells):
+        raise RuntimeError("no open floor on the map to stand anyone in")
+    centres = (cells + 0.5) * mapper.grid.cell + mapper.grid.origin
+    away = np.hypot(centres[:, 0] - mapper.pose[0], centres[:, 1] - mapper.pose[1])
+    # Not right under the wheels: the nearest free cell is the one the robot
+    # is standing on, and a person there is not a test of anything.
+    usable = centres[(away >= from_m) & (away <= within_m)]
+    if not len(usable):
+        raise RuntimeError(f"no open floor {from_m}-{within_m} m from the robot")
+    return tuple(usable[len(usable) // 2])
+
+
+def probe_disc(at: tuple[float, float], radius: float = 0.20,
+               step: float = 0.025) -> np.ndarray:
+    """The patch of floor a person occupies, as points -- not their outline.
+
+    Probing the box's perimeter looks tidier and is wrong: re-localising
+    against a map that is itself a couple of centimetres warped moves the
+    whole sweep by a cell or two, and a one-cell-thick outline then misses
+    entirely. The question being asked is "is there something standing HERE",
+    so ask it about the area. clear_spot guarantees half a metre of clearance,
+    so a 20 cm radius cannot accidentally include a wall.
+    """
+    grid = np.arange(-radius, radius + 1e-9, step)
+    gx, gy = np.meshgrid(grid, grid)
+    keep = gx ** 2 + gy ** 2 <= radius ** 2
+    return np.column_stack([at[0] + gx[keep], at[1] + gy[keep]])
+
+
+def person_box(at: tuple[float, float], half: float = 0.10) -> list:
+    """A 20 cm box: near enough a standing person to a LiDAR at leg height."""
+    x, y = at
+    return [(x - half, y - half, x + half, y - half),
+            (x + half, y - half, x + half, y + half),
+            (x + half, y + half, x - half, y + half),
+            (x - half, y + half, x - half, y - half)]
+
+
+def mapper_tests(rng: np.random.Generator, show: bool = False) -> int:
+    failures = 0
+    print("\ntracking a pose with no encoders: odometry is 20% wrong on purpose")
+
+    truth = (0.0, 0.0, 0.0)
+    mapper = Mapper(pose=truth, forward_deg=0.0)
+    odom_only = truth
+    # Sit still for a moment first -- nothing can match against a map that
+    # does not exist yet, which is why the first few updates say so.
+    for _ in range(4):
+        mapper.update(robot_sweep(truth, rng), 0.0, 0.0)
+
+    plan = ([(0.25, 0.0)] * 6 + [(0.0, 45.0)] * 2 + [(0.25, 0.0)] * 6
+            + [(0.0, 45.0)] * 2 + [(0.25, 0.0)] * 6 + [(0.0, -30.0)]
+            + [(0.25, 0.0)] * 4)
+    untrusted = 0
+    for forward, turn_deg in plan:
+        truth = drive(truth, forward, turn_deg)
+        # No encoders: what odometry REPORTS is the timed guess, +/-20%.
+        odo_f = forward * (1.0 + rng.normal(0.0, 0.12))
+        odo_t = math.radians(turn_deg * (1.0 + rng.normal(0.0, 0.12)))
+        odom_only = drive(odom_only, odo_f, math.degrees(odo_t))
+        out = mapper.update(robot_sweep(truth, rng), odo_f, odo_t)
+        untrusted += not out["trusted"]
+
+    matched = math.hypot(mapper.pose[0] - truth[0], mapper.pose[1] - truth[1])
+    naive = math.hypot(odom_only[0] - truth[0], odom_only[1] - truth[1])
+    print(f"        drove {mapper.travelled_m:.1f} m over {len(plan)} moves, "
+          f"{untrusted} update(s) fell back to odometry")
+    print(f"        odometry alone ended {naive * 100:.0f} cm out; "
+          f"matched to the map, {matched * 100:.0f} cm out")
+    failures += not report("scan matching beats dead reckoning",
+                           matched < naive * 0.6,
+                           f"{naive / max(matched, 1e-6):.1f}x better")
+    failures += not report("and is good to a few centimetres", matched < 0.10,
+                           f"{matched * 100:.1f} cm from truth")
+    heading_err = abs(math.degrees((mapper.pose[2] - truth[2] + math.pi)
+                                   % (2 * math.pi) - math.pi))
+    failures += not report("heading holds too", heading_err < 5.0,
+                           f"{heading_err:.1f} deg out")
+
+    # --- a person walks in ----------------------------------------------
+    print("\nsomeone walks in and stands there -- when does the map believe it?")
+    here = mapper.pose
+    stand_at = clear_spot(mapper)
+    person = person_box(stand_at)
+    probe = probe_disc(stand_at)
+    with_person = ROOM + person
+    print(f"        robot at ({here[0]:.2f}, {here[1]:.2f}), someone steps in "
+          f"at ({stand_at[0]:.2f}, {stand_at[1]:.2f})")
+
+    def person_state() -> tuple[int, int]:
+        """(sweeps the most-seen part of them was tracked in, cells mapped)"""
+        return (int(mapper.transient.count_at(probe).max()),
+                int((mapper.grid.classify(probe) == 1).sum()))
+
+    for _ in range(2):
+        mapper.update(robot_sweep(here, rng, room=with_person), 0.0, 0.0)
+    seen, occupied = person_state()
+    failures += not report("seen twice: tracked, but NOT on the map",
+                           seen >= 2 and occupied == 0,
+                           f"tracked in {seen} sweeps, {occupied} cells mapped")
+    blocking = mapper.transient.blocking_points()
+    near = (np.hypot(blocking[:, 0] - stand_at[0],
+                     blocking[:, 1] - stand_at[1]).min()
+            if len(blocking) else 99.0)
+    failures += not report("but it IS in the way, and known to be",
+                           near < 0.30, f"nearest blocking cell {near:.2f} m")
+    flagged = len(mapper.transient.unconfirmed_points())
+    failures += not report("and flagged as not-furniture, so it can be said "
+                           "out loud", flagged > 0,
+                           f"{flagged} unconfirmed cells")
+
+    for _ in range(6):
+        mapper.update(robot_sweep(here, rng, room=with_person), 0.0, 0.0)
+    seen, occupied = person_state()
+    failures += not report("still there after eight sweeps: now it is mapped",
+                           occupied > 0, f"{occupied} cells now occupied")
+
+    # --- and walks off again ---------------------------------------------
+    print("\nthey walk off -- the map has to let go, or it fills up with ghosts")
+    gone = None
+    for sweeps in range(1, 31):
+        mapper.update(robot_sweep(here, rng), 0.0, 0.0)
+        if person_state()[1] == 0:
+            gone = sweeps
+            break
+    failures += not report("the ghost clears", gone is not None,
+                           f"gone after {gone} sweeps" if gone
+                           else "still on the map after 30 sweeps")
+    walls = float(near_occupied(mapper.grid, wall_points(ROOM)).mean())
+    failures += not report("the room survived all of that", walls >= 0.85,
+                           f"{walls * 100:.1f}% of wall surface still mapped")
+
+    if show:
+        print("\n" + mapper.grid.to_ascii())
+        print(f"\n{mapper.status()}")
+    return failures
 
 def map_tests(rng: np.random.Generator, show: bool = False) -> int:
     failures = 0
@@ -276,6 +458,7 @@ def main() -> int:
     failures += not ok
 
     failures += map_tests(rng, show="--show" in sys.argv)
+    failures += mapper_tests(rng, show="--show" in sys.argv)
 
     print(f"\n{'all good' if not failures else str(failures) + ' failed'}")
     return 1 if failures else 0

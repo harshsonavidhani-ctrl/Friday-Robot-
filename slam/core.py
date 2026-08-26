@@ -113,11 +113,15 @@ class LikelihoodField:
         ix, iy = self._indices(points)
         self._perfect = float(self.field[ix, iy].sum() / len(points)) or 1.0
 
-    def _indices(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _raw_indices(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Cell indices without clipping -- may fall outside the field."""
         cells = np.floor((points - self.min_xy) / self.cell).astype(np.int64)
-        ix = np.clip(cells[:, 0], 0, self.shape[0] - 1)
-        iy = np.clip(cells[:, 1], 0, self.shape[1] - 1)
-        return ix, iy
+        return cells[:, 0], cells[:, 1]
+
+    def _indices(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        ix, iy = self._raw_indices(points)
+        return (np.clip(ix, 0, self.shape[0] - 1),
+                np.clip(iy, 0, self.shape[1] - 1))
 
     def score(self, points: np.ndarray) -> float:
         """Mean likelihood of these points, 0..1. Higher is better aligned.
@@ -139,6 +143,57 @@ class LikelihoodField:
             return 0.0
         ix, iy = self._indices(points[inside])
         return float(self.field[ix, iy].sum() / len(points) / self._perfect)
+
+
+    def score_xy(self, x: np.ndarray, y: np.ndarray) -> float:
+        """score() for coordinates already split into two arrays.
+
+        Same number, without building an (N, 2) array to pass it in. That
+        allocation is most of the cost when scoring a thousand candidate
+        poses, which is exactly what match_pose does.
+        """
+        ix = np.floor((x - self.min_xy[0]) / self.cell).astype(np.int64)
+        iy = np.floor((y - self.min_xy[1]) / self.cell).astype(np.int64)
+        good = ((ix >= 0) & (ix < self.shape[0]) &
+                (iy >= 0) & (iy < self.shape[1]))
+        if not good.any():
+            return 0.0
+        return float(self.field[ix[good], iy[good]].sum()
+                     / len(x) / self._perfect)
+
+    def score_shifts(self, points: np.ndarray, half: int) -> np.ndarray:
+        """Score every whole-cell translation in a (2*half+1) square, at once.
+
+        THE POINT OF THIS. Scoring a candidate pose is a table lookup per
+        point, and shifting the pose by exactly one cell shifts every one of
+        those lookups by exactly one index. So a whole square of candidate
+        translations is the same index array read at different offsets -- the
+        cell coordinates are computed once for the sweep instead of once per
+        candidate, which is what took a third of a second on the Pi and now
+        takes a few milliseconds.
+
+        The field is padded rather than bounds-checked per shift: a mask over
+        350 points, eighty-one times per rotation, costs more than the copy.
+        """
+        n = len(points)
+        if n == 0:
+            return np.zeros((2 * half + 1, 2 * half + 1))
+        ix, iy = self._raw_indices(points)
+        keep = ((ix >= -half) & (ix < self.shape[0] + half) &
+                (iy >= -half) & (iy < self.shape[1] + half))
+        out = np.zeros((2 * half + 1, 2 * half + 1))
+        if not keep.any():
+            return out
+        pad = 2 * half
+        padded = np.pad(self.field, pad, mode="constant")
+        stride = padded.shape[1]
+        flat = padded.reshape(-1)
+        base = (ix[keep] + pad) * stride + (iy[keep] + pad)
+        for i in range(-half, half + 1):
+            row = base + i * stride
+            for j in range(-half, half + 1):
+                out[i + half, j + half] = flat[row + j].sum()
+        return out / n / self._perfect
 
 
 def match_translation(reference: np.ndarray, query: np.ndarray,
@@ -217,3 +272,74 @@ def match_confidence(reference: np.ndarray, query: np.ndarray,
     scores = np.asarray(scores)
     median = float(np.median(scores))
     return float(scores.max() / median) if median > 1e-9 else float("inf")
+
+
+def match_pose(field: LikelihoodField, query: np.ndarray,
+               prior: tuple[float, float, float] = (0.0, 0.0, 0.0),
+               window_m: float | None = None,
+               window_deg: float | None = None,
+               ) -> tuple[tuple[float, float, float], float, float]:
+    """Correct a pose prior by matching a sweep against a reference field.
+
+    `prior` is where odometry says the robot is, in world metres and radians.
+    The search is an exhaustive sweep of a small box around it -- there are no
+    wheel encoders, so the prior is a TIMED guess worth about +/-20%, and the
+    window has to be wide enough to contain that error over one sweep.
+
+    Exhaustive rather than gradient descent for the same reason match_translation
+    is: scoring is an array lookup, so a thousand candidates cost tens of
+    milliseconds, and a search that visits every candidate cannot settle into a
+    local maximum. A corridor still has a ridge rather than a peak along its
+    length -- that is real ambiguity in the geometry, not a failure of the
+    search, and it is what the sharpness return is for.
+
+    Returns ((x, y, theta), score, sharpness). Score is 0..1 against a perfect
+    match; sharpness is peak over median across the whole window, and near 1
+    it means the room did not constrain the answer however good the score
+    looked. Below config.SLAM_MIN_SCORE / SLAM_MIN_CONFIDENCE the caller
+    should keep its odometry and say that it did.
+    """
+    window_m = config.SLAM_POSE_WINDOW_M if window_m is None else window_m
+    window_deg = config.SLAM_POSE_WINDOW_DEG if window_deg is None else window_deg
+    if query.size == 0:
+        return prior, 0.0, 1.0
+
+    px, py, pth = prior
+    half = max(int(round(window_m / field.cell)), 1)
+
+    # COARSE: whole-cell translations, scored a square at a time.
+    best = (px, py, pth)
+    best_score = -1.0
+    spread = []
+    for dth in np.radians(np.arange(-window_deg, window_deg + 1e-9, 3.0)):
+        rotated = transform(query, px, py, pth + dth)
+        scores = field.score_shifts(rotated, half)
+        spread.append(scores)
+        flat_best = int(np.argmax(scores))
+        i, j = divmod(flat_best, scores.shape[1])
+        if scores[i, j] > best_score:
+            best_score = float(scores[i, j])
+            best = (px + (i - half) * field.cell,
+                    py + (j - half) * field.cell, pth + dth)
+
+    # FINE: sub-cell, in a box one cell wide around the coarse answer. Going
+    # finer than the blur only reads the smoothing, so a third of a cell and
+    # one degree is where it stops paying.
+    cx, cy, cth = best
+    step = field.cell / 3.0
+    offsets = np.arange(-field.cell, field.cell + 1e-9, step)
+    for dth in np.radians(np.arange(-3.0, 3.0 + 1e-9, 1.0)):
+        rotated = transform(query, cx, cy, cth + dth)
+        for dx in offsets:
+            shifted_x = rotated[:, 0] + dx
+            for dy in offsets:
+                value = field.score_xy(shifted_x, rotated[:, 1] + dy)
+                if value > best_score:
+                    best_score = value
+                    best = (cx + dx, cy + dy, cth + dth)
+
+    everything = np.concatenate([block.ravel() for block in spread])
+    median = float(np.median(everything))
+    sharpness = (float(everything.max() / median) if median > 1e-9
+                 else float("inf"))
+    return (float(best[0]), float(best[1]), float(best[2])), best_score, sharpness

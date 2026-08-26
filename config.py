@@ -1089,6 +1089,61 @@ SLAM_P_FREE = 0.35
 # at 5 cm is 480 x 480 cells -- under a megabyte, and larger than the flat.
 SLAM_MAP_MAX_M = 24.0
 
+# --- Transient obstacles vs the permanent map ----------------------------
+# A person walking past, or a chair moved this morning, must NOT become part
+# of the room. So a return does not go into the permanent map on sight: the
+# cell has to be hit in this many SEPARATE sweeps first. Below that the hit is
+# real and is avoided -- it is just not believed to be furniture yet.
+#
+# Three sweeps at the mapping rate is about three seconds. A person standing
+# still that long does get mapped; they also get UNMAPPED about twelve sweeps
+# after they walk off, because the beams that then pass through carve the cell
+# free. That asymmetry is deliberate -- being slow to add and slow to forget
+# is how a map stays useful without lying about a doorway that is blocked.
+SLAM_CONFIRM_SCANS = 3
+
+# How long an unconfirmed return keeps blocking the path. This is an
+# AVOIDANCE lifetime, not a map lifetime: it only has to outlast the gap
+# between sweeps, because a thing still there will be seen again.
+SLAM_TRANSIENT_TTL_S = 4.0
+
+# --- Pose tracking -------------------------------------------------------
+# Odometry is the prior and the scan matcher corrects it. There are no wheel
+# encoders, so the prior is a TIMED conversion (state/calibration.json) worth
+# about +/-20% -- the search window has to be wide enough to contain that
+# error over one sweep interval, and no wider, because every extra centimetre
+# is candidates to score.
+SLAM_POSE_WINDOW_M = 0.20
+SLAM_POSE_WINDOW_DEG = 12.0
+
+# Matching against the accumulated MAP rather than the previous sweep is what
+# stops drift compounding: the previous sweep has already drifted, the map has
+# been averaged over many. Rebuilding the map's likelihood field costs a blur
+# over the whole grid, so it is cached and rebuilt only this often.
+SLAM_FIELD_REBUILD_SCANS = 5
+
+# ⚠ POSE MATCHING NEEDS ITS OWN SHARPNESS GATE, NOT SLAM_MIN_CONFIDENCE.
+# That one is 5.0 because match_translation scores 360 bearings, most of them
+# badly wrong, so the median is low and a true peak towers over it. match_pose
+# only ever scores a 20 cm box around the prior, where EVERY candidate is
+# nearly right and the median is therefore high -- a correct match on the test
+# room scores 2.1 to 3.7 here, so a gate of 5.0 would reject every good answer
+# it was ever given. Near 1.0 still means the room did not constrain it: a
+# bare corridor has a ridge along its length rather than a peak.
+SLAM_POSE_MIN_SHARPNESS = 1.4
+
+# Scan-to-map matching needs a map worth matching against. Below this many
+# occupied cells the room is still mostly a rumour, so odometry is kept.
+SLAM_MATCH_MIN_CELLS = 150
+
+# A keyframe -- pose plus the sweep taken there -- is kept every time the
+# robot has moved this far or turned this much since the last one. They are
+# what loop closure re-matches against, and what the map is rebuilt from when
+# a loop closes.
+SLAM_KEYFRAME_M = 0.30
+SLAM_KEYFRAME_DEG = 25.0
+SLAM_KEYFRAME_MAX = 400          # ~120 m of travel; caps memory on the Pi
+
 
 # =====================================================================
 # ANTI-BUMP — the backstops that do not depend on knowing which way is forward
