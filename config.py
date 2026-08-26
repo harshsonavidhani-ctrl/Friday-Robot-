@@ -1122,6 +1122,7 @@ SLAM_POSE_WINDOW_DEG = 12.0
 # over the whole grid, so it is cached and rebuilt only this often.
 SLAM_FIELD_REBUILD_SCANS = 5
 
+
 # ⚠ POSE MATCHING NEEDS ITS OWN SHARPNESS GATE, NOT SLAM_MIN_CONFIDENCE.
 # That one is 5.0 because match_translation scores 360 bearings, most of them
 # badly wrong, so the median is low and a true peak towers over it. match_pose
@@ -1136,6 +1137,31 @@ SLAM_POSE_MIN_SHARPNESS = 1.4
 # occupied cells the room is still mostly a rumour, so odometry is kept.
 SLAM_MATCH_MIN_CELLS = 150
 
+# And a match needs this many beams landing on ground the map has an opinion
+# about. Without a floor, a pose that puts almost the whole sweep into
+# unmapped space can score 1.0 on the three beams that happened to land on a
+# known wall -- a perfect score computed from nearly nothing.
+SLAM_MATCH_MIN_BEAMS = 40
+
+# ⚠ THE MOTION PRIOR IS NOT OPTIONAL ONCE THE KNOWN MASK IS ON. Excusing the
+# beams that land in unmapped space is what stops the matcher freezing during
+# exploration -- but it also excuses a WRONG pose that throws its beams out
+# past the walls into the unknown, and in a fully mapped room that cost 2.4 cm
+# of accuracy turning into 41 cm, measured. The answer is not to drop the mask
+# but to stop pretending odometry told us nothing: candidates are scored by
+# likelihood TIMES a Gaussian on how far they stray from the odometry prior,
+# which is the posterior rather than the likelihood.
+#
+# The width of that Gaussian is NOT a constant, because odometry's uncertainty
+# is not: a sweep taken after a 25 cm hop deserves a much wider prior than one
+# taken standing still. So it scales with the move that was just reported --
+# SLAM_ODOM_ERROR of it, the same +/-20% state/calibration.json is worth --
+# with a floor for the error that does not come from moving at all (the pose
+# it started from was already approximate).
+SLAM_ODOM_ERROR = 0.20
+SLAM_POSE_PRIOR_FLOOR_M = 0.04
+SLAM_POSE_PRIOR_FLOOR_DEG = 3.0
+
 # A keyframe -- pose plus the sweep taken there -- is kept every time the
 # robot has moved this far or turned this much since the last one. They are
 # what loop closure re-matches against, and what the map is rebuilt from when
@@ -1143,6 +1169,122 @@ SLAM_MATCH_MIN_CELLS = 150
 SLAM_KEYFRAME_M = 0.30
 SLAM_KEYFRAME_DEG = 25.0
 SLAM_KEYFRAME_MAX = 400          # ~120 m of travel; caps memory on the Pi
+
+# --- Loop closure --------------------------------------------------------
+# ⚠ SCAN-TO-MAP MATCHING CANNOT SEE ITS OWN DRIFT, and measuring that was the
+# whole reason this exists. Over a 46 m exploration run the matcher reported
+# "matched" with scores of 0.6-1.0 and sharpness comfortably over the gate on
+# essentially every sweep -- while applying a correction of 0.000 m. It was
+# not failing. The map is BUILT at the drifted pose, so the next sweep fits it
+# perfectly, and the error is invisible from the inside. The flat came out
+# 157% of its real floor area: not offset, which would be harmless, but
+# stretched, because the corridor mapped early and the rooms mapped late no
+# longer agreed with each other.
+#
+# Drift only becomes observable on RETURNING to geometry that was mapped
+# before it accumulated. That is the whole trick, and it is why these
+# thresholds are stricter than the per-sweep ones: a false loop closure does
+# not nudge the pose, it rewrites the entire map around a lie.
+SLAM_LOOP_RADIUS_M = 2.0         # "near a place we have been"
+# ...but not one we were just at. Measured in TRAVEL, not keyframes: a
+# keyframe is also cut every 25 degrees of turn, so turning on the spot lays
+# down a dozen of them without going anywhere at all.
+SLAM_LOOP_MIN_TRAVEL_M = 4.0
+SLAM_LOOP_WINDOW_M = 1.0         # search wide: the drift is what we are hunting
+SLAM_LOOP_WINDOW_DEG = 30.0
+SLAM_LOOP_MIN_SCORE = 0.45       # vs SLAM_MIN_SCORE 0.15 for a routine sweep
+SLAM_LOOP_MIN_SHARPNESS = 2.0    # vs SLAM_POSE_MIN_SHARPNESS 1.4
+SLAM_LOOP_MIN_ERROR_M = 0.10     # below this there is nothing worth rewriting
+
+
+# =====================================================================
+# NAVIGATION — planning a path across the map
+# =====================================================================
+# The robot's own radius, and it is not a guess: the LiDAR sees Friday's own
+# chassis at a rock-steady 210 mm on bearings 89-98 (LIDAR_SELF_MASK). That
+# return is the widest part of the body measured from the sensor, which is
+# exactly the number a planner needs.
+NAV_ROBOT_RADIUS_M = 0.21
+
+# Extra room on top, because the pose estimate is worth a few centimetres and
+# a wall does not move out of the way. Obstacles are inflated by radius +
+# clearance, so the robot can be planned as a POINT — the alternative is
+# checking a footprint at every cell of every candidate path.
+NAV_CLEARANCE_M = 0.09
+
+# ⚠ INFLATION CAN SEAL A DOORWAY SHUT. At 30 cm of inflation a 70 cm doorway
+# leaves a 10 cm gap, and one badly-placed cell closes it. If Friday starts
+# refusing to plan through doors that are plainly wide enough, this is the
+# number to look at first -- not the planner.
+NAV_INFLATE_M = NAV_ROBOT_RADIUS_M + NAV_CLEARANCE_M
+
+# Diagonal steps are only allowed when both orthogonal neighbours are clear,
+# so a path cannot squeeze through the corner between two obstacles that
+# touch. Cheap to enforce, and the failure it prevents is a wedged robot.
+NAV_ALLOW_DIAGONAL = True
+
+# ⚠ UNCONFIRMED RETURNS ONLY BLOCK PLANNING NEAR THE ROBOT. Every surface that
+# has just come into view is unconfirmed -- that is what the confirmation gate
+# MEANS -- so a robot exploring new space sees hundreds of "unexplained"
+# returns per sweep, all of them ordinary walls the map has not finished
+# believing in yet. Inflating that lot globally walls the robot into whatever
+# it can already see: measured on the test flat, reachable cells collapsed
+# from 12,423 to 3,613 and exploration stopped in the corridor insisting the
+# flat was fully mapped.
+#
+# So the transient layer constrains the plan only within this radius, which is
+# exactly the job it was built for: not driving into the person who is HERE.
+# Further out the map is in charge, and anything real out there will have been
+# seen many more times before the robot arrives.
+NAV_LOCAL_OBSTACLE_M = 1.5
+
+
+# =====================================================================
+# FRONTIER EXPLORATION — the boundary between what is known and what is not
+# =====================================================================
+# A frontier is a cell the map knows is FREE that touches a cell it knows
+# nothing about. Driving to one is the only move that is guaranteed to reveal
+# something new, which is why exploration is done this way and not by picking
+# a direction: random headings re-cover the same floor and never finish.
+
+# Frontier groups smaller than this are ignored. Below a few cells they are
+# usually the ragged edge of the sensor's own range or a gap behind a chair
+# leg, and chasing them makes the robot fidget instead of explore.
+FRONTIER_MIN_CELLS = 5
+
+# ⚠ CHOOSE BY NEW AREA PER METRE TRAVELLED, NOT BY EITHER ALONE. Nearest-first
+# leaves the robot nibbling at the edge of the room it is in; biggest-first
+# sends it across the flat and back for every scrap. The score is
+#
+#     expected new cells / (path distance + FRONTIER_NEAR_M)
+#
+# and the constant is what stops a frontier one centimetre away scoring
+# infinity. One metre means "a frontier 1 m away must reveal twice as much as
+# one at 0 m to be worth the same".
+FRONTIER_NEAR_M = 1.0
+
+# Expected new area is counted as the UNKNOWN cells within this radius of the
+# frontier, rather than the frontier's own width -- a two-cell gap into a
+# whole unmapped room is worth far more than a wide frontier against the
+# range limit in open floor, and width alone cannot tell them apart.
+FRONTIER_GAIN_RADIUS_M = 1.5
+
+# A frontier the robot has failed to reach this many times is dropped for the
+# rest of the run. Some frontiers are real but unreachable -- behind a chair
+# leg the inflation seals, or across a threshold too narrow -- and retrying
+# forever is the classic way exploration livelocks.
+FRONTIER_MAX_ATTEMPTS = 3
+
+# ⚠ ONE CONNECTED BOUNDARY IS NOT ONE DESTINATION. Frontier cells are found by
+# connected components, and early in a run the whole known/unknown boundary is
+# a single arc -- measured on the test flat, ONE cluster of 559 cells. Its
+# centroid is a point in the middle of everything, so "drive to the frontier"
+# means drive to nowhere in particular, and the run stalls in the first room
+# while insisting it is exploring. So any arc longer than this is chopped into
+# chunks about a doorway wide, each of which is somewhere a robot can actually
+# be sent.
+FRONTIER_SPLIT_M = 0.75
+FRONTIER_MAX_CELLS = 40
 
 
 # =====================================================================

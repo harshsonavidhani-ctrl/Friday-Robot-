@@ -75,17 +75,32 @@ def transform(points: np.ndarray, dx: float, dy: float,
 
 
 class LikelihoodField:
-    """A blurred occupancy image of one scan, for scoring candidate poses.
+    """A blurred occupancy image, for scoring candidate poses against.
 
-    Built once from a reference cloud; after that, scoring a transformed
-    cloud is an array lookup and a sum. The blur is what makes the score a
-    smooth function of pose instead of a field of spikes -- without it, a
-    candidate that is one cell out scores zero rather than nearly-right, and
-    nothing can be optimised.
+    Built once from a reference cloud (or from the whole map, see from_grid);
+    after that, scoring a transformed cloud is an array lookup and a sum. The
+    blur is what makes the score a smooth function of pose instead of a field
+    of spikes -- without it, a candidate one cell out scores zero rather than
+    nearly-right, and there is nothing to optimise.
+
+    ⚠ THE DENOMINATOR IS THE WHOLE BALLGAME DURING EXPLORATION. Scoring a
+    pose as (likelihood over beams) / (ALL beams) quietly penalises any pose
+    that looks at ground nobody has mapped yet, because those beams can only
+    ever score zero. Driving into a new room therefore always scores worse
+    than staying put, and the matcher pins the robot in the last place it knew
+    well while the real robot drives away. It does not look like a failure --
+    the score stays healthy and the pose stays smooth, it just stops moving.
+    Measured in the four-room flat: the estimate froze at x = 4.18 m and was
+    4.3 m behind by the end of the corridor.
+
+    Pass `known` -- a mask of the cells the map has an opinion about -- and
+    the divisor becomes the beams that landed somewhere judgeable, which is
+    the only fair question to ask of a pose.
     """
 
     def __init__(self, points: np.ndarray, cell_m: float | None = None,
-                 blur_m: float | None = None, pad_m: float = 0.5) -> None:
+                 blur_m: float | None = None, pad_m: float = 0.5,
+                 known: np.ndarray | None = None) -> None:
         self.cell = cell_m if cell_m is not None else config.SLAM_CELL_M
         blur = blur_m if blur_m is not None else config.SLAM_BLUR_M
         if points.size == 0:
@@ -112,6 +127,30 @@ class LikelihoodField:
         # -- so SLAM_MIN_SCORE can be reasoned about instead of tuned.
         ix, iy = self._indices(points)
         self._perfect = float(self.field[ix, iy].sum() / len(points)) or 1.0
+        self.known = known
+
+    @classmethod
+    def from_grid(cls, grid, blur_m: float | None = None) -> "LikelihoodField":
+        """A field over the WHOLE map, on the map's own lattice.
+
+        Built on the grid's lattice rather than from a bag of points, because
+        the `known` mask has to line up with the field cell for cell -- and
+        resampling one onto the other would put the two half a cell apart in
+        a way that is very hard to see and quietly biases every match.
+        """
+        blur = config.SLAM_BLUR_M if blur_m is None else blur_m
+        field = cls.__new__(cls)
+        field.cell = grid.cell
+        field.min_xy = np.asarray(grid.origin, dtype=np.float64)
+        field.shape = grid.shape
+        occupied = grid.occupied_mask()
+        field.field = gaussian_filter(occupied.astype(np.float32),
+                                      sigma=blur / grid.cell, mode="constant")
+        field.known = ~grid.unknown_mask()
+        cells = np.argwhere(occupied)
+        field._perfect = (float(field.field[cells[:, 0], cells[:, 1]].mean())
+                          if len(cells) else 1.0) or 1.0
+        return field
 
     def _raw_indices(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Cell indices without clipping -- may fall outside the field."""
@@ -142,7 +181,24 @@ class LikelihoodField:
         if not inside.any():
             return 0.0
         ix, iy = self._indices(points[inside])
-        return float(self.field[ix, iy].sum() / len(points) / self._perfect)
+        total = float(self.field[ix, iy].sum())
+        return self._normalise(total, len(points), ix, iy)
+
+    def _normalise(self, total: float, n_points: int,
+                   ix: np.ndarray, iy: np.ndarray) -> float:
+        """Divide by the beams that landed somewhere the map has an opinion.
+
+        With no `known` mask this is plain occupancy scoring over every beam,
+        which is what the two-sweep matchers want. With one, beams that landed
+        in unmapped space are removed from the denominator instead of counting
+        as misses -- see the warning on the class.
+        """
+        if self.known is None:
+            return float(total / n_points / self._perfect)
+        judgeable = int(self.known[ix, iy].sum())
+        if judgeable < config.SLAM_MATCH_MIN_BEAMS:
+            return 0.0
+        return float(total / judgeable / self._perfect)
 
 
     def score_xy(self, x: np.ndarray, y: np.ndarray) -> float:
@@ -158,8 +214,8 @@ class LikelihoodField:
                 (iy >= 0) & (iy < self.shape[1]))
         if not good.any():
             return 0.0
-        return float(self.field[ix[good], iy[good]].sum()
-                     / len(x) / self._perfect)
+        gx, gy = ix[good], iy[good]
+        return self._normalise(float(self.field[gx, gy].sum()), len(x), gx, gy)
 
     def score_shifts(self, points: np.ndarray, half: int) -> np.ndarray:
         """Score every whole-cell translation in a (2*half+1) square, at once.
@@ -189,11 +245,23 @@ class LikelihoodField:
         stride = padded.shape[1]
         flat = padded.reshape(-1)
         base = (ix[keep] + pad) * stride + (iy[keep] + pad)
+        # The known mask has to be summed at every shift too: how many beams
+        # the map can judge changes as the candidate pose moves, and using a
+        # fixed divisor reintroduces exactly the bias this is here to remove.
+        judge = (np.pad(self.known, pad, mode="constant").reshape(-1)
+                 if self.known is not None else None)
         for i in range(-half, half + 1):
             row = base + i * stride
             for j in range(-half, half + 1):
-                out[i + half, j + half] = flat[row + j].sum()
-        return out / n / self._perfect
+                total = flat[row + j].sum()
+                if judge is None:
+                    out[i + half, j + half] = total / n
+                else:
+                    seen = judge[row + j].sum()
+                    out[i + half, j + half] = (
+                        total / seen if seen >= config.SLAM_MATCH_MIN_BEAMS
+                        else 0.0)
+        return out / self._perfect
 
 
 def match_translation(reference: np.ndarray, query: np.ndarray,
@@ -278,6 +346,8 @@ def match_pose(field: LikelihoodField, query: np.ndarray,
                prior: tuple[float, float, float] = (0.0, 0.0, 0.0),
                window_m: float | None = None,
                window_deg: float | None = None,
+               prior_m: float | None = None,
+               prior_deg: float | None = None,
                ) -> tuple[tuple[float, float, float], float, float]:
     """Correct a pose prior by matching a sweep against a reference field.
 
@@ -306,40 +376,74 @@ def match_pose(field: LikelihoodField, query: np.ndarray,
 
     px, py, pth = prior
     half = max(int(round(window_m / field.cell)), 1)
+    sigma_xy = config.SLAM_POSE_PRIOR_FLOOR_M if prior_m is None else prior_m
+    sigma_th = math.radians(config.SLAM_POSE_PRIOR_FLOOR_DEG
+                            if prior_deg is None else prior_deg)
 
-    # COARSE: whole-cell translations, scored a square at a time.
+    # The motion prior, as a weight on each candidate. Chosen by the weighted
+    # score, REPORTED as the raw one: config.SLAM_MIN_SCORE means "how well
+    # does the sweep fit the room", and multiplying that by how much the
+    # planner liked the pose would make the threshold mean nothing.
+    steps = (np.arange(-half, half + 1) * field.cell)
+    prior_xy = np.exp(-0.5 * (steps[:, None] ** 2 + steps[None, :] ** 2)
+                      / sigma_xy ** 2)
+
     best = (px, py, pth)
-    best_score = -1.0
+    best_weighted, best_raw = -1.0, 0.0
     spread = []
     for dth in np.radians(np.arange(-window_deg, window_deg + 1e-9, 3.0)):
         rotated = transform(query, px, py, pth + dth)
         scores = field.score_shifts(rotated, half)
         spread.append(scores)
-        flat_best = int(np.argmax(scores))
-        i, j = divmod(flat_best, scores.shape[1])
-        if scores[i, j] > best_score:
-            best_score = float(scores[i, j])
+        weighted = scores * prior_xy * math.exp(-0.5 * dth ** 2 / sigma_th ** 2)
+        i, j = np.unravel_index(int(np.argmax(weighted)), weighted.shape)
+        if weighted[i, j] > best_weighted:
+            best_weighted = float(weighted[i, j])
+            best_raw = float(scores[i, j])
             best = (px + (i - half) * field.cell,
                     py + (j - half) * field.cell, pth + dth)
 
     # FINE: sub-cell, in a box one cell wide around the coarse answer. Going
     # finer than the blur only reads the smoothing, so a third of a cell and
     # one degree is where it stops paying.
+    #
+    # ⚠ REFINING AGAINST A FINER FIELD WAS TRIED AND MADE IT WORSE -- twice,
+    # in two different ways, so it is written down rather than tried a third
+    # time. The idea is sound in the abstract: this field is blurred over 12 cm
+    # so the coarse search is globally safe, and one 25 cm hop of 10% odometry
+    # error is 2.5 cm, which that blur cannot see.
+    #   - A fine field built from the MAP's occupied cells is worthless: cell
+    #     centres sit on a 5 cm lattice by construction, so a 2 cm field over
+    #     them is a lattice of blobs and refining against it snaps the pose to
+    #     multiples of the map resolution. 9 cm of error became 21 cm.
+    #   - A fine field built from recent KEYFRAME returns has the resolution,
+    #     but its poses carry exactly the drift being hunted, so it scores
+    #     "consistent with where I have just been" and overrides the map-wide
+    #     answer that was doing better. Also 21 cm.
+    # Sub-cell refinement needs a reference that is both finer than the map
+    # AND independent of the recent trajectory. Neither of those was.
     cx, cy, cth = best
-    step = field.cell / 3.0
-    offsets = np.arange(-field.cell, field.cell + 1e-9, step)
+    offsets = np.arange(-field.cell, field.cell + 1e-9, field.cell / 3.0)
     for dth in np.radians(np.arange(-3.0, 3.0 + 1e-9, 1.0)):
         rotated = transform(query, cx, cy, cth + dth)
         for dx in offsets:
             shifted_x = rotated[:, 0] + dx
             for dy in offsets:
-                value = field.score_xy(shifted_x, rotated[:, 1] + dy)
-                if value > best_score:
-                    best_score = value
+                raw = field.score_xy(shifted_x, rotated[:, 1] + dy)
+                off_x, off_y = cx + dx - px, cy + dy - py
+                off_t = cth + dth - pth
+                weight = math.exp(-0.5 * ((off_x ** 2 + off_y ** 2)
+                                          / sigma_xy ** 2
+                                          + off_t ** 2 / sigma_th ** 2))
+                if raw * weight > best_weighted:
+                    best_weighted, best_raw = raw * weight, raw
                     best = (cx + dx, cy + dy, cth + dth)
 
+    # Sharpness is measured on the RAW scores: it answers "did the room
+    # constrain this", and a prior-weighted field would answer "did the prior
+    # constrain this", which it always did.
     everything = np.concatenate([block.ravel() for block in spread])
     median = float(np.median(everything))
     sharpness = (float(everything.max() / median) if median > 1e-9
                  else float("inf"))
-    return (float(best[0]), float(best[1]), float(best[2])), best_score, sharpness
+    return (float(best[0]), float(best[1]), float(best[2])), best_raw, sharpness

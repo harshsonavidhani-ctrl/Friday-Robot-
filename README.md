@@ -231,6 +231,36 @@ Three decisions in the map are worth knowing before trusting it:
   space — the same rule the safety interrupt already applies to a null
   clearance, and for the same reason.
 
+### Exploring
+
+```bash
+./venv/bin/python scripts/test_explore.py            # explore a simulated flat
+./venv/bin/python scripts/test_explore.py --show     # print the map it built
+```
+
+`slam/frontier.py` finds the boundary between mapped and unmapped space;
+`slam/plan.py` plans a route to it (one Dijkstra gives the true driving
+distance to *every* candidate at once, so ranking a dozen is array lookups);
+`slam/explore.py` is the policy that picks one. It decides — it never drives.
+Execution goes through the MCP server, where the safety interrupt lives.
+
+Frontiers are chosen by **new area per metre travelled**. Nearest-first leaves
+the robot nibbling round the room it is in; biggest-first sends it across the
+flat for every scrap.
+
+On a simulated four-room flat it finds the doorways, gets into the rooms, and
+maps ~2× the floor per metre driven that random headings manage.
+
+**Known open — pose drift.** Over ~60 m the map comes out ~120% of the real
+floor area. The matcher is not failing: it reports a good score and applies a
+0.002 m correction, because the map is built *at* the drifted pose, so every
+new sweep fits it perfectly. Drift is only observable on returning to geometry
+mapped before it accumulated — which frontier exploration, fanning outward,
+rarely does. Loop closure (`Mapper.try_loop_closure`) is implemented for
+exactly this and correctly does nothing on an outward-only run. Refining
+against a finer field was tried twice and made it worse both times; the
+reasoning is written down in `slam/core.py` so it is not tried a third time.
+
 Both of the LiDAR's own quirks are already handled in `sensors.Lidar.scan()`
 and `config.py`, and both cost hours to find:
 
