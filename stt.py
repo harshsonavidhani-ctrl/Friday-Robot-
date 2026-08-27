@@ -192,6 +192,7 @@ def endpoint(frames, max_seconds: float | None = None,
         preroll.extend(preroll_frames)
 
     voiced: list[bytes] = []
+    preroll_len = 0
     started = False
     quiet_run = 0
     voiced_run = 0
@@ -210,6 +211,10 @@ def endpoint(frames, max_seconds: float | None = None,
                 # "orward" and the transcript is wrong in a way that is
                 # very hard to debug from the text alone.
                 voiced.extend(preroll)
+                # Remembered so the length test below can measure what was
+                # SAID, not what was carried in ahead of it -- the pre-roll is
+                # up to 300 ms on its own and would mask every short blip.
+                preroll_len = len(voiced)
                 log.debug("speech started")
             elif time.monotonic() - began > start_timeout:
                 raise Silence(
@@ -219,6 +224,22 @@ def endpoint(frames, max_seconds: float | None = None,
         voiced.append(frame)
         quiet_run = 0 if speech else quiet_run + 1
         if quiet_run >= silence_frames:
+            # TOO SHORT TO BE A COMMAND? Then it was the wake word's own tail
+            # arriving through the pre-roll, not Harsh. Drop it and keep
+            # listening, rather than returning a capture of "hey Friday" and
+            # calling the turn done -- which is what made a command spoken
+            # after a natural pause vanish entirely.
+            spoken_ms = (len(voiced) - preroll_len - quiet_run) * FRAME_MS
+            if spoken_ms < config.VAD_MIN_UTTERANCE_MS:
+                log.debug("discarding a %.0f ms blip (the wake word's tail) "
+                          "and listening on", spoken_ms)
+                voiced.clear()
+                preroll.clear()
+                preroll_len = 0
+                started = False
+                quiet_run = 0
+                voiced_run = 0
+                continue
             break
         if time.monotonic() - began > max_seconds:
             log.info("hit the %.0fs utterance limit", max_seconds)

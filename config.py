@@ -178,6 +178,19 @@ VAD_START_FRAMES = 3         # consecutive 30 ms voiced frames before Friday
                              # believes speech started — one frame is a cough
 VAD_PREROLL_MS = 300         # audio kept from BEFORE speech was detected, so
                              # the first syllable is not clipped off
+# THE WAKE WORD'S OWN TAIL USED TO END THE CAPTURE. openWakeWord fires at the
+# END of "hey Friday", so a short tail of it bleeds into the capture through
+# the handover pre-roll. That tail is speech, it trips VAD_START_FRAMES, and
+# then the perfectly normal pause before Harsh actually says anything exceeds
+# VAD_SILENCE_MS -- so the capture endpointed on the wake word, transcribed
+# ~nothing, and the command that followed was never heard. Measured: a 1.9 s
+# capture containing only the tail, then "" as the transcript.
+#
+# So an endpoint carrying less voiced audio than this is treated as that tail
+# rather than as an utterance, and listening continues until LISTEN_START_
+# TIMEOUT_S. 300 ms sits above the tail and below any real word: "stop" runs
+# 400-600 ms with its plosive. Raise it and short commands start disappearing.
+VAD_MIN_UTTERANCE_MS = 300
 MAX_UTTERANCE_S = 20.0       # hard ceiling on one utterance
 LISTEN_START_TIMEOUT_S = 8.0 # give up if nobody speaks after waking
 
