@@ -116,6 +116,14 @@ class OpenWakeWord(WakeSource):
         self._thread: threading.Thread | None = None
         self._beep: Path | None = None
         self.last_score = 0.0
+        # THE COOLDOWN IS INSTANCE STATE, not a local in the detector loop,
+        # because resume() has to be able to clear it. A cooldown that outlives
+        # its turn is indistinguishable from a wake word that has stopped
+        # working -- Friday sits there scoring frames and discarding every one
+        # of them, and from across the room that is simply "she isn't hearing
+        # me any more".
+        self._cooldown_until = 0.0
+        self._peak_since_report = 0.0
 
     # -- the model --
     def model(self):
@@ -153,6 +161,11 @@ class OpenWakeWord(WakeSource):
         if self._sub is not None:
             self._sub.clear()
         self._reset_model()
+        # CLEAR THE COOLDOWN. Its only job is to stop ONE utterance scoring
+        # high across neighbouring frames and firing twice. Once the turn it
+        # belongs to is over that job is done, and carrying it into the next
+        # turn can only ever suppress a real wake. Resuming IS the next turn.
+        self._cooldown_until = 0.0
         self._paused.clear()
 
     def _reset_model(self) -> None:
@@ -166,7 +179,6 @@ class OpenWakeWord(WakeSource):
     # -- the detector thread --
     def _detect(self) -> None:
         buffer = bytearray()
-        cooldown_until = 0.0
         import numpy as np
 
         for frame in self._sub.frames():
@@ -182,8 +194,6 @@ class OpenWakeWord(WakeSource):
                 del buffer[:CHUNK_BYTES]
 
                 now = time.monotonic()
-                if now < cooldown_until:
-                    continue
                 try:
                     samples = np.frombuffer(chunk, dtype=np.int16)
                     scores = self.model().predict(samples)
@@ -194,10 +204,28 @@ class OpenWakeWord(WakeSource):
                     time.sleep(0.2)
                     continue
 
-                score = max(scores.values()) if scores else 0.0
-                self.last_score = float(score)
-                if score >= self.threshold:
-                    cooldown_until = now + config.WAKE_COOLDOWN_S
+                score = float(max(scores.values()) if scores else 0.0)
+                self.last_score = score
+                self._peak_since_report = max(self._peak_since_report, score)
+
+                # SCORING CONTINUES THROUGH THE COOLDOWN, and only the FIRING
+                # is suppressed. Skipping predict() during the cooldown, as
+                # this used to, left the classifier's internal buffer stale
+                # and hid exactly the frames worth seeing -- the ones that
+                # were loud enough to fire and were thrown away.
+                cooling = now < self._cooldown_until
+                if score >= config.WAKE_LOG_SCORE_ABOVE:
+                    note = ""
+                    if score >= self.threshold:
+                        note = "  <== over threshold"
+                        if cooling:
+                            note += (f", SUPPRESSED with "
+                                     f"{self._cooldown_until - now:.1f}s "
+                                     f"of cooldown left")
+                    log.info("wake score %.3f%s", score, note)
+
+                if score >= self.threshold and not cooling:
+                    self._cooldown_until = now + config.WAKE_COOLDOWN_S
                     self._reset_model()
                     buffer.clear()
                     log.info("wake word detected (%.2f)", score)

@@ -108,6 +108,14 @@ WAKE_VAD_THRESHOLD = 0.5
 # the capture starts mid-word and the transcript is wrong.
 WAKE_HANDOVER_MS = 400
 
+# Every scored frame at or above this is logged, so a threshold can be picked
+# from REAL DATA rather than guessed at. Set it a little under WAKE_THRESHOLD
+# and the log fills with the near-misses -- the "I said it and nothing
+# happened" frames, which are the ones worth seeing. openWakeWord's VAD gate
+# means only speech is ever scored, so this does not flood.
+# Set to 1.1 to silence it entirely.
+WAKE_LOG_SCORE_ABOVE = 0.2
+
 WAKE_BEEP = True             # short tone on wake, so Harsh knows it heard him
                              # without having to look at the face
 WAKE_BEEP_HZ = 880
