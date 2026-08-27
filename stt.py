@@ -454,6 +454,22 @@ class AudioStream:
 
 # --- transcription -------------------------------------------------------
 
+# ONE TRANSCRIPTION AT A TIME, ACROSS THE WHOLE PROCESS.
+#
+# asyncio.wait_for CANNOT KILL A THREAD. When the orchestrator's STT stage
+# times out, the whisper call underneath it keeps running to completion,
+# holding its cpu_threads the entire time. The next turn then starts a SECOND
+# transcription alongside the abandoned one, which is slower, so it times out
+# too, and leaves a third. Measured on this Pi as exactly that spiral: turn 1
+# finished in 22 s, turn 2 timed out at 30 s, turn 3 timed out having taken
+# even longer -- and from the sofa every one of them is "I said hey Friday and
+# she did nothing".
+#
+# This lock does not make the abandoned work stop; nothing can. What it does
+# is stop it being MULTIPLIED, so a slow Pi degrades instead of collapsing.
+_transcribe_lock = threading.Lock()
+
+
 def transcribe(audio: bytes, language: str | None = None) -> str:
     """Raw PCM -> text. Returns "" when nothing intelligible was said."""
     if not audio:
@@ -462,15 +478,32 @@ def transcribe(audio: bytes, language: str | None = None) -> str:
 
     # faster-whisper wants float32 in [-1, 1]; the mic gives int16.
     samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
-    segments, info = model().transcribe(
-        samples,
-        language=language or config.STT_LANGUAGE,
-        beam_size=config.STT_BEAM_SIZE,
-        vad_filter=False,               # webrtcvad already endpointed this
-    )
-    text = " ".join(segment.text.strip() for segment in segments).strip()
-    log.info("heard (%s, %.2f): %r", info.language, info.language_probability,
-             text)
+    started = time.monotonic()
+    waited = 0.0
+    if not _transcribe_lock.acquire(timeout=config.STT_QUEUE_TIMEOUT_S):
+        log.error("another transcription is still running after %.0fs — "
+                  "skipping this one rather than piling on",
+                  config.STT_QUEUE_TIMEOUT_S)
+        return ""
+    waited = time.monotonic() - started
+    try:
+        segments, info = model().transcribe(
+            samples,
+            language=language or config.STT_LANGUAGE,
+            beam_size=config.STT_BEAM_SIZE,
+            vad_filter=False,           # webrtcvad already endpointed this
+        )
+        text = " ".join(segment.text.strip() for segment in segments).strip()
+    finally:
+        _transcribe_lock.release()
+    # The ratio is logged because it is the number that decides whether the
+    # stage ceiling is sane. x3 is this Pi idle; x9 is it fighting the face.
+    heard_s = len(samples) / config.MIC_SAMPLE_RATE
+    took = time.monotonic() - started
+    log.info("heard (%s, %.2f) in %.1fs for %.1fs of audio (x%.1f realtime%s): %r",
+             info.language, info.language_probability, took, heard_s,
+             took / max(heard_s, 0.01),
+             f", {waited:.1f}s queued" if waited > 0.5 else "", text)
     return text
 
 

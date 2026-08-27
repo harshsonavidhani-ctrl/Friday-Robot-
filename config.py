@@ -246,7 +246,11 @@ WAKE_DEADTIME_MS = 350
 EMPTY_TRANSCRIPT_RETRY = True
 RETRY_LISTEN_TIMEOUT_S = 4.0   # shorter than the first wait -- if he was going
                                # to speak, he is speaking by now
-MAX_UTTERANCE_S = 20.0       # hard ceiling on one utterance
+# 20 s was a ceiling on the AUDIO that became a 3-minute ceiling on the
+# TRANSCRIPTION at x9 realtime -- so the stage timeout could never be met and
+# every long sentence was abandoned. A spoken command is rarely over 10 s, and
+# bounding it here bounds everything downstream.
+MAX_UTTERANCE_S = 10.0       # hard ceiling on one utterance
 LISTEN_START_TIMEOUT_S = 8.0 # give up if nobody speaks after waking
 
 # --- Pipeline stage deadlines ---------------------------------------------
@@ -266,7 +270,16 @@ LISTEN_START_TIMEOUT_S = 8.0 # give up if nobody speaks after waking
 #   STT     tiny/int8, 4 threads   ~x5 realtime, so ~10 s worst case at 20 s in
 #   brain   Sonnet, streamed       5-25 s depending on tool rounds
 #   tool    most are <1 s          scan_environment is the slow one at ~8 s
-STAGE_STT_TIMEOUT_S = 30.0   # transcription of one utterance
+# Measured on this Pi WITH the face running: x3 realtime at best, x9 at worst.
+# MAX_UTTERANCE_S caps the audio at 10 s, so the worst realistic case is ~90 s
+# and 30 s was guaranteed to fire on any long sentence -- which it did, three
+# turns in a row, and each abandoned transcription kept running and made the
+# next one slower. See the lock in stt.transcribe.
+STAGE_STT_TIMEOUT_S = 75.0   # transcription of one utterance
+# How long a NEW transcription waits for an abandoned one to finish before it
+# gives up. Beyond this, returning "" quickly is better than joining a queue
+# that is already the reason nothing is responding.
+STT_QUEUE_TIMEOUT_S = 20.0
 STAGE_BRAIN_TIMEOUT_S = 90.0 # the whole tool-use loop, all rounds together
 STAGE_TOOL_TIMEOUT_S = 25.0  # ONE MCP tool call. A tool that overruns comes
                              # back to the model as a tool error, so it can
