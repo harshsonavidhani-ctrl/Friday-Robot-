@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import logging
 import sys
 import threading
@@ -349,6 +350,32 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                         "TRANSCRIBING", stt.transcribe, audio,
                         timeout=config.STAGE_STT_TIMEOUT_S)
                     turn.stage("TRANSCRIBED", stages.quote(spoken))
+
+                    # NOTHING CAME BACK? Listen once more before giving up.
+                    # The capture can close on the wake word's own tail before
+                    # Harsh has started talking -- especially on a borderline
+                    # score, which fires earlier in the phrase and leaves more
+                    # of it in the buffer. Abandoning there looks exactly like
+                    # being ignored, which is the complaint this whole day of
+                    # work is about.
+                    if not spoken.strip() and config.EMPTY_TRANSCRIPT_RETRY:
+                        turn.stage("RE-LISTENING", "nothing in the first take")
+                        # No handover on the retry: the wake word is long
+                        # past, so there is nothing worth reaching back for,
+                        # and reaching back is what put it in the capture the
+                        # first time.
+                        audio = await turn.call(
+                            "CAPTURING",
+                            functools.partial(
+                                stream.capture,
+                                start_timeout=config.RETRY_LISTEN_TIMEOUT_S,
+                                handover_ms=0),
+                            timeout=config.MAX_UTTERANCE_S
+                            + config.RETRY_LISTEN_TIMEOUT_S + 5.0)
+                        spoken = await turn.call(
+                            "TRANSCRIBING", stt.transcribe, audio,
+                            timeout=config.STAGE_STT_TIMEOUT_S)
+                        turn.stage("TRANSCRIBED", stages.quote(spoken))
                 except stt.Silence as exc:
                     turn.stage("NOTHING SAID", str(exc))
                     turn.done("ABANDONED")
@@ -370,7 +397,12 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                         # Logged as its own outcome. "Heard you, understood
                         # nothing" and "never heard you" are different faults
                         # with different fixes, and they used to look the same.
-                        face.feel("confused")
+                        #
+                        # set(), not feel(): "confused" is a PIPELINE face, and
+                        # face_director.emotion() drops any name that is not in
+                        # EMOTION_FACES. Sent through feel() this never once
+                        # reached the screen.
+                        face.set("confused")
                         turn.done("ABANDONED (empty transcript)")
                 finally:
                     # RE-ARM, ALWAYS. Every path above lands here, including

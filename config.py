@@ -102,7 +102,15 @@ WAKE_WORD_MODEL = ROOT / "assets/models/wake/friday.onnx"
 # The score above which a frame counts as a wake, 0-1. Higher = fewer false
 # triggers but more misses. Tune against the real room, not in the abstract:
 #   ./venv/bin/python wake_word.py --tune
-WAKE_THRESHOLD = 0.5
+# 0.4, not 0.5, and the 0.1 was bought with measurement rather than nerve.
+# At 0.5 the real room produced ZERO false fires in 2.5 minutes (peak score
+# 0.000 -- openWakeWord's VAD gate means room tone never even reaches the
+# classifier), while a real "hey Friday" was logged at 0.480 and missed by two
+# hundredths. Spending unused false-positive headroom on catch rate is the
+# right trade for a wake word: a spurious wake is a moment of silence, a
+# missed one is a robot that ignores you.
+# Re-measure with `scripts/test_wake.py --live` before moving it again.
+WAKE_THRESHOLD = 0.4
 
 # How long after a wake before another one can fire. Stops one "hey Friday"
 # from registering two or three times as the score stays high across frames.
@@ -116,7 +124,12 @@ WAKE_VAD_THRESHOLD = 0.5
 # Audio kept from before the wake fired and handed to the VAD capture as
 # pre-roll. Covers "hey Friday move forward" said in one breath -- without it
 # the capture starts mid-word and the transcript is wrong.
-WAKE_HANDOVER_MS = 400
+# openWakeWord fires at the END of the phrase, so audio from BEFORE the fire
+# is the wake word itself, not the command -- "hey Friday move forward" in one
+# breath has the command entirely after the fire. This only has to cover the
+# model's own detection latency, so it is small. It was 400 ms, which dragged
+# most of "hey Friday" into the capture and got transcribed as an empty string.
+WAKE_HANDOVER_MS = 150
 
 # Every scored frame at or above this is logged, so a threshold can be picked
 # from REAL DATA rather than guessed at. Set it a little under WAKE_THRESHOLD
@@ -143,6 +156,21 @@ WAKE_SOURCE = "both"
 # the worst possible moment.
 MIC_CAPTURE_BUFFER_S = 3.0   # how much recent audio the capture subscription
                              # holds, so a wake can reach back for pre-roll
+
+# HOW MUCH THE WAKE DETECTOR CAN FALL BEHIND BEFORE AUDIO IS LOST. Each
+# subscription is a bounded deque that silently discards its OLDEST frame when
+# full, so this is not "how much history" -- it is how long the detector thread
+# may be descheduled before a phrase gets torn in half.
+#
+# This was 2.0 s and it was measurably too small. On a loaded Pi the dropped
+# count climbed 53 -> 127 -> 348 -> 567 across ten tries and the catch rate
+# collapsed to 4/10, with the misses scoring 0.000-0.109 -- not near misses,
+# audio that never arrived. On an idle Pi the same test drops 14 frames total
+# (a startup burst) and catches 10/10. The classifier was never the problem.
+#
+# The cost of a bigger buffer is staleness if the detector falls behind for
+# real. A late wake beats a missed one.
+MIC_WAKE_BUFFER_S = 6.0
 MIC_RESTART_BACKOFF_S = 0.5  # first retry delay if the mic stream dies
 MIC_RESTART_BACKOFF_MAX_S = 10.0
 # faster-whisper. TINY, not base — measured on this Pi 4 against 1.78 s of
@@ -191,6 +219,17 @@ VAD_PREROLL_MS = 300         # audio kept from BEFORE speech was detected, so
 # TIMEOUT_S. 300 ms sits above the tail and below any real word: "stop" runs
 # 400-600 ms with its plosive. Raise it and short commands start disappearing.
 VAD_MIN_UTTERANCE_MS = 300
+
+# AN EMPTY TRANSCRIPT IS NOT AN ANSWER, IT IS A MISSED TURN. The capture can
+# close on the wake word's own tail before Harsh has started speaking -- more
+# so on a borderline score, which fires earlier in the phrase and leaves more
+# of it behind. Whisper turns that into "", and Friday used to shrug and go
+# back to sleep, which from across the room is indistinguishable from being
+# ignored. So she listens once more instead, briefly, before giving up.
+# One retry only: two would be a robot that will not stop listening.
+EMPTY_TRANSCRIPT_RETRY = True
+RETRY_LISTEN_TIMEOUT_S = 4.0   # shorter than the first wait -- if he was going
+                               # to speak, he is speaking by now
 MAX_UTTERANCE_S = 20.0       # hard ceiling on one utterance
 LISTEN_START_TIMEOUT_S = 8.0 # give up if nobody speaks after waking
 

@@ -301,7 +301,8 @@ class OpenWakeWord(WakeSource):
         self.model()                            # fail loudly before the thread
         if self.stream is None:
             self.stream = stt.AudioStream().start()
-        self._sub = self.stream.subscribe(seconds=2.0, name="wake")
+        self._sub = self.stream.subscribe(seconds=config.MIC_WAKE_BUFFER_S,
+                                          name="wake")
         self._thread = threading.Thread(target=self._run, name="wake-detect",
                                         daemon=True)
         self._thread.start()
