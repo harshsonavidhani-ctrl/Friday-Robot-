@@ -480,27 +480,43 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
     if intent.say:
         voice.say(intent.say)
     outcome = "worked"
-    if intent.tool:
+    for tool, args in intent.plan():
         try:
             # The same ceiling the brain's tool calls get. The offline path is
             # the one that runs when everything else is already degraded, so
             # it is the last place that can afford to hang.
             result = await turn.run(
-                "TOOL", session.call_tool(intent.tool, intent.args),
-                timeout=config.STAGE_TOOL_TIMEOUT_S, detail=intent.tool)
-            text = result.content[0].text if result.content else ""
-            turn.note(f"{intent.tool} -> {text[:120]}")
+                "TOOL", session.call_tool(tool, args),
+                timeout=config.STAGE_TOOL_TIMEOUT_S, detail=tool)
+            # NOT EVERY RESULT IS TEXT. observe() comes back as ImageContent,
+            # which has no .text at all -- reading it blindly raised
+            # AttributeError and failed the whole command at its FIRST step,
+            # which for a directional move is the observe() the server insists
+            # on. Caught by the test that was meant to prove observe() worked.
+            text = " ".join(getattr(part, "text", "") or ""
+                            for part in (result.content or []))
+            kinds = ", ".join(type(part).__name__
+                              for part in (result.content or [])) or "nothing"
+            turn.note(f"{tool} -> {text[:120] or kinds}")
             if "STOPPED" in text or "refused" in text:
                 outcome = "partial"
+                # THE SAFETY INTERRUPT SPOKE. Abandon the rest of the sequence
+                # rather than driving the next leg of a plan the robot has
+                # already said it cannot carry out.
+                turn.note("refused or stopped — abandoning the rest")
+                voice.say("I had to stop.")
+                break
         except stages.StageTimeout as exc:
             voice.say("The robot didn't answer that one.")
             face.alarm("dizzy")
             outcome = "failed"
             turn.note(str(exc))
+            break
         except Exception as exc:            # noqa: BLE001
             log.error("offline command failed: %s", exc)
             face.alarm("dizzy")
             outcome = "failed"
+            break
     try:
         memory.log_event(f"offline: {intent.name}", task=intent.name,
                          outcome=outcome)
