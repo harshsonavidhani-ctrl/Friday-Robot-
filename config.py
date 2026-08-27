@@ -151,6 +151,14 @@ WAKE_LOG_SCORE_ABOVE = 0.2
 # How long the wake detector may receive NO audio at all before it says so.
 # A starved detector and a detector that simply heard nothing look identical
 # in the log otherwise -- both are silence -- and that cost an hour once.
+# Audio to discard when the detector re-arms after a turn. wait_until_quiet()
+# returns when the PLAYER exits, but the tail of Friday's own sentence is
+# still in flight through pipewire and still in the room, and it arrives a few
+# frames later -- she woke herself at 1.000 half a second after re-arming.
+# Deliberately small: anything longer starts eating a real "hey Friday" spoken
+# the instant she stops talking.
+WAKE_RESUME_SETTLE_S = 0.35
+
 WAKE_STALL_WARN_S = 20.0
 
 # How often the detector says it is alive when it has not fired. Prints

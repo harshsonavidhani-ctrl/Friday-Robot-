@@ -112,6 +112,7 @@ class OpenWakeWord(WakeSource):
         self._fired: "list[str]" = []
         self._ready = threading.Condition()
         self._paused = threading.Event()
+        self._settle_until = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._beep: Path | None = None
@@ -168,6 +169,15 @@ class OpenWakeWord(WakeSource):
         # belongs to is over that job is done, and carrying it into the next
         # turn can only ever suppress a real wake. Resuming IS the next turn.
         self._cooldown_until = 0.0
+        # SETTLE BEFORE SCORING AGAIN. clear() drops what has ARRIVED, but the
+        # tail of Friday's own reply is still in flight through pipewire and
+        # still in the air, and it lands a few frames later. Measured: turn 6
+        # woke at 1.000 exactly 0.5 s after turn 5 said LISTENING, which is
+        # faster than a person can say "hey Friday". This is NOT the cooldown
+        # being reinstated -- that is cleared above and stays cleared, because
+        # carrying it forward suppresses real wakes. This is only the handful
+        # of frames that were already on their way.
+        self._settle_until = time.monotonic() + config.WAKE_RESUME_SETTLE_S
         self._paused.clear()
 
     def _reset_model(self) -> None:
@@ -228,6 +238,9 @@ class OpenWakeWord(WakeSource):
                 scored = 0
 
             if self._paused.is_set():
+                buffer.clear()
+                continue
+            if now_f < self._settle_until:
                 buffer.clear()
                 continue
 

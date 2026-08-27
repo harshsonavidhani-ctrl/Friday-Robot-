@@ -531,7 +531,15 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
             kinds = ", ".join(type(part).__name__
                               for part in (result.content or [])) or "nothing"
             turn.note(f"{tool} -> {text[:120] or kinds}")
-            if "STOPPED" in text or "refused" in text:
+            # CASE-INSENSITIVE, and that is not a nicety. The server says
+            # "REFUSED — ..." in capitals (embodiment.py) while this tested
+            # for lowercase "refused", so a REFUSAL never aborted the
+            # sequence -- only a STOPPED did. Asked to "go left" with a stale
+            # observation, Friday had her pivot refused and then drove
+            # FORWARD anyway, because the next step ran regardless. Wrong
+            # direction, under the safety interrupt's nose.
+            low = text.lower()
+            if "stopped" in low or "refused" in low:
                 outcome = "partial"
                 # THE SAFETY INTERRUPT SPOKE. Abandon the rest of the sequence
                 # rather than driving the next leg of a plan the robot has

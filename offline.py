@@ -155,15 +155,24 @@ def _direction_intent(heard: str) -> Intent | None:
     if found in ("left", "right") and not going:
         degrees = size if unit == "deg" and size else 90.0
         degrees = -degrees if found == "left" else degrees
-        return Intent(name=found, tool="turn_degrees",
-                      args={"degrees": degrees},
-                      say=f"Turning {found}.")
+        # observe() first here too: turn_degrees is under the same freshness
+        # rule as move, so a bare "turn left" after a pause was refused for a
+        # stale look exactly like "go left" was.
+        return Intent(name=found, say=f"Turning {found}.",
+                      steps=[("observe", {}),
+                             ("turn_degrees", {"degrees": degrees})])
 
     steps: list = []
     say = ""
     if found in ("left", "right"):
         # Pivot first, then drive: travelling left IS turning and going.
         degrees = -90.0 if found == "left" else 90.0
+        # LOOK BEFORE THE PIVOT TOO. The server trusts an observation for a
+        # few seconds only, and turn_degrees is under the same rule as move.
+        # With the pivot first it was judged against whatever look happened
+        # to be lying around -- 17s old in the case that found this -- so
+        # "go left" had its turn refused every time and then drove forward.
+        steps.append(("observe", {}))
         steps.append(("turn_degrees", {"degrees": degrees}))
         say = f"Going {found}."
         drive = "forward"
