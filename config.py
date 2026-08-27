@@ -83,11 +83,21 @@ COST_LOG = LOG_DIR / "spend.jsonl"
 # replaced, which spent seconds inside whisper and dropped anything said during
 # that gap. Measured on this Pi: 17 ms per 80 ms chunk, ~21% of one core.
 #
-# ⚠ WAKE_WORD_MODEL IS A STAND-IN. friday.onnx does not exist yet, so this
-# points at openWakeWord's bundled "hey jarvis" model. Everything else about
-# the pipeline is final -- when the custom model lands, change THIS LINE ONLY.
-WAKE_WORD_MODEL = (ROOT / "venv/lib/python3.13/site-packages/openwakeword"
-                   / "resources/models/hey_jarvis_v0.1.onnx")
+# TRAINED ON THIS PI, 2026-08-27, by scripts/train_wake.py. openWakeWord ships
+# alexa / hey_jarvis / hey_mycroft / hey_marvin and there is no "hey friday" to
+# download, so this one was made: nine Piper voices saying it at three speeds,
+# augmented for distance, room and noise, against 1830 negatives -- hard ones
+# ("friday" alone, "hey" alone, "good friday", "hey fred") plus 45 s of this
+# actual room. Held-out AUC 0.9958.
+#
+# Until it existed the detector ran on the bundled hey_jarvis, which means
+# "hey Friday" could not have worked at ANY threshold. If wake detection ever
+# looks broken again, check FIRST that this file is what is loaded.
+#
+# It is trained on SYNTHETIC speech. Measure it against a real voice --
+#   ./venv/bin/python scripts/test_wake.py --live
+# -- and if it is weak the fix is real recordings of Harsh, not more Piper.
+WAKE_WORD_MODEL = ROOT / "assets/models/wake/friday.onnx"
 
 # The score above which a frame counts as a wake, 0-1. Higher = fewer false
 # triggers but more misses. Tune against the real room, not in the abstract:

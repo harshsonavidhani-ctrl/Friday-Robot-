@@ -20,6 +20,17 @@ assets/models/
 *.onnx
 *.gguf
 
+# ...EXCEPT the wake word, which is Friday's name and cannot be re-downloaded.
+# Every other model here is a fetch away (Piper voices, faster-whisper). This
+# one was trained on this Pi by scripts/train_wake.py and exists nowhere else,
+# so an SD card failure would take it with it. It is ~600 kB. Committing it is
+# the difference between "re-run the trainer" and "it's gone".
+# The room recording it trained against is NOT committed -- it is 45s of audio
+# from Harsh's home and has no business in a repo.
+!assets/models/wake/
+!assets/models/wake/friday.onnx
+assets/models/wake/ambient.wav
+
 # OS
 .DS_Store
 
