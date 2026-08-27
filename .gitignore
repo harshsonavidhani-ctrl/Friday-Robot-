@@ -29,7 +29,17 @@ assets/models/
 # from Harsh's home and has no business in a repo.
 !assets/models/wake/
 !assets/models/wake/friday.onnx
+# Harsh's own recordings of the wake word. ~40 short clips, ~2 MB. Committed
+# because they are the ONE thing here that cannot be regenerated: Piper voices
+# and whisper are a download away, the trained model is 25 minutes of CPU, and
+# these are a person standing in a room saying a phrase forty times. Lose them
+# and the only fix is to record them again.
+!assets/models/wake/samples/
+!assets/models/wake/samples/*.wav
+# The 45s room recording stays out — it is ambient audio of Harsh's home and
+# has no business in a repo.
 assets/models/wake/ambient.wav
+assets/models/wake/*.bak
 
 # OS
 .DS_Store

@@ -173,28 +173,42 @@ def record_wakes(count: int, out_dir: Path) -> int:
     start = len(existing)
     if existing:
         print(f"{start} samples already recorded; adding {count} more.")
-    print(f"\nSay \"hey Friday\" {count} times, one per prompt.")
+    print(f"\nSay \"hey Friday\" {count} times, with a short pause between each.")
     print("VARY IT ON PURPOSE -- this is the whole point:")
     print("  close up and from across the room, facing away, quietly,")
     print("  quickly, half-mumbled, mid-sentence. However you really say it.")
     print("Ctrl-C to stop early; whatever is recorded is kept.\n")
 
+    # NO KEY PRESSES. Each utterance is segmented by the SAME VAD the live
+    # capture uses, so Harsh just says it over and over with a breath between
+    # takes and every one lands on disk endpointed the way the real pipeline
+    # would endpoint it. Pressing Enter forty times also changes how you say a
+    # phrase, which is the last thing this recording wants.
     stream = stt.AudioStream().start()
     kept = 0
+    misses = 0
     try:
-        for index in range(count):
-            input(f"  [{index + 1}/{count}] press Enter, then say it: ")
+        while kept < count and misses < 6:
             try:
-                audio = stream.capture(max_seconds=3.0, start_timeout=6.0,
+                audio = stream.capture(max_seconds=3.0, start_timeout=25.0,
                                        handover_ms=0, deadtime_ms=0)
             except stt.Silence:
-                print("        heard nothing — skipping")
+                misses += 1
+                print(f"  ...nothing heard for a while ({misses}/6)")
                 continue
+            secs = len(audio) / 2 / RATE
+            if secs < 0.35:
+                print(f"  ...{secs:.2f}s — too short to be the phrase, ignored")
+                continue
+            misses = 0
             path = out_dir / f"wake_{start + kept:03d}.wav"
             stt.save_wav(audio, path)
-            secs = len(audio) / 2 / RATE
-            print(f"        saved {path.name}  ({secs:.2f}s)")
             kept += 1
+            import numpy as np
+            level = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+            db = 20 * np.log10(max(np.sqrt((level ** 2).mean()), 1) / 32768)
+            print(f"  [{kept}/{count}] {path.name}  {secs:.2f}s  {db:.0f} dBFS",
+                  flush=True)
     except KeyboardInterrupt:
         print("\n  stopped early")
     finally:
