@@ -194,6 +194,8 @@ class OpenWakeWord(WakeSource):
         # nothing" -- are separated here, the same distinction last_rms
         # already makes for a single frame.
         last_frame = time.monotonic()
+        last_beat = last_frame
+        scored = 0
         warned = False
 
         for frame in self._sub.frames():
@@ -210,6 +212,21 @@ class OpenWakeWord(WakeSource):
             elif now_f - last_frame <= config.WAKE_STALL_WARN_S:
                 warned = False
             last_frame = now_f
+
+            # HEARTBEAT. The stall warning above proves audio is ARRIVING; it
+            # cannot say whether the detector is looking at it. A detector
+            # left paused and a detector scoring everything below
+            # WAKE_LOG_SCORE_ABOVE are both perfectly silent in the log, and
+            # they need opposite fixes. So every WAKE_HEARTBEAT_S of not
+            # firing, say which one it is, out loud, with the numbers.
+            if now_f - last_beat > config.WAKE_HEARTBEAT_S:
+                log.info("wake alive: paused=%s  scored=%d chunks  "
+                         "last_score=%.3f  last_rms=%.0f  dropped=%d",
+                         self._paused.is_set(), scored, self.last_score,
+                         self.last_rms, getattr(self._sub, "dropped", -1))
+                last_beat = now_f
+                scored = 0
+
             if self._paused.is_set():
                 buffer.clear()
                 continue
@@ -220,6 +237,7 @@ class OpenWakeWord(WakeSource):
                 del buffer[:CHUNK_BYTES]
 
                 now = time.monotonic()
+                scored += 1
                 try:
                     samples = np.frombuffer(chunk, dtype=np.int16)
                     scores = self.model().predict(samples)

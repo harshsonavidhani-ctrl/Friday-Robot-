@@ -153,6 +153,12 @@ WAKE_LOG_SCORE_ABOVE = 0.2
 # in the log otherwise -- both are silence -- and that cost an hour once.
 WAKE_STALL_WARN_S = 20.0
 
+# How often the detector says it is alive when it has not fired. Prints
+# paused=, how many chunks it actually scored, the last score and the last
+# microphone level -- the four numbers that separate "left paused", "starved",
+# "deaf to him" and "the room is quiet", which are otherwise one silence.
+WAKE_HEARTBEAT_S = 30.0
+
 WAKE_BEEP = True             # short tone on wake, so Harsh knows it heard him
                              # without having to look at the face
 WAKE_BEEP_HZ = 880
@@ -185,6 +191,15 @@ MIC_CAPTURE_BUFFER_S = 3.0   # how much recent audio the capture subscription
 # The cost of a bigger buffer is staleness if the detector falls behind for
 # real. A late wake beats a missed one.
 MIC_WAKE_BUFFER_S = 6.0
+# HOW LONG A SILENT MICROPHONE IS ALLOWED TO STAY SILENT before the stream is
+# assumed wedged and torn down for the pump to rebuild. pw-cat does not die
+# when it fails -- measured on 2026-08-28 with Friday deaf after answering:
+# the process was alive, had read 0 bytes in 5 s, and had used 0 seconds of
+# CPU in 4m16s. Nothing raised, so nothing restarted. Comfortably longer than
+# any real pause in a quiet room, because a needless restart costs the ~1 s of
+# audio in flight.
+MIC_STALL_RESTART_S = 12.0
+
 MIC_RESTART_BACKOFF_S = 0.5  # first retry delay if the mic stream dies
 MIC_RESTART_BACKOFF_MAX_S = 10.0
 # faster-whisper. TINY, not base — measured on this Pi 4 against 1.78 s of

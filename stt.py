@@ -398,7 +398,10 @@ class AudioStream:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._capture: Subscription | None = None
+        self._watchdog: threading.Thread | None = None
+        self._last_frame = time.monotonic()
         self.restarts = 0
+        self.stalls = 0
 
     # -- lifecycle --
     def start(self) -> "AudioStream":
@@ -409,7 +412,35 @@ class AudioStream:
         self._thread = threading.Thread(target=self._pump, name="mic-stream",
                                         daemon=True)
         self._thread.start()
+        # A WEDGED pw-cat IS SILENT, NOT BROKEN, AND _pump ONLY RESTARTS ON AN
+        # EXCEPTION. Measured 2026-08-28 while Friday had gone deaf after
+        # answering: pw-cat alive, 0 bytes read in 5 s, 0 seconds of CPU in
+        # 4m16s. It never raises, so the read below it blocks forever, every
+        # subscription starves, and the wake detector blocks inside frames()
+        # -- which is why it logged nothing at all, not even a low score.
+        # This turns "no audio is arriving" into the exception the restart
+        # path is already written to handle.
+        self._watchdog = threading.Thread(target=self._watch, name="mic-watch",
+                                          daemon=True)
+        self._watchdog.start()
         return self
+
+    def _watch(self) -> None:
+        while not self._stop.wait(1.0):
+            quiet = time.monotonic() - self._last_frame
+            if quiet < config.MIC_STALL_RESTART_S:
+                continue
+            mic = self._mic
+            if mic is None:
+                continue
+            log.error("no audio for %.0fs — the microphone stream is wedged, "
+                      "closing it so the pump restarts it", quiet)
+            self._last_frame = time.monotonic()   # one kill per stall
+            self.stalls += 1
+            try:
+                mic.close()
+            except Exception as exc:              # noqa: BLE001
+                log.error("could not close the wedged stream: %s", exc)
 
     def close(self) -> None:
         self._stop.set()
@@ -452,6 +483,7 @@ class AudioStream:
                         return
                     with self._lock:
                         subs = list(self._subs)
+                    self._last_frame = time.monotonic()
                     for sub in subs:
                         sub.offer(frame)
                 # frames() returning means the process ended — fall through
