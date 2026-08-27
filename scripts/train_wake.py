@@ -238,12 +238,21 @@ def real_wake_clips(out_dir: Path, rng: np.random.Generator,
         audio = np.frombuffer(raw, dtype=np.int16)
         if len(audio) == 0:
             continue
+        # KEEP THE END, NOT THE BEGINNING. place() trims a long clip with
+        # clip[:CLIP_SAMPLES], which is exactly backwards for a real take.
+        # openWakeWord fires at the END of the phrase, and the VAD endpoint IS
+        # that end. 13 of the first 40 recordings run past 2.0 s -- seven of
+        # them all the way to the recorder's 3.0 s cap, where a short pause let
+        # two takes merge into one file -- so the first-2 s window fed the
+        # classifier the run-up and threw the phrase's ending away.
+        if len(audio) > CLIP_SAMPLES:
+            audio = audio[-CLIP_SAMPLES:]
         for _ in range(per_clip):
             clips.append(augment(place(audio, rng), rng))
     return clips
 
 
-def score_samples(samples_dir: Path) -> int:
+def score_samples(samples_dir: Path, model_path: Path | None = None) -> int:
     """Run the CURRENT model over the real recordings and report the scores.
 
     This is the question "is the threshold too high, or is the model wrong?"
@@ -261,11 +270,12 @@ def score_samples(samples_dir: Path) -> int:
               f"run: scripts/train_wake.py --record-wakes 40")
         return 1
 
-    model = Model(wakeword_model_paths=[str(config.WAKE_WORD_MODEL)],
+    model_path = model_path or Path(config.WAKE_WORD_MODEL)
+    model = Model(wakeword_model_paths=[str(model_path)],
                   vad_threshold=config.WAKE_VAD_THRESHOLD)
     CHUNK = 1280
     scores = []
-    print(f"\nmodel {Path(config.WAKE_WORD_MODEL).name}, "
+    print(f"\nmodel {model_path.name}, "
           f"threshold {config.WAKE_THRESHOLD}\n")
     for path in paths:
         with wave.open(str(path), "rb") as f:
@@ -450,6 +460,9 @@ def main() -> int:
     ap.add_argument("--score", action="store_true",
                     help="score the recorded samples against the CURRENT "
                          "model — tells you if it is the threshold or the model")
+    ap.add_argument("--model", type=Path,
+                    help="score THIS model instead of config.WAKE_WORD_MODEL "
+                         "— the before/after comparison runs one code path")
     ap.add_argument("--samples", type=Path,
                     default=config.ROOT / "assets/models/wake/samples",
                     help="where the real recordings live")
@@ -465,7 +478,7 @@ def main() -> int:
                         format="%(levelname)-7s %(name)s | %(message)s")
 
     if args.score:
-        return score_samples(args.samples)
+        return score_samples(args.samples, args.model)
     if args.record_wakes:
         return record_wakes(args.record_wakes, args.samples)
     if args.record_ambient:
