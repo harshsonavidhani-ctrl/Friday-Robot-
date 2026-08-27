@@ -66,6 +66,11 @@ class Intent:
 _RULES: list[tuple[str, str, str | None, dict, str]] = [
     # name        pattern                                    tool          args                                    say
     ("stop",      r"\b(stop|halt|ruk|ruko|रुक|रुको|थम)\b",   "stop",       {},                                     "Stopping."),
+    # English "turn around" only. Romanised "peeche mudo" still resolves to
+    # backward -- the go/turn verb matching above the table wins over this row
+    # -- and reversing when asked to turn around is a mild wrong answer, not a
+    # dangerous one, so it is left rather than fixed with a special case.
+    ("around",    r"\b(turn around|turn round|about turn|spin around|ghoom|peeche mud\w*|पीछे मुड़|घूम)\b", "turn_degrees", {"degrees": 180},                      "Turning around."),
     ("backward",  r"\b(back|backward|reverse|peeche|पीछे)\b", "move",      {"direction": "backward",
                                                                             "duration_seconds": 1.0},              "Going back."),
     ("forward",   r"\b(forward|ahead|aage|आगे|चल)\b",         "move",      {"direction": "forward",

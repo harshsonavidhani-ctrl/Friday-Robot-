@@ -186,6 +186,53 @@ def endpoint(frames, max_seconds: float | None = None,
     start_timeout = start_timeout or config.LISTEN_START_TIMEOUT_S
     vad = webrtcvad.Vad(config.VAD_AGGRESSIVENESS)
 
+    # THE LEVEL GATE. webrtcvad judges spectral shape and knows nothing about
+    # loudness, so this room's steady fan reads as speech in 45.6% of frames
+    # and the 700 ms of silence never arrives -- see VAD_SPEECH_MARGIN_DB.
+    # A frame counts as speech only if it is ALSO clearly above the noise
+    # floor, and the floor is estimated from frames webrtcvad calls non-speech
+    # so that talking cannot drag it up and gate Harsh out mid-sentence.
+    import numpy as _np
+    margin = float(getattr(config, "VAD_SPEECH_MARGIN_DB", 0.0) or 0.0)
+
+    # MINIMUM-STATISTICS NOISE FLOOR. Tracked from the very first frame, so
+    # there is no bootstrap window where the gate has to trust webrtcvad
+    # blindly -- that version started on the fan and closed 1.2 s later,
+    # clipping the speech it was supposed to be waiting for. The floor falls
+    # instantly to any quieter frame and creeps up slowly, so a burst of
+    # speech cannot drag it with it, and a room that genuinely gets louder is
+    # still followed within a few seconds.
+    floor_db: list[float] = []          # one-element cell, closed over
+
+    def _level_db(buf: bytes) -> float:
+        samples = _np.frombuffer(buf, dtype=_np.int16).astype(_np.float32)
+        if samples.size == 0:
+            return -120.0
+        return 20.0 * _np.log10(max(float(_np.sqrt((samples ** 2).mean())),
+                                    1.0) / 32768.0)
+
+    def _is_speech(buf: bytes, sustaining: bool = False) -> bool:
+        """webrtcvad AND clearly above the noise floor, with hysteresis.
+
+        A high bar to START (the fan must not open a capture) and a lower one
+        to SUSTAIN it. Without the second bar a single margin has to be both,
+        and it cannot: 10 dB rejected the room but cut 12% off the end of a
+        real phrase, because the quiet consonants at the end of a word fall
+        below a threshold the room never reaches.
+        """
+        raw = vad.is_speech(buf, config.MIC_SAMPLE_RATE)
+        if margin <= 0:
+            return raw
+        level = _level_db(buf)
+        if not floor_db:
+            floor_db.append(level)
+        elif level < floor_db[0]:
+            floor_db[0] = level                      # fall instantly
+        else:
+            floor_db[0] += config.VAD_FLOOR_RISE_DB  # creep up slowly
+        need = margin - (config.VAD_SUSTAIN_DROP_DB if sustaining else 0.0)
+        return raw and level >= floor_db[0] + need
+
     silence_frames = max(1, int(config.VAD_SILENCE_MS / FRAME_MS))
     preroll = collections.deque(
         maxlen=max(1, int(config.VAD_PREROLL_MS / FRAME_MS)))
@@ -207,7 +254,7 @@ def endpoint(frames, max_seconds: float | None = None,
     began = time.monotonic()
 
     for frame in frames:
-        speech = vad.is_speech(frame, config.MIC_SAMPLE_RATE)
+        speech = _is_speech(frame, sustaining=started)
         seen += 1
         if seen <= deadtime_frames:
             # Still inside the wake word. Keep it out of the pre-roll too, or

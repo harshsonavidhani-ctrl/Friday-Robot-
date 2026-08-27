@@ -205,6 +205,33 @@ VAD_AGGRESSIVENESS = 2       # webrtcvad 0-3; 3 is most aggressive at calling
                              # things noise, which drops quiet speech
 VAD_START_FRAMES = 3         # consecutive 30 ms voiced frames before Friday
                              # believes speech started — one frame is a cough
+
+# WEBRTCVAD ALONE CANNOT ENDPOINT IN THIS ROOM, and that one fact caused three
+# separate bugs. Measured on 8.8 s of the EMPTY room: at aggressiveness 2,
+# 45.6% of frames come back "speech" and there is exactly ONE gap of 700 ms in
+# the whole recording. So the capture never closed, ran to MAX_UTTERANCE_S
+# every single time, and handed Whisper ~10 s of fan noise. That produced an
+# empty transcript, which tripped the RE-LISTENING retry -- Friday appearing to
+# start listening again with no wake word -- and on the retry Whisper
+# hallucinated "I'm sorry. I'm sorry." out of the noise. One turn took 81 s.
+#
+# webrtcvad has no idea how LOUD anything is; it only judges spectral shape,
+# and a steady broadband fan at -33 dBFS looks enough like speech to it. So a
+# frame now has to be BOTH vad-speech AND this many dB above the running noise
+# floor. The floor is measured only from frames webrtcvad calls non-speech, so
+# it cannot be dragged upward by Harsh actually talking.
+# Measured in this room: floor -33 dBFS, loudest noise frame -23.7, Harsh's own
+# wake recordings peak at -7. 10 dB clears the noise and leaves him ~13 dB.
+# Set to 0 to disable the gate and go back to webrtcvad on its own.
+VAD_SPEECH_MARGIN_DB = 10.0
+VAD_SUSTAIN_DROP_DB = 7.0    # once speech HAS started, this many dB is
+                             # forgiven. Starting needs the full margin so the
+                             # fan can never open a capture; sustaining needs
+                             # less so the quiet tail of a word is not cut.
+VAD_FLOOR_RISE_DB = 0.03     # how fast the floor creeps UP per 30 ms frame.
+                             # It falls instantly. 0.03 dB/frame = 1 dB/second,
+                             # slow enough that a sentence cannot drag it up,
+                             # fast enough to follow a room that really changes.
 VAD_PREROLL_MS = 300         # audio kept from BEFORE speech was detected, so
                              # the first syllable is not clipped off
 # THE WAKE WORD'S OWN TAIL USED TO END THE CAPTURE. openWakeWord fires at the

@@ -466,6 +466,39 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
     return await one_turn(brain_obj, session, voice, face, spoken, turn)
 
 
+def _stop_reason(text: str) -> str:
+    """Turn the safety interrupt's own words into one spoken line.
+
+    The MCP result already says exactly why it stopped -- "something is 219 mm
+    ahead, inside the 250 mm stop distance (ToF) (clearance 219 mm)" -- and
+    Friday used to answer all of that with "I had to stop.", which tells Harsh
+    nothing he could act on. He cannot see the ToF reading; the whole point of
+    a voice is to hand him what only the robot knows.
+
+    Kept to ONE short natural line, per the narration rules: distance in the
+    unit a person would actually say, no sensor jargon, no numbers read out to
+    the millimetre.
+    """
+    import re
+    match = re.search(r"clearance\s+(\d+(?:\.\d+)?)\s*mm", text)
+    if not match:
+        # Refused for a reason with no distance in it -- an observe() that has
+        # gone stale, a tool that said no. Say that plainly rather than
+        # inventing a measurement.
+        if "refused" in text.lower():
+            return "I stopped — the robot refused that one."
+        return "Something's in the way, so I stopped."
+    mm = float(match.group(1))
+    if mm < 100:
+        how_far = f"only about {mm / 10:.0f} centimetres"
+    elif mm < 1000:
+        how_far = f"about {mm / 10:.0f} centimetres"
+    else:
+        how_far = f"about {mm / 1000:.1f} metres"
+    where = "ahead" if "ahead" in text else "in the way"
+    return f"Something's {where}, {how_far} off. I've stopped."
+
+
 async def _run_offline(intent, session, voice: Voice, face: Face,
                        turn: "stages.Turn | None" = None) -> None:
     """Carry out a locally-understood command, still through the MCP server.
@@ -504,7 +537,7 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
                 # rather than driving the next leg of a plan the robot has
                 # already said it cannot carry out.
                 turn.note("refused or stopped — abandoning the rest")
-                voice.say("I had to stop.")
+                voice.say(_stop_reason(text))
                 break
         except stages.StageTimeout as exc:
             voice.say("The robot didn't answer that one.")
