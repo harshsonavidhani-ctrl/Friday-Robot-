@@ -40,6 +40,18 @@ import wake_word                                         # noqa: E402
 log = logging.getLogger("test.wake")
 
 
+def loudness(detector) -> str:
+    """How loud the last window of microphone audio actually was, in dBFS."""
+    try:
+        import numpy as np
+        rms = detector._peak_rms_since_report
+        dropped = getattr(detector._sub, "dropped", 0)
+        note = f", {dropped} frames dropped" if dropped else ""
+        return f"{20 * np.log10(max(rms, 1) / 32768):.0f} dBFS{note}"
+    except Exception as exc:                              # noqa: BLE001
+        return f"unknown ({type(exc).__name__})"
+
+
 def phrase_for_model() -> str:
     """The phrase the CURRENT model listens for."""
     name = Path(config.WAKE_WORD_MODEL).name.lower()
@@ -51,8 +63,9 @@ def phrase_for_model() -> str:
     return "hey Friday"
 
 
-def run(tries: int, live: bool, settle: float, window: float) -> int:
-    detector = wake_word.OpenWakeWord()
+def run(tries: int, live: bool, settle: float, window: float,
+        threshold: float | None = None) -> int:
+    detector = wake_word.OpenWakeWord(threshold=threshold)
     detector.model()
     stream = stt.AudioStream().start()
     detector.stream = stream
@@ -79,6 +92,7 @@ def run(tries: int, live: bool, settle: float, window: float) -> int:
         with detector._ready:
             detector._fired.clear()
         detector._peak_since_report = 0.0
+        detector._peak_rms_since_report = 0.0
 
         if live:
             input(f"  [{attempt}/{tries}] press Enter, then say it: ")
@@ -99,8 +113,14 @@ def run(tries: int, live: bool, settle: float, window: float) -> int:
         peak = detector._peak_since_report
         peaks.append(peak)
         caught += hit
+        # THE MICROPHONE LEVEL IS REPORTED TOO, because a miss has two very
+        # different causes and the score alone cannot tell them apart:
+        # a low score with audio present means the model did not recognise it;
+        # a low score with NO audio present means the sound never arrived, and
+        # no threshold anywhere will ever fix that.
+        level = loudness(detector)
         print(f"  [{attempt}/{tries}] {'CAUGHT' if hit else 'MISSED'}"
-              f"   peak score {peak:.3f}")
+              f"   peak score {peak:.3f}   mic {level}")
 
         # THE COOLDOWN IS CLEARED BETWEEN TRIES, exactly as a finished turn
         # clears it. A run that catches the first and misses the rest is the
@@ -133,10 +153,13 @@ def main() -> int:
     ap.add_argument("--settle", type=float, default=2.0)
     ap.add_argument("--window", type=float, default=6.0,
                     help="seconds to wait for a detection after each try")
+    ap.add_argument("--threshold", type=float, default=None,
+                    help="override config.WAKE_THRESHOLD for this run")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)-7s %(name)s | %(message)s")
-    return run(args.tries, args.live, args.settle, args.window)
+    return run(args.tries, args.live, args.settle, args.window,
+               args.threshold)
 
 
 if __name__ == "__main__":

@@ -124,6 +124,8 @@ class OpenWakeWord(WakeSource):
         # me any more".
         self._cooldown_until = 0.0
         self._peak_since_report = 0.0
+        self.last_rms = 0.0
+        self._peak_rms_since_report = 0.0
 
     # -- the model --
     def model(self):
@@ -207,6 +209,16 @@ class OpenWakeWord(WakeSource):
                 score = float(max(scores.values()) if scores else 0.0)
                 self.last_score = score
                 self._peak_since_report = max(self._peak_since_report, score)
+                # HOW LOUD THE AUDIO ACTUALLY WAS. A low score has two
+                # completely different causes and the score alone cannot
+                # separate them: the model did not recognise what it heard, or
+                # nothing reached it at all. The second is a dead microphone,
+                # a muted card or a dropped stream, and no threshold anywhere
+                # will ever fix it.
+                self.last_rms = float(np.sqrt(
+                    (samples.astype(np.float32) ** 2).mean()))
+                self._peak_rms_since_report = max(
+                    self._peak_rms_since_report, self.last_rms)
 
                 # SCORING CONTINUES THROUGH THE COOLDOWN, and only the FIRING
                 # is suppressed. Skipping predict() during the cooldown, as

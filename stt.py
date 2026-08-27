@@ -246,9 +246,18 @@ class Subscription:
             maxlen=max(1, int(seconds * 1000 / FRAME_MS)))
         self._ready = threading.Condition()
         self._closed = False
+        # DROPS ARE COUNTED because they are otherwise invisible. A full deque
+        # discards its oldest frame silently, and for the wake detector that
+        # means audio torn out of the middle of a phrase -- which scores like
+        # a phrase that was never said rather than like a near miss. On a Pi
+        # already running at load 9 this is a real possibility, not a
+        # theoretical one, so it is measured instead of assumed.
+        self.dropped = 0
 
     def offer(self, frame: bytes) -> None:
         with self._ready:
+            if len(self._frames) == self._frames.maxlen:
+                self.dropped += 1
             self._frames.append(frame)
             self._ready.notify()
 
