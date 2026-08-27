@@ -160,7 +160,14 @@ class Voice:
                     return
                 sentence = self._work.pop(0)
             self._speaking = True
-            self.face.set("speaking")
+            # THE SPEAKING FACE IS TTS'S JOB, NOT THIS ONE'S. Setting it here
+            # too is what left Friday stuck talking: tts._mouth_moving saves
+            # the CURRENT emotion so it can put it back afterwards, and if
+            # this line has already set "speaking" then that is what it saves
+            # and that is what it restores. The face came back to "speaking"
+            # at the end of every sentence and stayed there.
+            # tts owns it because tts is the only thing that knows when the
+            # audio actually starts and stops.
             try:
                 tts.speak(sentence)
             except Exception as exc:        # noqa: BLE001

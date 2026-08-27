@@ -445,6 +445,13 @@ def _mouth_moving():
     previous = None
     try:
         previous = face_control.get_emotion()
+        # NEVER RESTORE INTO "speaking". If the face is somehow already
+        # showing it when we get here, something else set it and putting it
+        # back would leave Friday talking forever with nothing to say. Settle
+        # to neutral instead -- wrong for one beat, rather than stuck for good.
+        if previous == "speaking":
+            log.debug("face was already 'speaking' — will settle to neutral")
+            previous = config.FACE_DEFAULT_EMOTION
         face_control.set_emotion("speaking")
     except Exception as exc:                        # noqa: BLE001
         log.debug("could not show the speaking face: %s", exc)
