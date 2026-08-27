@@ -153,6 +153,134 @@ def ambient_windows(path: Path, rng: np.random.Generator,
     return out
 
 
+def record_wakes(count: int, out_dir: Path) -> int:
+    """Record Harsh actually saying the wake word, N times.
+
+    THIS IS THE PART SYNTHETIC DATA CANNOT DO. Nine Piper voices give a model
+    that catches Piper reliably and a real person unreliably -- which is
+    exactly what happened: 10/10 from the speaker, misses from the sofa. TTS
+    has no breath, no room, no accent, and none of the sloppiness of a phrase
+    somebody has said ten thousand times. A few dozen real samples are worth
+    more than another thousand synthetic ones.
+
+    Each take is endpointed with the same VAD the live capture uses, so what
+    lands on disk is the phrase and not the silence around it.
+    """
+    import stt
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    existing = sorted(out_dir.glob("wake_*.wav"))
+    start = len(existing)
+    if existing:
+        print(f"{start} samples already recorded; adding {count} more.")
+    print(f"\nSay \"hey Friday\" {count} times, one per prompt.")
+    print("VARY IT ON PURPOSE -- this is the whole point:")
+    print("  close up and from across the room, facing away, quietly,")
+    print("  quickly, half-mumbled, mid-sentence. However you really say it.")
+    print("Ctrl-C to stop early; whatever is recorded is kept.\n")
+
+    stream = stt.AudioStream().start()
+    kept = 0
+    try:
+        for index in range(count):
+            input(f"  [{index + 1}/{count}] press Enter, then say it: ")
+            try:
+                audio = stream.capture(max_seconds=3.0, start_timeout=6.0,
+                                       handover_ms=0, deadtime_ms=0)
+            except stt.Silence:
+                print("        heard nothing — skipping")
+                continue
+            path = out_dir / f"wake_{start + kept:03d}.wav"
+            stt.save_wav(audio, path)
+            secs = len(audio) / 2 / RATE
+            print(f"        saved {path.name}  ({secs:.2f}s)")
+            kept += 1
+    except KeyboardInterrupt:
+        print("\n  stopped early")
+    finally:
+        stream.close()
+
+    total = len(list(out_dir.glob("wake_*.wav")))
+    print(f"\n{kept} recorded, {total} in total at {out_dir}")
+    print("Now retrain:  ./venv/bin/python scripts/train_wake.py")
+    return 0 if total else 1
+
+
+def real_wake_clips(out_dir: Path, rng: np.random.Generator,
+                    per_clip: int) -> list[np.ndarray]:
+    """Load Harsh's own recordings and augment them hard.
+
+    Weighted far above the synthetic ones by sheer repetition: these are the
+    only samples that describe the voice the robot actually has to answer to.
+    """
+    import wave
+    clips: list[np.ndarray] = []
+    for path in sorted(out_dir.glob("wake_*.wav")):
+        try:
+            with wave.open(str(path), "rb") as f:
+                raw = f.readframes(f.getnframes())
+        except Exception:                                 # noqa: BLE001
+            continue
+        audio = np.frombuffer(raw, dtype=np.int16)
+        if len(audio) == 0:
+            continue
+        for _ in range(per_clip):
+            clips.append(augment(place(audio, rng), rng))
+    return clips
+
+
+def score_samples(samples_dir: Path) -> int:
+    """Run the CURRENT model over the real recordings and report the scores.
+
+    This is the question "is the threshold too high, or is the model wrong?"
+    turned into a number. A real "hey Friday" scoring 0.30 means lower the
+    threshold and you are done today. One scoring 0.02 means the model has
+    never heard a voice like this and no threshold will save it -- retrain.
+    """
+    import numpy as np
+    from openwakeword.model import Model
+    import wave
+
+    paths = sorted(samples_dir.glob("wake_*.wav"))
+    if not paths:
+        print(f"no recordings in {samples_dir} — "
+              f"run: scripts/train_wake.py --record-wakes 40")
+        return 1
+
+    model = Model(wakeword_model_paths=[str(config.WAKE_WORD_MODEL)],
+                  vad_threshold=config.WAKE_VAD_THRESHOLD)
+    CHUNK = 1280
+    scores = []
+    print(f"\nmodel {Path(config.WAKE_WORD_MODEL).name}, "
+          f"threshold {config.WAKE_THRESHOLD}\n")
+    for path in paths:
+        with wave.open(str(path), "rb") as f:
+            audio = np.frombuffer(f.readframes(f.getnframes()), dtype=np.int16)
+        model.reset()
+        peak = 0.0
+        for i in range(0, len(audio) - CHUNK + 1, CHUNK):
+            out = model.predict(audio[i:i + CHUNK])
+            peak = max(peak, max(out.values()) if out else 0.0)
+        scores.append(peak)
+        mark = "caught" if peak >= config.WAKE_THRESHOLD else "MISSED"
+        print(f"  {path.name}  {peak:5.3f}  {mark}")
+
+    scores = np.array(scores)
+    caught = float((scores >= config.WAKE_THRESHOLD).mean())
+    print(f"\n{caught:.0%} would fire at {config.WAKE_THRESHOLD}")
+    print(f"scores: min {scores.min():.3f}  median {np.median(scores):.3f}  "
+          f"max {scores.max():.3f}")
+    for t in (0.1, 0.2, 0.3, 0.4, 0.5):
+        print(f"  at {t}: catches {float((scores >= t).mean()):5.0%}")
+    if np.median(scores) < 0.1:
+        print("\nThe model does not recognise this voice at all. Retrain with "
+              "these samples -- no threshold fixes this.")
+    elif np.median(scores) < config.WAKE_THRESHOLD:
+        print("\nThe voice IS recognised but scores under the threshold. "
+              "Lowering it helps today; retraining helps properly.")
+    return 0
+
+
 def record_ambient(seconds: float, path: Path) -> int:
     """Record the real room, for negatives that actually match where Friday lives."""
     import subprocess, os
@@ -180,7 +308,8 @@ def record_ambient(seconds: float, path: Path) -> int:
 
 
 def build_dataset(rng: np.random.Generator, ambient: Path,
-                  per_clip: int) -> tuple[np.ndarray, np.ndarray]:
+                  per_clip: int,
+                  samples_dir: Path | None = None) -> tuple[np.ndarray, np.ndarray]:
     from piper import PiperVoice
 
     positives: list[np.ndarray] = []
@@ -208,6 +337,19 @@ def build_dataset(rng: np.random.Generator, ambient: Path,
             for _ in range(max(1, per_clip // 3)):
                 negatives.append(augment(place(clip, rng), rng))
         del voice
+
+    # HARSH'S OWN VOICE, WEIGHTED HEAVILY. Each real take is augmented far more
+    # times than a synthetic one, because there are far fewer of them and they
+    # are the only samples that describe the voice this robot actually has to
+    # answer. Without them the model catches Piper and misses the person.
+    real = real_wake_clips(samples_dir, rng, per_clip * 4) if samples_dir else []
+    if real:
+        takes = len(list(samples_dir.glob('wake_*.wav')))
+        print(f"  + {len(real)} clips from {takes} REAL recordings of Harsh")
+        positives.extend(real)
+    else:
+        print("  ! no real voice samples — the model will catch Piper and miss "
+              "a person.\n    Fix with: scripts/train_wake.py --record-wakes 40")
 
     room = ambient_windows(ambient, rng, count=max(400, len(positives)))
     if room:
@@ -288,6 +430,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--record-ambient", type=float, metavar="SECONDS",
                     help="record room noise for negatives, then exit")
+    ap.add_argument("--record-wakes", type=int, metavar="N",
+                    help="record yourself saying the wake word N times, then "
+                         "exit. THIS is what makes it catch a real voice.")
+    ap.add_argument("--score", action="store_true",
+                    help="score the recorded samples against the CURRENT "
+                         "model — tells you if it is the threshold or the model")
+    ap.add_argument("--samples", type=Path,
+                    default=config.ROOT / "assets/models/wake/samples",
+                    help="where the real recordings live")
     ap.add_argument("--ambient", type=Path,
                     default=config.ROOT / "assets/models/wake/ambient.wav")
     ap.add_argument("--out", type=Path,
@@ -299,11 +450,16 @@ def main() -> int:
     logging.basicConfig(level=logging.WARNING,
                         format="%(levelname)-7s %(name)s | %(message)s")
 
+    if args.score:
+        return score_samples(args.samples)
+    if args.record_wakes:
+        return record_wakes(args.record_wakes, args.samples)
     if args.record_ambient:
         return record_ambient(args.record_ambient, args.ambient)
 
     rng = np.random.default_rng(args.seed)
-    clips, labels = build_dataset(rng, args.ambient, args.per_clip)
+    clips, labels = build_dataset(rng, args.ambient, args.per_clip,
+                                  samples_dir=args.samples)
     features = embed(clips)
 
     from sklearn.model_selection import train_test_split
