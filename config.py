@@ -109,8 +109,16 @@ WAKE_WORD_MODEL = ROOT / "assets/models/wake/friday.onnx"
 # hundredths. Spending unused false-positive headroom on catch rate is the
 # right trade for a wake word: a spurious wake is a moment of silence, a
 # missed one is a robot that ignores you.
+# RAISED 0.4 -> 0.5 on 2026-08-28, and it cost nothing. After the retrain the
+# catch rate on Harsh's 40 recordings is FLAT at 80% from 0.2 all the way to
+# 0.5 -- the model stopped being ambiguous, so the threshold no longer trades
+# catches against false fires the way it did when it was picked. What forced
+# it: a false wake logged at 0.419, nineteen thousandths over the old bar,
+# while every genuine wake that night scored 0.69, 0.70, 0.72, 0.76, 0.89,
+# 0.97, 0.98, 0.99, 1.00, 1.00 and the live test's WEAKEST was 0.595. There is
+# a wide empty gap between the two, and 0.5 sits in it.
 # Re-measure with `scripts/test_wake.py --live` before moving it again.
-WAKE_THRESHOLD = 0.4
+WAKE_THRESHOLD = 0.5
 
 # How long after a wake before another one can fire. Stops one "hey Friday"
 # from registering two or three times as the score stays high across frames.
