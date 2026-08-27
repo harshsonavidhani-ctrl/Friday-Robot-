@@ -162,7 +162,8 @@ class Microphone:
 
 def endpoint(frames, max_seconds: float | None = None,
              start_timeout: float | None = None,
-             preroll_frames: list[bytes] | None = None) -> bytes:
+             preroll_frames: list[bytes] | None = None,
+             deadtime_ms: int = 0) -> bytes:
     """Consume 30 ms frames until the speaker stops. Raises Silence if none.
 
     Split out of Microphone.listen so the SAME endpointing runs whether the
@@ -191,6 +192,13 @@ def endpoint(frames, max_seconds: float | None = None,
     if preroll_frames:
         preroll.extend(preroll_frames)
 
+    # THE WAKE WORD'S OWN TAIL LIVES IN HERE. openWakeWord fires at the end of
+    # the phrase, so speech in the first deadtime_ms is what Friday just heard
+    # herself being called, not what she is being asked. Refusing to start on
+    # it is what stops the capture closing before Harsh has spoken.
+    deadtime_frames = int(deadtime_ms / FRAME_MS) if deadtime_ms else 0
+    seen = 0
+
     voiced: list[bytes] = []
     preroll_len = 0
     started = False
@@ -200,6 +208,11 @@ def endpoint(frames, max_seconds: float | None = None,
 
     for frame in frames:
         speech = vad.is_speech(frame, config.MIC_SAMPLE_RATE)
+        seen += 1
+        if seen <= deadtime_frames:
+            # Still inside the wake word. Keep it out of the pre-roll too, or
+            # it is prepended the moment real speech does start.
+            continue
 
         if not started:
             preroll.append(frame)
@@ -414,7 +427,8 @@ class AudioStream:
     # -- capture --
     def capture(self, max_seconds: float | None = None,
                 start_timeout: float | None = None,
-                handover_ms: int | None = None) -> bytes:
+                handover_ms: int | None = None,
+                deadtime_ms: int | None = None) -> bytes:
         """VAD-endpoint one utterance from the shared stream.
 
         The capture subscription exists from start-up and is never drained
@@ -427,12 +441,15 @@ class AudioStream:
             raise STTError("audio stream is not started")
         handover_ms = (config.WAKE_HANDOVER_MS if handover_ms is None
                        else handover_ms)
+        deadtime_ms = (config.WAKE_DEADTIME_MS if deadtime_ms is None
+                       else deadtime_ms)
         keep = max(0, int(handover_ms / FRAME_MS))
         backlog = self._capture.drain()
         return endpoint(self._capture.frames(),
                         max_seconds=max_seconds,
                         start_timeout=start_timeout,
-                        preroll_frames=backlog[-keep:] if keep else None)
+                        preroll_frames=backlog[-keep:] if keep else None,
+                        deadtime_ms=deadtime_ms)
 
 
 # --- transcription -------------------------------------------------------

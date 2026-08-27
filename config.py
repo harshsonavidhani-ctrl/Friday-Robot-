@@ -129,7 +129,8 @@ WAKE_VAD_THRESHOLD = 0.5
 # breath has the command entirely after the fire. This only has to cover the
 # model's own detection latency, so it is small. It was 400 ms, which dragged
 # most of "hey Friday" into the capture and got transcribed as an empty string.
-WAKE_HANDOVER_MS = 150
+WAKE_HANDOVER_MS = 0            # see WAKE_DEADTIME_MS: any pre-roll here is
+                             # pre-roll OF THE WAKE WORD itself
 
 # Every scored frame at or above this is logged, so a threshold can be picked
 # from REAL DATA rather than guessed at. Set it a little under WAKE_THRESHOLD
@@ -219,6 +220,21 @@ VAD_PREROLL_MS = 300         # audio kept from BEFORE speech was detected, so
 # TIMEOUT_S. 300 ms sits above the tail and below any real word: "stop" runs
 # 400-600 ms with its plosive. Raise it and short commands start disappearing.
 VAD_MIN_UTTERANCE_MS = 300
+
+# DEAD TIME AFTER THE WAKE, during which the capture refuses to believe speech
+# has started. openWakeWord fires at the END of "hey Friday", so the first
+# couple of hundred milliseconds of the capture are the wake word's own tail --
+# measured at ~450 ms here, which sailed straight past the 300 ms length guard
+# above and endpointed the capture at 1.3 s, before Harsh had said anything.
+#
+# Length could not separate them: a real "stop" is 400-600 ms too. TIME can --
+# the tail is contiguous with the wake, and a command never is, because Friday
+# beeps first and Harsh waits for it.
+#
+# The cost is "hey Friday move forward" said in one unbroken breath, where
+# "move" could start inside this window. That is the rarer way to talk to her,
+# and the beep actively teaches the other one.
+WAKE_DEADTIME_MS = 350
 
 # AN EMPTY TRANSCRIPT IS NOT AN ANSWER, IT IS A MISSED TURN. The capture can
 # close on the wake word's own tail before Harsh has started speaking -- more

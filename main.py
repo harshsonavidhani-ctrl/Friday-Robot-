@@ -369,7 +369,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                             functools.partial(
                                 stream.capture,
                                 start_timeout=config.RETRY_LISTEN_TIMEOUT_S,
-                                handover_ms=0),
+                                handover_ms=0, deadtime_ms=0),
                             timeout=config.MAX_UTTERANCE_S
                             + config.RETRY_LISTEN_TIMEOUT_S + 5.0)
                         spoken = await turn.call(

@@ -95,6 +95,7 @@ class FaceDirector:
         self._until = 0.0            # when it expires (0 = holds until replaced)
         self._last_activity = time.monotonic()
         self._idle_stage = 0
+        self._pending: tuple[str, int, float] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
@@ -181,10 +182,30 @@ class FaceDirector:
             # Debounce applies even to forced pipeline changes: force is about
             # outranking a lingering emotion, not about being allowed to
             # flicker. Only safety, handled above, skips this.
+            #
+            # TWO CORRECTIONS, both from Harsh watching the real screen and
+            # saying the order was wrong.
+            #
+            # 1. IDLE NEVER DEBOUNCES A REAL STATE. The drift thread flips the
+            #    face to bored/sleepy/sleeping on its own schedule, and if a
+            #    wake landed within FACE_MIN_DWELL_S of one of those, the
+            #    "listening" face was thrown away and the next thing on screen
+            #    was "thinking". Friday looked like she skipped listening
+            #    entirely. Idle animation must never outrank what she is
+            #    actually doing.
+            #
+            # 2. A DEBOUNCED CHANGE IS DEFERRED, NOT DISCARDED. This used to
+            #    `return` and lose the request outright, so any state that
+            #    arrived too soon after another simply never appeared. It is
+            #    now remembered and applied by _step() the moment the dwell is
+            #    up -- late by a fraction of a second, rather than missing.
             if (now - self._since < config.FACE_MIN_DWELL_S
-                    and name != self._current):
-                log.debug("%s debounced behind %s", name, self._current)
+                    and name != self._current
+                    and priority <= self._priority):
+                log.debug("%s deferred behind %s", name, self._current)
+                self._pending = (name, priority, hold)
                 return
+            self._pending = None
             self._apply(name, priority, hold)
 
     def _expired(self, now: float) -> bool:
@@ -227,6 +248,14 @@ class FaceDirector:
     def _step(self) -> None:
         now = time.monotonic()
         with self._lock:
+            # A face that was deferred behind the dwell gets its turn as soon
+            # as the dwell is over, so nothing requested is ever simply lost.
+            if (self._pending is not None
+                    and now - self._since >= config.FACE_MIN_DWELL_S):
+                name, priority, hold = self._pending
+                self._pending = None
+                self._apply(name, priority, hold)
+                return
             # An expired emotion eases back to neutral.
             if self._expired(now):
                 self._apply(config.FACE_DEFAULT_EMOTION, IDLE, hold=0.0)
