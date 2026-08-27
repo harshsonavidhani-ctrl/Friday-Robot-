@@ -260,6 +260,12 @@ VAD_START_FRAMES = 3         # consecutive 30 ms voiced frames before Friday
 # wake recordings peak at -7. 10 dB clears the noise and leaves him ~13 dB.
 # Set to 0 to disable the gate and go back to webrtcvad on its own.
 VAD_SPEECH_MARGIN_DB = 10.0
+# How many CONSECUTIVE below-full-margin frames may still count as speech
+# after a strong one. 30 ms each, so 25 is 0.75 s -- long enough to carry the
+# quiet tail of a word, short enough that room noise cannot hold a capture
+# open on its own. Unbounded, it did exactly that.
+VAD_SUSTAIN_FRAMES = 25
+
 VAD_SUSTAIN_DROP_DB = 7.0    # once speech HAS started, this many dB is
                              # forgiven. Starting needs the full margin so the
                              # fan can never open a capture; sustaining needs

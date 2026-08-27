@@ -203,6 +203,7 @@ def endpoint(frames, max_seconds: float | None = None,
     # speech cannot drag it with it, and a room that genuinely gets louder is
     # still followed within a few seconds.
     floor_db: list[float] = []          # one-element cell, closed over
+    strong: list[int] = [0]             # frames since the last full-margin one
 
     def _level_db(buf: bytes) -> float:
         samples = _np.frombuffer(buf, dtype=_np.int16).astype(_np.float32)
@@ -230,8 +231,22 @@ def endpoint(frames, max_seconds: float | None = None,
             floor_db[0] = level                      # fall instantly
         else:
             floor_db[0] += config.VAD_FLOOR_RISE_DB  # creep up slowly
-        need = margin - (config.VAD_SUSTAIN_DROP_DB if sustaining else 0.0)
-        return raw and level >= floor_db[0] + need
+        if not raw:
+            return False
+        if level >= floor_db[0] + margin:
+            strong[0] = 0                    # a full-margin frame, right now
+            return True
+        # BELOW THE FULL BAR. Forgivable only just after a strong frame -- the
+        # quiet consonants ending a word -- and only for a bounded run of
+        # them. Without the bound, room noise sitting a few dB over the floor
+        # sustained a capture that a noise burst had opened, and it ran to
+        # MAX_UTTERANCE_S exactly as before the gate existed: 8.8 s of
+        # nothing, transcribed as ''. Counted in FRAMES, not seconds, so the
+        # behaviour is identical when replayed offline from a file.
+        strong[0] += 1
+        if not sustaining or strong[0] > config.VAD_SUSTAIN_FRAMES:
+            return False
+        return level >= floor_db[0] + (margin - config.VAD_SUSTAIN_DROP_DB)
 
     silence_frames = max(1, int(config.VAD_SILENCE_MS / FRAME_MS))
     preroll = collections.deque(
