@@ -183,9 +183,33 @@ class OpenWakeWord(WakeSource):
         buffer = bytearray()
         import numpy as np
 
+        # A STALLED DETECTOR IS SILENT, WHICH IS THE WORST WAY TO FAIL.
+        # Twice on 2026-08-28 the loop stopped firing after a capture that
+        # ended in Silence: the thread was alive, the mic was delivering
+        # audio (-26 dBFS measured), and a wake phrase played through
+        # Friday's OWN speaker got no reaction at all. Nothing was logged,
+        # because scores are only logged above WAKE_LOG_SCORE_ABOVE and a
+        # detector receiving no frames produces no scores. So the two states
+        # that look identical from the log -- "heard nothing" and "was handed
+        # nothing" -- are separated here, the same distinction last_rms
+        # already makes for a single frame.
+        last_frame = time.monotonic()
+        warned = False
+
         for frame in self._sub.frames():
             if self._stop.is_set():
                 return
+            now_f = time.monotonic()
+            if now_f - last_frame > config.WAKE_STALL_WARN_S and not warned:
+                log.warning(
+                    "wake detector got NO audio for %.0fs (paused=%s, "
+                    "dropped=%d) — it was starved, not deaf",
+                    now_f - last_frame, self._paused.is_set(),
+                    getattr(self._sub, "dropped", -1))
+                warned = True
+            elif now_f - last_frame <= config.WAKE_STALL_WARN_S:
+                warned = False
+            last_frame = now_f
             if self._paused.is_set():
                 buffer.clear()
                 continue

@@ -140,6 +140,11 @@ WAKE_HANDOVER_MS = 0            # see WAKE_DEADTIME_MS: any pre-roll here is
 # Set to 1.1 to silence it entirely.
 WAKE_LOG_SCORE_ABOVE = 0.2
 
+# How long the wake detector may receive NO audio at all before it says so.
+# A starved detector and a detector that simply heard nothing look identical
+# in the log otherwise -- both are silence -- and that cost an hour once.
+WAKE_STALL_WARN_S = 20.0
+
 WAKE_BEEP = True             # short tone on wake, so Harsh knows it heard him
                              # without having to look at the face
 WAKE_BEEP_HZ = 880
