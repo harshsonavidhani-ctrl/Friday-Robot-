@@ -162,6 +162,30 @@ VAD_PREROLL_MS = 300         # audio kept from BEFORE speech was detected, so
                              # the first syllable is not clipped off
 MAX_UTTERANCE_S = 20.0       # hard ceiling on one utterance
 LISTEN_START_TIMEOUT_S = 8.0 # give up if nobody speaks after waking
+
+# --- Pipeline stage deadlines ---------------------------------------------
+# WHY THESE EXIST. The failure that prompted them looked like "Friday hears me
+# and then does nothing": the wake word fired, the face changed, and the turn
+# then sat inside some stage forever with nothing in the log to say which one.
+# A stage that overruns now ABORTS, says so out loud, and re-arms the wake
+# word -- a Friday that admits it lost the thread is worth far more than one
+# that goes quiet and looks broken.
+#
+# Capture is deliberately absent: it is already bounded by MAX_UTTERANCE_S and
+# LISTEN_START_TIMEOUT_S above, which are the same mechanism by another name.
+#
+# Every value is a CEILING, not a target. Set them well above the measured
+# warm time or a slow-but-working turn gets killed for no reason. Measured on
+# this Pi with the other services running:
+#   STT     tiny/int8, 4 threads   ~x5 realtime, so ~10 s worst case at 20 s in
+#   brain   Sonnet, streamed       5-25 s depending on tool rounds
+#   tool    most are <1 s          scan_environment is the slow one at ~8 s
+STAGE_STT_TIMEOUT_S = 30.0   # transcription of one utterance
+STAGE_BRAIN_TIMEOUT_S = 90.0 # the whole tool-use loop, all rounds together
+STAGE_TOOL_TIMEOUT_S = 25.0  # ONE MCP tool call. A tool that overruns comes
+                             # back to the model as a tool error, so it can
+                             # apologise or try something else, rather than
+                             # taking the turn down with it.
 # Downloaded 2026-08-23 into assets/models/ (gitignored, fetched with
 # `python -m piper.download_voices --download-dir assets/models/piper NAME`).
 #

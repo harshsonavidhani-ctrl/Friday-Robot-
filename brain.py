@@ -28,6 +28,7 @@ matters.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -310,11 +311,29 @@ class Brain:
                 if on_tool:
                     on_tool(block.name, dict(block.input))
                 log.info("tool %s %s", block.name, block.input)
+                started = time.monotonic()
                 try:
-                    outcome = await session.call_tool(block.name,
-                                                      dict(block.input))
+                    # A TOOL CALL GETS A CEILING. Without one a wedged serial
+                    # port or a camera that never returns takes the whole turn
+                    # down silently -- the command is heard, the tool never
+                    # comes back, and Friday simply stops. The timeout comes
+                    # back to the model as a tool error below, so it can say
+                    # so or try another way.
+                    outcome = await asyncio.wait_for(
+                        session.call_tool(block.name, dict(block.input)),
+                        config.STAGE_TOOL_TIMEOUT_S)
                     content = _result_text(outcome)
                     is_error = False
+                    log.info("tool %s -> ok (%.1fs)", block.name,
+                             time.monotonic() - started)
+                except asyncio.TimeoutError:
+                    content = (f"{block.name} did not answer within "
+                               f"{config.STAGE_TOOL_TIMEOUT_S:g}s and was "
+                               f"abandoned. The robot may be busy or the "
+                               f"device may be wedged.")
+                    is_error = True
+                    log.error("tool %s TIMED OUT after %gs", block.name,
+                              config.STAGE_TOOL_TIMEOUT_S)
                 except Exception as exc:            # noqa: BLE001
                     # The MCP server already turns tool failures into readable
                     # strings, so reaching here means the SERVER is unwell.

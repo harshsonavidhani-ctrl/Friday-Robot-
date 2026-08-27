@@ -37,6 +37,7 @@ import threading
 import time
 
 import config
+import stages
 
 log = logging.getLogger("friday")
 
@@ -219,25 +220,38 @@ async def check() -> int:
 
 
 async def one_turn(brain_obj, session, voice: Voice, face: Face,
-                   text: str) -> str:
+                   text: str, turn: "stages.Turn | None" = None) -> str:
     """Think about one thing and say the answer."""
     import brain as brain_module
 
+    turn = turn or stages.Turn("typed")
     face.set("thinking")
-    log.info("asking: %r", text)
     try:
-        reply = await brain_obj.ask(
-            text,
-            on_sentence=voice.say,
-            on_tool=lambda name, args: log.info("  tool %s %s", name, args),
-            session=session,
+        reply = await turn.run(
+            "THINKING",
+            brain_obj.ask(
+                text,
+                on_sentence=voice.say,
+                on_tool=lambda name, args: turn.stage("TOOL", f"{name} {args}"),
+                session=session,
+            ),
+            timeout=config.STAGE_BRAIN_TIMEOUT_S,
         )
     except brain_module.SpendCapReached as exc:
         log.warning("spend cap: %s", exc)
         voice.say("I've hit my spending limit for today.")
         face.feel("sad")
         voice.wait_until_quiet()
-        face.rest()
+        turn.done("ABANDONED (spend cap)")
+        return ""
+    except stages.StageTimeout as exc:
+        # SAY SOMETHING. A brain that overran used to leave Friday silent and
+        # apparently ignoring the command, which is indistinguishable from
+        # never having heard it.
+        face.alarm("dizzy")
+        voice.say("That one took me too long. Ask me again?")
+        voice.wait_until_quiet()
+        turn.done(f"ABANDONED ({exc})")
         return ""
     except Exception as exc:                # noqa: BLE001
         # Every stage failure lands here, flashes dizzy, and the loop carries
@@ -247,13 +261,14 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
         face.alarm("dizzy")
         voice.say("Something went wrong in my head just then.")
         voice.wait_until_quiet()
-        face.rest()
+        turn.done(f"FAILED ({type(exc).__name__}: {exc})")
         return ""
 
+    turn.stage("SPEAKING", stages.quote(reply, 120))
     voice.wait_until_quiet()
     if reply.strip():
         face.set("success")
-    face.rest()
+    turn.done()
     return reply
 
 
@@ -286,7 +301,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                  len(listed.tools))
 
         if typed is not None:
-            await one_turn(brain_obj, session, voice, face, typed)
+            await handle(brain_obj, session, voice, face, typed)
             voice.close()
             return 0
 
@@ -300,7 +315,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
 
         try:
             for trigger in source.listen():
-                log.info("woken (%s)", trigger)
+                turn = stages.Turn(trigger)
                 # Acknowledge instantly: the face and the beep both land
                 # before any model runs, so Harsh knows he was heard rather
                 # than wondering whether to repeat himself.
@@ -308,33 +323,57 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 if hasattr(source, "beep"):
                     source.beep()
 
+                # THE DETECTOR STAYS PAUSED FOR THE WHOLE TURN — through the
+                # thinking and the speaking too, not just the capture. It used
+                # to resume the moment the transcript came back, which left it
+                # scoring Friday's OWN voice while she answered. A self-wake
+                # there burns the cooldown, so the next real "hey Friday"
+                # arrives mid-cooldown and is dropped: the command that looks
+                # broken is the one AFTER the one that worked.
+                source.pause()
                 spoken = ""
                 try:
-                    # The detector is deaf while Friday listens and answers,
-                    # so her own voice and the beep cannot wake her again.
-                    source.pause()
-                    audio = await asyncio.to_thread(stream.capture)
+                    audio = await turn.call("CAPTURING", stream.capture,
+                                            timeout=config.MAX_UTTERANCE_S
+                                            + config.LISTEN_START_TIMEOUT_S
+                                            + 5.0)
                     face.set("thinking")
-                    spoken = await asyncio.to_thread(stt.transcribe, audio)
-                except stt.Silence:
-                    log.info("nothing said")
-                    face.rest()
-                    continue
-                except Exception as exc:    # noqa: BLE001
-                    log.error("could not listen: %s", exc)
+                    spoken = await turn.call(
+                        "TRANSCRIBING", stt.transcribe, audio,
+                        timeout=config.STAGE_STT_TIMEOUT_S)
+                    turn.stage("TRANSCRIBED", stages.quote(spoken))
+                except stt.Silence as exc:
+                    turn.stage("NOTHING SAID", str(exc))
+                    turn.done("ABANDONED")
+                except stages.StageTimeout as exc:
                     face.alarm("dizzy")
-                    face.rest()
-                    continue
+                    voice.say("Sorry, I lost that one.")
+                    voice.wait_until_quiet()
+                    turn.done(f"ABANDONED ({exc})")
+                except Exception as exc:    # noqa: BLE001
+                    log.error("could not listen: %s: %s",
+                              type(exc).__name__, exc)
+                    face.alarm("dizzy")
+                    turn.done("FAILED (capture)")
+                else:
+                    if spoken.strip():
+                        await handle(brain_obj, session, voice, face, spoken,
+                                     turn)
+                    else:
+                        # Logged as its own outcome. "Heard you, understood
+                        # nothing" and "never heard you" are different faults
+                        # with different fixes, and they used to look the same.
+                        face.feel("confused")
+                        turn.done("ABANDONED (empty transcript)")
                 finally:
-                    source.resume()
-
-                if not spoken.strip():
-                    log.info("empty transcript")
-                    face.feel("confused")
+                    # RE-ARM, ALWAYS. Every path above lands here, including
+                    # the timeouts and the crashes, because a turn that ends
+                    # without handing the microphone back is exactly the bug
+                    # this whole trace exists to make visible.
                     face.rest()
-                    continue
+                    source.resume()
+                    turn.listening()
 
-                await handle(brain_obj, session, voice, face, spoken)
                 if once:
                     break
         finally:
@@ -346,7 +385,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
 
 
 async def handle(brain_obj, session, voice: Voice, face: Face,
-                 spoken: str) -> str:
+                 spoken: str, turn: "stages.Turn | None" = None) -> str:
     """One utterance: reflexes first, then the brain if it can be reached.
 
     STOP IS CHECKED BEFORE ANYTHING ELSE, online or off. Nothing should stand
@@ -359,11 +398,13 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
     """
     import offline
 
+    turn = turn or stages.Turn("typed")
+
     if offline.is_stop(spoken):
-        log.info("STOP heard — going straight to the motors")
+        turn.note("STOP heard — going straight to the motors")
         await _run_offline(offline.Intent(name="stop", tool="stop",
                                           say="Stopping."),
-                           session, voice, face)
+                           session, voice, face, turn)
         return "stopped"
 
     # No key is the same situation as no internet, from the robot's point of
@@ -372,21 +413,22 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
     if brain_obj is None or not offline.online():
         intent = offline.understand(spoken)
         if intent is not None:
-            log.info("offline — handling %r locally", intent.name)
-            await _run_offline(intent, session, voice, face)
+            turn.note(f"offline — handling {intent.name!r} locally")
+            await _run_offline(intent, session, voice, face, turn)
             return intent.say
-        log.info("offline and %r is not a local command", spoken[:40])
+        turn.note(f"offline, and {spoken[:40]!r} is not a local command")
         face.feel("sad")
         voice.say("I can't reach my brain right now. I can still drive, "
                   "stop, turn and tell you the time.")
         voice.wait_until_quiet()
-        face.rest()
+        turn.done("ABANDONED (offline, no local match)")
         return ""
 
-    return await one_turn(brain_obj, session, voice, face, spoken)
+    return await one_turn(brain_obj, session, voice, face, spoken, turn)
 
 
-async def _run_offline(intent, session, voice: Voice, face: Face) -> None:
+async def _run_offline(intent, session, voice: Voice, face: Face,
+                       turn: "stages.Turn | None" = None) -> None:
     """Carry out a locally-understood command, still through the MCP server.
 
     Through MCP even with no internet, because that is where the safety
@@ -395,16 +437,27 @@ async def _run_offline(intent, session, voice: Voice, face: Face) -> None:
     """
     import memory
 
+    turn = turn or stages.Turn("offline")
     if intent.say:
         voice.say(intent.say)
     outcome = "worked"
     if intent.tool:
         try:
-            result = await session.call_tool(intent.tool, intent.args)
+            # The same ceiling the brain's tool calls get. The offline path is
+            # the one that runs when everything else is already degraded, so
+            # it is the last place that can afford to hang.
+            result = await turn.run(
+                "TOOL", session.call_tool(intent.tool, intent.args),
+                timeout=config.STAGE_TOOL_TIMEOUT_S, detail=intent.tool)
             text = result.content[0].text if result.content else ""
-            log.info("  %s -> %s", intent.tool, text[:120])
+            turn.note(f"{intent.tool} -> {text[:120]}")
             if "STOPPED" in text or "refused" in text:
                 outcome = "partial"
+        except stages.StageTimeout as exc:
+            voice.say("The robot didn't answer that one.")
+            face.alarm("dizzy")
+            outcome = "failed"
+            turn.note(str(exc))
         except Exception as exc:            # noqa: BLE001
             log.error("offline command failed: %s", exc)
             face.alarm("dizzy")
@@ -415,7 +468,7 @@ async def _run_offline(intent, session, voice: Voice, face: Face) -> None:
     except Exception:                       # noqa: BLE001
         pass
     voice.wait_until_quiet()
-    face.rest()
+    turn.done("DONE" if outcome == "worked" else f"DONE ({outcome})")
 
 
 def main() -> int:
