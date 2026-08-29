@@ -25,6 +25,8 @@ what the hardware is doing:
     test_explorer   frontier target selection, and the heading-only bias bounds
     test_recovery   oscillation/spin/no-progress detection, and the false positives
                     that would matter more than the true ones
+    test_cameras    identity by USB serial (not index), and surviving a camera that
+                    re-enumerates on its own
 """
 import subprocess
 import sys
@@ -35,7 +37,8 @@ SUITES = ["test_ld19.py", "test_reconnect.py", "test_motors.py",
           "test_ports.py", "test_creep.py", "test_pivot.py", "test_tof_floor.py",
           "test_frontier.py", "test_odometry.py", "test_wiring.py",
           "test_creep_pulse.py", "test_escape.py", "test_telemetry.py",
-          "test_world.py", "test_explorer.py", "test_recovery.py"]
+          "test_world.py", "test_explorer.py", "test_recovery.py",
+          "test_cameras.py"]
 
 failed = []
 for suite in SUITES:

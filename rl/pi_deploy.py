@@ -99,6 +99,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import telemetry as tlm  # noqa: E402
 from explorer import ExplorationPlanner, steering_bias  # noqa: E402
+import cameras as _cameras  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
 
@@ -899,34 +900,142 @@ class VL53L5CXThread(SensorThread):
 
 # --------------------------------------------------------------------- camera --------
 class CameraThread(SensorThread):
-    """USB camera grabber. Publishes a small grayscale frame (uint8).
+    """Self-healing USB camera grabber. Publishes a small grayscale frame (uint8).
 
-    Deliberately low resolution and MJPG: two USB cameras on one Pi 4B share USB 2.0
-    bandwidth, and raw YUYV at 640x480x2 cams will saturate the bus and stall both.
+    Low resolution and MJPG on purpose: two USB cameras on one Pi share USB 2.0
+    bandwidth, and raw YUYV at 640x480 from both will saturate the bus and stall them.
+
+    IDENTIFIED BY SERIAL, NEVER BY INDEX. `cam_indices = (0, 1)` opened the up
+    camera's METADATA node as the second camera and never touched the down camera at
+    all -- every UVC device on this machine occupies two consecutive video numbers,
+    so index arithmetic cannot work here. See cameras.py.
+
+    RETRIES FOREVER, unlike LD19Thread which gives up after MAX_RECONNECTS. The
+    inversion is deliberate and follows from criticality: the LiDAR is safety-critical,
+    so when it is genuinely gone the right move is to die and let the control loop stop
+    the robot on staleness. A camera is ADVISORY -- it may slow the robot, never steer
+    it, and its absence is already handled by the fail-open gate. So a camera that
+    vanishes must never kill anything, and one that comes back must be picked up again.
+
+    That is not hypothetical here. MEASURED on this robot: the down camera
+    (349c:2317 on usb 1-1.1.4) re-enumerates repeatedly -- "USB disconnect" then a new
+    device number, minutes apart, unprompted. The root cause is physical (that hub
+    leg, its cable, or its power) and software cannot fix it; what software can do is
+    come back every time without a restart, and say honestly how often it happened.
     """
 
-    def __init__(self, slot: SensorSlot, cfg: RobotConfig, index: int) -> None:
-        super().__init__(f"cam{index}", slot)
-        self.cfg, self.index = cfg, index
-        self._cap = None
+    # Backoff between reopen attempts, seconds. Capped so a camera that returns after
+    # twenty minutes is still picked up promptly rather than on an ever-lengthening
+    # schedule, and floored so a permanently absent device does not spin a core.
+    RETRY_MIN_S = 1.0
+    RETRY_MAX_S = 10.0
 
-    def _setup(self) -> None:
+    def __init__(self, slot: SensorSlot, cfg: RobotConfig, role: str,
+                 serial: str | None = None, path: str | None = None) -> None:
+        super().__init__(f"cam_{role}", slot)
+        self.cfg, self.role, self.serial = cfg, role, serial
+        self.explicit_path = path
+        self._cap = None
+        self.device: str | None = None
+        self.reconnects = 0
+        self.open_failures = 0
+        self._next_try = 0.0
+        self._backoff = self.RETRY_MIN_S
+
+    # ---- opening -----------------------------------------------------------------
+    def _resolve_path(self) -> str | None:
+        """Where is this camera right now? Re-asked on every reopen, never cached.
+
+        A device that re-enumerates comes back under a DIFFERENT /dev/videoN. Caching
+        the path is the same mistake as caching the index, one level up.
+        """
+        if self.explicit_path:
+            return self.explicit_path
+        if not self.serial:
+            return None
+        found = _cameras.resolve({self.role: self.serial})
+        d = found.get(self.role)
+        return d.path if d else None
+
+    def _try_open(self) -> bool:
         if cv2 is None:
-            raise RuntimeError("opencv-python not installed")
-        self._cap = cv2.VideoCapture(self.index, cv2.CAP_V4L2)
-        if not self._cap.isOpened():
-            raise RuntimeError(f"camera {self.index} did not open")
-        self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.cam_width)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.cam_height)
-        self._cap.set(cv2.CAP_PROP_FPS, self.cfg.cam_fps)
-        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # always the freshest frame
-        LOGGER.info("camera %d opened %dx%d", self.index, self.cfg.cam_width, self.cfg.cam_height)
+            return False
+        path = self._resolve_path()
+        if path is None:
+            return False
+        cap = cv2.VideoCapture(path, cv2.CAP_V4L2)
+        if not cap.isOpened():
+            cap.release()
+            return False
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.cam_width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.cam_height)
+        cap.set(cv2.CAP_PROP_FPS, self.cfg.cam_fps)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)          # always the freshest frame
+        # Warm up. Friday's own config.py has CAM_WARMUP_FRAMES = 10 for this reason:
+        # the first reads off a freshly opened UVC device commonly fail, and treating
+        # that as "camera broken" is how a working camera gets written off.
+        for _ in range(getattr(self.cfg, "cam_warmup_frames", 10)):
+            if cap.read()[0]:
+                break
+        self._cap = cap
+        self.device = path
+        self._backoff = self.RETRY_MIN_S
+        return True
+
+    def _drop(self) -> None:
+        try:
+            if self._cap is not None:
+                self._cap.release()
+        except Exception:                            # noqa: BLE001
+            pass
+        self._cap = None
+        self.device = None
+        self._next_try = time.monotonic() + self._backoff
+        self._backoff = min(self._backoff * 2.0, self.RETRY_MAX_S)
+
+    # ---- SensorThread hooks ------------------------------------------------------
+    def _setup(self) -> None:
+        # Never raises. A camera absent at startup is a degraded run, not a failed one,
+        # and this thread's whole job is to keep looking.
+        if self._try_open():
+            LOGGER.info("camera %s opened on %s (%dx%d)", self.role, self.device,
+                        self.cfg.cam_width, self.cfg.cam_height)
+        else:
+            self.open_failures += 1
+            LOGGER.warning("camera %s not present at startup (serial %s) -- will keep "
+                           "retrying; the visual gate stays fail-open meanwhile.",
+                           self.role, self.serial)
+            self._next_try = time.monotonic() + self._backoff
 
     def _poll(self) -> None:
-        ok, frame = self._cap.read()
-        if not ok:
-            time.sleep(0.02)
+        if self._cap is None:
+            if time.monotonic() < self._next_try:
+                time.sleep(0.1)
+                return
+            if self._try_open():
+                self.reconnects += 1
+                LOGGER.info("camera %s came back on %s (reconnect %d)",
+                            self.role, self.device, self.reconnects)
+            else:
+                self.open_failures += 1
+                self._next_try = time.monotonic() + self._backoff
+                self._backoff = min(self._backoff * 2.0, self.RETRY_MAX_S)
+            return
+        try:
+            ok, frame = self._cap.read()
+        except Exception:                            # noqa: BLE001
+            ok, frame = False, None
+        if not ok or frame is None:
+            # A read failure on an enumerated device is usually transient; a read
+            # failure on a device that has been unplugged never recovers. Telling them
+            # apart cheaply: ask where the camera is now. If it is gone, drop and wait.
+            if self._resolve_path() is None:
+                LOGGER.warning("camera %s disappeared from the bus -- dropping and "
+                               "waiting for it to come back.", self.role)
+                self._drop()
+            else:
+                time.sleep(0.02)
             return
         self.slot.publish(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
 
@@ -1981,6 +2090,12 @@ class ControlLoop:
         self.governor = LidarGovernor(cfg)
         self.reflex = ToFReflex(cfg)
         self.visual = VisualHazardMonitor(cfg, baseline)   # None => fail-open, disabled
+        # Up camera: measured image statistics, reported and never acted on. Explicitly
+        # NOT object detection -- nothing here names what is in view, because nothing
+        # that could is implemented.
+        self.context = _cameras.ContextMonitor()
+        # Set by main() so telemetry can report per-role device paths and reconnects.
+        self.cam_threads: list = []
         LOGGER.info("Visual hazard gate: %s", "ACTIVE" if self.visual.enabled else "DISABLED (uncalibrated)")
         self.limiter = RateLimiter(cfg)
         self.reverse_fallback = True
@@ -2264,12 +2379,29 @@ class ControlLoop:
         # ---- 3. visual gate (advisory) --------------------------------------------
         frames = {}
         if c.cam_enabled:
-            for key in ("cam0", "cam1"):
+            for key in ("cam_up", "cam_down"):
                 if key in self.slots:
                     fr, age = self.slots[key].read()
                     frames[key] = fr if (fr is not None and age <= c.cam_deadline) else None
-        vis_scale, vis_stop = self.visual.evaluate(frames)
+            # UP camera: measured context only, never motion authority. Its statistics
+            # are recorded and reported; nothing downstream reads them.
+            self.context.update(frames.get("cam_up"))
+        # FLOOR HAZARD IS A DOWN-CAMERA QUESTION ONLY.
+        #
+        # VisualHazardMonitor scores a bottom-centre band -- "the floor the robot is
+        # about to drive onto" -- and used to take max() over BOTH cameras, worst wins.
+        # That is right for the down camera, which is mounted above the bumper and sees
+        # floor. It is meaningless for the up camera, which is above the screen and
+        # sees the room: the bottom of ITS frame is whatever furniture is in the middle
+        # distance, so a sofa scored as floor hazard could brake the robot.
+        vis_scale, vis_stop = self.visual.evaluate(
+            {"cam_down": frames.get("cam_down")})
         rec.cams_reporting = sum(1 for f in frames.values() if f is not None)
+        rec.context = self.context.snapshot()
+        rec.cam_state = {
+            t.role: {"device": t.device, "updates": self.slots[f"cam_{t.role}"].updates,
+                     "reconnects": t.reconnects, "open_failures": t.open_failures}
+            for t in self.cam_threads}
         rec.visual_score = self.visual.last_score
         rec.visual_enabled = self.visual.enabled
         if vis_stop:
@@ -2572,8 +2704,11 @@ def build_sensors(cfg: RobotConfig, args) -> tuple[dict[str, SensorSlot], list[S
     slots = {
         "lidar": SensorSlot("lidar", cfg.lidar_deadline, critical=True),
         "tof": SensorSlot("tof", cfg.tof_deadline, critical=True),
-        "cam0": SensorSlot("cam0", cfg.cam_deadline, critical=False),
-        "cam1": SensorSlot("cam1", cfg.cam_deadline, critical=False),
+        # Named by ROLE, not by index. The two cameras see different things and are
+        # used for different jobs; "cam0"/"cam1" made them interchangeable in the code
+        # and they are not.
+        "cam_up": SensorSlot("cam_up", cfg.cam_deadline, critical=False),
+        "cam_down": SensorSlot("cam_down", cfg.cam_deadline, critical=False),
     }
     threads: list[SensorThread] = []
 
@@ -2588,8 +2723,10 @@ def build_sensors(cfg: RobotConfig, args) -> tuple[dict[str, SensorSlot], list[S
         if not lidar_only:
             threads.append(SimSensorThread("tof", slots["tof"], sim.tof, 15.0))
             if cfg.cam_enabled:
-                threads.append(SimSensorThread("cam0", slots["cam0"], sim.frame, float(cfg.cam_fps)))
-                threads.append(SimSensorThread("cam1", slots["cam1"], sim.frame, float(cfg.cam_fps)))
+                threads.append(SimSensorThread("cam_up", slots["cam_up"], sim.frame,
+                                               float(cfg.cam_fps)))
+                threads.append(SimSensorThread("cam_down", slots["cam_down"], sim.frame,
+                                               float(cfg.cam_fps)))
         return slots, threads, sim
 
     kind = getattr(args, "lidar_type", "ld19")
@@ -2616,19 +2753,31 @@ def build_sensors(cfg: RobotConfig, args) -> tuple[dict[str, SensorSlot], list[S
         else:
             threads.append(VL53L5CXThread(slots["tof"], cfg))
     if cfg.cam_enabled:
-        threads.append(CameraThread(slots["cam0"], cfg, cfg.cam_indices[0]))
-        threads.append(CameraThread(slots["cam1"], cfg, cfg.cam_indices[1]))
+        found = _cameras.resolve()
+        LOGGER.info("Cameras resolved by USB serial: %s", _cameras.describe(found))
+        for role, serial in (("up", _cameras.UP_SERIAL), ("down", _cameras.DOWN_SERIAL)):
+            override = getattr(args, f"cam_{role}_device", None)
+            if role not in found and not override:
+                LOGGER.warning("camera %s (serial %s) is not on the bus right now. "
+                               "The thread starts anyway and will pick it up when it "
+                               "returns -- the down camera on this robot is known to "
+                               "re-enumerate on its own.", role, serial)
+            threads.append(CameraThread(slots[f"cam_{role}"], cfg, role,
+                                        serial=serial, path=override))
     return slots, threads, None
 
 
 def run_calibration(cfg: RobotConfig, slots: dict[str, SensorSlot], seconds: float, out: Path) -> None:
     """Record clear-floor visual statistics. Point the robot at EMPTY floor first."""
-    LOGGER.warning("CALIBRATION: aim both cameras at clear, obstacle-free floor for %.0f s.", seconds)
+    LOGGER.warning("CALIBRATION: aim the DOWN camera at clear, obstacle-free floor "
+                   "for %.0f s.", seconds)
     mon = VisualHazardMonitor(cfg, VisualBaseline(1e-6, 1e-6, 1e-6))   # baselines off
     edges, darks, flows = [], [], []
     t_end = time.monotonic() + seconds
     while time.monotonic() < t_end:
-        for key in ("cam0", "cam1"):
+        # DOWN camera only. The baseline describes clear FLOOR, and folding the up
+        # camera's view of the room into it produces a baseline that matches neither.
+        for key in ("cam_down",):
             fr, age = slots[key].read()
             if fr is not None and age <= cfg.cam_deadline:
                 roi = mon._roi(fr).astype(np.float32)
@@ -3073,6 +3222,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", type=str, default=str(HERE / "exploration_model.onnx"))
     p.add_argument("--simulate", action="store_true", help="Synthetic sensors; no hardware needed.")
     p.add_argument("--selftest", action="store_true", help="Run safety-chain assertions and exit.")
+    p.add_argument("--cam-up-device", default=None, metavar="PATH",
+                   help="Override the up camera's device path (normally resolved by "
+                        "USB serial via /dev/v4l/by-id).")
+    p.add_argument("--cam-down-device", default=None, metavar="PATH",
+                   help="Override the down camera's device path.")
     p.add_argument("--no-recovery", action="store_true",
                    help="Disable oscillation/spin/no-progress detection and recovery. "
                         "The boxed-in escape turn is separate and stays on.")
@@ -3415,6 +3569,7 @@ def main(argv: list[str] | None = None) -> int:
         loop.map_enabled = not args.no_map
         loop.planner_enabled = not args.no_planner
         loop.recovery_enabled = not args.no_recovery
+        loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]
         if args.map_file:
             loop.world.map_file = Path(args.map_file)
 

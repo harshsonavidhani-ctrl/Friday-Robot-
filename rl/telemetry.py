@@ -154,6 +154,11 @@ class DecisionRecord:
     visual_score: float | None = None
     visual_enabled: bool = False
     cams_reporting: int = 0
+    # Per-role camera state and the up camera's measured context. `context` holds
+    # brightness/change/occlusion ONLY -- there is no object detection behind it and
+    # no field here names what is in view.
+    cam_state: dict | None = None
+    context: dict | None = None
 
     # ---- policy ----
     model_name: str = ""
@@ -473,12 +478,25 @@ def autonomy_status(rec: DecisionRecord, cfg: Any, mode: str,
         + (f"   (age {rec.tof_age * 1000:.0f} ms)" if rec.tof_age is not None else ""))
     add("")
     add("CAMERAS:")
-    if rec.cams_reporting == 0:
+    if rec.cam_state:
+        for role in ("up", "down"):
+            st = rec.cam_state.get(role)
+            if st is None:
+                continue
+            where = st.get("device") or "NOT ON THE BUS"
+            add(f"  {role:<5} {where:<14} frames {st.get('updates', 0):<6}"
+                f" reconnects {st.get('reconnects', 0)}")
+    elif rec.cams_reporting == 0:
         add("  NO FRAMES -- neither camera contributed to this tick")
-    else:
-        add(f"  {rec.cams_reporting} reporting   hazard score "
-            f"{_m(rec.visual_score, '', 2)}   "
-            f"gate {'ACTIVE' if rec.visual_enabled else 'DISABLED (uncalibrated -- advisory only)'}")
+    add(f"  floor hazard (DOWN cam only): {_m(rec.visual_score, '', 2)}   "
+        f"gate {'ACTIVE' if rec.visual_enabled else 'DISABLED (uncalibrated -- advisory)'}")
+    if rec.context:
+        c = rec.context
+        # Measured statistics, not perception. Nothing here says what is in view.
+        add(f"  up-cam context: brightness {_m(c.get('brightness'), '', 0)}   "
+            f"change {_m(c.get('change'), '', 1)}   "
+            f"occluded {_m(c.get('occluded'), '', 2)}"
+            f"   (measured only -- no object detection)")
     add("")
     add("MAP:")
     if rec.explored_m2 is None:
