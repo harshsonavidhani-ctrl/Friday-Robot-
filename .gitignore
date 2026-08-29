@@ -96,3 +96,17 @@ backup/
 # not source -- like state/*.db it means nothing in a fresh clone, and a stale
 # one committed here would be silently loaded over a real survey.
 state/map.npz
+
+# ...AND the RL exploration policy, for the same reason as the wake word above.
+# exploration_model.onnx is 144 kB, was trained on Harsh's laptop in a Gymnasium
+# sim and scp'd here. It is the ONLY copy on this machine, and *.onnx above would
+# silently drop it -- which is precisely how the last rebuild lost everything.
+# The blackbox from the first autonomous run is committed with it: that CSV is
+# the measured baseline (FRIDAY AUTONOMY BASELINE V1) every future run is
+# compared against, and it cannot be re-recorded -- it was a specific 30 s in a
+# specific room on 2026-08-28.
+!rl/exploration_model.onnx
+
+# rl/ runtime output: new black boxes are written per run and are NOT baseline.
+rl/blackbox-*.csv
+rl/state/

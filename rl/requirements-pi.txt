@@ -1,0 +1,27 @@
+# Raspberry Pi 4B (64-bit Raspberry Pi OS) -- runtime dependencies for pi_deploy.py
+#
+# System packages first:
+#   sudo apt update
+#   sudo apt install -y python3-opencv python3-pip python3-venv
+#
+# NOTE: older guides tell you to install `libatlas-base-dev`. Do NOT -- ATLAS was
+# removed in Debian trixie (Pi OS 13) and apt will abort the whole transaction,
+# silently skipping python3-opencv too. It is unnecessary anyway: modern numpy
+# aarch64 wheels ship their own OpenBLAS. If some package ever does demand a system
+# BLAS, install `libopenblas-dev` instead.
+#
+# Then, from THIS directory (the requirements file is resolved relative to $PWD):
+#   python3 -m venv --system-site-packages ~/robot/venv   # --system-site-packages so
+#   source ~/robot/venv/bin/activate                      # the apt OpenCV is visible
+#   pip install -r requirements-pi.txt
+
+numpy>=1.24
+onnxruntime>=1.16          # CPU inference; do NOT install onnxruntime-gpu on a Pi
+
+# --- sensor drivers ---
+rplidar-roboticia>=0.9.5   # RPLIDAR A1/A2 (maintained fork of the original `rplidar`)
+vl53l5cx-ctypes>=0.0.3     # 8x8 ToF; confirm this matches YOUR breakout's library
+pyserial>=3.5              # only needed for --motor serial
+
+# opencv-python is intentionally NOT listed: install it via apt (python3-opencv).
+# The pip wheel builds from source on ARM and can take over an hour.
