@@ -93,6 +93,12 @@ import numpy as np
 LOGGER = logging.getLogger("pi_deploy")
 HERE = Path(__file__).resolve().parent
 
+# Decision provenance (telemetry.py, beside this file). Imported by path so it travels
+# with pi_deploy.py and does not depend on the cwd the process was launched from.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import telemetry as tlm  # noqa: E402
+
 # Optional dependencies are imported lazily so `--simulate` runs on a bare machine.
 try:
     import onnxruntime as ort
@@ -1365,6 +1371,13 @@ class MotorDriver:
         self._lock = threading.Lock()
         self.last_cmd = (0.0, 0.0)
         self.last_executed = (0.0, 0.0)
+        # The literal line handed to the hardware, and the duties inside it. The status
+        # block reports THESE rather than recomputing the mapping, because recomputing
+        # would re-derive the answer from the same assumptions instead of observing the
+        # result -- and the creep pulse, stiction floor, kick and lead inversions all
+        # sit between the commanded twist and the bytes that reach the Arduino.
+        self.last_wire: str = ""
+        self.last_duties: tuple[int, int] | None = None
 
     def to_wheel_speeds(self, v: float, omega: float) -> tuple[float, float]:
         """(v, omega) -> (left, right) wheel linear speeds [m/s], scaled to stay legal.
@@ -1439,6 +1452,8 @@ class NullMotorDriver(MotorDriver):
         # rays at max. The ControlLoop uses the SIMULATED pose in --simulate, so
         # honesty here costs the sim nothing.
         self.last_executed = (0.0, 0.0)
+        self.last_wire = f"(null driver -- nothing turns) L={left:+.3f} R={right:+.3f}"
+        self.last_duties = None
         if self.verbose:
             LOGGER.debug("motor L=%+.3f R=%+.3f", left, right)
 
@@ -1707,6 +1722,7 @@ class FridayMotorDriver(MotorDriver):
             self._moving = False
             self._kick_left = 0
             self.last_executed = (0.0, 0.0)               # the creep cutoff bites here
+            self.last_duties = (0, 0)
             self._write_raw("S")                          # firmware's dedicated stop
             return
 
@@ -1733,6 +1749,11 @@ class FridayMotorDriver(MotorDriver):
             l_duty = -l_duty
         if self.invert_right:
             r_duty = -r_duty
+        # POST-inversion, because these are the numbers the firmware actually receives.
+        # The lead inversion is precisely where a wiring fault hides (a commanded
+        # STRAIGHT went out as a spin for the whole of this stack's early life), so the
+        # status block has to show the wire, not the intent.
+        self.last_duties = (l_duty, r_duty)
         self._write_raw(f"M{l_duty} {r_duty}")
 
     def drive_duty(self, left_duty: int, right_duty: int) -> None:
@@ -1771,6 +1792,9 @@ class FridayMotorDriver(MotorDriver):
             return
         try:
             self._ser.write((line + "\n").encode())
+            self.last_wire = line            # set on SUCCESS only: a failed write did
+                                             # not command anything, and reporting it
+                                             # as though it had would hide a dead port.
             self._cmds += 1
             pending = self._ser.in_waiting
             if pending:
@@ -1814,8 +1838,10 @@ class SerialMotorDriver(MotorDriver):
         LOGGER.info("Motor serial open on %s @ %d", port, baud)
 
     def _apply(self, left: float, right: float) -> None:
+        line = f"{left:.3f},{right:.3f}"
         try:
-            self._ser.write(f"{left:.3f},{right:.3f}\n".encode())
+            self._ser.write((line + "\n").encode())
+            self.last_wire = line                         # success only -- see FridayMotorDriver
         except Exception as exc:                          # noqa: BLE001
             LOGGER.error("Motor write failed: %s", exc)
 
@@ -1862,11 +1888,20 @@ class PolicyRunner:
                 f"against the training run that produced {model_path.name}."
             )
         self._buf = np.zeros((1, expected), np.float32)   # preallocated: no per-tick alloc
+        self.model_name = model_path.name
+        self.last_infer_ms: float | None = None
+        self.infer_count = 0
         LOGGER.info("Policy loaded: %s (obs_dim=%d, threads=%d)", model_path.name, expected, threads)
 
     def infer(self, obs: np.ndarray) -> np.ndarray:
+        """Run the network, timing it. The duration is evidence, not decoration:
+        "inference is running" is only credible if THIS tick produced a measurement."""
         self._buf[0, :] = obs
-        return self.sess.run([self.output_name], {self.input_name: self._buf})[0][0]
+        t0 = time.perf_counter()
+        out = self.sess.run([self.output_name], {self.input_name: self._buf})[0][0]
+        self.last_infer_ms = (time.perf_counter() - t0) * 1000.0
+        self.infer_count += 1
+        return out
 
 
 # ======================================================================================
@@ -1879,8 +1914,15 @@ class BlackBox:
     is the only question that matters. A ring buffer costs nothing and answers it.
     """
 
+    # v_raw/omega_raw are THE NETWORK'S OUTPUT and are never overwritten.
+    # v_policy/omega_policy are kept, in the same position as in baseline_v1, so the
+    # two files stay comparable -- but they are the POST-SUBSTITUTION working values,
+    # which is exactly the mislabelling that made the first run's log unable to answer
+    # "did my policy drive this robot". Compare v_raw against v_policy to see every
+    # tick where a hand-written rule replaced the network's answer.
     FIELDS = ("t", "lidar_min", "tof_min", "visual", "v_policy", "omega_policy",
-              "v_out", "omega_out", "gate", "loop_ms")
+              "v_out", "omega_out", "gate", "loop_ms",
+              "v_raw", "omega_raw", "authority", "wire")
 
     def __init__(self, seconds: float, hz: float) -> None:
         self.buf: deque[tuple] = deque(maxlen=int(seconds * hz) + 16)
@@ -1922,6 +1964,7 @@ class ControlLoop:
         self.limiter = RateLimiter(cfg)
         self.reverse_fallback = True
         self.escape_turns = True
+        self.status_every = 0          # ticks between full status blocks; 0 = off
         # 0.5 s at 10 Hz: long enough that a passing brake is not mistaken for being
         # stuck, short enough that she does not sit against a wall.
         self.escape_after_ticks = 5
@@ -1936,6 +1979,9 @@ class ControlLoop:
                       "governor_limits": 0, "stale_stops": 0, "overruns": 0,
                       "no_reverse_turns": 0, "escape_turns": 0}
         self.loop_ms: deque[float] = deque(maxlen=200)
+        # Populated by every tick, including the fail-safe early returns. Exists from
+        # construction so a status render before the first tick is empty, not a crash.
+        self.last_record: tlm.DecisionRecord | None = None
 
     # ------------------------------------------------------------------ reflex ------
     def _reflex_worker(self) -> None:
@@ -1997,21 +2043,66 @@ class ControlLoop:
             self.motors.emergency_stop()
             self.limiter.reset()
             self.stats["stale_stops"] += 1
+            # A record even here -- ESPECIALLY here. "The LiDAR went stale and I
+            # stopped" and "I decided to stop" produce identical wheel behaviour and
+            # must not produce identical telemetry.
+            rec = tlm.DecisionRecord(tick=self.stats["ticks"], obs_dim=c.obs_dim,
+                                     model_name=self.policy.model_name, model_loaded=True,
+                                     gate="stale_lidar", lidar_age=scan_age)
+            rec.wire = self.motors.last_wire
+            self.last_record = rec
             return {"gate": "stale_lidar", "v": 0.0, "omega": 0.0,
                     "lidar_min": float("nan"), "tof_min": float("nan"), "visual": 0.0,
-                    "v_policy": 0.0, "omega_policy": 0.0, "loop_ms": 0.0}
+                    "v_policy": 0.0, "omega_policy": 0.0,
+                    "v_raw": float("nan"), "omega_raw": float("nan"),
+                    "authority": "SAFETY", "loop_ms": 0.0}
         if c.tof_enabled and (depth is None or depth_age > c.tof_deadline):
             self.motors.emergency_stop()
             self.limiter.reset()
             self.stats["stale_stops"] += 1
+            rec = tlm.DecisionRecord(tick=self.stats["ticks"], obs_dim=c.obs_dim,
+                                     model_name=self.policy.model_name, model_loaded=True,
+                                     gate="stale_tof", lidar_min=float(np.min(scan)),
+                                     tof_age=depth_age)
+            rec.wire = self.motors.last_wire
+            self.last_record = rec
             return {"gate": "stale_tof", "v": 0.0, "omega": 0.0,
                     "lidar_min": float(np.min(scan)), "tof_min": float("nan"), "visual": 0.0,
-                    "v_policy": 0.0, "omega_policy": 0.0, "loop_ms": 0.0}
+                    "v_policy": 0.0, "omega_policy": 0.0,
+                    "v_raw": float("nan"), "omega_raw": float("nan"),
+                    "authority": "SAFETY", "loop_ms": 0.0}
 
         # ---- 1. policy ------------------------------------------------------------
         obs = self._build_observation(scan)
         action = self.policy.infer(obs)
         v_pol, omega_pol = float(action[0]), float(action[1])
+
+        # THE RAW OUTPUT, CAPTURED ONCE AND NEVER WRITTEN TO AGAIN.
+        #
+        # `v_pol`/`omega_pol` below are working variables that later stages overwrite
+        # in place. The first black box recorded THOSE as "v_policy", so the 34 ticks
+        # whose heading came from the no-reverse rule were logged under the policy's
+        # name at exactly +-omega_max -- and the log could not answer the one question
+        # it existed to answer. These two are the network's actual answer.
+        v_raw, omega_raw = v_pol, omega_pol
+        cl = tlm.clearances(scan)
+        frontier = self._obs[c.n_beams:2 * c.n_beams] if c.use_frontier_rays else None
+        rec = tlm.DecisionRecord(
+            tick=self.stats["ticks"], obs_dim=c.obs_dim,
+            model_name=self.policy.model_name, model_loaded=True,
+            infer_ms=self.policy.last_infer_ms,
+            v_raw=v_raw, omega_raw=omega_raw,
+            lidar_front=cl["front"], lidar_left=cl["left"],
+            lidar_right=cl["right"], lidar_rear=cl["rear"],
+            lidar_min=float(np.min(scan)), lidar_age=scan_age, tof_age=depth_age,
+            # "LIVE" means the channel carries variation. Pinned at one value is the
+            # signature of the frontier bug that once cost 41% of explored area, so it
+            # is surfaced rather than left to be rediscovered.
+            frontier_near=(float(np.min(frontier)) * c.lidar_max_range
+                           if frontier is not None else None),
+            frontier_live=(bool(np.ptp(frontier) > 1e-6) if frontier is not None else False),
+        )
+        rec.add("policy", v_raw, omega_raw, "network output")
 
         # Feed back the POLICY output (pre-safety), matching what training observed.
         self.last_action = c.to_normalised(v_pol, omega_pol)
@@ -2042,9 +2133,15 @@ class ControlLoop:
                 omega_pol = self._open_side(scan) * c.omega_max
                 self.stats["no_reverse_turns"] += 1
                 gate = "no_reverse_turn"
+                rec.add("no_reverse", v_pol, omega_pol,
+                        f"policy asked v={v_raw:+.3f}, below the {floor_mps:.3f} m/s "
+                        f"floor -> pivot toward open space")
 
         # ---- 2. LiDAR governor ----------------------------------------------------
         v, omega, limited = self.governor(v_pol, omega_pol, scan)
+        rec.add("governor", v, omega,
+                f"clearance {rec.lidar_min:.2f} m vs bubble {c.safe_distance:.2f} m"
+                if limited else "")
         if limited:
             self.stats["governor_limits"] += 1
             gate = "governor"
@@ -2082,6 +2179,9 @@ class ControlLoop:
             omega = self._open_side(scan) * c.omega_max
             self.stats["escape_turns"] += 1
             gate = "escape_turn"
+            rec.add("escape", v, omega,
+                    f"forward blocked {self._stuck_ticks} ticks at "
+                    f"{rec.lidar_min:.2f} m and no reverse available")
 
         # ---- 3. visual gate (advisory) --------------------------------------------
         frames = {}
@@ -2091,6 +2191,9 @@ class ControlLoop:
                     fr, age = self.slots[key].read()
                     frames[key] = fr if (fr is not None and age <= c.cam_deadline) else None
         vis_scale, vis_stop = self.visual.evaluate(frames)
+        rec.cams_reporting = sum(1 for f in frames.values() if f is not None)
+        rec.visual_score = self.visual.last_score
+        rec.visual_enabled = self.visual.enabled
         if vis_stop:
             v = min(v, 0.0)
             self.stats["visual_stops"] += 1
@@ -2099,6 +2202,9 @@ class ControlLoop:
             v = min(v, c.v_max * vis_scale) if v > 0 else v
             if gate == "ok":
                 gate = "visual_slow"
+        rec.add("visual", v, omega,
+                f"hazard score {self.visual.last_score:.2f} vs "
+                f"{c.visual_hazard_threshold:.2f}" if (vis_stop or vis_scale < 1.0) else "")
 
         # ---- 4. ToF reflex (hard veto) --------------------------------------------
         tof_scale, emergency = self.reflex.evaluate(depth)
@@ -2110,10 +2216,23 @@ class ControlLoop:
             v = min(v, c.v_max * tof_scale)
             if gate == "ok":
                 gate = "tof_slow"
+        rec.tof_min = self.reflex.last_min if depth is not None else None
+        rec.add("tof", v, omega,
+                f"nearest zone {self.reflex.last_min:.2f} m vs stop "
+                f"{c.tof_stop_distance:.2f} / slow {c.tof_slow_distance:.2f}"
+                if (emergency or tof_scale < 1.0) else "")
 
         # ---- 5. slew limit + actuate ----------------------------------------------
         v, omega = self.limiter(v, omega, c.dt, emergency=emergency)
+        rec.add("limiter", v, omega, "slew limited")
         self.motors.drive(v, omega)
+
+        # Read back what the driver actually put on the wire. Done AFTER drive() so
+        # these are this tick's values, not the previous tick's.
+        rec.final_v, rec.final_omega = v, omega
+        rec.wire = self.motors.last_wire
+        rec.duties = self.motors.last_duties
+        rec.gate = gate
 
         # ---- 6. propagate pose with what the WHEELS actually did -------------------
         # Not the commanded twist. The creep cutoff, the stiction floor and the duty
@@ -2134,15 +2253,28 @@ class ControlLoop:
         if loop_ms > c.dt * 1000.0:
             self.stats["overruns"] += 1
 
+        rec.loop_ms = loop_ms
+        rec.explored_m2 = self.map.explored_m2
+        rec.pose = tuple(float(x) for x in self.map.pose)
+        rec.executed_v, rec.executed_omega = self.motors.executed()
+        self.last_record = rec
+
         row = {"gate": gate, "v": v, "omega": omega,
                "lidar_min": float(np.min(scan)),
                "tof_min": self.reflex.last_min if depth is not None else float("nan"),
                "visual": self.visual.last_score,
-               "v_policy": v_pol, "omega_policy": omega_pol, "loop_ms": loop_ms}
+               "v_policy": v_pol, "omega_policy": omega_pol, "loop_ms": loop_ms,
+               "v_raw": v_raw, "omega_raw": omega_raw, "authority": rec.authority}
         self.blackbox.record((round(time.monotonic(), 3), round(row["lidar_min"], 3),
                               round(row["tof_min"], 3), round(row["visual"], 3),
-                              round(v_pol, 3), round(omega_pol, 3), round(v, 3),
-                              round(omega, 3), gate, round(loop_ms, 2)))
+                              # v_policy and v_raw MUST share a precision. At 3 dp
+                              # against 4, 0.436 != 0.4360 and every tick looks like a
+                              # rule substitution -- which is the exact false positive
+                              # these columns exist to rule out.
+                              round(v_pol, 4), round(omega_pol, 4), round(v, 3),
+                              round(omega, 3), gate, round(loop_ms, 2),
+                              round(v_raw, 4), round(omega_raw, 4), rec.authority,
+                              rec.wire))
         return row
 
     # ------------------------------------------------------------------- run --------
@@ -2163,6 +2295,15 @@ class ControlLoop:
                 if t_end is not None and time.monotonic() >= t_end:
                     break
                 row = self.tick()
+                # Full status block first: when both are on, the one-liner reads as a
+                # continuation of the block rather than interrupting it.
+                if self.status_every and self.stats["ticks"] % self.status_every == 0 \
+                        and self.last_record is not None:
+                    print(tlm.autonomy_status(
+                        self.last_record, self.cfg,
+                        mode="AUTONOMOUS EXPLORATION (RL policy)",
+                        stats=self.stats,
+                        objective=self._objective()), flush=True)
                 if verbose and self.stats["ticks"] % 5 == 0:
                     LOGGER.info(
                         "t=%5d | lidar %.2f | tof %.2f | vis %.2f | pol(%+.2f,%+.2f) "
@@ -2188,8 +2329,32 @@ class ControlLoop:
         if self._reflex_thread is not None:
             self._reflex_thread.join(timeout=1.0)
         self.motors.close()
-        self.blackbox.dump(HERE / "blackbox.csv")
+        # Timestamped, so runs never overwrite each other. The old fixed name meant
+        # every run destroyed the previous one's evidence -- and would have destroyed
+        # baseline_v1_blackbox.csv, the recording of the first autonomous run, which
+        # cannot be re-made. Comparing V1 against V2 requires both to still exist.
+        self.blackbox.dump(HERE / time.strftime("blackbox-%Y%m%d-%H%M%S.csv"))
         self.report()
+
+    def _objective(self) -> str:
+        """What Friday is working toward, stated only as far as the code can support.
+
+        There is no frontier planner in this stack -- the frontier rays are an
+        OBSERVATION fed to the network, not a target it was given. Claiming "heading
+        for the unexplored region to the north-east" would be fabrication. What can be
+        said truthfully is whether unknown space is currently visible and what the
+        policy is doing about it.
+        """
+        r = self.last_record
+        if r is None:
+            return "not started"
+        if not self.cfg.use_frontier_rays:
+            return "no frontier channel in this observation -- reactive navigation only"
+        if not r.frontier_live:
+            return ("no unknown space within LiDAR range: the policy is navigating on "
+                    "geometry alone until new area opens up")
+        return (f"unknown space visible from {r.frontier_near:.2f} m; the policy weighs "
+                f"it against clearance each tick (no explicit target is assigned)")
 
     def report(self) -> None:
         lm = np.array(self.loop_ms) if self.loop_ms else np.array([0.0])
@@ -2568,6 +2733,135 @@ def motor_speed_calibration(cfg: RobotConfig, motors: "FridayMotorDriver",
     LOGGER.info("=" * 74)
 
 
+def policy_proof(cfg: RobotConfig, loop: ControlLoop) -> int:
+    """Prove -- or disprove -- that the ONNX policy controls this robot.
+
+    The question this answers is not "does an .onnx file exist" but "does the network
+    determine what the wheels do". A file can exist, load, and still be irrelevant: if
+    every command it produced were overruled downstream, the robot would behave
+    identically without it. So this runs the REAL pipeline (real sensors unless
+    --simulate, real observation builder, real network, real safety chain) and then
+    tests the counterfactual directly.
+
+    Four things are established, in order of how easy they are to fake:
+
+      1. The model loads, and its input width matches what this config produces.
+      2. Inference runs, with a measured duration, on a real observation.
+      3. The network is INPUT-SENSITIVE -- distinct observations give distinct
+         actions. A constant output would still "run" while controlling nothing.
+      4. The counterfactual: the same observations are replayed through the safety
+         chain with the network's action replaced by a fixed one. If the wheel
+         commands come out the same, the policy is decoration.
+
+    Motors are never engaged: the chain is exercised, the actuation is not.
+    """
+    print()
+    print("=" * 70)
+    print("RL POLICY VERIFICATION".center(70))
+    print("=" * 70)
+
+    # ---- 1 + 2: load and infer on real observations -------------------------------
+    print(f"\n[1] Model: {loop.policy.model_name}")
+    print(f"    input '{loop.policy.input_name}' width {cfg.obs_dim} "
+          f"(n_beams={cfg.n_beams}, frontier_rays={cfg.use_frontier_rays})")
+    print(f"    output '{loop.policy.output_name}'")
+
+    n = 30
+    obs_log, act_log = [], []
+    print(f"\n[2] Running {n} live ticks through the real pipeline...")
+    for _ in range(n):
+        scan, age = loop.slots["lidar"].read()
+        if scan is None:
+            print("    FAIL: no LiDAR data -- cannot build a real observation.")
+            return 6
+        o = loop._build_observation(scan).copy()
+        a = loop.policy.infer(o)
+        obs_log.append(o)
+        act_log.append(np.asarray(a, dtype=np.float64).copy())
+        time.sleep(cfg.dt)
+
+    A = np.array(act_log)
+    O = np.array(obs_log)
+    print(f"    inference ran {loop.policy.infer_count} times, "
+          f"last {loop.policy.last_infer_ms:.3f} ms")
+    print(f"    v     range [{A[:, 0].min():+.4f}, {A[:, 0].max():+.4f}]  "
+          f"distinct {len(np.unique(A[:, 0].round(6)))}/{n}")
+    print(f"    omega range [{A[:, 1].min():+.4f}, {A[:, 1].max():+.4f}]  "
+          f"distinct {len(np.unique(A[:, 1].round(6)))}/{n}")
+
+    # ---- 3: input sensitivity -----------------------------------------------------
+    print("\n[3] Input sensitivity (is the output a function of the observation?)")
+    probe = O[-1].copy()
+    base = np.asarray(loop.policy.infer(probe), dtype=np.float64)
+    clear = probe.copy(); clear[:cfg.n_beams] = 1.0
+    blocked = probe.copy(); blocked[:cfg.n_beams] = 0.05
+    a_clear = np.asarray(loop.policy.infer(clear), dtype=np.float64)
+    a_block = np.asarray(loop.policy.infer(blocked), dtype=np.float64)
+    print(f"    all-clear  -> v={a_clear[0]:+.4f} omega={a_clear[1]:+.4f}")
+    print(f"    all-blocked-> v={a_block[0]:+.4f} omega={a_block[1]:+.4f}")
+    dv = abs(a_clear[0] - a_block[0])
+    sensitive = dv > 1e-3
+    print(f"    delta v = {dv:.4f}  ->  {'SENSITIVE' if sensitive else 'CONSTANT (!!)'}")
+    if a_clear[0] <= a_block[0]:
+        print("    WARNING: the network does not slow for a blocked scan. Check the "
+              "observation scaling against train.py before trusting this policy.")
+
+    # ---- 4: the counterfactual ----------------------------------------------------
+    print("\n[4] Counterfactual: would the wheels do the same with NO policy?")
+    print("    Replaying the same observations with the network's action replaced by")
+    print("    a fixed 'drive forward' command, through the same safety chain.")
+    gov, lim = LidarGovernor(cfg), RateLimiter(cfg)
+    real_out, null_out = [], []
+    for o, a in zip(obs_log, act_log):
+        scan = o[:cfg.n_beams] * cfg.lidar_max_range
+        rv, ro, _ = gov(float(a[0]), float(a[1]), scan)
+        real_out.append((rv, ro))
+        nv, no_, _ = gov(cfg.v_max, 0.0, scan)          # a policy-free "just go"
+        null_out.append((nv, no_))
+    R, N = np.array(real_out), np.array(null_out)
+    same_v = np.isclose(R[:, 0], N[:, 0], atol=1e-3).mean()
+    same_w = np.isclose(R[:, 1], N[:, 1], atol=1e-3).mean()
+    print(f"    v identical on {same_v * 100:.0f}% of ticks, "
+          f"omega identical on {same_w * 100:.0f}%")
+
+    print("\n" + "-" * 70)
+    if sensitive and same_w < 0.9:
+        print("VERDICT: the ONNX policy DETERMINES this robot's commands.")
+        print("  The network is input-sensitive, and removing it changes the")
+        print("  commanded heading on the majority of ticks.")
+        rc = 0
+    elif sensitive:
+        print("VERDICT: the policy runs and is input-sensitive, but the safety chain")
+        print("  is producing nearly the same commands without it. The policy is")
+        print("  loaded and live, yet contributing little HERE -- most likely because")
+        print("  the robot is boxed in and the governor is doing the deciding.")
+        print("  Re-run in open space before concluding anything about the policy.")
+        rc = 0
+    else:
+        print("VERDICT: the network's output does NOT vary with its input.")
+        print("  Whatever is driving this robot, it is not learned behaviour.")
+        rc = 7
+    print("-" * 70)
+
+    # The single most informative artefact: one COMPLETE tick, end to end, through
+    # the whole safety chain. Run with the motors swapped for a null driver and then
+    # restored, so this keeps its promise not to engage the wheels even when the
+    # caller passed --motor friday and the robot is sitting on the floor.
+    real_motors = loop.motors
+    try:
+        loop.motors = NullMotorDriver(cfg)
+        loop.tick()
+    finally:
+        loop.motors = real_motors
+    if loop.last_record is not None:
+        print("\nOne complete decision chain (motors held inert for this tick):\n")
+        print(tlm.policy_status(loop.last_record))
+        print()
+        print("REASON:", tlm.reason(loop.last_record, cfg))
+    print()
+    return rc
+
+
 def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     """Assert the safety chain actually behaves, using synthetic inputs.
 
@@ -2636,6 +2930,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", type=str, default=str(HERE / "exploration_model.onnx"))
     p.add_argument("--simulate", action="store_true", help="Synthetic sensors; no hardware needed.")
     p.add_argument("--selftest", action="store_true", help="Run safety-chain assertions and exit.")
+    p.add_argument("--status-every", type=int, default=0, metavar="N",
+                   help="Print the full FRIDAY AUTONOMOUS STATUS block every N ticks "
+                        "(10 = once a second at the default rate). 0 = off.")
+    p.add_argument("--policy-proof", action="store_true",
+                   help="Prove whether the ONNX policy controls this robot: run the "
+                        "real observation pipeline through the real network and print "
+                        "the full sensor -> policy -> safety -> motor chain, then exit "
+                        "without driving. Works with --simulate.")
     p.add_argument("--lidar-check", action="store_true",
                    help="Stream per-sector LiDAR diagnostics to verify beam 0 points forward, "
                         "then exit. Needs no model and never touches the motors.")
@@ -2935,14 +3237,25 @@ def main(argv: list[str] | None = None) -> int:
                         LOGGER.error("  %s thread is alive but published nothing "
                                      "(wrong baud, or the device is silent).", t.name)
             if "tof" in missing:
-                LOGGER.error("  ToF hints: enable I2C (sudo raspi-config nonint do_i2c 0; "
-                             "sudo reboot), confirm `i2cdetect -y 1` shows 0x29, or pass "
-                             "--no-tof for BENCH USE ONLY (it disables reflex braking).")
+                LOGGER.error("  ToF hints: this robot's bumper sensor is a DFRobot 8x8 "
+                             "matrix on USB SERIAL behind a Pico, not an I2C VL53L5CX. "
+                             "Check --tof-port/--tof-baud (115200) and that it is "
+                             "streaming 'yN:d0,...,d7,' lines; `ls /dev/serial/by-id/` "
+                             "should show a Pico. Or pass --no-tof for BENCH USE ONLY "
+                             "(it disables reflex braking).")
+                LOGGER.error("  Do NOT run raspi-config / enable I2C for this: it edits "
+                             "/boot/firmware/config.txt, which CLAUDE.md Part 1 forbids, "
+                             "and it would not help -- wrong bus, wrong sensor.")
             if "lidar" in missing:
                 LOGGER.error("  LiDAR hints: check --lidar-port/--lidar-baud (LD19 = 230400), "
                              "and that no other process holds the port "
                              "(pkill -f pi_deploy.py).")
             return 4
+
+        loop.status_every = max(0, int(args.status_every))
+
+        if args.policy_proof:
+            return policy_proof(cfg, loop)
 
         if args.selftest:
             return 0 if selftest(cfg, loop) == 0 else 5

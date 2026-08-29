@@ -19,6 +19,7 @@ what the hardware is doing:
     test_wiring     the RIGHT motor leads are reversed; the default must correct it
     test_creep_pulse  a robot with no creep executing a creep command (invariant 5)
     test_escape     boxed in: forward blocked, no reverse -> turn toward open space
+    test_telemetry  the raw policy output survives every stage that follows it
 """
 import subprocess
 import sys
@@ -28,7 +29,7 @@ HERE = Path(__file__).resolve().parent
 SUITES = ["test_ld19.py", "test_reconnect.py", "test_motors.py",
           "test_ports.py", "test_creep.py", "test_pivot.py", "test_tof_floor.py",
           "test_frontier.py", "test_odometry.py", "test_wiring.py",
-          "test_creep_pulse.py", "test_escape.py"]
+          "test_creep_pulse.py", "test_escape.py", "test_telemetry.py"]
 
 failed = []
 for suite in SUITES:

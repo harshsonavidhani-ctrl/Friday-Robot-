@@ -1,0 +1,153 @@
+"""The raw policy output must survive every stage that follows it.
+
+The first autonomous run's black box could not answer "did my trained policy drive
+this robot", because `ControlLoop.tick` overwrote `v_pol`/`omega_pol` in the
+no-reverse fallback BEFORE recording them. 34 of 300 ticks whose heading came from
+the `_open_side()` rule were logged under the policy's name at exactly +-omega_max.
+
+Every assertion here exists to stop that specific class of defect coming back: a
+number that is presented as the network's answer while being something else's.
+"""
+import sys
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import telemetry as tlm
+from pi_deploy import (BlackBox, ControlLoop, HERE, NullMotorDriver, PolicyRunner,
+                       RobotConfig, SensorSlot)
+
+cfg = RobotConfig()
+cfg.tof_enabled = False
+cfg.cam_enabled = False
+fails = 0
+
+
+def check(name, ok, detail=""):
+    global fails
+    print(f"  [{'PASS' if ok else 'FAIL'}] {name} {detail}")
+    if not ok:
+        fails += 1
+
+
+class NoReverseDriver(NullMotorDriver):
+    """A stiction floor, so the no-reverse substitution is reachable."""
+
+    def min_speed_mps(self) -> float:
+        return 0.179
+
+
+def make_loop(driver=None):
+    slots = {"lidar": SensorSlot("lidar", cfg.lidar_deadline, True),
+             "tof": SensorSlot("tof", cfg.tof_deadline, True)}
+    policy = PolicyRunner(HERE / "exploration_model.onnx", cfg)
+    loop = ControlLoop(cfg, policy, driver or NullMotorDriver(cfg), slots)
+    return loop, slots
+
+
+def boxed_scan():
+    """Everything close: forward forbidden, and the policy wants out."""
+    return np.full(cfg.n_beams, 0.33, np.float32)
+
+
+def open_scan():
+    return np.full(cfg.n_beams, 4.5, np.float32)
+
+
+print("--- telemetry / decision provenance ---")
+
+# 1. THE CENTRAL GUARANTEE. Drive into a box until a rule substitutes, and confirm
+#    the recorded raw output is still the network's, not the rule's.
+loop, slots = make_loop(driver=NoReverseDriver(cfg))
+subs = 0
+for _ in range(40):
+    slots["lidar"].publish(boxed_scan())
+    loop.tick()
+    r = loop.last_record
+    if r is not None and any(s.changed for s in r.stages if s.name in tlm.RULE_STAGES):
+        subs += 1
+        # The raw pair must equal what the policy stage recorded -- the first entry
+        # in the chain -- and must NOT have been replaced by the rule's +-omega_max.
+        pol = r.stages[0]
+        if abs(pol.v - r.v_raw) > 1e-9 or abs(pol.omega - r.omega_raw) > 1e-9:
+            check("raw output survived a rule substitution", False,
+                  f"stage0=({pol.v:+.3f},{pol.omega:+.3f}) raw=({r.v_raw:+.3f},{r.omega_raw:+.3f})")
+            break
+else:
+    check("raw output survived every rule substitution", True, f"{subs} substitutions seen")
+check("a rule substitution actually occurred (otherwise the test proves nothing)",
+      subs > 0, f"{subs} ticks")
+
+# 2. When a rule substitutes, authority must say RULE -- not POLICY.
+rule_ticks = []
+loop, slots = make_loop(driver=NoReverseDriver(cfg))
+for _ in range(40):
+    slots["lidar"].publish(boxed_scan())
+    loop.tick()
+    if loop.last_record is not None:
+        rule_ticks.append(loop.last_record.authority)
+check("a substituted tick reports authority RULE, never POLICY",
+      "RULE" in rule_ticks, f"authorities seen: {sorted(set(rule_ticks))}")
+
+# 3. The slew limiter must NOT count as a safety override. It fires on almost every
+#    acceleration; counted as an override it would report YES nearly always and the
+#    field would stop meaning anything.
+rec = tlm.DecisionRecord(v_raw=0.4, omega_raw=0.1)
+rec.add("policy", 0.4, 0.1)
+rec.add("governor", 0.4, 0.1)
+rec.add("limiter", 0.08, 0.1)          # speed shaped, heading untouched
+check("limiter is not a safety override", rec.authority == "POLICY", rec.authority)
+check("limiter is reported separately", rec.rate_limited is True)
+check("limiter kind is SMOOTHING", rec.stages[-1].kind == "SMOOTHING")
+
+# 4. A genuine safety cut MUST be reported as one.
+rec2 = tlm.DecisionRecord(v_raw=0.4, omega_raw=0.1)
+rec2.add("policy", 0.4, 0.1)
+rec2.add("governor", 0.05, 0.1, "clearance 0.40 m")
+rec2.add("limiter", 0.05, 0.1)
+check("a governor cut reports authority SAFETY", rec2.authority == "SAFETY", rec2.authority)
+
+# 5. NO FABRICATED VALUES. An unmeasured field must render as absence, never as 0.00.
+blank = tlm.DecisionRecord()
+txt = tlm.autonomy_status(blank, cfg, mode="TEST")
+check("an unreported ToF renders as absence, not 0.00 m",
+      "not reported" in txt and "nearest obstacle 0.00" not in txt)
+check("zero cameras is stated explicitly", "NO FRAMES" in txt)
+
+# 6. The black box schema must carry the raw columns, and at the SAME precision as
+#    v_policy -- at 3 dp against 4, every tick reads as a substitution.
+check("blackbox schema has v_raw/omega_raw",
+      "v_raw" in BlackBox.FIELDS and "omega_raw" in BlackBox.FIELDS)
+check("blackbox schema has authority", "authority" in BlackBox.FIELDS)
+
+loop, slots = make_loop()
+for _ in range(5):
+    slots["lidar"].publish(open_scan())
+    loop.tick()
+rows = list(loop.blackbox.buf)
+i_pol, i_raw = BlackBox.FIELDS.index("v_policy"), BlackBox.FIELDS.index("v_raw")
+same_precision = all(
+    abs(r[i_pol] - r[i_raw]) < 1e-9 for r in rows
+)   # open space: no substitution, so the two columns must agree EXACTLY
+check("v_policy and v_raw agree exactly when no rule fires (matched precision)",
+      same_precision, f"{len(rows)} rows")
+
+# 7. Sector clearances must be orientation-correct: beam 0 is forward.
+scan = np.full(cfg.n_beams, 5.0, np.float32)
+scan[0] = 0.5                                    # something directly ahead
+cl = tlm.clearances(scan)
+check("an obstacle at beam 0 reads as FRONT", cl["front"] < 1.0, f"front={cl['front']:.2f}")
+check("...and not as left/right/rear",
+      min(cl["left"], cl["right"], cl["rear"]) > 4.0)
+scan2 = np.full(cfg.n_beams, 5.0, np.float32)
+scan2[cfg.n_beams // 4] = 0.5                    # 90 deg CCW = left
+check("an obstacle at n/4 reads as LEFT", tlm.clearances(scan2)["left"] < 1.0)
+
+# 8. Action naming must not call a pivot "forward".
+check("pivot is named a pivot", tlm.action_name(0.0, 1.2) == "PIVOT_LEFT")
+check("stop is named a stop", tlm.action_name(0.0, 0.0) == "STOP")
+check("an arc is named an arc", tlm.action_name(0.3, -0.9) == "FORWARD_ARC_RIGHT")
+
+print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
+sys.exit(1 if fails else 0)
