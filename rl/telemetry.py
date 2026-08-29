@@ -137,6 +137,10 @@ class DecisionRecord:
     # ---- bookkeeping ----
     gate: str = "ok"
     explored_m2: float | None = None
+    # Persistent world model (world.WorldMap). None => mapping is off, which is a
+    # different fact from "mapped nothing" and is rendered differently.
+    world: dict | None = None
+    world_loaded: bool = False
     pose: tuple[float, float, float] | None = None
     loop_ms: float | None = None
 
@@ -386,9 +390,20 @@ def autonomy_status(rec: DecisionRecord, cfg: Any, mode: str,
     if rec.explored_m2 is None:
         add("  not tracked")
     else:
-        add(f"  explored {rec.explored_m2:.1f} m^2 this run   "
+        add(f"  observation map: {rec.explored_m2:.1f} m^2 swept this run   "
             f"frontier {'present' if rec.frontier_live else 'none in range'}")
-        add("  NOTE: in-memory only, dead-reckoned. Nothing persists between runs.")
+    if rec.world is None:
+        add("  persistent map: DISABLED")
+    else:
+        w = rec.world
+        add(f"  persistent map: {w['explored_m2']:6.1f} m^2 known "
+            f"({w['free_m2']:.1f} free)   {w['unknown']} cells unknown")
+        add(f"                  {w['visited_m2']:6.1f} m^2 physically driven   "
+            f"{w['sweeps']} sweeps this run / {w.get('sweeps_total', 0)} ever"
+            + (f"  ({w['dropped']} superseded)" if w.get("dropped") else ""))
+        add(f"                  {'restored from disk' if rec.world_loaded else 'fresh this run'}"
+            f"   bounds {w['bounds'][0]:.1f},{w['bounds'][1]:.1f} .. "
+            f"{w['bounds'][2]:.1f},{w['bounds'][3]:.1f} m")
     if rec.pose is not None:
         add(f"  dead-reckoned pose  x={rec.pose[0]:.2f} y={rec.pose[1]:.2f} "
             f"theta={np.degrees(rec.pose[2]):+.0f} deg")

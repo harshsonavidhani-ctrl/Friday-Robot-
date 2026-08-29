@@ -98,6 +98,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import telemetry as tlm  # noqa: E402
+from world import MapperThread, WorldMap  # noqa: E402
 
 # Optional dependencies are imported lazily so `--simulate` runs on a bare machine.
 try:
@@ -1957,6 +1958,13 @@ class ControlLoop:
         if self.map.blind_beams.size:
             LOGGER.info("Exploration map ignores %d blind beam(s) (chassis): %s",
                         self.map.blind_beams.size, list(self.map.blind_beams))
+        # PERSISTENT MEMORY. `self.map` above is the observation's frontier source and
+        # must keep its training geometry; `self.world` is what Friday REMEMBERS. Two
+        # objects because they answer different questions and have different lifetimes:
+        # one is reset every run by design, the other is the point of not being.
+        self.world = WorldMap(max_range=cfg.lidar_max_range)
+        self.mapper: MapperThread | None = None
+        self.map_enabled = True
         self.governor = LidarGovernor(cfg)
         self.reflex = ToFReflex(cfg)
         self.visual = VisualHazardMonitor(cfg, baseline)   # None => fail-open, disabled
@@ -2247,6 +2255,15 @@ class ControlLoop:
             ex_v, ex_omega = self.motors.executed()
             self.map.dead_reckon(ex_v, ex_omega, c.dt)
 
+        # ---- 6b. persistent memory ------------------------------------------------
+        # Same pose as the observation map, so the two never disagree about where the
+        # robot is. submit() copies and returns immediately; integration happens on the
+        # mapper thread, because folding a sweep costs ~24 ms against a 100 ms budget
+        # and that cost GROWS with the map.
+        if self.mapper is not None:
+            self.world.set_pose(*(float(x) for x in self.map.pose))
+            self.mapper.submit(scan, self.map.pose, self.map.blind_beams)
+
         loop_ms = (time.perf_counter() - t_start) * 1000.0
         self.loop_ms.append(loop_ms)
         self.stats["ticks"] += 1
@@ -2255,6 +2272,10 @@ class ControlLoop:
 
         rec.loop_ms = loop_ms
         rec.explored_m2 = self.map.explored_m2
+        if self.mapper is not None:
+            w = self.world.stats()
+            w["dropped"] = self.world.dropped
+            rec.world, rec.world_loaded = w, self.world.loaded_from_disk
         rec.pose = tuple(float(x) for x in self.map.pose)
         rec.executed_v, rec.executed_omega = self.motors.executed()
         self.last_record = rec
@@ -2284,6 +2305,17 @@ class ControlLoop:
                                                    name="reflex", daemon=True)
             self._reflex_thread.start()
             LOGGER.info("Reflex thread running at %.0f Hz", self.cfg.reflex_hz)
+
+        if self.map_enabled:
+            if self.world.load():
+                s = self.world.stats()
+                LOGGER.info("World map restored from %s: %.1f m^2 known, %d sweeps",
+                            self.world.map_file.name, s["explored_m2"], s["sweeps"])
+            else:
+                LOGGER.info("No world map at %s -- starting a fresh one.",
+                            self.world.map_file)
+            self.mapper = MapperThread(self.world, hz=2.0)
+            self.mapper.start()
 
         period = self.cfg.dt
         next_tick = time.monotonic()
@@ -2328,6 +2360,17 @@ class ControlLoop:
         self.motors.emergency_stop()
         if self._reflex_thread is not None:
             self._reflex_thread.join(timeout=1.0)
+        if self.mapper is not None:
+            self.mapper.stop()
+            self.mapper.join(timeout=2.0)
+            saved = self.world.save()
+            s = self.world.stats()
+            if saved is not None:
+                LOGGER.info("World map saved: %s  (%.1f m^2 known, %.1f m^2 driven, "
+                            "%d sweeps, %d dropped)", saved.name, s["explored_m2"],
+                            s["visited_m2"], s["sweeps"], self.world.dropped)
+            else:
+                LOGGER.info("World map not saved (nothing was observed).")
         self.motors.close()
         # Timestamped, so runs never overwrite each other. The old fixed name meant
         # every run destroyed the previous one's evidence -- and would have destroyed
@@ -2930,6 +2973,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", type=str, default=str(HERE / "exploration_model.onnx"))
     p.add_argument("--simulate", action="store_true", help="Synthetic sensors; no hardware needed.")
     p.add_argument("--selftest", action="store_true", help="Run safety-chain assertions and exit.")
+    p.add_argument("--no-map", action="store_true",
+                   help="Disable the persistent world map (no load, no save, no "
+                        "mapper thread). The policy is unaffected -- its frontier "
+                        "rays come from LocalExplorationMap either way.")
+    p.add_argument("--map-file", default=None, metavar="PATH",
+                   help="Where the persistent world map lives "
+                        "(default: friday/state/rl_map.npz). NOT state/map.npz -- "
+                        "that is Friday's scan-matched survey and must not be "
+                        "overwritten by a dead-reckoned one.")
     p.add_argument("--status-every", type=int, default=0, metavar="N",
                    help="Print the full FRIDAY AUTONOMOUS STATUS block every N ticks "
                         "(10 = once a second at the default rate). 0 = off.")
@@ -3253,6 +3305,9 @@ def main(argv: list[str] | None = None) -> int:
             return 4
 
         loop.status_every = max(0, int(args.status_every))
+        loop.map_enabled = not args.no_map
+        if args.map_file:
+            loop.world.map_file = Path(args.map_file)
 
         if args.policy_proof:
             return policy_proof(cfg, loop)
