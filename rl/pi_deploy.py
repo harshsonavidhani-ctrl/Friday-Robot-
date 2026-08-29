@@ -99,6 +99,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import telemetry as tlm  # noqa: E402
 from explorer import ExplorationPlanner, steering_bias  # noqa: E402
+from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
 
 # Optional dependencies are imported lazily so `--simulate` runs on a bare machine.
@@ -1973,6 +1974,10 @@ class ControlLoop:
         self.map_enabled = True
         self.planner: ExplorationPlanner | None = None
         self.planner_enabled = True
+        # Broader stuck detection than the boxed-in check below. It sees oscillation,
+        # spinning and no-progress, which are invisible in any single tick.
+        self.recovery = RecoveryController(cfg, self.world)
+        self.recovery_enabled = True
         self.governor = LidarGovernor(cfg)
         self.reflex = ToFReflex(cfg)
         self.visual = VisualHazardMonitor(cfg, baseline)   # None => fail-open, disabled
@@ -1993,7 +1998,8 @@ class ControlLoop:
         self._reflex_thread: threading.Thread | None = None
         self.stats = {"ticks": 0, "reflex_stops": 0, "visual_stops": 0,
                       "governor_limits": 0, "stale_stops": 0, "overruns": 0,
-                      "no_reverse_turns": 0, "escape_turns": 0, "planner_biases": 0}
+                      "no_reverse_turns": 0, "escape_turns": 0, "planner_biases": 0,
+                      "recovery_ticks": 0}
         self.loop_ms: deque[float] = deque(maxlen=200)
         # Populated by every tick, including the fail-safe early returns. Exists from
         # construction so a status render before the first tick is empty, not a crash.
@@ -2214,7 +2220,8 @@ class ControlLoop:
             self._stuck_ticks += 1
         else:
             self._stuck_ticks = 0
-        if self._stuck_ticks >= self.escape_after_ticks:
+        boxed_in = self._stuck_ticks >= self.escape_after_ticks
+        if boxed_in:
             v = 0.0
             omega = self._open_side(scan) * c.omega_max
             self.stats["escape_turns"] += 1
@@ -2222,6 +2229,37 @@ class ControlLoop:
             rec.add("escape", v, omega,
                     f"forward blocked {self._stuck_ticks} ticks at "
                     f"{rec.lidar_min:.2f} m and no reverse available")
+
+        # ---- 2c. RECOVERY CONTROLLER ----------------------------------------------
+        #
+        # Fed the EXECUTED twist, never the commanded one. On this drivetrain the creep
+        # cutoff turns a sub-floor request into a full stop and the stiction floor lifts
+        # a small one, so a detector watching commands would conclude the robot was
+        # travelling nicely while it sat buzzing against a wall.
+        #
+        # Its output is a pivot in place, which cannot approach anything -- the
+        # footprint does not translate -- so it reduces no safety margin, and the
+        # governor, visual gate, reflex and limiter all still run on the result below.
+        if self.recovery_enabled:
+            ex = self.motors.executed()
+            forced = self.recovery.update(
+                scan, ex[0], ex[1], v, boxed_in, self.map.pose,
+                self.stats["ticks"], self._open_side(scan))
+            if forced is not None:
+                v, omega, why_rec = forced
+                self.stats["recovery_ticks"] += 1
+                gate = "recovery"
+                rec.add("recovery", v, omega, why_rec)
+                # At the last escalation the destination itself is suspect. Drop it so
+                # the planner stops steering back toward whatever the robot cannot reach.
+                if (getattr(self.recovery, "blacklist_requested", False)
+                        and self.planner is not None):
+                    with self.planner._lock:
+                        if self.planner.target is not None:
+                            self.planner.blacklist.add(self.planner.target.key())
+                            self.planner.target = None
+                            self.planner.targets_abandoned += 1
+                    self.recovery.blacklist_requested = False
 
         # ---- 3. visual gate (advisory) --------------------------------------------
         frames = {}
@@ -3035,6 +3073,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", type=str, default=str(HERE / "exploration_model.onnx"))
     p.add_argument("--simulate", action="store_true", help="Synthetic sensors; no hardware needed.")
     p.add_argument("--selftest", action="store_true", help="Run safety-chain assertions and exit.")
+    p.add_argument("--no-recovery", action="store_true",
+                   help="Disable oscillation/spin/no-progress detection and recovery. "
+                        "The boxed-in escape turn is separate and stays on.")
     p.add_argument("--no-planner", action="store_true",
                    help="Disable frontier target selection. The RL policy then drives "
                         "alone, exactly as before Phase 3 -- useful for an A/B of "
@@ -3373,6 +3414,7 @@ def main(argv: list[str] | None = None) -> int:
         loop.status_every = max(0, int(args.status_every))
         loop.map_enabled = not args.no_map
         loop.planner_enabled = not args.no_planner
+        loop.recovery_enabled = not args.no_recovery
         if args.map_file:
             loop.world.map_file = Path(args.map_file)
 
