@@ -34,6 +34,7 @@ template chosen by vibe. If a reason cannot be grounded in a field, it is not em
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -46,6 +47,7 @@ import numpy as np
 STAGE_ORDER = (
     "policy",           # raw ONNX output -- the only stage that CREATES a command
     "no_reverse",       # control adaptation: unexecutable reverse -> pivot
+    "planner",          # frontier target: bounded HEADING bias, never speed
     "governor",         # LiDAR braking; may only reduce
     "escape",           # control adaptation: boxed in -> decisive pivot
     "visual",           # camera hazard; advisory, may only reduce
@@ -56,6 +58,11 @@ STAGE_ORDER = (
 # Which stages are the ROBOT'S OWN DECISION versus a hand-written rule. This is the
 # distinction the whole module exists to make legible, so it is data, not prose.
 POLICY_STAGES = frozenset({"policy"})
+# The exploration planner is its own authority, deliberately not lumped in with the
+# hand-written rules. It is a DECISION about where to go, made from the persistent map
+# -- not a hardware workaround like `no_reverse`, and not a safety veto. Collapsing the
+# three into "not the policy" is what made the first run's log unreadable.
+PLANNER_STAGES = frozenset({"planner"})
 RULE_STAGES = frozenset({"no_reverse", "escape"})
 SAFETY_STAGES = frozenset({"governor", "visual", "tof"})
 # The slew limiter is NOT a safety override and must not be counted as one. It changes
@@ -81,6 +88,8 @@ class Stage:
     def kind(self) -> str:
         if self.name in POLICY_STAGES:
             return "POLICY"
+        if self.name in PLANNER_STAGES:
+            return "PLANNER"
         if self.name in RULE_STAGES:
             return "RULE"
         if self.name in SMOOTHING_STAGES:
@@ -136,6 +145,10 @@ class DecisionRecord:
 
     # ---- bookkeeping ----
     gate: str = "ok"
+    # Planner context for this tick: bearing error, applied bias, and why. None means
+    # the planner is off, which is a different fact from "the planner had nothing to
+    # say" and is rendered differently.
+    planner: dict | None = None
     explored_m2: float | None = None
     # Persistent world model (world.WorldMap). None => mapping is off, which is a
     # different fact from "mapped nothing" and is rendered differently.
@@ -325,6 +338,15 @@ def reason(rec: DecisionRecord, cfg: Any) -> str:
         return (f"the navigation policy chose {action_name(rec.final_v, rec.final_omega)} "
                 f"from {seen}; no safety stage modified it")
 
+    if d.name == "planner":
+        p = rec.planner or {}
+        e = p.get("bearing_error")
+        if e is None:
+            return "steering toward the exploration target"
+        return (f"steering toward the exploration target: it is "
+                f"{math.degrees(abs(e)):.0f} deg {'left' if e > 0 else 'right'} of the "
+                f"nose, so a {abs(p.get('bias', 0.0)):.2f} rad/s bias was added to the "
+                f"policy's turn")
     if d.name == "no_reverse":
         return (f"the policy asked to reverse at {rec.v_raw:+.2f} m/s, below this "
                 f"drivetrain's {getattr(cfg, '_floor_mps', float('nan')):.2f} m/s floor, so it "
@@ -420,6 +442,17 @@ def autonomy_status(rec: DecisionRecord, cfg: Any, mode: str,
         add("POLICY OUTPUT:   none this tick")
     add(f"SELECTED ACTION: {action_name(rec.final_v, rec.final_omega)}")
     add(f"DECIDED BY:      {rec.authority}")
+    if rec.planner is None:
+        add("EXPLORATION:     planner disabled")
+    else:
+        e = rec.planner.get("bearing_error")
+        if e is None:
+            add(f"EXPLORATION:     no target -- {rec.planner.get('reason', '')}")
+        else:
+            add(f"EXPLORATION:     target {math.degrees(abs(e)):.0f} deg "
+                f"{'left' if e > 0 else 'right'}   bias "
+                f"{rec.planner.get('bias', 0.0):+.2f} rad/s"
+                f"   ({rec.planner.get('reason', '')})")
     over = [s.name for s in rec.stages if s.changed and s.name in SAFETY_STAGES]
     add(f"SAFETY STATUS:   {'OVERRIDE -- ' + ', '.join(over) if over else 'SAFE (no override)'}")
     add(f"MOTOR COMMAND:   {rec.wire or '(nothing sent)'}")

@@ -199,6 +199,25 @@ class WorldMap:
             self.sweeps += 1
         return used
 
+    def grid_snapshot(self) -> OccupancyGrid | None:
+        """A private copy of the grid, taken under the lock.
+
+        The planner spends ~265 ms per cycle reading this. The mapper thread grows and
+        REALLOCATES `logodds` as the map extends, so a planner holding a reference
+        would be reading an array that changes shape underneath it. Copying costs a
+        few hundred kB and removes the whole class of problem; holding the lock for
+        265 ms instead would stall mapping and, through it, the control loop's submit.
+        """
+        with self._lock:
+            if self.grid.shape == (1, 1):
+                return None
+            clone = OccupancyGrid(self.grid.cell)
+            clone.logodds = self.grid.logodds.copy()
+            clone.origin = self.grid.origin.copy()
+            clone.scans = self.grid.scans
+            clone._empty = self.grid._empty
+            return clone
+
     # ----------------------------------------------------------------- state ---
     def stats(self) -> dict[str, Any]:
         """Real counts, straight off the grid. Nothing derived or estimated."""

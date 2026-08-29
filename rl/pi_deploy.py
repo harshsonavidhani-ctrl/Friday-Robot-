@@ -98,6 +98,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import telemetry as tlm  # noqa: E402
+from explorer import ExplorationPlanner, steering_bias  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
 
 # Optional dependencies are imported lazily so `--simulate` runs on a bare machine.
@@ -1923,7 +1924,12 @@ class BlackBox:
     # tick where a hand-written rule replaced the network's answer.
     FIELDS = ("t", "lidar_min", "tof_min", "visual", "v_policy", "omega_policy",
               "v_out", "omega_out", "gate", "loop_ms",
-              "v_raw", "omega_raw", "authority", "wire")
+              "v_raw", "omega_raw", "authority", "wire",
+              # Planner columns. `bias` is the rad/s actually added this tick, so
+              # "the planner fired" and "the planner mattered" can be told apart --
+              # 62% of ticks carrying a 0.05 rad/s nudge is a different fact from 62%
+              # carrying a hard turn, and the gate column alone cannot distinguish them.
+              "plan_err", "plan_bias")
 
     def __init__(self, seconds: float, hz: float) -> None:
         self.buf: deque[tuple] = deque(maxlen=int(seconds * hz) + 16)
@@ -1965,6 +1971,8 @@ class ControlLoop:
         self.world = WorldMap(max_range=cfg.lidar_max_range)
         self.mapper: MapperThread | None = None
         self.map_enabled = True
+        self.planner: ExplorationPlanner | None = None
+        self.planner_enabled = True
         self.governor = LidarGovernor(cfg)
         self.reflex = ToFReflex(cfg)
         self.visual = VisualHazardMonitor(cfg, baseline)   # None => fail-open, disabled
@@ -1985,7 +1993,7 @@ class ControlLoop:
         self._reflex_thread: threading.Thread | None = None
         self.stats = {"ticks": 0, "reflex_stops": 0, "visual_stops": 0,
                       "governor_limits": 0, "stale_stops": 0, "overruns": 0,
-                      "no_reverse_turns": 0, "escape_turns": 0}
+                      "no_reverse_turns": 0, "escape_turns": 0, "planner_biases": 0}
         self.loop_ms: deque[float] = deque(maxlen=200)
         # Populated by every tick, including the fail-safe early returns. Exists from
         # construction so a status render before the first tick is empty, not a crash.
@@ -2145,6 +2153,30 @@ class ControlLoop:
                         f"policy asked v={v_raw:+.3f}, below the {floor_mps:.3f} m/s "
                         f"floor -> pivot toward open space")
 
+        # ---- 1c. EXPLORATION PLANNER (heading only) --------------------------------
+        #
+        # The policy has no goal input -- 72 LiDAR beams, 72 frontier rays, its own
+        # last action, and nothing that says where the unmapped room is. So the target
+        # is NOT smuggled into the observation (that would be out-of-distribution input
+        # to a network that cannot report its own confusion). It is arbitrated here,
+        # after the policy has had its say.
+        #
+        # Heading only, capped, and additive. Forward speed stays the policy's and then
+        # the safety chain's; a planner can never make this robot go faster at
+        # anything. The governor, visual gate, reflex and limiter all run below.
+        planner_ctx = None
+        if self.planner is not None:
+            err = self.planner.bearing_error(self.map.pose)
+            bias, why = steering_bias(err, omega_pol, c.omega_max)
+            planner_ctx = {"bearing_error": err, "bias": bias, "reason": why}
+            if bias != 0.0:
+                omega_pol = float(np.clip(omega_pol + bias, -c.omega_max, c.omega_max))
+                self.stats["planner_biases"] += 1
+                gate = "planner"
+                rec.add("planner", v_pol, omega_pol, why)
+            self.planner.note_progress(self.map.pose)
+        rec.planner = planner_ctx
+
         # ---- 2. LiDAR governor ----------------------------------------------------
         v, omega, limited = self.governor(v_pol, omega_pol, scan)
         rec.add("governor", v, omega,
@@ -2295,7 +2327,11 @@ class ControlLoop:
                               round(v_pol, 4), round(omega_pol, 4), round(v, 3),
                               round(omega, 3), gate, round(loop_ms, 2),
                               round(v_raw, 4), round(omega_raw, 4), rec.authority,
-                              rec.wire))
+                              rec.wire,
+                              round(planner_ctx["bearing_error"], 4)
+                              if planner_ctx and planner_ctx["bearing_error"] is not None
+                              else "",
+                              round(planner_ctx["bias"], 4) if planner_ctx else ""))
         return row
 
     # ------------------------------------------------------------------- run --------
@@ -2318,8 +2354,19 @@ class ControlLoop:
             else:
                 LOGGER.info("No world map at %s -- starting a fresh one.",
                             self.world.map_file)
-            self.mapper = MapperThread(self.world, hz=2.0)
+            # No explicit rate: MapperThread's default is the MEASURED one (5 Hz
+            # against 7.4 ms mean per sweep). A literal here silently overrode it.
+            self.mapper = MapperThread(self.world)
             self.mapper.start()
+            if self.planner_enabled:
+                # 0.5 Hz: one cycle costs ~265 ms on this Pi (DistanceField 87 ms +
+                # frontier.find 179 ms over a 53 m^2 map), which is 2.65x the whole
+                # control budget. It plans against a grid SNAPSHOT for the same reason.
+                self.planner = ExplorationPlanner(self.world, period_s=2.0)
+                self.planner.start()
+                LOGGER.info("Frontier planner running every %.1f s "
+                            "(heading bias only, capped at %.0f%% of omega_max)",
+                            2.0, 100 * 0.55)
 
         period = self.cfg.dt
         next_tick = time.monotonic()
@@ -2364,6 +2411,15 @@ class ControlLoop:
         self.motors.emergency_stop()
         if self._reflex_thread is not None:
             self._reflex_thread.join(timeout=1.0)
+        if self.planner is not None:
+            self.planner.stop()
+            self.planner.join(timeout=3.0)
+            p = self.planner.snapshot()
+            LOGGER.info("Planner: %d chosen, %d ARRIVED at, %d revealed without "
+                        "arriving, %d abandoned, %d cycles, %d frontiers left%s",
+                        p["chosen"], p["arrived"], p["revealed"], p["abandoned"],
+                        p["cycles"], p["frontiers"],
+                        "  (EXHAUSTED)" if p["exhausted"] else "")
         if self.mapper is not None:
             self.mapper.stop()
             self.mapper.join(timeout=2.0)
@@ -2979,6 +3035,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", type=str, default=str(HERE / "exploration_model.onnx"))
     p.add_argument("--simulate", action="store_true", help="Synthetic sensors; no hardware needed.")
     p.add_argument("--selftest", action="store_true", help="Run safety-chain assertions and exit.")
+    p.add_argument("--no-planner", action="store_true",
+                   help="Disable frontier target selection. The RL policy then drives "
+                        "alone, exactly as before Phase 3 -- useful for an A/B of "
+                        "planner-on vs planner-off exploration efficiency.")
     p.add_argument("--no-map", action="store_true",
                    help="Disable the persistent world map (no load, no save, no "
                         "mapper thread). The policy is unaffected -- its frontier "
@@ -3312,6 +3372,7 @@ def main(argv: list[str] | None = None) -> int:
 
         loop.status_every = max(0, int(args.status_every))
         loop.map_enabled = not args.no_map
+        loop.planner_enabled = not args.no_planner
         if args.map_file:
             loop.world.map_file = Path(args.map_file)
 
