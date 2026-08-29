@@ -31,9 +31,14 @@ import statistics as st
 import sys
 from collections import Counter
 
-# Gates whose heading came from a hand-written rule rather than from the network.
-# Kept in sync with telemetry.RULE_STAGES by name.
-RULE_GATES = {"no_reverse_turn", "escape_turn"}
+# Gates whose heading came from something other than the policy. Split by ROLE, not
+# lumped as "rules": `escape_turn` means the ROBOT was stuck (recovery), while
+# `no_reverse_turn` means the COMMAND was unexecutable (capability adaptation). They
+# fail differently and a run dominated by one says something different from the other.
+RECOVERY_GATES = {"escape_turn"}
+CAPABILITY_GATES = {"no_reverse_turn"}
+PLANNER_GATES = {"planner"}
+RULE_GATES = RECOVERY_GATES | CAPABILITY_GATES
 SAFETY_GATES = {"governor", "tof_slow", "visual_slow", "visual_stop", "REFLEX_STOP",
                 "stale_lidar", "stale_tof"}
 DT = 0.1  # control period; matches RobotConfig.control_hz = 10
@@ -82,7 +87,10 @@ def analyse(path):
     gates = Counter(r["gate"] for r in rows)
     print("\n-- GATE DISTRIBUTION (which stage had the last word) --")
     for g, c in gates.most_common():
-        tag = "RULE  " if g in RULE_GATES else ("SAFETY" if g in SAFETY_GATES else "POLICY")
+        tag = ("RECOVERY  " if g in RECOVERY_GATES else
+               "CAPABILITY" if g in CAPABILITY_GATES else
+               "PLANNER   " if g in PLANNER_GATES else
+               "SAFETY    " if g in SAFETY_GATES else "RL_POLICY ")
         print(f"   {g:<18} {c:5d}  {100 * c / n:5.1f}%   [{tag}]")
 
     if has_raw:

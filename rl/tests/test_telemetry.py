@@ -87,8 +87,9 @@ for _ in range(40):
     loop.tick()
     if loop.last_record is not None:
         rule_ticks.append(loop.last_record.authority)
-check("a substituted tick reports authority RULE, never POLICY",
-      "RULE" in rule_ticks, f"authorities seen: {sorted(set(rule_ticks))}")
+check("an unexecutable-reverse tick reports CAPABILITY_ADAPTER, never RL_POLICY",
+      tlm.SRC_CAPABILITY in rule_ticks,
+      f"authorities seen: {sorted(set(rule_ticks))}")
 
 # 3. The slew limiter must NOT count as a safety override. It fires on almost every
 #    acceleration; counted as an override it would report YES nearly always and the
@@ -97,16 +98,17 @@ rec = tlm.DecisionRecord(v_raw=0.4, omega_raw=0.1)
 rec.add("policy", 0.4, 0.1)
 rec.add("governor", 0.4, 0.1)
 rec.add("limiter", 0.08, 0.1)          # speed shaped, heading untouched
-check("limiter is not a safety override", rec.authority == "POLICY", rec.authority)
+check("limiter is not a safety override", rec.authority == tlm.SRC_POLICY, rec.authority)
 check("limiter is reported separately", rec.rate_limited is True)
-check("limiter kind is SMOOTHING", rec.stages[-1].kind == "SMOOTHING")
+check("limiter kind is MOTION_SMOOTHING", rec.stages[-1].kind == tlm.SRC_SMOOTHING)
 
 # 4. A genuine safety cut MUST be reported as one.
 rec2 = tlm.DecisionRecord(v_raw=0.4, omega_raw=0.1)
 rec2.add("policy", 0.4, 0.1)
 rec2.add("governor", 0.05, 0.1, "clearance 0.40 m")
 rec2.add("limiter", 0.05, 0.1)
-check("a governor cut reports authority SAFETY", rec2.authority == "SAFETY", rec2.authority)
+check("a governor cut reports SAFETY_OVERRIDE", rec2.authority == tlm.SRC_SAFETY,
+      rec2.authority)
 
 # 5. NO FABRICATED VALUES. An unmeasured field must render as absence, never as 0.00.
 blank = tlm.DecisionRecord()
@@ -148,6 +150,58 @@ check("an obstacle at n/4 reads as LEFT", tlm.clearances(scan2)["left"] < 1.0)
 check("pivot is named a pivot", tlm.action_name(0.0, 1.2) == "PIVOT_LEFT")
 check("stop is named a stop", tlm.action_name(0.0, 0.0) == "STOP")
 check("an arc is named an arc", tlm.action_name(0.3, -0.9) == "FORWARD_ARC_RIGHT")
+
+# 9. ACTION SOURCES must be five DISTINCT roles. Recovery and capability adaptation
+#    used to share the label "RULE", and they fail differently: `escape` fires because
+#    the ROBOT is stuck, `no_reverse` because the COMMAND is unexecutable. A robot
+#    reporting "recovery" while merely translating a reverse sends you hunting for a
+#    trap that is not there.
+srcs = {tlm.SRC_POLICY, tlm.SRC_PLANNER, tlm.SRC_SAFETY, tlm.SRC_RECOVERY,
+        tlm.SRC_CAPABILITY, tlm.SRC_SMOOTHING}
+check("the six action sources are all distinct", len(srcs) == 6, str(sorted(srcs)))
+check("escape is RECOVERY_CONTROLLER",
+      tlm.Stage("escape", 0, 0).kind == tlm.SRC_RECOVERY)
+check("no_reverse is CAPABILITY_ADAPTER, not recovery",
+      tlm.Stage("no_reverse", 0, 0).kind == tlm.SRC_CAPABILITY)
+check("planner is EXPLORATION_PLANNER",
+      tlm.Stage("planner", 0, 0).kind == tlm.SRC_PLANNER)
+check("governor is SAFETY_OVERRIDE",
+      tlm.Stage("governor", 0, 0).kind == tlm.SRC_SAFETY)
+
+# 10. THE PROVENANCE CONTRACT. Every executed action must carry the full record.
+rec3 = tlm.DecisionRecord(v_raw=0.40, omega_raw=-0.20)
+rec3.planner = {"bearing_error": 0.9, "bias": 0.3, "reason": "target is 52 deg left"}
+rec3.add("policy", 0.40, -0.20, "network output")
+rec3.add("planner", 0.40, 0.10, "target is 52 deg left")
+rec3.add("governor", 0.12, 0.10, "clearance 0.44 m")
+rec3.add("limiter", 0.08, 0.10, "slew limited")
+rec3.final_v, rec3.final_omega = 0.08, 0.10
+rec3.wire = "M100 60"
+p = rec3.provenance()
+for key in ("RAW_POLICY_ACTION", "PLANNER_CONTEXT", "SAFETY_DECISION",
+            "FINAL_EXECUTED_ACTION", "ACTION_SOURCE", "MODIFICATION_REASON"):
+    check(f"provenance carries {key}", key in p)
+check("RAW_POLICY_ACTION is the NETWORK's, not the last stage's",
+      p["RAW_POLICY_ACTION"]["v"] == 0.40 and p["RAW_POLICY_ACTION"]["omega"] == -0.20,
+      str(p["RAW_POLICY_ACTION"]))
+check("SAFETY_DECISION records the override", p["SAFETY_DECISION"]["overridden"] is True)
+check("...and names the stage", "governor" in p["SAFETY_DECISION"]["stages"])
+check("FINAL_EXECUTED_ACTION carries the literal wire command",
+      p["FINAL_EXECUTED_ACTION"]["wire"] == "M100 60")
+check("ACTION_SOURCE is the LAST non-smoothing change (the governor)",
+      p["ACTION_SOURCE"] == tlm.SRC_SAFETY, p["ACTION_SOURCE"])
+check("MODIFICATION_REASON is the measurement that caused it",
+      "clearance" in p["MODIFICATION_REASON"], p["MODIFICATION_REASON"])
+
+# With no safety cut, the planner must own the action.
+rec4 = tlm.DecisionRecord(v_raw=0.4, omega_raw=-0.2)
+rec4.add("policy", 0.4, -0.2)
+rec4.add("planner", 0.4, 0.1, "target left")
+rec4.add("limiter", 0.4, 0.1)
+check("an unvetoed planner tick is EXPLORATION_PLANNER",
+      rec4.provenance()["ACTION_SOURCE"] == tlm.SRC_PLANNER)
+check("...and reports no safety override",
+      rec4.provenance()["SAFETY_DECISION"]["overridden"] is False)
 
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

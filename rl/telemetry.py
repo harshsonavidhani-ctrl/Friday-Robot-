@@ -48,6 +48,7 @@ STAGE_ORDER = (
     "policy",           # raw ONNX output -- the only stage that CREATES a command
     "no_reverse",       # control adaptation: unexecutable reverse -> pivot
     "planner",          # frontier target: bounded HEADING bias, never speed
+    "recovery",         # stuck: a deliberate, escalating, bounded escape
     "governor",         # LiDAR braking; may only reduce
     "escape",           # control adaptation: boxed in -> decisive pivot
     "visual",           # camera hazard; advisory, may only reduce
@@ -55,15 +56,42 @@ STAGE_ORDER = (
     "limiter",          # slew limit; may only reduce rate of change
 )
 
-# Which stages are the ROBOT'S OWN DECISION versus a hand-written rule. This is the
-# distinction the whole module exists to make legible, so it is data, not prose.
+# ======================================================================================
+# ACTION SOURCES -- the five things that can decide what the wheels do
+# ======================================================================================
+# Every executed action traces to exactly one of these. They are separate because they
+# fail differently, and lumping any two together destroys the ability to diagnose:
+#
+#   RL_POLICY            the trained network. The only source that CREATES a command.
+#   EXPLORATION_PLANNER  a decision about WHERE TO GO, from the persistent map.
+#                        Bounded heading bias; it can never change speed.
+#   SAFETY_OVERRIDE      a veto or a brake. Can only ever REDUCE.
+#   RECOVERY_CONTROLLER  the robot is stuck and a deliberate escape is being driven.
+#   CAPABILITY_ADAPTER   the command is physically unexecutable by this drivetrain and
+#                        was translated into one that is. NOT a safety event and NOT a
+#                        decision -- the intent is preserved, the means are changed.
+#   MOTION_SMOOTHING     shapes how fast a command is approached, never what it is.
+#
+# The distinction between RECOVERY and CAPABILITY matters and was previously lost: both
+# used to be "RULE". `escape` fires because the ROBOT is stuck; `no_reverse` fires
+# because the COMMAND cannot be executed. A robot reporting "recovery" while merely
+# translating a reverse tells you to go look for a trap that is not there.
+SRC_POLICY = "RL_POLICY"
+SRC_PLANNER = "EXPLORATION_PLANNER"
+SRC_SAFETY = "SAFETY_OVERRIDE"
+SRC_RECOVERY = "RECOVERY_CONTROLLER"
+SRC_CAPABILITY = "CAPABILITY_ADAPTER"
+SRC_SMOOTHING = "MOTION_SMOOTHING"
+
 POLICY_STAGES = frozenset({"policy"})
-# The exploration planner is its own authority, deliberately not lumped in with the
-# hand-written rules. It is a DECISION about where to go, made from the persistent map
-# -- not a hardware workaround like `no_reverse`, and not a safety veto. Collapsing the
-# three into "not the policy" is what made the first run's log unreadable.
 PLANNER_STAGES = frozenset({"planner"})
-RULE_STAGES = frozenset({"no_reverse", "escape"})
+# `_open_side()` -- "turn toward whichever side has more open space" -- is called from
+# BOTH of these, and that is why its architectural role was ambiguous. It is not itself
+# a controller; it is a SHARED PRIMITIVE, a direction chooser that reads the live scan.
+# The two callers use it for different reasons and are classified by the reason.
+RECOVERY_STAGES = frozenset({"escape", "recovery"})   # the robot is stuck
+CAPABILITY_STAGES = frozenset({"no_reverse"})  # the command is unexecutable
+RULE_STAGES = RECOVERY_STAGES | CAPABILITY_STAGES   # kept: "not policy, not safety"
 SAFETY_STAGES = frozenset({"governor", "visual", "tof"})
 # The slew limiter is NOT a safety override and must not be counted as one. It changes
 # how fast the command is approached, never what the command is -- a policy asking for
@@ -87,14 +115,16 @@ class Stage:
     @property
     def kind(self) -> str:
         if self.name in POLICY_STAGES:
-            return "POLICY"
+            return SRC_POLICY
         if self.name in PLANNER_STAGES:
-            return "PLANNER"
-        if self.name in RULE_STAGES:
-            return "RULE"
+            return SRC_PLANNER
+        if self.name in RECOVERY_STAGES:
+            return SRC_RECOVERY
+        if self.name in CAPABILITY_STAGES:
+            return SRC_CAPABILITY
         if self.name in SMOOTHING_STAGES:
-            return "SMOOTHING"
-        return "SAFETY"
+            return SRC_SMOOTHING
+        return SRC_SAFETY
 
 
 @dataclass
@@ -189,9 +219,40 @@ class DecisionRecord:
 
     @property
     def authority(self) -> str:
-        """POLICY / RULE / SAFETY -- who chose what the wheels are doing this tick."""
+        """ACTION_SOURCE: the one thing that decided what the wheels do this tick."""
         s = self.deciding_stage
         return s.kind if s is not None else "NONE"
+
+    @property
+    def action_source(self) -> str:
+        """Alias for `authority`, under the name the architecture uses."""
+        return self.authority
+
+    def provenance(self) -> dict[str, Any]:
+        """The full per-action record: raw policy in, executed action out, and why.
+
+        This is the contract Phase 4 asks for, in one place, so a caller never has to
+        reassemble it from stages and risk getting the attribution wrong.
+        """
+        safety = [s for s in self.stages if s.changed and s.name in SAFETY_STAGES]
+        return {
+            "RAW_POLICY_ACTION": None if self.v_raw is None
+            else {"v": self.v_raw, "omega": self.omega_raw},
+            "PLANNER_CONTEXT": self.planner,
+            "SAFETY_DECISION": {
+                "overridden": bool(safety),
+                "stages": [s.name for s in safety],
+                "detail": "; ".join(s.detail for s in safety if s.detail),
+            },
+            "FINAL_EXECUTED_ACTION": {
+                "v": self.final_v, "omega": self.final_omega,
+                "name": action_name(self.final_v, self.final_omega),
+                "wire": self.wire, "duties": self.duties,
+            },
+            "ACTION_SOURCE": self.action_source,
+            "MODIFICATION_REASON": (self.deciding_stage.detail
+                                    if self.deciding_stage is not None else ""),
+        }
 
     @property
     def policy_survived(self) -> bool:
@@ -282,10 +343,19 @@ def policy_status(rec: DecisionRecord) -> str:
     over = [s for s in rec.stages if s.changed and s.name in SAFETY_STAGES]
     add(f"Safety Override:    {'YES -- ' + ', '.join(s.name for s in over) if over else 'NO'}")
     add(f"Rate Limited:       {'YES (acceleration shaped; heading unchanged)' if rec.rate_limited else 'NO'}")
-    rules = [s for s in rec.stages if s.changed and s.name in RULE_STAGES]
-    if rules:
-        add(f"Rule Substitution:  YES -- {', '.join(s.name for s in rules)} "
-            f"(hand-written, NOT the policy)")
+    rec_st = [s for s in rec.stages if s.changed and s.name in RECOVERY_STAGES]
+    cap_st = [s for s in rec.stages if s.changed and s.name in CAPABILITY_STAGES]
+    if rec_st:
+        add(f"Recovery:           ACTIVE -- {', '.join(s.name for s in rec_st)} "
+            f"(the robot was stuck; this heading is NOT the policy's)")
+    if cap_st:
+        add(f"Capability Adapt:   YES -- {', '.join(s.name for s in cap_st)} "
+            f"(the policy's command is unexecutable by this drivetrain; "
+            f"intent kept, means changed)")
+    pl_st = [s for s in rec.stages if s.changed and s.name in PLANNER_STAGES]
+    if pl_st:
+        add("Planner Steering:   YES -- heading biased toward the exploration target "
+            "(speed untouched)")
     add("")
     add(f"Motor Command:      {rec.wire or '(nothing sent)'}")
     if rec.duties is not None:
@@ -338,6 +408,8 @@ def reason(rec: DecisionRecord, cfg: Any) -> str:
         return (f"the navigation policy chose {action_name(rec.final_v, rec.final_omega)} "
                 f"from {seen}; no safety stage modified it")
 
+    if d.name == "recovery":
+        return d.detail or "recovery manoeuvre in progress"
     if d.name == "planner":
         p = rec.planner or {}
         e = p.get("bearing_error")
@@ -455,6 +527,8 @@ def autonomy_status(rec: DecisionRecord, cfg: Any, mode: str,
                 f"   ({rec.planner.get('reason', '')})")
     over = [s.name for s in rec.stages if s.changed and s.name in SAFETY_STAGES]
     add(f"SAFETY STATUS:   {'OVERRIDE -- ' + ', '.join(over) if over else 'SAFE (no override)'}")
+    add(f"ACTION SOURCE:   {rec.action_source}")
+    add(f"REASON CODE:     {rec.gate}")
     add(f"MOTOR COMMAND:   {rec.wire or '(nothing sent)'}")
     add("")
     add(f"REASON:          {reason(rec, cfg)}")

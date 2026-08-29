@@ -185,7 +185,8 @@ for i in range(20):
     slots["lidar"].publish(np.full(cfg.n_beams, 3.0, np.float32))
     loop.tick()
     auths.append(loop.last_record.authority)
-check("a biased tick reports authority PLANNER", "PLANNER" in auths,
+import telemetry as _tlm
+check("a biased tick reports EXPLORATION_PLANNER", _tlm.SRC_PLANNER in auths,
       f"seen: {sorted(set(auths))}")
 check("the record carries the planner's own context",
       loop.last_record.planner is not None
