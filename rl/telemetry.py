@@ -184,6 +184,9 @@ class DecisionRecord:
     # the planner is off, which is a different fact from "the planner had nothing to
     # say" and is rendered differently.
     planner: dict | None = None
+    # Result of asking "can the drivetrain execute what the policy asked for?", run
+    # every tick so "checked and fine" is distinguishable from "never checked".
+    capability: dict | None = None
     explored_m2: float | None = None
     # Persistent world model (world.WorldMap). None => mapping is off, which is a
     # different fact from "mapped nothing" and is rendered differently.
@@ -255,6 +258,7 @@ class DecisionRecord:
                 "wire": self.wire, "duties": self.duties,
             },
             "ACTION_SOURCE": self.action_source,
+            "CAPABILITY_CHECK": self.capability,
             "MODIFICATION_REASON": (self.deciding_stage.detail
                                     if self.deciding_stage is not None else ""),
         }
@@ -449,6 +453,125 @@ def reason(rec: DecisionRecord, cfg: Any) -> str:
         return (f"the command was slew-limited to stay physically achievable "
                 f"({d.v:+.2f} m/s, {d.omega:+.2f} rad/s)")
     return f"{d.name} changed the command"
+
+
+# ======================================================================================
+# Capability checking
+# ======================================================================================
+def capability_check(v: float, omega: float, floor_mps: float, v_min: float,
+                     v_max: float, omega_max: float) -> dict[str, Any]:
+    """Can this drivetrain actually execute the action the policy just asked for?
+
+    Evaluated on EVERY tick, not only when it fails, so the telemetry can say "checked,
+    executable" rather than leaving the reader to infer it from the absence of a
+    complaint. Absence of evidence and evidence of absence look identical in a log.
+
+    The finding this exists to make unmissable: on this robot `v_min` is -0.15 m/s and
+    the stiction floor is 0.179 m/s, so EVERY reverse the policy is capable of asking
+    for is below the slowest speed the wheels can turn. Not most -- all of them. The
+    trained action space and the hardware do not overlap on that axis at all, and the
+    honest fix is retraining with the measured floor, not patching the runtime.
+
+    Returns a record, never a decision. The caller decides what to do with it, and what
+    it did is recorded separately.
+    """
+    reasons = []
+    executable = True
+
+    if v < 0.0:
+        if floor_mps > 0.0 and abs(v) < floor_mps:
+            executable = False
+            reasons.append(
+                f"reverse {v:+.3f} m/s is below the {floor_mps:.3f} m/s stiction floor: "
+                f"the wheels cannot turn this slowly and it would execute as a full stop")
+        if abs(v_min) < floor_mps:
+            reasons.append(
+                f"NOTE: v_min {v_min:+.3f} m/s is itself below the floor, so NO reverse "
+                f"in the trained action space is executable on this drivetrain")
+    elif 0.0 < v < (floor_mps or 0.0):
+        # Not "inexecutable" -- creep pulsing handles it -- but worth recording,
+        # because it is why executed != commanded on a healthy forward tick.
+        reasons.append(
+            f"forward {v:.3f} m/s is below the {floor_mps:.3f} m/s floor and will be "
+            f"creep-pulsed to average out")
+
+    return {
+        "requested": {"v": v, "omega": omega},
+        "executable": executable,
+        "floor_mps": floor_mps,
+        "action_space": {"v_min": v_min, "v_max": v_max, "omega_max": omega_max},
+        "findings": reasons,
+    }
+
+
+# ======================================================================================
+# The autonomy state interface
+# ======================================================================================
+# REASON CODES. The gate string was already carrying this information; naming the set
+# makes it an interface rather than an implementation detail that happens to be
+# printed. Each maps to a condition that is MEASURED, never inferred.
+REASON_CODES = {
+    "ok": "policy command executed as given",
+    "planner": "heading biased toward the exploration target",
+    "governor": "speed reduced for LiDAR clearance",
+    "tof_slow": "speed capped by the bumper ToF",
+    "visual_slow": "speed capped by the floor camera",
+    "visual_stop": "stopped by a sustained floor hazard",
+    "REFLEX_STOP": "emergency stop: obstacle inside the ToF stop distance",
+    "no_reverse_turn": "reverse is unexecutable on this drivetrain; turned instead",
+    "escape_turn": "boxed in with no reverse available; pivoted to open space",
+    "recovery": "no progress detected; running a recovery manoeuvre",
+    "stale_lidar": "LiDAR went stale; stopped rather than assume clear",
+    "stale_tof": "ToF went stale; stopped rather than assume clear",
+}
+
+
+def autonomy_state(rec: DecisionRecord, cfg: Any, mode: str,
+                   planner: dict | None = None,
+                   recovery: dict | None = None,
+                   objective: str = "",
+                   stats: dict[str, int] | None = None) -> dict[str, Any]:
+    """The complete autonomy state, as data rather than as a printed page.
+
+    Every value here is measured or explicitly absent (None). Nothing is estimated to
+    fill a field, and nothing is named that the code cannot establish -- which is why
+    there is no "objects detected" and no "room" key: neither is implemented, and a
+    plausible-looking guess in a state interface is worse than a gap, because whatever
+    reads it cannot tell the difference.
+
+    This is the machine-readable twin of `autonomy_status()`. The rendered block is for
+    a person watching a run; this is for anything else -- the dashboard, a log, a voice
+    layer deciding whether an event is worth speaking.
+    """
+    return {
+        "CURRENT_MODE": mode,
+        "TICK": rec.tick,
+        "SENSOR_STATE": {
+            "lidar": {"front": rec.lidar_front, "left": rec.lidar_left,
+                      "right": rec.lidar_right, "rear": rec.lidar_rear,
+                      "min": rec.lidar_min, "age_s": rec.lidar_age},
+            "tof": {"nearest": rec.tof_min, "age_s": rec.tof_age},
+            "cameras": rec.cam_state,
+            "floor_hazard": {"score": rec.visual_score, "gate_active": rec.visual_enabled},
+            "up_context": rec.context,
+        },
+        "MAP_STATE": rec.world,
+        "EXPLORATION_TARGET": planner,
+        "RAW_RL_POLICY_OUTPUT": (None if rec.v_raw is None
+                                 else {"v": rec.v_raw, "omega": rec.omega_raw,
+                                       "inference_ms": rec.infer_ms,
+                                       "model": rec.model_name}),
+        "PLANNER_CONTRIBUTION": rec.planner,
+        "CAPABILITY_CHECK": rec.capability,
+        "SAFETY_STATUS": rec.provenance()["SAFETY_DECISION"],
+        "RECOVERY_STATUS": recovery,
+        "ACTION_SOURCE": rec.action_source,
+        "FINAL_EXECUTED_ACTION": rec.provenance()["FINAL_EXECUTED_ACTION"],
+        "REASON_CODE": rec.gate,
+        "REASON": reason(rec, cfg),
+        "NEXT_OBJECTIVE": objective,
+        "RUN_TOTALS": dict(stats or {}),
+    }
 
 
 def autonomy_status(rec: DecisionRecord, cfg: Any, mode: str,

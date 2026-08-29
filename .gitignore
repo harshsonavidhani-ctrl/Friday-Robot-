@@ -117,3 +117,9 @@ rl/state/
 # is scan-matched (7.3 cm over 5.4 m), this one is dead-reckoned, and letting the
 # worse estimate overwrite the better survey would destroy it without a word.
 state/rl_map.npz
+# ...and its companion visit trace, written by the same save.
+state/rl_map.visits.npz
+
+# The RL stack's live autonomy state, rewritten every half-second while a run is in
+# progress. Runtime output for the dashboard and the voice layer to read, not source.
+state/rl_autonomy.json

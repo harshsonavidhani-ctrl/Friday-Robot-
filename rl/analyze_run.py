@@ -175,6 +175,50 @@ def analyse(path):
               f"   (budget {DT * 1000:.0f})")
         print(f"   overruns: {over}")
 
+    # ---- Phase 10: control-source shares, coverage rate, and health -------------
+    if has_raw and "infer_ms" in rows[0]:
+        print("\n-- CONTROL SOURCE SHARE --")
+        auth = Counter(r["authority"] for r in rows)
+        for a in ("RL_POLICY", "EXPLORATION_PLANNER", "SAFETY_OVERRIDE",
+                  "RECOVERY_CONTROLLER", "CAPABILITY_ADAPTER", "MOTION_SMOOTHING"):
+            c = auth.get(a, 0)
+            print(f"   {a:<22}{c:5d}  {100 * c / n:5.1f}%")
+
+        cov = fnum(rows, "explored_m2")
+        if cov and max(cov) > 0:
+            gained = max(cov) - min(cov)
+            print("\n-- EXPLORATION --")
+            print(f"   coverage {min(cov):.1f} -> {max(cov):.1f} m^2  (+{gained:.1f})")
+            if span > 0:
+                print(f"   rate {gained / span * 60:.1f} m^2/min")
+            if dist > 1e-6:
+                # The efficiency number that matters: area gained per metre driven.
+                # Distance alone rewards a robot that drives in circles.
+                print(f"   efficiency {gained / dist:.1f} m^2 per metre driven")
+
+        lat = fnum(rows, "infer_ms")
+        if lat:
+            print("\n-- POLICY LATENCY --")
+            print(f"   inference mean {st.mean(lat):.3f} ms  p95 "
+                  f"{sorted(lat)[int(0.95 * len(lat))]:.3f}  max {max(lat):.3f}")
+
+        recs = [r.get("recovery", "") for r in rows]
+        episodes = sum(1 for a, b in zip(recs, recs[1:])
+                       if a != "RECOVERING" and b == "RECOVERING")
+        in_rec = sum(1 for x in recs if x == "RECOVERING")
+        print("\n-- RECOVERY --")
+        print(f"   episodes {episodes}   ticks spent recovering {in_rec} "
+              f"({100 * in_rec / n:.1f}%)")
+
+        pb = [abs(float(r["plan_bias"])) for r in rows
+              if r.get("plan_bias") not in ("", None)]
+        fired = [x for x in pb if x > 1e-9]
+        if pb:
+            print("\n-- PLANNER --")
+            print(f"   biased {len(fired)}/{len(pb)} ticks ({100 * len(fired) / len(pb):.0f}%)")
+            if fired:
+                print(f"   |bias| median {st.median(fired):.3f} rad/s  max {max(fired):.3f}")
+
     # ---- the §18 headline metrics ----------------------------------------------
     print("\n-- BASELINE METRICS --")
     stuck = gates.get("escape_turn", 0)
@@ -189,10 +233,26 @@ def analyse(path):
         print(f"   turn efficiency        {math.degrees(rot) / dist:.0f} deg/m "
               f"(lower is more direct)")
     print("=" * 74)
+    cov = fnum(rows, "explored_m2") if "explored_m2" in rows[0] else []
+    lat = fnum(rows, "infer_ms") if "infer_ms" in rows[0] else []
+    auth = Counter(r.get("authority", "") for r in rows)
     return {"path": path, "n": n, "dist": dist, "rot_deg": math.degrees(rot),
             "rule_rot_pct": (100 * rule_rot / rot) if rot > 1e-9 else 0.0,
             "min_lidar": min(lm) if lm else float("nan"),
-            "safety": sum(gates.get(g, 0) for g in SAFETY_GATES)}
+            "safety": sum(gates.get(g, 0) for g in SAFETY_GATES),
+            "deg_per_m": (math.degrees(rot) / dist) if dist > 1e-6 else float("nan"),
+            "coverage": (max(cov) - min(cov)) if cov else float("nan"),
+            "infer_ms": st.mean(lat) if lat else float("nan"),
+            # NaN, not 0.0, when the column is absent. A legacy file has no
+            # `authority` column, and reporting "RL_POLICY 0.0%" for it would state
+            # that the policy never drove -- which is the opposite of what that run
+            # actually showed. Unknown and zero must not render the same.
+            "policy_pct": (100 * auth.get("RL_POLICY", 0) / n
+                           if (has_raw and n) else float("nan")),
+            "planner_pct": (100 * auth.get("EXPLORATION_PLANNER", 0) / n
+                            if (has_raw and n) else float("nan")),
+            "safety_pct": (100 * auth.get("SAFETY_OVERRIDE", 0) / n
+                           if (has_raw and n) else float("nan"))}
 
 
 def main(argv):
@@ -201,12 +261,38 @@ def main(argv):
         raise SystemExit("no blackbox-*.csv found; pass a path")
     out = [analyse(p) for p in paths]
     if len(out) > 1:
-        print("\nCOMPARISON")
-        print(f"{'run':<34}{'ticks':>7}{'dist m':>9}{'rot deg':>9}"
-              f"{'rule rot %':>12}{'min m':>8}{'safety':>8}")
-        for r in out:
-            print(f"{r['path'][-33:]:<34}{r['n']:>7}{r['dist']:>9.2f}{r['rot_deg']:>9.0f}"
-                  f"{r['rule_rot_pct']:>12.0f}{r['min_lidar']:>8.2f}{r['safety']:>8}")
+        print("\n" + "=" * 74)
+        print("COMPARISON  (BASELINE vs V2)")
+        print("=" * 74)
+        rows_ = [
+            ("ticks", "{:.0f}", "n"),
+            ("distance m", "{:.2f}", "dist"),
+            ("rotation deg", "{:.0f}", "rot_deg"),
+            ("deg per metre", "{:.0f}", "deg_per_m"),
+            ("non-policy rot %", "{:.0f}", "rule_rot_pct"),
+            ("coverage m^2", "{:.1f}", "coverage"),
+            ("min clearance m", "{:.2f}", "min_lidar"),
+            ("safety events", "{:.0f}", "safety"),
+            ("RL_POLICY %", "{:.1f}", "policy_pct"),
+            ("PLANNER %", "{:.1f}", "planner_pct"),
+            ("SAFETY %", "{:.1f}", "safety_pct"),
+            ("inference ms", "{:.3f}", "infer_ms"),
+        ]
+        head = f"{'metric':<20}" + "".join(f"{r['path'][-16:]:>18}" for r in out)
+        print(head)
+        print("-" * len(head))
+        for label, fmt, key in rows_:
+            cells = ""
+            for r in out:
+                v = r.get(key, float("nan"))
+                cells += f"{(fmt.format(v) if v == v else 'n/a'):>18}"
+            print(f"{label:<20}{cells}")
+        print("\nNote: 'n/a' means the column is absent from that file, NOT zero.")
+        print("COMPARE LIKE WITH LIKE. A simulated run and a hardware run are not")
+        print("comparable on coverage or clearance: the simulator is an open box and")
+        print("the room is not. Use this to compare hardware against hardware.")
+        print("Legacy 10-column black boxes predate the per-source and coverage")
+        print("columns, so those rows cannot be filled for them and are not guessed.")
     return 0
 
 

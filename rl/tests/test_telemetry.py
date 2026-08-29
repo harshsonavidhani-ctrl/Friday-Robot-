@@ -203,5 +203,84 @@ check("an unvetoed planner tick is EXPLORATION_PLANNER",
 check("...and reports no safety override",
       rec4.provenance()["SAFETY_DECISION"]["overridden"] is False)
 
+# 11. THE AUTONOMY STATE INTERFACE. Every field Phase 7 requires must be present, and
+#     an unmeasured one must be None rather than a plausible number.
+st = tlm.autonomy_state(rec3, cfg, mode="TEST",
+                        planner={"has_target": True, "target_xy": (1.0, 2.0)},
+                        recovery={"state": "MONITOR"}, objective="obj",
+                        stats={"ticks": 7})
+for key in ("CURRENT_MODE", "SENSOR_STATE", "MAP_STATE", "EXPLORATION_TARGET",
+            "RAW_RL_POLICY_OUTPUT", "PLANNER_CONTRIBUTION", "SAFETY_STATUS",
+            "ACTION_SOURCE", "FINAL_EXECUTED_ACTION", "REASON_CODE"):
+    check(f"autonomy state exposes {key}", key in st)
+check("RAW_RL_POLICY_OUTPUT is the network's own numbers",
+      st["RAW_RL_POLICY_OUTPUT"]["v"] == 0.40)
+check("...and carries the model name and inference time",
+      "model" in st["RAW_RL_POLICY_OUTPUT"] and "inference_ms" in st["RAW_RL_POLICY_OUTPUT"])
+check("REASON_CODE is a code, and REASON is prose", st["REASON_CODE"] == rec3.gate
+      and isinstance(st["REASON"], str))
+
+# An empty record must yield absence, not zeros. A state interface that reports 0.00 m
+# for a sensor that has never spoken is worse than one that reports nothing, because
+# whatever reads it cannot tell the two apart.
+empty = tlm.autonomy_state(tlm.DecisionRecord(), cfg, mode="TEST")
+check("an unmeasured LiDAR reports None, not 0.0",
+      empty["SENSOR_STATE"]["lidar"]["front"] is None)
+check("an unmeasured ToF reports None, not 0.0",
+      empty["SENSOR_STATE"]["tof"]["nearest"] is None)
+check("no policy output reports None, not a zero action",
+      empty["RAW_RL_POLICY_OUTPUT"] is None)
+check("the state interface invents no semantic perception fields",
+      not any(k in str(st).lower() for k in ("objects_detected", "room_name",
+                                             "recognised")))
+check("every reason code has a description",
+      set(tlm.REASON_CODES) >= {"ok", "planner", "governor", "REFLEX_STOP",
+                                "recovery", "no_reverse_turn", "escape_turn"})
+
+# 12. CAPABILITY CHECKING (Phase 9). The action space and this drivetrain do not
+#     overlap on the reverse axis AT ALL: v_min is -0.15 m/s and the stiction floor is
+#     0.179, so every reverse the policy can ask for is below the slowest speed the
+#     wheels turn. The check must say so, and must run on every tick -- "checked and
+#     executable" and "never checked" look identical in a log otherwise.
+cap_bad = tlm.capability_check(-0.07, 0.3, 0.179, cfg.v_min, cfg.v_max, cfg.omega_max)
+check("a sub-floor reverse is reported INEXECUTABLE", cap_bad["executable"] is False)
+check("...with the measured floor in the finding",
+      any("0.179" in f for f in cap_bad["findings"]))
+check("...and the fact that NO reverse is executable at all",
+      any("NO reverse" in f for f in cap_bad["findings"]))
+check("the check records what was requested",
+      cap_bad["requested"]["v"] == -0.07)
+check("...and the action space it was judged against",
+      cap_bad["action_space"]["v_min"] == cfg.v_min)
+
+cap_ok = tlm.capability_check(0.35, 0.2, 0.179, cfg.v_min, cfg.v_max, cfg.omega_max)
+check("a normal forward command is executable", cap_ok["executable"] is True)
+check("...with nothing to report", cap_ok["findings"] == [])
+
+cap_creep = tlm.capability_check(0.08, 0.0, 0.179, cfg.v_min, cfg.v_max, cfg.omega_max)
+check("a sub-floor FORWARD is executable (creep pulsing handles it)",
+      cap_creep["executable"] is True)
+check("...but is still reported, since it makes executed != commanded",
+      any("creep" in f for f in cap_creep["findings"]))
+
+# A driver with no floor (the null driver, or hardware that can reverse) must not be
+# told it cannot reverse.
+cap_free = tlm.capability_check(-0.10, 0.0, 0.0, cfg.v_min, cfg.v_max, cfg.omega_max)
+check("a drivetrain with no floor CAN reverse", cap_free["executable"] is True)
+
+# 13. The provenance contract must carry the capability check (Phase 9's requirement).
+rec5 = tlm.DecisionRecord(v_raw=-0.07, omega_raw=0.2)
+rec5.capability = cap_bad
+rec5.add("policy", -0.07, 0.2)
+rec5.add("no_reverse", 0.0, 1.6, "reverse not executable")
+p5 = rec5.provenance()
+check("provenance carries CAPABILITY_CHECK", "CAPABILITY_CHECK" in p5)
+check("...and RAW_POLICY_ACTION still shows the REVERSE the policy asked for",
+      p5["RAW_POLICY_ACTION"]["v"] == -0.07)
+check("...while ACTION_SOURCE says the adapter acted",
+      p5["ACTION_SOURCE"] == tlm.SRC_CAPABILITY)
+check("the autonomy state exposes CAPABILITY_CHECK too",
+      "CAPABILITY_CHECK" in tlm.autonomy_state(rec5, cfg, mode="TEST"))
+
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

@@ -100,6 +100,7 @@ if str(HERE) not in sys.path:
 import telemetry as tlm  # noqa: E402
 from explorer import ExplorationPlanner, steering_bias  # noqa: E402
 import cameras as _cameras  # noqa: E402
+from narrator import Narrator  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
 
@@ -2039,7 +2040,12 @@ class BlackBox:
               # "the planner fired" and "the planner mattered" can be told apart --
               # 62% of ticks carrying a 0.05 rad/s nudge is a different fact from 62%
               # carrying a hard turn, and the gate column alone cannot distinguish them.
-              "plan_err", "plan_bias")
+              "plan_err", "plan_bias",
+              # Phase 10 metrics. infer_ms makes policy latency measurable per tick
+              # rather than as a single end-of-run mean; explored_m2 turns coverage
+              # into a RATE; recovery lets stuck episodes be counted from the file
+              # alone, without needing the run's log.
+              "infer_ms", "explored_m2", "recovery")
 
     def __init__(self, seconds: float, hz: float) -> None:
         self.buf: deque[tuple] = deque(maxlen=int(seconds * hz) + 16)
@@ -2101,10 +2107,18 @@ class ControlLoop:
         self.reverse_fallback = True
         self.escape_turns = True
         self.status_every = 0          # ticks between full status blocks; 0 = off
+        # Machine-readable state for anything that is not a person watching a terminal:
+        # the dashboard, a log, the voice layer. Written atomically at state_every ticks.
+        self.state_file: Path | None = HERE.parent / "state" / "rl_autonomy.json"
+        self.state_every = 5
+        # Voice. Disabled by default: a robot that starts talking unprompted during a
+        # bench test is a surprise, and surprises around motors are the wrong kind.
+        self.narrator = Narrator(enabled=False)
         # 0.5 s at 10 Hz: long enough that a passing brake is not mistaken for being
         # stuck, short enough that she does not sit against a wall.
         self.escape_after_ticks = 5
         self._stuck_ticks = 0
+        self._warned_no_reverse = False
         self.blackbox = BlackBox(30.0, cfg.control_hz)
 
         self.last_action = np.zeros(2, np.float32)
@@ -2263,16 +2277,35 @@ class ControlLoop:
         # speed, and the governor, visual gate, reflex and rate limiter all still run
         # on the result below. Disable with --no-reverse-fallback to see the raw
         # policy behaviour.
-        if self.reverse_fallback and v_pol < 0.0:
-            floor_mps = self.motors.min_speed_mps()
-            if floor_mps > 0.0 and abs(v_pol) < floor_mps:
-                v_pol = 0.0
-                omega_pol = self._open_side(scan) * c.omega_max
-                self.stats["no_reverse_turns"] += 1
-                gate = "no_reverse_turn"
-                rec.add("no_reverse", v_pol, omega_pol,
-                        f"policy asked v={v_raw:+.3f}, below the {floor_mps:.3f} m/s "
-                        f"floor -> pivot toward open space")
+        # THE CHECK RUNS EVERY TICK, not only when it fails. "Checked and executable"
+        # and "never checked" look identical in a log otherwise, and this is the exact
+        # axis on which the trained action space and this hardware do not overlap.
+        floor_mps = self.motors.min_speed_mps()
+        rec.capability = tlm.capability_check(
+            v_pol, omega_pol, floor_mps, c.v_min, c.v_max, c.omega_max)
+
+        if self.reverse_fallback and not rec.capability["executable"]:
+            if not self._warned_no_reverse:
+                self._warned_no_reverse = True
+                # Said ONCE, loudly. Substituting an action silently is precisely what
+                # must not happen, and per-tick logging at 10 Hz is its own kind of
+                # silence -- it becomes scrollback nobody reads.
+                LOGGER.warning(
+                    "CAPABILITY MISMATCH: the policy is asking to reverse and this "
+                    "drivetrain cannot. v_min %+.3f m/s vs stiction floor %.3f m/s, so "
+                    "NO reverse in the trained action space is executable. Substituting "
+                    "a pivot toward open space, labelled CAPABILITY_ADAPTER in "
+                    "telemetry -- the raw policy output is preserved unmodified. The "
+                    "real fix is retraining with the measured floor, not this. "
+                    "--no-reverse-fallback shows the raw behaviour instead.",
+                    c.v_min, floor_mps)
+            v_pol = 0.0
+            omega_pol = self._open_side(scan) * c.omega_max
+            self.stats["no_reverse_turns"] += 1
+            gate = "no_reverse_turn"
+            rec.add("no_reverse", v_pol, omega_pol,
+                    "; ".join(rec.capability["findings"])
+                    or f"reverse {v_raw:+.3f} m/s is not executable")
 
         # ---- 1c. EXPLORATION PLANNER (heading only) --------------------------------
         #
@@ -2356,10 +2389,17 @@ class ControlLoop:
         # footprint does not translate -- so it reduces no safety margin, and the
         # governor, visual gate, reflex and limiter all still run on the result below.
         if self.recovery_enabled:
-            ex = self.motors.executed()
+            # SAME SOURCE OF TRUTH AS DEAD RECKONING. In --simulate the world moves
+            # exactly as commanded while the null driver honestly reports executing
+            # nothing, so asking the driver would have every simulated run trip
+            # `no_progress` within five seconds -- a detector firing on a robot that is
+            # demonstrably crossing the room. On hardware the driver IS the truth,
+            # because the creep cutoff and stiction floor make executed != commanded.
+            ex = (v, omega) if self.sim is not None else self.motors.executed()
             forced = self.recovery.update(
                 scan, ex[0], ex[1], v, boxed_in, self.map.pose,
                 self.stats["ticks"], self._open_side(scan))
+            rec._recovery_state = self.recovery.state
             if forced is not None:
                 v, omega, why_rec = forced
                 self.stats["recovery_ticks"] += 1
@@ -2501,7 +2541,10 @@ class ControlLoop:
                               round(planner_ctx["bearing_error"], 4)
                               if planner_ctx and planner_ctx["bearing_error"] is not None
                               else "",
-                              round(planner_ctx["bias"], 4) if planner_ctx else ""))
+                              round(planner_ctx["bias"], 4) if planner_ctx else "",
+                              round(self.policy.last_infer_ms or 0.0, 4),
+                              round((rec.world or {}).get("explored_m2", 0.0), 2),
+                              (rec.__dict__.get("_recovery_state") or "")))
         return row
 
     # ------------------------------------------------------------------- run --------
@@ -2550,6 +2593,14 @@ class ControlLoop:
                 row = self.tick()
                 # Full status block first: when both are on, the one-liner reads as a
                 # continuation of the block rather than interrupting it.
+                if self.state_every and self.stats["ticks"] % self.state_every == 0:
+                    st = self.autonomy_state()
+                    self._publish_state_dict(st)
+                    # Transition detection + string building only: microseconds, no
+                    # I/O. tts.speak() BLOCKS for a second or more and would blow the
+                    # 100 ms budget by an order of magnitude, so it happens on the
+                    # narrator's own thread.
+                    self.narrator.observe(st or {})
                 if self.status_every and self.stats["ticks"] % self.status_every == 0 \
                         and self.last_record is not None:
                     print(tlm.autonomy_status(
@@ -2581,6 +2632,11 @@ class ControlLoop:
         self.motors.emergency_stop()
         if self._reflex_thread is not None:
             self._reflex_thread.join(timeout=1.0)
+        try:
+            self.narrator.finish(self.autonomy_state())
+        except Exception:                              # noqa: BLE001
+            pass
+        self.narrator.stop()
         if self.planner is not None:
             self.planner.stop()
             self.planner.join(timeout=3.0)
@@ -2610,6 +2666,40 @@ class ControlLoop:
         # cannot be re-made. Comparing V1 against V2 requires both to still exist.
         self.blackbox.dump(HERE / time.strftime("blackbox-%Y%m%d-%H%M%S.csv"))
         self.report()
+
+    def autonomy_state(self) -> dict[str, Any] | None:
+        """The full machine-readable state, or None before the first tick."""
+        if self.last_record is None:
+            return None
+        return tlm.autonomy_state(
+            self.last_record, self.cfg,
+            mode=("AUTONOMOUS EXPLORATION (RL policy + frontier planner)"
+                  if self.planner is not None else "AUTONOMOUS (RL policy only)"),
+            planner=self.planner.snapshot() if self.planner is not None else None,
+            recovery=self.recovery.snapshot() if self.recovery_enabled else None,
+            objective=self._objective(), stats=self.stats)
+
+    def _publish_state(self) -> None:
+        self._publish_state_dict(self.autonomy_state())
+
+    def _publish_state_dict(self, st: dict[str, Any] | None) -> None:
+        """Write the autonomy state where other processes can read it.
+
+        Atomic replace via a temp file in the same directory -- the same idiom as
+        face_control and the occupancy map, and for the same reason: a reader that
+        catches a half-written file gets a JSON error rather than a plausible-looking
+        truncated state.
+        """
+        if st is None or self.state_file is None:
+            return
+        try:
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.state_file.with_suffix(".tmp")
+            with tmp.open("w") as fh:
+                json.dump(st, fh, indent=1, default=str)
+            os.replace(tmp, self.state_file)
+        except Exception:                              # noqa: BLE001
+            pass          # telemetry must never take the robot down
 
     def _objective(self) -> str:
         """What Friday is working toward, stated only as far as the code can support.
@@ -3222,6 +3312,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--model", type=str, default=str(HERE / "exploration_model.onnx"))
     p.add_argument("--simulate", action="store_true", help="Synthetic sensors; no hardware needed.")
     p.add_argument("--selftest", action="store_true", help="Run safety-chain assertions and exit.")
+    p.add_argument("--voice", action="store_true",
+                   help="Speak autonomy events aloud through Friday's Piper TTS. "
+                        "Event-driven and throttled; speech runs on its own thread and "
+                        "cannot delay the control loop. OFF by default.")
+    p.add_argument("--voice-dry-run", action="store_true",
+                   help="Like --voice but LOGS what would be said instead of speaking. "
+                        "Use this to tune narration without waking the house.")
+    p.add_argument("--state-file", default=None, metavar="PATH",
+                   help="Where to publish the machine-readable autonomy state "
+                        "(default: friday/state/rl_autonomy.json). Set to 'none' to "
+                        "disable publishing.")
     p.add_argument("--cam-up-device", default=None, metavar="PATH",
                    help="Override the up camera's device path (normally resolved by "
                         "USB serial via /dev/v4l/by-id).")
@@ -3570,6 +3671,28 @@ def main(argv: list[str] | None = None) -> int:
         loop.planner_enabled = not args.no_planner
         loop.recovery_enabled = not args.no_recovery
         loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]
+        if args.voice or args.voice_dry_run:
+            speak_fn = None
+            if args.voice:
+                try:
+                    sys.path.insert(0, str(HERE.parent))
+                    import tts as _tts
+                    speak_fn = _tts.speak
+                    LOGGER.info("Voice ON via %s", _tts.engine_name())
+                except Exception as exc:              # noqa: BLE001
+                    # Degrade to logging rather than refusing to run. Losing narration
+                    # is a cosmetic loss; refusing to explore because the speaker is
+                    # missing is not.
+                    LOGGER.warning("TTS unavailable (%s: %s) -- narrating to the log "
+                                   "instead.", type(exc).__name__, exc)
+            else:
+                LOGGER.info("Voice DRY RUN: narration goes to the log, not the speaker.")
+            loop.narrator = Narrator(speak=speak_fn, enabled=True)
+            loop.narrator.start()
+
+        if args.state_file:
+            loop.state_file = (None if args.state_file.lower() == "none"
+                               else Path(args.state_file))
         if args.map_file:
             loop.world.map_file = Path(args.map_file)
 
