@@ -401,6 +401,12 @@ def autonomy_status(rec: DecisionRecord, cfg: Any, mode: str,
         add(f"                  {w['visited_m2']:6.1f} m^2 physically driven   "
             f"{w['sweeps']} sweeps this run / {w.get('sweeps_total', 0)} ever"
             + (f"  ({w['dropped']} superseded)" if w.get("dropped") else ""))
+        # Revisit ratio is the number a coverage figure cannot show: a robot driving
+        # the same 2 m of corridor forever reports a healthy constant visited_m2.
+        rr = w.get("revisit_ratio", 0.0)
+        add(f"                  {w.get('revisited_m2', 0.0):6.1f} m^2 re-entered   "
+            f"revisit ratio {rr:.2f}"
+            + ("   <- re-treading ground" if rr > 0.5 else ""))
         add(f"                  {'restored from disk' if rec.world_loaded else 'fresh this run'}"
             f"   bounds {w['bounds'][0]:.1f},{w['bounds'][1]:.1f} .. "
             f"{w['bounds'][2]:.1f},{w['bounds'][3]:.1f} m")

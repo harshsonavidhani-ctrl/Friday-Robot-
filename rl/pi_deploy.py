@@ -2309,8 +2309,12 @@ class ControlLoop:
         if self.map_enabled:
             if self.world.load():
                 s = self.world.stats()
-                LOGGER.info("World map restored from %s: %.1f m^2 known, %d sweeps",
-                            self.world.map_file.name, s["explored_m2"], s["sweeps"])
+                LOGGER.info("World map restored from %s: %.1f m^2 known, %d sweeps, "
+                            "%.1f m^2 previously driven%s",
+                            self.world.map_file.name, s["explored_m2"],
+                            s["sweeps_total"], s["visited_m2"],
+                            "" if self.world.visits_loaded
+                            else "  (visit trace MISSING -- map only)")
             else:
                 LOGGER.info("No world map at %s -- starting a fresh one.",
                             self.world.map_file)
@@ -2367,8 +2371,10 @@ class ControlLoop:
             s = self.world.stats()
             if saved is not None:
                 LOGGER.info("World map saved: %s  (%.1f m^2 known, %.1f m^2 driven, "
-                            "%d sweeps, %d dropped)", saved.name, s["explored_m2"],
-                            s["visited_m2"], s["sweeps"], self.world.dropped)
+                            "%.1f m^2 re-entered, revisit ratio %.2f, %d sweeps, "
+                            "%d superseded)", saved.name, s["explored_m2"],
+                            s["visited_m2"], s["revisited_m2"], s["revisit_ratio"],
+                            s["sweeps"], self.world.dropped)
             else:
                 LOGGER.info("World map not saved (nothing was observed).")
         self.motors.close()

@@ -40,6 +40,7 @@ missed control deadline costs a collision.
 from __future__ import annotations
 
 import math
+import os
 import threading
 import time
 from collections import deque
@@ -83,13 +84,23 @@ class WorldMap:
         self.max_range = float(max_range)
         self.pose = np.zeros(3, np.float64)          # x, y, theta
         self.loaded_from_disk = False
+        self.visits_loaded = False
         self.sweeps = 0
         self.dropped = 0                             # sweeps the mapper could not keep up with
 
-        # Visit trace, in world metres. A set of snapped cell coordinates rather than
-        # an array, because the world grid grows and reallocates while this must not.
-        self._visited: set[tuple[int, int]] = set()
+        # Visit trace, in world metres. A dict of snapped cell -> visit COUNT, keyed
+        # in absolute world cells rather than array indices, because the occupancy grid
+        # grows and reallocates underneath while this must survive unchanged.
+        #
+        # Counts, not a set, because "have I been here" and "have I been here FIVE
+        # TIMES" are different questions and only the second one detects a robot going
+        # in circles. Phase 10's repeated-visit metric reads this.
+        self._visits: dict[tuple[int, int], int] = {}
         self._visit_cell = max(self.grid.cell, 0.10)
+        # Cells the robot is standing on RIGHT NOW. A count must increment when the
+        # robot ENTERS a cell, not on every one of the ten pose updates per second it
+        # spends there -- otherwise a parked robot invents thousands of revisits.
+        self._occupying: set[tuple[int, int]] = set()
         self._trail: deque[tuple[float, float]] = deque(maxlen=4000)
         self._lock = threading.Lock()
 
@@ -109,19 +120,42 @@ class WorldMap:
         c = self._visit_cell
         r = int(math.ceil(VISIT_RADIUS_M / c))
         cx, cy = int(math.floor(x / c)), int(math.floor(y / c))
-        for dx in range(-r, r + 1):
-            for dy in range(-r, r + 1):
-                if dx * dx + dy * dy <= r * r:
-                    self._visited.add((cx + dx, cy + dy))
+        now = {(cx + dx, cy + dy)
+               for dx in range(-r, r + 1) for dy in range(-r, r + 1)
+               if dx * dx + dy * dy <= r * r}
+        for cell in now - self._occupying:            # newly ENTERED cells only
+            self._visits[cell] = self._visits.get(cell, 0) + 1
+        self._occupying = now
         self._trail.append((float(x), float(y)))
 
     def has_visited(self, x: float, y: float) -> bool:
         c = self._visit_cell
-        return (int(math.floor(x / c)), int(math.floor(y / c))) in self._visited
+        return (int(math.floor(x / c)), int(math.floor(y / c))) in self._visits
+
+    def visit_count(self, x: float, y: float) -> int:
+        """How many separate times the robot has entered this cell. 0 = never."""
+        c = self._visit_cell
+        return self._visits.get((int(math.floor(x / c)), int(math.floor(y / c))), 0)
 
     @property
     def visited_m2(self) -> float:
-        return len(self._visited) * self._visit_cell ** 2
+        return len(self._visits) * self._visit_cell ** 2
+
+    @property
+    def revisited_m2(self) -> float:
+        """Area entered more than once. High relative to visited_m2 = going in circles."""
+        return sum(1 for n in self._visits.values() if n > 1) * self._visit_cell ** 2
+
+    @property
+    def revisit_ratio(self) -> float:
+        """0.0 = every cell entered once. Approaches 1.0 as the robot re-treads ground.
+
+        A pure coverage number cannot see this: a robot driving the same 2 m of
+        corridor forever reports a healthy constant `visited_m2` and looks fine.
+        """
+        if not self._visits:
+            return 0.0
+        return sum(1 for n in self._visits.values() if n > 1) / len(self._visits)
 
     # ------------------------------------------------------------ integrate ----
     def scan_to_points(self, scan_m: np.ndarray, pose: np.ndarray
@@ -171,8 +205,16 @@ class WorldMap:
         with self._lock:
             g = self.grid
             if g.shape == (1, 1):
+                # No scan has been folded in yet, so there is no occupancy to report.
+                # The VISIT numbers are still real and are reported as such: a robot
+                # that has driven but not yet mapped has genuinely covered ground, and
+                # zeroing that here would be inventing a fact to fill a field.
                 return {"cells": 0, "free": 0, "occupied": 0, "unknown": 0,
-                        "free_m2": 0.0, "explored_m2": 0.0, "visited_m2": 0.0,
+                        "free_m2": 0.0, "explored_m2": 0.0,
+                        "visited_m2": self.visited_m2,
+                        "revisited_m2": self.revisited_m2,
+                        "revisit_ratio": self.revisit_ratio,
+                        "visit_cells": len(self._visits),
                         "sweeps": self.sweeps, "sweeps_total": int(g.scans),
                         "shape": g.shape, "bounds": g.bounds}
             free = int(g.free_mask().sum())
@@ -182,6 +224,9 @@ class WorldMap:
             return {"cells": free + occ + unk, "free": free, "occupied": occ,
                     "unknown": unk, "free_m2": free * a, "explored_m2": (free + occ) * a,
                     "visited_m2": self.visited_m2,
+                    "revisited_m2": self.revisited_m2,
+                    "revisit_ratio": self.revisit_ratio,
+                    "visit_cells": len(self._visits),
                     # sweeps THIS RUN vs sweeps EVER. A restored map carries a lifetime
                     # total in the grid and has nothing yet from this session; printing
                     # only the session count makes a restored map read as empty.
@@ -189,28 +234,66 @@ class WorldMap:
                     "shape": g.shape, "bounds": g.bounds}
 
     # ------------------------------------------------------------ persistence --
-    def load(self) -> bool:
-        """Restore the previous run's map. Missing or unreadable -> start fresh.
+    @property
+    def visits_file(self) -> Path:
+        """Companion to the grid file. Separate because OccupancyGrid owns its own
+        npz schema and version, and bolting a foreign key into it would mean this
+        module could silently invalidate Friday's map format."""
+        return self.map_file.with_suffix(".visits.npz")
 
-        A corrupt or version-mismatched map must never be fatal: the robot's job does
-        not depend on remembering, and refusing to start because a cache is stale
-        would be worse than forgetting.
+    def load(self) -> bool:
+        """Restore the previous run's map AND visit trace.
+
+        Missing or unreadable -> start fresh. A corrupt or version-mismatched map must
+        never be fatal: the robot's job does not depend on remembering, and refusing to
+        start because a cache is stale would be worse than forgetting.
         """
         try:
             self.grid = OccupancyGrid.load(self.map_file)
             self.loaded_from_disk = True
-            return True
         except FileNotFoundError:
             return False
         except Exception:                             # noqa: BLE001 -- see docstring
             return False
 
+        # The visit trace is loaded SEPARATELY and its failure is non-fatal: an
+        # occupancy map without a visit trace is still a useful map. Losing it silently
+        # would be bad, so it is reported through `visits_loaded`.
+        self.visits_loaded = False
+        try:
+            with np.load(self.visits_file, allow_pickle=False) as d:
+                cells, counts = d["cells"], d["counts"]
+                cell_m = float(d["cell_m"])
+                # A trace snapped at a different cell size describes different cells.
+                # Refuse rather than reinterpret -- the same rule OccupancyGrid.load
+                # applies to a map saved at another resolution.
+                if abs(cell_m - self._visit_cell) < 1e-9:
+                    self._visits = {(int(a), int(b)): int(n)
+                                    for (a, b), n in zip(cells, counts)}
+                    self.visits_loaded = True
+        except FileNotFoundError:
+            pass
+        except Exception:                             # noqa: BLE001
+            pass
+        return True
+
     def save(self) -> Path | None:
+        """Write the map and the visit trace. Returns the map path, or None."""
         try:
             with self._lock:
                 if self.grid.shape == (1, 1):
                     return None                       # nothing observed; do not clobber
-                return self.grid.save(self.map_file)
+                target = self.grid.save(self.map_file)
+                if self._visits:
+                    cells = np.array(list(self._visits.keys()), np.int64)
+                    counts = np.array(list(self._visits.values()), np.int32)
+                    tmp = self.visits_file.with_suffix(".tmp")
+                    np.savez_compressed(tmp, cells=cells, counts=counts,
+                                        cell_m=self._visit_cell)
+                    # np.savez_compressed appends .npz when handed a path without one.
+                    src = tmp if tmp.exists() else tmp.with_suffix(".tmp.npz")
+                    os.replace(src, self.visits_file)   # atomic, like the grid's save
+                return target
         except Exception:                             # noqa: BLE001
             return None
 

@@ -160,5 +160,80 @@ check("the mapper survives a malformed sweep", alive)
 check("the mapper integrated something", w5.stats()["free"] > 0)
 check("superseded snapshots are counted, not queued", w5.dropped > 0, f"{w5.dropped}")
 
+# 10. VISIT COUNTS. "Have I been here" and "have I been here five times" are
+#     different questions, and only the second detects a robot going in circles.
+w6 = WorldMap()
+for i in range(10):
+    w6.set_pose(12.0 + 0.15 * i, 12.0, 0.0)
+one_pass = w6.stats()
+check("a single pass produces no revisits", one_pass["revisited_m2"] == 0.0,
+      f"{one_pass['revisited_m2']:.2f} m^2")
+check("...and a revisit ratio of zero", one_pass["revisit_ratio"] == 0.0)
+
+for i in range(10):                                    # drive back over the same line
+    w6.set_pose(12.0 + 0.15 * (9 - i), 12.0, 0.0)
+back = w6.stats()
+check("driving back over ground registers revisits", back["revisited_m2"] > 0,
+      f"{back['revisited_m2']:.2f} m^2, ratio {back['revisit_ratio']:.2f}")
+check("re-treading does NOT inflate covered area",
+      abs(back["visited_m2"] - one_pass["visited_m2"]) < 1e-9,
+      f"{one_pass['visited_m2']:.2f} -> {back['visited_m2']:.2f} m^2")
+
+# A PARKED robot must not invent revisits. The pose updates 10x a second whether or
+# not the wheels turn; counting per update rather than per ENTRY would have a
+# stationary robot reporting thousands of revisits and every circling alarm firing.
+before_parked = w6.stats()["revisited_m2"]
+for _ in range(300):
+    w6.set_pose(12.0, 12.0, 0.0)
+check("300 updates while parked add no revisits",
+      w6.stats()["revisited_m2"] == before_parked)
+check("visit_count reports a real number", w6.visit_count(12.0, 12.0) >= 1,
+      f"{w6.visit_count(12.0, 12.0)}")
+check("visit_count is 0 for somewhere never visited", w6.visit_count(40.0, 40.0) == 0)
+
+# 11. THE VISIT TRACE MUST PERSIST. Phase 1 saved the occupancy grid but not this,
+#     so the robot remembered what it had SEEN while forgetting where it had DRIVEN.
+with tempfile.TemporaryDirectory() as td:
+    path = Path(td) / "m.npz"
+    a = WorldMap(map_file=path)
+    for i in range(10):
+        a.set_pose(12.0 + 0.15 * i, 12.0, 0.0)
+        a.integrate(room, np.array([12.0 + 0.15 * i, 12.0, 0.0]))
+    for i in range(10):
+        a.set_pose(12.0 + 0.15 * (9 - i), 12.0, 0.0)
+    src_stats = a.stats()
+    a.save()
+    check("saving writes a companion visits file", a.visits_file.exists(),
+          a.visits_file.name)
+
+    b = WorldMap(map_file=path)
+    b.load()
+    dst = b.stats()
+    check("the visit trace is flagged as restored", b.visits_loaded is True)
+    check("driven area survived the round trip",
+          abs(dst["visited_m2"] - src_stats["visited_m2"]) < 1e-9,
+          f"{src_stats['visited_m2']:.2f} -> {dst['visited_m2']:.2f} m^2")
+    check("revisit counts survived the round trip",
+          abs(dst["revisited_m2"] - src_stats["revisited_m2"]) < 1e-9,
+          f"{src_stats['revisited_m2']:.2f} -> {dst['revisited_m2']:.2f} m^2")
+    check("a restored cell keeps its exact count",
+          b.visit_count(12.0, 12.0) == a.visit_count(12.0, 12.0),
+          f"{a.visit_count(12.0, 12.0)} -> {b.visit_count(12.0, 12.0)}")
+
+# 12. A map with no visits file must still load. Losing the trace is a degradation,
+#     not a failure -- an occupancy map without one is still a useful map.
+with tempfile.TemporaryDirectory() as td:
+    path = Path(td) / "m.npz"
+    a = WorldMap(map_file=path)
+    for _ in range(6):
+        a.integrate(room, np.array([12.0, 12.0, 0.0]))
+    a.save()
+    if a.visits_file.exists():
+        a.visits_file.unlink()
+    b = WorldMap(map_file=path)
+    check("a map with no visits file still loads", b.load() is True)
+    check("...and says the trace was not restored", b.visits_loaded is False)
+    check("...and the occupancy survived", b.stats()["explored_m2"] > 0)
+
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)
