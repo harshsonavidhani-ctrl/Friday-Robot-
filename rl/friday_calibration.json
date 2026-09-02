@@ -1,0 +1,107 @@
+{
+  "measured": {
+    "obs_dim": 77,
+    "inference_ms": 6.89,
+    "lidar_mean_min_range": 0.209,
+    "nearest_beam_index": 8,
+    "nearest_beam_deg": 40.0,
+    "tof_rate_hz": 19.7,
+    "tof_median_min_m": 1.415,
+    "tick_ms_mean": 8.72,
+    "tick_ms_p95": 16.42,
+    "tick_ms_max": 17.53
+  },
+  "checks": [
+    {
+      "stage": "onnxruntime installed",
+      "status": "PASS",
+      "detail": "version 1.29.0"
+    },
+    {
+      "stage": "model file present",
+      "status": "PASS",
+      "detail": "4335 KB"
+    },
+    {
+      "stage": "model loads",
+      "status": "PASS",
+      "detail": "in ['batch', 77] -> out ['batch', 'Clipaction_chunk_dim_1', 2]"
+    },
+    {
+      "stage": "inference latency",
+      "status": "PASS",
+      "detail": "6.9 ms per forward pass (budget 100 ms/tick)"
+    },
+    {
+      "stage": "deploy module imports",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "stage": "RobotConfig matches training spec",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "stage": "model width matches adapter",
+      "status": "PASS",
+      "detail": "77 channels"
+    },
+    {
+      "stage": "LiDAR publishing",
+      "status": "PASS",
+      "detail": "119 scans, 72 beams"
+    },
+    {
+      "stage": "beam count",
+      "status": "PASS",
+      "detail": "72"
+    },
+    {
+      "stage": "LiDAR freshness",
+      "status": "PASS",
+      "detail": "0.0% of reads older than 0.40 s"
+    },
+    {
+      "stage": "no dead beams",
+      "status": "PASS",
+      "detail": "0.0% of beams never returned a hit"
+    },
+    {
+      "stage": "alignment (informational)",
+      "status": "WARN",
+      "detail": "nearest return at beam 8/72 = 40 deg, 0.21 m -- verify this points where you put the box"
+    },
+    {
+      "stage": "ToF publishing",
+      "status": "PASS",
+      "detail": "118 frames of (8, 8) "
+    },
+    {
+      "stage": "ToF rate",
+      "status": "PASS",
+      "detail": "19.7 Hz (device caps ~15 Hz in 8x8)"
+    },
+    {
+      "stage": "cameras",
+      "status": "SKIP",
+      "detail": "--no-cameras"
+    },
+    {
+      "stage": "tick within budget",
+      "status": "PASS",
+      "detail": "mean 8.7 | p95 16.4 | max 17.5 ms (budget 100)"
+    },
+    {
+      "stage": "stiction sweep",
+      "status": "PASS",
+      "detail": "note the lowest duty giving STEADY rotation, EACH direction"
+    },
+    {
+      "stage": "STAGE 8 wheel speed (blocker B3)",
+      "status": "SKIP",
+      "detail": "run with --speed 120 --motor friday --i-am-watching. Until measured, the drivetrain model is an estimate."
+    }
+  ],
+  "timestamp": "2026-09-02T21:21:05"
+}
