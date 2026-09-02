@@ -186,7 +186,17 @@ class RobotConfig:
     # SINGLE-POINT and worth refining: it is one clean run, not a fitted curve, and
     # a loaded brushed motor is not linear. Re-measure with a closing-RATE fit (slope
     # of ToF distance vs time, R^2 > 0.9) in a clear lane of at least 2 m.
-    wheel_speed_max: float = 0.476      # [m/s] per wheel
+    #
+    # ⚠ STALE SINCE 2026-09-02. MOTOR_MAX_DUTY was raised 0.75 -> 0.85 with Harsh's
+    # explicit approval, moving the ceiling from duty 191 to 217. This constant means
+    # "the speed reached at the ceiling duty", so it no longer describes the hardware:
+    #     duty = 255 * max_duty * (wheel_speed / wheel_speed_max)
+    # asks for ~14% more duty than it did when 0.476 was taken, and Friday therefore
+    # moves FASTER than the commanded m/s. The safety chain still bounds her by
+    # measured distance, so this is a calibration error and not a collision risk --
+    # but the policy's idea of how far it travels per tick is now wrong.
+    # Re-measure AT 0.85 (blocker B3) before trusting any commanded velocity.
+    wheel_speed_max: float = 0.476      # [m/s] per wheel -- MEASURED AT THE OLD 0.75 CEILING
 
     # ---- LiDAR chassis self-mask ----
     # Raw sensor bearings (degrees, pre-offset) that look at the robot's own body.
@@ -3413,10 +3423,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # DELIBERATELY short of full power: the L298N heats and the battery sags under
     # load, and a brownout mid-drive could reset the Pi. friday/config.py says if
     # turning is ever still too weak, ASK before going higher. Do that, do not raise it.
-    p.add_argument("--motor-max-duty", type=float, default=0.75,
-                   help="Fraction of full PWM the driver may ever command. 0.75 matches "
+    p.add_argument("--motor-max-duty", type=float, default=0.85,
+                   help="Fraction of full PWM the driver may ever command. 0.85 matches "
                         "friday/config.py MOTOR_MAX_DUTY, which is the approved ceiling "
-                        "for this L298N. Do not raise it without asking.")
+                        "for this L298N (raised from 0.75 on 2026-09-02 with Harsh's "
+                        "explicit approval). Do not raise it without asking. NOTE: "
+                        "wheel_speed_max was measured at the OLD ceiling of duty 191, so "
+                        "commanded m/s under-reports real speed until it is re-measured.")
     p.add_argument("--motor-watchdog", type=float, default=0.5,
                    help="Firmware watchdog window [s]. The Arduino stops the motors if it "
                         "hears nothing for this long -- the safety layer that survives this "

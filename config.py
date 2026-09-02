@@ -911,7 +911,19 @@ MOTOR_RAMP_FLOOR = 0.6       # ramp starts here, as a fraction of the pulse
 # above ~180 did nothing at all. Deliberately short of full power: the L298N
 # heats and the battery sags under load, and a brownout mid-drive could reset
 # the Pi. If turning is ever still too weak, ASK before going higher.
-MOTOR_MAX_DUTY = 0.75
+#
+# Raised 0.75 -> 0.85 on 2026-09-02, again with Harsh's explicit approval, after
+# the ACT policy's stand runs. Ceiling duty goes 191 -> 217.
+#
+# ⚠ THIS INVALIDATES A MEASURED CONSTANT. rl/pi_deploy.py RobotConfig
+# .wheel_speed_max = 0.476 m/s was measured AT duty 191, and the mapping is
+#     duty = 255 * max_duty * (wheel_speed / wheel_speed_max)
+# so the same commanded m/s now asks for ~14% more duty than when that number
+# was taken. Friday will physically move faster than the policy believes it
+# requested until wheel_speed_max is re-measured AT 0.85 (blocker B3).
+# Watch `vcgencmd get_throttled` after loaded runs: bit 0 set means undervoltage
+# and the ceiling is too high for this battery.
+MOTOR_MAX_DUTY = 0.85
 MOTOR_WATCHDOG_S = 0.5       # stop if no new command within this window
 
 # ⚠ NOTHING ON THE MOTOR LINK MAY BLOCK FOREVER. THE STOP DEPENDS ON IT.

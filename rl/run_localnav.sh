@@ -10,7 +10,7 @@
 #      Ctrl-C must never leave Friday without her serial doorway.
 #
 #   2. The hand-written example command carried --motor-max-duty 0.4. That is
-#      half the approved ceiling (friday/config.py MOTOR_MAX_DUTY = 0.75), and
+#      well under the approved ceiling (friday/config.py MOTOR_MAX_DUTY = 0.85), and
 #      0.4 x 255 = 102 sits BELOW the measured 190 pivot break-away -- so pivots
 #      got their 2-tick kick, fell under the threshold and hummed. Defaults here
 #      are the approved ones; pass flags to override deliberately, not by
@@ -71,7 +71,7 @@ fi
 # the exit status, and let the trap put the service back.
 rc=0
 "$PY" "$HERE/friday_localnav_deploy.py" \
-    --motor-max-duty 0.75 \
+    --motor-max-duty 0.85 \
     --motor-min-duty 72 \
     "$@" || rc=$?
 exit "$rc"
