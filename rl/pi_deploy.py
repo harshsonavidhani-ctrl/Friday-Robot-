@@ -155,6 +155,16 @@ class RobotConfig:
     # braking law reads the front hemisphere, so before this a reverse command was
     # executed with no obstacle check of any kind behind her.
     governor_rear_arc_deg: float = 90.0
+    # Relocalisation search, deliberately much wider than SLAM's tracking window
+    # (0.20 m / 12 deg): that corrects a tick of drift, this has to absorb the robot
+    # being nudged between sessions.
+    relocalise_window_m: float = 1.00
+    relocalise_window_deg: float = 40.0
+    # Sharpness, min occupied cells and min judgeable beams all come from config.py
+    # at runtime, NOT from numbers invented here. They are measured on this robot and
+    # carry warnings: a gate of 5.0 "would reject every good answer it was ever
+    # given" because a correct match scores 2.1-3.7, and my own first guess of 3.0
+    # duly rejected a valid match at 2.46. See SLAM_POSE_MIN_SHARPNESS.
     # Reverse gets robot_radius + collision_margin and NOT the additional
     # hard_stop_extra the forward law uses. Deliberate: forward runs at up to 0.50 m/s
     # while the only executable reverse is 0.15 m/s, so the stopping distance being
@@ -2314,6 +2324,95 @@ class ControlLoop:
         self.last_record: tlm.DecisionRecord | None = None
 
     # ------------------------------------------------------------------ reflex ------
+    def relocalise(self, timeout_s: float = 4.0) -> bool:
+        """Find the robot in the map it just loaded. True if it succeeded.
+
+        Reuses Friday's own SLAM matcher (`slam.core.match_pose` over a
+        `LikelihoodField`) rather than a second implementation -- two matchers that
+        could disagree about where the robot is would be worse than none.
+
+        The prior is the pose the map was SAVED at, which is where she was when the
+        last run ended. That is the honest assumption: she is usually left where she
+        stopped. If she was picked up and carried, the match fails and the caller
+        throws the map away, which is the correct outcome and not an error.
+
+        The search window is deliberately far wider than SLAM's own tracking window
+        (0.20 m / 12 deg): tracking corrects a tick of drift, this has to absorb
+        being nudged between sessions.
+        """
+        try:
+            from slam.core import LikelihoodField, match_pose
+            # The repo-root config.py, which is what slam/core.py itself imports --
+            # there is no slam.config. SLAM_MIN_SCORE lives there.
+            import config as friday_config
+        except Exception as exc:                      # noqa: BLE001
+            LOGGER.warning("Relocalisation unavailable (%s); cannot place the robot "
+                           "in the restored map.", exc)
+            return False
+
+        prior = self.world.loaded_pose
+        if prior is None:
+            LOGGER.warning("The restored map has no saved pose, so there is no prior "
+                           "to relocalise from. Maps written before this existed "
+                           "cannot be placed.")
+            return False
+
+        deadline = time.monotonic() + timeout_s
+        scan = None
+        while time.monotonic() < deadline:
+            candidate, age = self.slots["lidar"].read()
+            if candidate is not None and age < self.cfg.lidar_deadline:
+                scan = np.asarray(candidate, np.float64)
+                break
+            time.sleep(0.05)
+        if scan is None:
+            LOGGER.warning("No LiDAR scan within %.1f s; cannot relocalise.", timeout_s)
+            return False
+
+        # A map worth matching against, and a sweep worth matching with. Both floors
+        # are measured constants with their reasons recorded in config.py: below
+        # MIN_CELLS "the room is still mostly a rumour", and without MIN_BEAMS "a pose
+        # that puts almost the whole sweep into unmapped space can score 1.0 on the
+        # three beams that happened to land on a known wall".
+        min_cells = getattr(friday_config, "SLAM_MATCH_MIN_CELLS", 150)
+        min_beams = getattr(friday_config, "SLAM_MATCH_MIN_BEAMS", 40)
+        n_occupied = int(self.world.grid.occupied_mask().sum())
+        if n_occupied < min_cells:
+            LOGGER.warning("The restored map has only %d occupied cells (need %d); "
+                           "too little structure to relocalise against.",
+                           n_occupied, min_cells)
+            return False
+
+        n = scan.size
+        bearing = np.arange(n) * (2.0 * math.pi / n)
+        good = scan < self.cfg.lidar_max_range - 0.02
+        if int(good.sum()) < min_beams:
+            LOGGER.warning("Only %d usable beams (need %d); too few to relocalise.",
+                           int(good.sum()), min_beams)
+            return False
+        pts = np.stack([scan[good] * np.cos(bearing[good]),
+                        scan[good] * np.sin(bearing[good])], axis=1)
+
+        field = LikelihoodField.from_grid(self.world.grid)
+        (x, y, th), score, sharp = match_pose(
+            field, pts, prior=(float(prior[0]), float(prior[1]), float(prior[2])),
+            window_m=self.cfg.relocalise_window_m,
+            window_deg=self.cfg.relocalise_window_deg)
+
+        min_score = getattr(friday_config, "SLAM_MIN_SCORE", 0.15)
+        min_sharp = getattr(friday_config, "SLAM_POSE_MIN_SHARPNESS", 1.4)
+        ok = score >= min_score and sharp >= min_sharp
+        LOGGER.info("Relocalisation: score %.3f (min %.2f), sharpness %.2f (min %.2f), "
+                    "moved %.2f m / %.0f deg from the saved pose -- %s",
+                    score, min_score, sharp, min_sharp,
+                    math.hypot(x - prior[0], y - prior[1]),
+                    abs(math.degrees(th - prior[2])), "ACCEPTED" if ok else "REJECTED")
+        if not ok:
+            return False
+        self.world.set_pose(x, y, th)
+        self.map.set_pose(x, y, th)
+        return True
+
     def _reflex_worker(self) -> None:
         """High-rate ToF watchdog with a direct line to the motors.
 
@@ -2813,6 +2912,18 @@ class ControlLoop:
                             s["sweeps_total"], s["visited_m2"],
                             "" if self.world.visits_loaded
                             else "  (visit trace MISSING -- map only)")
+                if not self.relocalise():
+                    # A map you cannot place yourself in is WORSE than no map. The
+                    # pose re-initialises to zero every run, so an unrelocalised map
+                    # is a picture of the room taken from somewhere the robot is not,
+                    # and the frontier planner will steer confidently toward places
+                    # that are not there. Measured after three runs of this: 335
+                    # disconnected occupied blobs, largest 17 cells, because one wall
+                    # had been written at three different offsets. Discard and rebuild.
+                    LOGGER.warning("Discarding the restored map and starting fresh. "
+                                   "The robot could not find itself in it, so every "
+                                   "target it named would be at the wrong address.")
+                    self.world = WorldMap(max_range=self.cfg.lidar_max_range)
             else:
                 LOGGER.info("No world map at %s -- starting a fresh one.",
                             self.world.map_file)

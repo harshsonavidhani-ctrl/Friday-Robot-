@@ -39,6 +39,7 @@ missed control deadline costs a collision.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import threading
@@ -85,6 +86,13 @@ class WorldMap:
         self.pose = np.zeros(3, np.float64)          # x, y, theta
         self.loaded_from_disk = False
         self.visits_loaded = False
+        # Where the robot was when the map was last written, so a later run has a
+        # PRIOR to relocalise against. Without one, loading the map is worse than
+        # not loading it: `pose` re-initialises to zero every run, so she navigates a
+        # map of a room she is no longer standing in the same part of. Measured after
+        # three runs: 335 disconnected occupied blobs, largest 17 cells, because the
+        # same wall was written at three different offsets.
+        self.loaded_pose: np.ndarray | None = None
         self.sweeps = 0
         self.dropped = 0                             # sweeps the mapper could not keep up with
 
@@ -260,6 +268,16 @@ class WorldMap:
         module could silently invalidate Friday's map format."""
         return self.map_file.with_suffix(".visits.npz")
 
+    @property
+    def pose_file(self) -> Path:
+        """Sidecar holding the pose the map was last written at.
+
+        A separate file, like the visit trace, because OccupancyGrid owns its own
+        format and should not grow fields for a caller's benefit. Losing it is
+        non-fatal: the map simply cannot be relocalised against and is discarded.
+        """
+        return self.map_file.with_suffix(".pose.json")
+
     def load(self) -> bool:
         """Restore the previous run's map AND visit trace.
 
@@ -294,6 +312,19 @@ class WorldMap:
             pass
         except Exception:                             # noqa: BLE001
             pass
+
+        # The pose the map was written at. Only a PRIOR -- the caller must still
+        # relocalise against it and is expected to discard the map if the match
+        # fails, because she may simply have been picked up and put somewhere else.
+        self.loaded_pose = None
+        try:
+            d = json.loads(self.pose_file.read_text())
+            if abs(float(d.get("cell", -1.0)) - self.grid.cell) < 1e-9:
+                self.loaded_pose = np.array([d["x"], d["y"], d["theta"]], np.float64)
+        except FileNotFoundError:
+            pass
+        except Exception:                             # noqa: BLE001
+            pass
         return True
 
     def save(self) -> Path | None:
@@ -312,6 +343,16 @@ class WorldMap:
                     # np.savez_compressed appends .npz when handed a path without one.
                     src = tmp if tmp.exists() else tmp.with_suffix(".tmp.npz")
                     os.replace(src, self.visits_file)   # atomic, like the grid's save
+                try:
+                    tmp = self.pose_file.with_suffix(".tmp")
+                    tmp.write_text(json.dumps({
+                        "x": float(self.pose[0]), "y": float(self.pose[1]),
+                        "theta": float(self.pose[2]), "t": time.time(),
+                        "cell": float(self.grid.cell),
+                    }))
+                    os.replace(tmp, self.pose_file)
+                except Exception:                     # noqa: BLE001 -- non-fatal
+                    pass
                 return target
         except Exception:                             # noqa: BLE001
             return None
