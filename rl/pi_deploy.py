@@ -154,6 +154,20 @@ class RobotConfig:
     tof_slow_distance: float = 0.60     # [m] begin proportional braking
     tof_min_valid_zones: int = 3        # ignore isolated speckle; need N zones to agree
     tof_max_range: float = 4.00
+    # Minimum BUMPER clearance before an emergency stop will still allow rotation.
+    #
+    # Measured from the bumper, like every other ToF range -- NOT from the chassis
+    # centre. The first version of this compared tof_min against robot_radius (0.22,
+    # a centre-relative number) and so double-counted the robot's own length: the
+    # allowance then never fired, because after braking she rests around 0.215 m and
+    # every reflex tick tested "no (too close)" while the policy was asking to turn
+    # at 0.6 rad/s.
+    #
+    # 0.12 m is the right kind of number because a pivot does not translate: a roughly
+    # circular chassis rotating about its centre barely changes its distance to
+    # anything, so the only real risk is a protruding corner scrubbing something
+    # already almost touching the bumper. Forward motion stays vetoed regardless.
+    tof_pivot_min_clearance: float = 0.12   # [m] from the BUMPER; below this, freeze
 
     # ---- visual hazard gate ----
     cam_enabled: bool = True
@@ -1471,10 +1485,20 @@ class RateLimiter:
     def reset(self) -> None:
         self.v = self.omega = 0.0
 
-    def __call__(self, v: float, omega: float, dt: float, emergency: bool = False) -> tuple[float, float]:
+    def __call__(self, v: float, omega: float, dt: float, emergency: bool = False,
+                 allow_rotation: bool = False) -> tuple[float, float]:
         if emergency:
-            self.v = self.omega = 0.0                    # never rate-limit a stop
-            return 0.0, 0.0
+            self.v = 0.0                                 # never rate-limit a stop
+            if not allow_rotation:
+                self.omega = 0.0
+                return 0.0, 0.0
+            # The caller has established that turning in place cannot reach the
+            # obstacle (it lies outside robot_radius), so rotation is the escape and
+            # must survive the stop. It is deliberately NOT slew limited either --
+            # the same reasoning that makes a stop immediate makes turning AWAY from
+            # something immediate. Forward speed stays zero regardless.
+            self.omega = omega
+            return 0.0, omega
         dv = self.cfg.max_lin_accel * dt
         dw = self.cfg.max_ang_accel * dt
         # Slowing down is always allowed at full rate; only acceleration is limited.
@@ -2467,9 +2491,36 @@ class ControlLoop:
                 f"{c.visual_hazard_threshold:.2f}" if (vis_stop or vis_scale < 1.0) else "")
 
         # ---- 4. ToF reflex (hard veto) --------------------------------------------
+        # Set by the emergency branch when the obstacle is far enough that turning in
+        # place cannot reach it. It has to be carried down to the rate limiter, which
+        # otherwise zeroes rotation along with speed and silently undoes the escape.
+        pivot_allowed = False
         tof_scale, emergency = self.reflex.evaluate(depth)
         if emergency:
-            v, omega = 0.0, 0.0
+            # Forward motion is vetoed absolutely -- that is the whole point of the
+            # reflex and it does not soften.
+            v = 0.0
+            # Rotation is a different question, and zeroing it here was a real bug.
+            # A differential drive pivoting in place TRANSLATES NOWHERE: it sweeps a
+            # circle of robot_radius and cannot close distance on anything outside it.
+            # Meanwhile this stage runs LAST, after the escape-turn and planner stages
+            # have already chosen "turn toward open space" -- so zeroing omega erased
+            # the one manoeuvre that could free her. Measured: stopped 0.20 m from a
+            # wall she sat for 316 consecutive ticks with v_out AND omega_out at zero,
+            # 100% REFLEX_STOP, unable to turn away and explored 0.1 m^2.
+            #
+            # So: keep the commanded rotation unless the bumper is almost touching,
+            # and only freeze completely there. Approved by Harsh 2026-09-02.
+            #
+            # The threshold is BUMPER-relative, matching what the ToF measures. An
+            # earlier version tested against robot_radius, a CENTRE-relative number,
+            # which double-counted the robot's own length: she rests near 0.215 m after
+            # braking, so every reflex tick read "too close" and froze while the policy
+            # was asking for 0.6 rad/s. Measured over that run: 10 of 11 reflex ticks.
+            if self.reflex.last_min <= c.tof_pivot_min_clearance:
+                omega = 0.0
+            else:
+                pivot_allowed = True
             self.stats["reflex_stops"] += 1
             gate = "REFLEX_STOP"
         elif tof_scale < 1.0 and v > 0:
@@ -2483,7 +2534,8 @@ class ControlLoop:
                 if (emergency or tof_scale < 1.0) else "")
 
         # ---- 5. slew limit + actuate ----------------------------------------------
-        v, omega = self.limiter(v, omega, c.dt, emergency=emergency)
+        v, omega = self.limiter(v, omega, c.dt, emergency=emergency,
+                                allow_rotation=pivot_allowed)
         rec.add("limiter", v, omega, "slew limited")
         self.motors.drive(v, omega)
 
@@ -3304,6 +3356,14 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     loop.limiter.v = 0.5
     v, omega = loop.limiter(0.0, 0.0, cfg.dt, emergency=True)
     check("emergency stop is immediate", v == 0.0 and omega == 0.0)
+
+    # 5b. an emergency stop must still let her TURN AWAY when the obstacle is outside
+    # the circle a pivot sweeps -- otherwise she freezes facing a wall and the escape
+    # turn the earlier stages already chose is erased. Forward must stay zero.
+    loop.limiter.v = 0.5
+    v, omega = loop.limiter(0.6, 1.2, cfg.dt, emergency=True, allow_rotation=True)
+    check("emergency stop still permits a pivot escape",
+          v == 0.0 and omega == 1.2, f"v={v:.3f} omega={omega:.3f}")
 
     # 6. rate limiter must cap acceleration
     loop.limiter.reset()

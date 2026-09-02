@@ -135,9 +135,11 @@ check("inversion does not change the executed twist",
       abs(a.executed()[1] - b.executed()[1]) < 1e-6,
       f"{a.executed()[1]:.3f} vs {b.executed()[1]:.3f}")
 
-# 7. The duty cap is the approved one for this L298N.
-check("--motor-max-duty defaults to the approved 0.75",
-      abs(args.motor_max_duty - 0.75) < 1e-9, f"{args.motor_max_duty}")
+# 7. The duty cap is the approved one for this L298N. 0.75 -> 0.85 on 2026-09-02
+# with Harsh's explicit approval; this assertion exists to catch a ceiling that
+# drifts WITHOUT that approval, so it tracks friday/config.py MOTOR_MAX_DUTY.
+check("--motor-max-duty defaults to the approved 0.85",
+      abs(args.motor_max_duty - 0.85) < 1e-9, f"{args.motor_max_duty}")
 
 
 print("--- pivot stiction boost (APPROVED exemption from the max_duty cap) ---")
