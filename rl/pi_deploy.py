@@ -145,6 +145,11 @@ class RobotConfig:
 
     # ---- LiDAR safety governor (mirrors SafetyGovernor in train.py) ----
     safe_distance: float = 0.55         # begin braking below this clearance [m]
+    # Half-angle of the arc the FORWARD braking law considers, measured from the nose.
+    # 90 deg = the front hemisphere. Beams behind this cannot be reached by driving
+    # forward, so letting them veto forward motion only made her undriveable in any
+    # room with a wall in it. Rotation and reverse still see the whole sweep.
+    governor_forward_arc_deg: float = 90.0
     collision_margin: float = 0.04
     hard_stop_extra: float = 0.10       # extra margin over robot_radius + collision_margin
 
@@ -1301,10 +1306,35 @@ class LidarGovernor:
 
     def __init__(self, cfg: RobotConfig) -> None:
         self.cfg = cfg
+        self._fwd_mask: np.ndarray | None = None
+
+    def _forward_mask(self, n: int) -> np.ndarray:
+        """Beams within +/- governor_forward_arc_deg of the nose, as a boolean mask.
+
+        Cached per beam count: the arc never changes at runtime, and rebuilding it
+        every tick would be pure waste inside a 100 ms budget.
+        """
+        if self._fwd_mask is None or self._fwd_mask.size != n:
+            # Beam i looks along i * (360/n) degrees with beam 0 down the nose. Fold
+            # to [-180, 180) so the wrap behind the robot is one comparison rather
+            # than two index ranges.
+            bearing = (np.arange(n) * (360.0 / n) + 180.0) % 360.0 - 180.0
+            self._fwd_mask = np.abs(bearing) <= self.cfg.governor_forward_arc_deg
+        return self._fwd_mask
 
     def __call__(self, v: float, omega: float, scan_m: np.ndarray) -> tuple[float, float, bool]:
         c = self.cfg
-        d_min = float(np.min(scan_m))
+        # The braking law gates FORWARD travel, so it must look where she is going.
+        # This used to be np.min() over the whole 360 deg sweep, which meant a wall
+        # BEHIND or beside her vetoed driving forward -- measured at 299 governor
+        # interventions in 410 ticks, in a room with a clear path ahead. Driving
+        # forward cannot collide with what is behind, so the rear beams have no
+        # standing here. The arc is deliberately the whole front hemisphere: a beam
+        # exactly level with her still counts, because she has width and turns while
+        # she drives. Rotation and reverse are unaffected -- neither is gated by
+        # d_min. Approved by Harsh 2026-09-02.
+        scan_fwd = scan_m[self._forward_mask(scan_m.size)]
+        d_min = float(np.min(scan_fwd)) if scan_fwd.size else float(np.min(scan_m))
         v_out = float(np.clip(v, c.v_min, c.v_max))
         omega_out = float(np.clip(omega, -c.omega_max, c.omega_max))
         if d_min <= c.hard_stop:
@@ -3346,6 +3376,13 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     scan[0] = cfg.hard_stop - 0.05
     v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
     check("governor blocks forward inside hard_stop", v <= 0.0, f"v={v:.3f}")
+
+    # 1b. ...but a wall BEHIND her must not. Driving forward cannot reach it, and
+    # vetoing on it made her undriveable in any room with a wall in it.
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    scan[cfg.n_beams // 2] = cfg.hard_stop - 0.05       # directly astern
+    v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
+    check("a wall behind does not block forward", v > 0.0, f"v={v:.3f}")
 
     # 2. governor must scale speed inside the bubble
     scan[0] = (cfg.hard_stop + cfg.safe_distance) / 2.0
