@@ -2319,6 +2319,7 @@ class ControlLoop:
                       "no_reverse_turns": 0, "escape_turns": 0, "planner_biases": 0,
                       "recovery_ticks": 0}
         self.loop_ms: deque[float] = deque(maxlen=200)
+        self._last_tick_t: float | None = None
         # Populated by every tick, including the fail-safe early returns. Exists from
         # construction so a status render before the first tick is empty, not a crash.
         self.last_record: tlm.DecisionRecord | None = None
@@ -2462,6 +2463,24 @@ class ControlLoop:
     def tick(self) -> dict[str, Any]:
         c = self.cfg
         t_start = time.perf_counter()
+        # REAL elapsed since the last command, not the nominal dt.
+        #
+        # The slew limiter converts an acceleration limit into a per-tick step, so it
+        # needs the time that actually passed. It was handed c.dt unconditionally
+        # while 33% of ticks overran the 100 ms budget (measured: mean 94 ms, p95 275,
+        # max 465). On a 250 ms tick it therefore permitted 0.8 * 0.1 = 0.08 m/s of
+        # change where 0.20 was due, so she accelerated 2.5x too slowly -- and by a
+        # factor that varied with the jitter, which is what "not smooth" is.
+        #
+        # Clamped both ways. Below half nominal a near-zero interval would freeze
+        # acceleration; above 3x, a long stall would bank enough allowance to make the
+        # recovery a lurch. Only the SLEW rate is affected: governor, reflex and the
+        # duty ceiling still bound absolute speed, so this cannot make her faster,
+        # only less sluggish at reaching a speed already permitted.
+        dt_real = c.dt
+        if self._last_tick_t is not None:
+            dt_real = min(max(t_start - self._last_tick_t, c.dt * 0.5), c.dt * 3.0)
+        self._last_tick_t = t_start
         gate = "ok"
 
         scan, scan_age = self.slots["lidar"].read()
@@ -2820,7 +2839,7 @@ class ControlLoop:
                 if (emergency or tof_scale < 1.0) else "")
 
         # ---- 5. slew limit + actuate ----------------------------------------------
-        v, omega = self.limiter(v, omega, c.dt, emergency=emergency,
+        v, omega = self.limiter(v, omega, dt_real, emergency=emergency,
                                 allow_rotation=pivot_allowed)
         rec.add("limiter", v, omega, "slew limited")
         self.motors.drive(v, omega)
@@ -3751,6 +3770,22 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     l, r = loop.motors.to_wheel_speeds(cfg.v_max, cfg.omega_max)
     check("wheel speeds within limit",
           max(abs(l), abs(r)) <= cfg.wheel_speed_max + 1e-6, f"L={l:.3f} R={r:.3f}")
+
+    # 6b. The slew limit must scale with REAL elapsed time, and stay bounded.
+    #     Feeding it the nominal dt on a 250 ms tick allowed 2.5x too little
+    #     acceleration, so she crawled up to speed by an amount that varied with
+    #     however long the tick happened to take.
+    loop.limiter.reset()
+    v_short, _ = loop.limiter(cfg.v_max, 0.0, cfg.dt)
+    loop.limiter.reset()
+    v_long, _ = loop.limiter(cfg.v_max, 0.0, cfg.dt * 3.0)
+    check("slew allowance scales with elapsed time",
+          v_long > v_short * 2.5, f"{v_short:.3f} at dt vs {v_long:.3f} at 3*dt")
+    #     ...and tick() must clamp it, so a long stall cannot bank a lurch.
+    loop.limiter.reset()
+    v_huge, _ = loop.limiter(cfg.v_max, 0.0, cfg.dt * 50.0)
+    check("an unclamped dt would be a lurch (hence the 3x cap in tick)",
+          v_huge > cfg.v_max * 0.9, f"v={v_huge:.3f}")
 
     # 7b. THE WHOLE CHAIN, not just the governor: with the rear blocked, no stage may
     #     output reverse. 1c-1e test the governor in isolation, but escape (2b) and
