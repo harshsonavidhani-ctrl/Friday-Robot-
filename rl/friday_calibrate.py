@@ -316,7 +316,14 @@ def main(argv=None) -> int:
     ap.add_argument("--calibrate-seconds", type=float, default=3.0)
     ap.add_argument("--motor", choices=["null", "friday"], default="null")
     ap.add_argument("--motor-port", type=str, default="auto")
-    ap.add_argument("--motor-max-duty", type=float, default=0.5)
+    # 0.75 == friday/config.py MOTOR_MAX_DUTY == pi_deploy's default: the approved
+    # ceiling for this L298N. This used to default to 0.5, which is not a neutral
+    # choice -- 0.5 x 255 = 127, and the MEASURED pivot break-away on this robot is
+    # 190. A stiction sweep left on the old default therefore stopped ramping before
+    # the duty at which the wheels actually turn, and reported a floor that does not
+    # exist. Three files disagreeing about one hardware ceiling is how a throttle
+    # becomes invisible. Raising it ABOVE 0.75 still needs Harsh's explicit approval.
+    ap.add_argument("--motor-max-duty", type=float, default=0.75)
     ap.add_argument("--motor-watchdog", type=float, default=0.5)
     ap.add_argument("--motor-invert-left", action="store_true")
     ap.add_argument("--motor-invert-right", action="store_true")
