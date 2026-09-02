@@ -107,6 +107,15 @@ state/map.npz
 # specific room on 2026-08-28.
 !rl/exploration_model.onnx
 
+# ...AND the LeRobot/ACT local-nav policy, for exactly the same reason. This one
+# is 4.3 MB, trained on Harsh's laptop and scp'd here on 2026-09-02. It is also
+# the ONLY copy on this machine, and there is still no git remote -- so *.onnx
+# above would leave the trained policy living on one SD card and nowhere else.
+# It is a DIFFERENT model from exploration_model.onnx (77-dim ACT chunked export
+# vs the 144 kB PPO policy); the PPO one stays as the rollback and must not be
+# overwritten by it.
+!rl/friday_localnav_act.onnx
+
 # rl/ runtime output: new black boxes are written per run and are NOT baseline.
 rl/blackbox-*.csv
 rl/state/

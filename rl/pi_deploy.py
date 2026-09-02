@@ -2206,7 +2206,7 @@ class ControlLoop:
                     "lidar_min": float("nan"), "tof_min": float("nan"), "visual": 0.0,
                     "v_policy": 0.0, "omega_policy": 0.0,
                     "v_raw": float("nan"), "omega_raw": float("nan"),
-                    "authority": "SAFETY", "loop_ms": 0.0}
+                    "authority": tlm.SRC_SAFETY, "loop_ms": 0.0}
         if c.tof_enabled and (depth is None or depth_age > c.tof_deadline):
             self.motors.emergency_stop()
             self.limiter.reset()
@@ -2221,7 +2221,7 @@ class ControlLoop:
                     "lidar_min": float(np.min(scan)), "tof_min": float("nan"), "visual": 0.0,
                     "v_policy": 0.0, "omega_policy": 0.0,
                     "v_raw": float("nan"), "omega_raw": float("nan"),
-                    "authority": "SAFETY", "loop_ms": 0.0}
+                    "authority": tlm.SRC_SAFETY, "loop_ms": 0.0}
 
         # ---- 1. policy ------------------------------------------------------------
         obs = self._build_observation(scan)
@@ -2603,9 +2603,17 @@ class ControlLoop:
                     self.narrator.observe(st or {})
                 if self.status_every and self.stats["ticks"] % self.status_every == 0 \
                         and self.last_record is not None:
+                    # Mode is DERIVED, not asserted. It was a literal here, which
+                    # meant the printed block claimed "RL policy" whether or not the
+                    # frontier planner was running -- a displayed field that did not
+                    # come from internal state, which is the exact defect this
+                    # telemetry exists to prevent. `_mode()` is the single source
+                    # both the printed block and the JSON state read from.
                     print(tlm.autonomy_status(
-                        self.last_record, self.cfg,
-                        mode="AUTONOMOUS EXPLORATION (RL policy)",
+                        self.last_record, self.cfg, mode=self._mode(),
+                        planner=(self.planner.snapshot() if self.planner else None),
+                        recovery=(self.recovery.snapshot() if self.recovery_enabled
+                                  else None),
                         stats=self.stats,
                         objective=self._objective()), flush=True)
                 if verbose and self.stats["ticks"] % 5 == 0:
