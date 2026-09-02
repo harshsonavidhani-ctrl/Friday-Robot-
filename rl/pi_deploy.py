@@ -2398,15 +2398,33 @@ class ControlLoop:
                 # Said ONCE, loudly. Substituting an action silently is precisely what
                 # must not happen, and per-tick logging at 10 Hz is its own kind of
                 # silence -- it becomes scrollback nobody reads.
-                LOGGER.warning(
-                    "CAPABILITY MISMATCH: the policy is asking to reverse and this "
-                    "drivetrain cannot. v_min %+.3f m/s vs stiction floor %.3f m/s, so "
-                    "NO reverse in the trained action space is executable. Substituting "
-                    "a pivot toward open space, labelled CAPABILITY_ADAPTER in "
-                    "telemetry -- the raw policy output is preserved unmodified. The "
-                    "real fix is retraining with the measured floor, not this. "
-                    "--no-reverse-fallback shows the raw behaviour instead.",
-                    c.v_min, floor_mps)
+                # The message has to distinguish two genuinely different states, because
+                # it used to assert the worse one unconditionally. Since wheel_speed_max
+                # was measured at 0.403 the floor is 0.149 m/s and v_min is -0.150, so
+                # the fastest reverse the policy can ask for IS executable -- by 0.001
+                # m/s. Claiming "no reverse is executable" there is simply false, and a
+                # warning that overstates is one people learn to discount.
+                if abs(c.v_min) < floor_mps:
+                    LOGGER.warning(
+                        "CAPABILITY MISMATCH: the policy asked to reverse and this "
+                        "drivetrain cannot. v_min %+.3f m/s is itself below the %.3f m/s "
+                        "stiction floor, so NO reverse in the trained action space is "
+                        "executable. Substituting a pivot toward open space, labelled "
+                        "CAPABILITY_ADAPTER in telemetry -- the raw policy output is "
+                        "preserved unmodified. The real fix is retraining with the "
+                        "measured floor. --no-reverse-fallback shows the raw behaviour.",
+                        c.v_min, floor_mps)
+                else:
+                    LOGGER.warning(
+                        "CAPABILITY MISMATCH: the policy asked to reverse at %+.3f m/s, "
+                        "below the %.3f m/s stiction floor. Note v_min %+.3f m/s IS "
+                        "executable, so this is a PARTIAL mismatch -- only reverses "
+                        "slower than the floor are being substituted with a pivot "
+                        "(CAPABILITY_ADAPTER in telemetry; raw policy output preserved). "
+                        "The margin is %.3f m/s, which is thin enough that measurement "
+                        "error in wheel_speed_max could close it. "
+                        "--no-reverse-fallback shows the raw behaviour.",
+                        v_raw, floor_mps, c.v_min, abs(c.v_min) - floor_mps)
             v_pol = 0.0
             omega_pol = self._open_side(scan) * c.omega_max
             self.stats["no_reverse_turns"] += 1

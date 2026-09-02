@@ -180,5 +180,59 @@ for i in range(60):
     loop2.tick()
 check("--no-recovery leaves the controller inert", loop2.stats["recovery_ticks"] == 0)
 
+# 9. A maneuver must be RELEASED as soon as the path it was opening is actually open.
+#
+# It used to run its whole tick budget regardless. Measured over a 90 s exploration
+# run: RECOVERY_CONTROLLER held authority for 112 of 316 ticks, and `_maneuver` only
+# ever returns a pivot or a reverse -- so forward motion was impossible for all of
+# them whether or not the way had opened.
+#
+# The release test is FORWARD CLEARANCE, deliberately not `not boxed_in`. That flag is
+# a stuck counter, so it clears the moment the pivot starts moving her; releasing on it
+# measured WORSE than never releasing (recovery 112 -> 12 ticks, forward ticks 10 -> 0)
+# because she was handed back into a path still blocked.
+BLOCKED = np.full(cfg.n_beams, 0.30, np.float32)     # inside hard_stop
+OPEN = np.full(cfg.n_beams, 2.00, np.float32)
+
+rc9 = RecoveryController(cfg)
+rc9.update(BLOCKED, 0.0, 0.0, 0.30, True, np.zeros(3), 0, 1.0)
+check("boxed_in starts a maneuver", rc9.state == "RECOVERING", rc9.state)
+held = 0
+for i in range(LEVELS[0]["ticks"]):                   # path is open now
+    if rc9.update(OPEN, 0.0, 0.0, 0.30, True, np.zeros(3), 100 + i, 1.0) is None:
+        break
+    held += 1
+check("...and releases early once the way ahead is genuinely open",
+      rc9.state == "VERIFY" and held < LEVELS[0]["ticks"] - 1,
+      f"held {held} of {LEVELS[0]['ticks']}, state {rc9.state}")
+check("the early release is counted", rc9.early_exits == 1, f"{rc9.early_exits}")
+check("snapshot exposes early_exits", rc9.snapshot().get("early_exits") == 1)
+
+# The negative, which is the one that matters: a robot whose path is STILL blocked must
+# get its whole budget. A release test that cannot tell these apart is the regression.
+rc10 = RecoveryController(cfg)
+rc10.update(BLOCKED, 0.0, 0.0, 0.30, True, np.zeros(3), 0, 1.0)
+held10 = 0
+for i in range(LEVELS[0]["ticks"] + 2):
+    if rc10.update(BLOCKED, 0.0, 0.0, 0.30, True, np.zeros(3), 200 + i, 1.0) is None:
+        break
+    held10 += 1
+check("a still-blocked robot keeps its full budget",
+      rc10.early_exits == 0 and held10 >= LEVELS[0]["ticks"] - 1,
+      f"held {held10}, early_exits {rc10.early_exits}")
+
+# ...and clearance alone must not release a maneuver that a MOTION trigger started,
+# because a spin is not fixed by there being room to spin in.
+rc11 = RecoveryController(cfg)
+run(rc11, SPIN_WINDOW + 2, 0.0, 2.0, 0.30)
+if rc11.state == "RECOVERING":
+    held11 = 0
+    for i in range(LEVELS[0]["ticks"]):
+        if rc11.update(OPEN, 0.0, 2.0, 0.30, False, np.zeros(3), 300 + i, 1.0) is None:
+            break
+        held11 += 1
+    check("a spin recovery is not released by open space alone",
+          rc11.early_exits == 0, f"early_exits {rc11.early_exits}, held {held11}")
+
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

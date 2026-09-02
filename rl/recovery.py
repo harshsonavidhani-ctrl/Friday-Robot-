@@ -95,6 +95,22 @@ LEVELS = (
 )
 VERIFY_TICKS = 30               # 3 s of normal driving before calling it recovered
 
+# A recovery maneuver used to run its FULL tick budget with no check that it had
+# worked. Measured over a 90 s exploration run: the policy asked to go forward on
+# 222 of 316 ticks and moved on 9, while RECOVERY_CONTROLLER held authority for 112
+# -- and `_maneuver` only ever returns a pivot or a reverse, so every one of those
+# ticks made forward motion impossible BY CONSTRUCTION, whether or not the way had
+# already opened. A level-1 pivot that clears the obstruction on tick 2 still burned
+# the remaining 6.
+#
+# So a maneuver is now released as soon as its own trigger stops firing. This only
+# ever hands authority BACK to the policy sooner; the governor, visual gate, ToF
+# reflex and rate limiter all sit downstream and are untouched, so it cannot widen
+# any safety margin. Escalation is unchanged -- VERIFY still has to pass.
+MIN_MANEUVER_TICKS = 3          # let a maneuver actually do something before judging it
+CLEARED_TRAVEL_M = 0.05         # movement that says a motion-history trigger has broken
+CLEARED_AHEAD_MARGIN_M = 0.10   # clearance past hard_stop before calling a path open
+
 
 @dataclass
 class RecoveryEvent:
@@ -157,6 +173,8 @@ class RecoveryController:
         self.recoveries = 0
         self.successes = 0
         self.escalations = 0
+        self.early_exits = 0
+        self._maneuver_ticks = 0
         self._cooldown = 0
 
     # ------------------------------------------------------------------ detect ---
@@ -191,6 +209,39 @@ class RecoveryController:
                         f"{h.travel(PROGRESS_WINDOW):.3f} m in {PROGRESS_WINDOW} ticks")
         return None
 
+    def _cleared(self, scan: np.ndarray, boxed_in: bool) -> bool:
+        """Has the condition that triggered THIS maneuver stopped holding?
+
+        Deliberately trigger-specific rather than "is _detect quiet". `_detect` is
+        ordered by evidence and would answer for whichever condition happens to fire
+        now, which is not the question -- a spin recovery must not be released because
+        the robot is no longer boxed in.
+        """
+        if self.trigger == "boxed_in":
+            # NOT `not boxed_in`. That flag is a stuck COUNTER
+            # (`_stuck_ticks >= escape_after_ticks`), so it goes false the instant the
+            # maneuver starts moving her -- which says the pivot began, not that it
+            # achieved anything. Releasing on it measured worse than not releasing at
+            # all: recovery authority fell 112 -> 12 ticks over a 90 s run while
+            # forward ticks went 10 -> 0, because she was handed back into a path that
+            # was still blocked and then sat through VERIFY doing nothing.
+            #
+            # The maneuver exists to open a driveable heading, so that is what has to
+            # be true to end it: real clearance in the forward arc, past the distance
+            # at which the governor forbids forward motion anyway.
+            arc = getattr(self.cfg, "governor_forward_arc_deg", 90.0)
+            n = scan.size
+            bearing = (np.arange(n) * (360.0 / n) + 180.0) % 360.0 - 180.0
+            ahead = scan[np.abs(bearing) <= arc]
+            if ahead.size == 0:
+                return False
+            return float(np.min(ahead)) > self.cfg.hard_stop + CLEARED_AHEAD_MARGIN_M
+        # spinning / oscillation / no_progress are all "the robot is not getting
+        # anywhere" measured over a window. The evidence they have broken is that it
+        # has started covering ground again. A pivot recovery cannot satisfy this,
+        # which is correct: pivoting is not progress.
+        return self.hist.travel(MIN_MANEUVER_TICKS) >= CLEARED_TRAVEL_M
+
     # ----------------------------------------------------------------- respond ---
     def update(self, scan: np.ndarray, exec_v: float, exec_omega: float,
                cmd_v: float, boxed_in: bool, pose: np.ndarray, tick: int,
@@ -210,7 +261,17 @@ class RecoveryController:
         # --- executing a recovery -------------------------------------------------
         if self.state == "RECOVERING":
             self.remaining -= 1
+            self._maneuver_ticks += 1
             if self.remaining <= 0:
+                self.state = "VERIFY"
+                self.verify_left = VERIFY_TICKS
+                return None
+            if (self._maneuver_ticks >= MIN_MANEUVER_TICKS
+                    and self._cleared(scan, boxed_in)):
+                # Worked early. Hand the robot back now instead of pivoting at a gap
+                # it can already drive through. VERIFY still runs, so a premature
+                # release is caught and escalated exactly as a failed one would be.
+                self.early_exits += 1
                 self.state = "VERIFY"
                 self.verify_left = VERIFY_TICKS
                 return None
@@ -253,6 +314,7 @@ class RecoveryController:
         self.level = 0
         self.turn_sign = 1.0 if open_side >= 0 else -1.0
         self.remaining = LEVELS[0]["ticks"]
+        self._maneuver_ticks = 0
         self.state = "RECOVERING"
         self.active_event = RecoveryEvent(
             t=time.time(), tick=tick, trigger=trigger, level=1, detail=detail,
@@ -290,6 +352,7 @@ class RecoveryController:
         self.level = min(self.level + 1, len(LEVELS) - 1)
         self.escalations += 1
         self.remaining = LEVELS[self.level]["ticks"]
+        self._maneuver_ticks = 0
         self.state = "RECOVERING"
         if self.active_event is not None:
             self.active_event.level = self.level + 1
@@ -309,6 +372,12 @@ class RecoveryController:
             "recoveries": self.recoveries,
             "successes": self.successes,
             "escalations": self.escalations,
+            # Maneuvers released as soon as their own trigger stopped firing, rather
+            # than running the full tick budget. High relative to `recoveries` means
+            # the escapes are working quickly and the robot is getting its authority
+            # back; zero means every recovery ran to its budget, which is what this
+            # counter exists to make visible.
+            "early_exits": self.early_exits,
             "triggers": dict(self.triggers),
             "active": None if self.active_event is None else {
                 "trigger": self.active_event.trigger,
