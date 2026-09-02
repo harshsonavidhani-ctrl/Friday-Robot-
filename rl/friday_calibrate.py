@@ -364,8 +364,21 @@ def main(argv=None) -> int:
     # becomes invisible. Raising it ABOVE 0.75 still needs Harsh's explicit approval.
     ap.add_argument("--motor-max-duty", type=float, default=0.85)
     ap.add_argument("--motor-watchdog", type=float, default=0.5)
-    ap.add_argument("--motor-invert-left", action="store_true")
-    ap.add_argument("--motor-invert-right", action="store_true")
+    # MEASURED, and NOT optional on this robot: friday/config.py has
+    #     MOTOR_INVERT_LEFT = False
+    #     MOTOR_INVERT_RIGHT = True    <- the right motor leads are reversed
+    # These were store_true, i.e. BOTH defaulted to False, while pi_deploy's own
+    # parser correctly defaults invert-right to True. So every motor measurement
+    # taken through THIS script ran with the right motor backwards: drive_duty(d, d)
+    # became a PIVOT instead of driving straight, and the robot span on the spot.
+    # A stiction sweep in that state measures the sideways-scrub break-away (190),
+    # not the straight-line floor (72), which is a completely different number.
+    # BooleanOptionalAction so a physically corrected lead can still pass
+    # --no-motor-invert-right, matching pi_deploy.
+    ap.add_argument("--motor-invert-left", action=argparse.BooleanOptionalAction,
+                    default=False)
+    ap.add_argument("--motor-invert-right", action=argparse.BooleanOptionalAction,
+                    default=True)
     ap.add_argument("--i-am-watching", action="store_true")
     ap.add_argument("--lidar-port", type=str, default="auto")
     ap.add_argument("--seed", type=int, default=0)
