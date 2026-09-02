@@ -1488,17 +1488,21 @@ class RateLimiter:
     def __call__(self, v: float, omega: float, dt: float, emergency: bool = False,
                  allow_rotation: bool = False) -> tuple[float, float]:
         if emergency:
-            self.v = 0.0                                 # never rate-limit a stop
+            # Never rate-limit a stop. Forward is killed outright; a REVERSE the
+            # caller has already sanctioned is passed through, because slewing an
+            # escape is the same mistake as slewing the stop itself.
+            self.v = min(v, 0.0)
             if not allow_rotation:
                 self.omega = 0.0
-                return 0.0, 0.0
+                return self.v, 0.0
             # The caller has established that turning in place cannot reach the
             # obstacle (it lies outside robot_radius), so rotation is the escape and
             # must survive the stop. It is deliberately NOT slew limited either --
             # the same reasoning that makes a stop immediate makes turning AWAY from
-            # something immediate. Forward speed stays zero regardless.
+            # something immediate. Forward speed stays vetoed regardless; self.v is
+            # already clamped to <= 0 above, so a sanctioned reverse survives here too.
             self.omega = omega
-            return 0.0, omega
+            return self.v, omega
         dv = self.cfg.max_lin_accel * dt
         dw = self.cfg.max_ang_accel * dt
         # Slowing down is always allowed at full rate; only acceleration is limited.
@@ -2497,9 +2501,17 @@ class ControlLoop:
         pivot_allowed = False
         tof_scale, emergency = self.reflex.evaluate(depth)
         if emergency:
-            # Forward motion is vetoed absolutely -- that is the whole point of the
-            # reflex and it does not soften.
-            v = 0.0
+            # FORWARD motion is vetoed absolutely -- that is the whole point of the
+            # reflex and it does not soften. Reverse is a different matter: the ToF
+            # looks FORWARD, so an obstacle 0.2 m ahead is a reason to stop advancing
+            # and precisely a reason to back off. Zeroing v outright also contradicted
+            # LidarGovernor one layer up, which on the same evidence does
+            #     v_out = min(v_out, 0.0)   # "rotate / reverse only"
+            # This makes the reflex agree with the rule the chain already had rather
+            # than inventing a new exception. Measured while she was wedged: the
+            # policy asked for -0.150 m/s on nearly every stuck tick and the reflex
+            # threw all of them away. Approved by Harsh 2026-09-02.
+            v = min(v, 0.0)
             # Rotation is a different question, and zeroing it here was a real bug.
             # A differential drive pivoting in place TRANSLATES NOWHERE: it sweeps a
             # circle of robot_radius and cannot close distance on anything outside it.
@@ -3364,6 +3376,17 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     v, omega = loop.limiter(0.6, 1.2, cfg.dt, emergency=True, allow_rotation=True)
     check("emergency stop still permits a pivot escape",
           v == 0.0 and omega == 1.2, f"v={v:.3f} omega={omega:.3f}")
+
+    # 5c. FORWARD must never survive an emergency stop, whatever else is allowed.
+    loop.limiter.v = 0.5
+    v, _ = loop.limiter(0.6, 0.0, cfg.dt, emergency=True, allow_rotation=True)
+    check("emergency stop never lets forward through", v == 0.0, f"v={v:.3f}")
+
+    # 5d. ...but REVERSE must, because the ToF looks forward and backing off is the
+    # escape. Same rule LidarGovernor already applies: "rotate / reverse only".
+    loop.limiter.reset()
+    v, _ = loop.limiter(-0.15, 0.0, cfg.dt, emergency=True)
+    check("emergency stop permits reverse escape", v == -0.15, f"v={v:.3f}")
 
     # 6. rate limiter must cap acceleration
     loop.limiter.reset()
