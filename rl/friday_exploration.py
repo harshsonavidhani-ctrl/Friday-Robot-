@@ -83,6 +83,17 @@ class ExplorationConfig:
 
     # ---- attempt memory ----------------------------------------------------------
     blacklist_radius: float = 0.70     # [m] around a failed target
+    # How much cheaper a rival frontier must be to displace the committed one.
+    #
+    # Without this the target THRASHES, and the attempt memory never engages. The
+    # selection cost is `d * (1 - forward_bias * ahead)`, which depends on the robot's
+    # HEADING -- and she turns constantly (122-145 turning ticks per 90 s run), so the
+    # cheapest frontier changes as she rotates and the target follows it. Measured over
+    # four runs: 9-17 targets selected, 0 reached, 0 abandoned, 0 blacklisted, because
+    # a target that is replaced every ~10 s can never reach the 25 s timeout that
+    # blacklists it. She dithers instead of committing, which is what "it gets confused"
+    # looks like from outside.
+    target_hysteresis: float = 0.35    # a rival must be 35% cheaper to steal the goal
     blacklist_ttl_s: float = 45.0      # forget failures eventually; the map changes
     max_attempts_per_target: int = 2
 
@@ -259,7 +270,19 @@ class ExplorationSupervisor:
         prev = self.st.target
         changed = prev is None or float(np.hypot(*(target - prev))) > 0.5
         self.st.target = target
-        self.st.target_started_t = now
+        # ONLY on a genuinely new target. Resetting unconditionally made the whole
+        # attempt-memory mechanism dead code: `replan_period_s` re-commits the SAME
+        # target every 3 s while navigating, so `elapsed` could never reach the 25 s
+        # `target_timeout_s`, so nothing was ever abandoned and nothing was ever
+        # blacklisted. Measured across three 90 s runs, every one of them reported
+        # `abandoned=0 blacklisted=0` while reaching 0 of 9-17 selected targets --
+        # she re-picked the same unreachable frontier until the run ended.
+        #
+        # This is the failure the class docstring calls "the single most common
+        # failure of naive frontier exploration", and the guard against it was
+        # switched off by a clock reset one line too broad.
+        if changed:
+            self.st.target_started_t = now
         self._ticks_since_plan = 0
         if changed:
             self.st.targets_selected += 1
@@ -328,7 +351,24 @@ class ExplorationSupervisor:
         cost = d * (1.0 - self.cfg.forward_bias * 0.5 * ahead)
 
         k = int(np.argmin(cost))
-        return np.array([fx[k], fy[k]], np.float32), n_frontier
+        best = np.array([fx[k], fy[k]], np.float32)
+
+        # HYSTERESIS. Stay with the committed target unless a rival is clearly better.
+        # "Still valid" means a surviving candidate lies near it -- the exact cell may
+        # have been explored away, which is not a reason to abandon the area. Anything
+        # blacklisted or out of range was already filtered above, so a target that has
+        # become unreachable simply has no survivor near it and loses its hold.
+        cur = self.st.target
+        if cur is not None and self.st.phase == Phase.NAVIGATE:
+            near = np.hypot(fx - cur[0], fy - cur[1]) <= self.cfg.blacklist_radius
+            if near.any():
+                cur_cost = float(np.min(cost[near]))
+                if cost[k] > cur_cost * (1.0 - self.cfg.target_hysteresis):
+                    # Return the surviving cell nearest the committed target, not the
+                    # original coordinate, so the goal tracks the frontier as it recedes.
+                    j = int(np.argmin(np.where(near, cost, np.inf)))
+                    return np.array([fx[j], fy[j]], np.float32), n_frontier
+        return best, n_frontier
 
     def _may_declare_complete(self, now: float) -> bool:
         """Guard against announcing "fully explored" from a momentarily empty map.
