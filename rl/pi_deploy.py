@@ -192,30 +192,46 @@ class RobotConfig:
     # ---- actuation limits ----
     max_lin_accel: float = 0.8          # [m/s^2] command slew limit -> no wheel slip
     max_ang_accel: float = 4.0          # [rad/s^2]
-    # MEASURED ON THIS ROBOT 2026-08-28, at the ceiling duty of 191 (max_duty 0.75).
-    # The bumper ToF closed 1.393 -> 0.280 m under power in 2.34 s while driving
-    # straight at one surface: 1.113 m / 2.34 s = 0.476 m/s.
+    # MEASURED ON THIS ROBOT 2026-09-03, at the ceiling duty of 216 (max_duty 0.85).
     #
-    # History, because two wrong values are on record and both get quoted:
+    # Method: driven at duty 216 straight at a wall SQUARE-ON to her (fitted plane
+    # normal_x 0.976, planarity 0.018 m). A perpendicular plane is an exact 1:1
+    # ruler -- travel d shortens its distance by d, with no scan matching involved.
+    # 37 samples, ZERO non-monotonic steps. The acceleration ramp is visible out to
+    # ~0.3 s; the steady-state slope after it is 0.403 m/s.
+    #
+    # CORROBORATED by a method that shares no failure mode: driving ONE wheel with
+    # the other stopped arcs her about the stopped wheel at omega = v / wheel_base,
+    # and the yaw recovered by circular correlation of the scan gives 0.397 m/s.
+    # The two agree to 1.5%.
+    #
+    # Attempts that FAILED here, recorded so nobody repeats them:
+    #   full-scan matching -- degenerate among parallel walls. Many (dx, dy, dtheta)
+    #                         fit equally well, so the estimate wandered 0.04-0.33 m
+    #                         with uniformly LOW residuals. Low residual is not
+    #                         evidence of a good fit when the geometry is degenerate.
+    #   oblique wall fit   -- at normal_x ~0.5 the division by the normal's forward
+    #                         component amplified error enough to INVERT the sign,
+    #                         reporting confident reverse motion for a forward drive.
+    # Check normal_x before believing any wall-referenced distance.
+    #
+    # History, because several wrong values are on record and all get quoted:
     #   0.85  -- train.py's simulator. Never measured on hardware.
-    #   0.185 -- friday/state/calibration.json forward_cm_per_s 18.5, but that was
-    #            taken at a LOWER effective duty (move_speed 170 x speed_percent 75),
-    #            not at the ceiling, so it does not describe this constant.
+    #   0.476 -- measured 2026-08-28, but at the OLD duty-191 ceiling; it stopped
+    #            describing the hardware the moment max_duty went to 0.85.
+    #   0.185 -- friday/state/calibration.json forward_cm_per_s 18.5, taken at a
+    #            LOWER effective duty, so it never described this constant at all.
     #
-    # SINGLE-POINT and worth refining: it is one clean run, not a fitted curve, and
-    # a loaded brushed motor is not linear. Re-measure with a closing-RATE fit (slope
-    # of ToF distance vs time, R^2 > 0.9) in a clear lane of at least 2 m.
+    # STILL n=1 for the translation run. It is the independent agreement that carries
+    # the confidence here, not the run count -- more runs would tighten it.
     #
-    # ⚠ STALE SINCE 2026-09-02. MOTOR_MAX_DUTY was raised 0.75 -> 0.85 with Harsh's
-    # explicit approval, moving the ceiling from duty 191 to 217. This constant means
-    # "the speed reached at the ceiling duty", so it no longer describes the hardware:
-    #     duty = 255 * max_duty * (wheel_speed / wheel_speed_max)
-    # asks for ~14% more duty than it did when 0.476 was taken, and Friday therefore
-    # moves FASTER than the commanded m/s. The safety chain still bounds her by
-    # measured distance, so this is a calibration error and not a collision risk --
-    # but the policy's idea of how far it travels per tick is now wrong.
-    # Re-measure AT 0.85 (blocker B3) before trusting any commanded velocity.
-    wheel_speed_max: float = 0.476      # [m/s] per wheel -- MEASURED AT THE OLD 0.75 CEILING
+    # Two things measured alongside this that the constant does NOT capture:
+    #   * the wheels differ by ~17% (left 0.428, right 0.366 m/s at identical duty),
+    #     so open-loop straight driving always curves, and with no encoders nothing
+    #     downstream can correct it;
+    #   * she COASTS ~0.22 m after the motors cut (0.405 m under power, 0.629 m
+    #     settled). Read that before trusting any stopping-distance assumption.
+    wheel_speed_max: float = 0.403      # [m/s] per wheel -- MEASURED AT THE 0.85 CEILING
 
     # ---- LiDAR chassis self-mask ----
     # Raw sensor bearings (degrees, pre-offset) that look at the robot's own body.

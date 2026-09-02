@@ -915,12 +915,15 @@ MOTOR_RAMP_FLOOR = 0.6       # ramp starts here, as a fraction of the pulse
 # Raised 0.75 -> 0.85 on 2026-09-02, again with Harsh's explicit approval, after
 # the ACT policy's stand runs. Ceiling duty goes 191 -> 217.
 #
-# ⚠ THIS INVALIDATES A MEASURED CONSTANT. rl/pi_deploy.py RobotConfig
-# .wheel_speed_max = 0.476 m/s was measured AT duty 191, and the mapping is
+# RESOLVED 2026-09-03. Raising the ceiling invalidated rl/pi_deploy.py
+# RobotConfig.wheel_speed_max, which is defined as the speed reached AT the
+# ceiling duty:
 #     duty = 255 * max_duty * (wheel_speed / wheel_speed_max)
-# so the same commanded m/s now asks for ~14% more duty than when that number
-# was taken. Friday will physically move faster than the policy believes it
-# requested until wheel_speed_max is re-measured AT 0.85 (blocker B3).
+# It has now been re-measured at duty 216 and is 0.403 m/s, not the 0.476 taken
+# at the old duty-191 ceiling -- so the true speed was ~16% BELOW what the
+# policy believed, and dead reckoning (which integrates the commanded value
+# through the same linear map) was overstating distance by ~18%. See the comment
+# on that field for the method and its corroboration.
 # Watch `vcgencmd get_throttled` after loaded runs: bit 0 set means undervoltage
 # and the ceiling is too high for this battery.
 MOTOR_MAX_DUTY = 0.85

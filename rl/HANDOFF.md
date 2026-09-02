@@ -109,24 +109,32 @@ If `0x29` never appears, it is wiring or 3.3 V power. Also confirm the Python pa
 name matches the breakout — `VL53L5CXThread._setup` imports `vl53l5cx_ctypes`, and
 vendors ship different libraries.
 
-### B3 — `wheel_speed_max = 0.85 m/s` is **unverified**
+### B3 — `wheel_speed_max` — **CLOSED 2026-09-03**, measured at 0.403 m/s
 
-It came from the training simulator. Nobody has measured this robot. Every speed in the
-system is expressed against it: governor braking, reflex stop distance, dead reckoning,
-the policy's own `v_max`. If the truth is 0.3 m/s, everything is overstated ~3x.
+Measured at the duty-216 ceiling by driving straight at a wall square-on to the robot
+(plane `normal_x` 0.976, planarity 0.018 m), which makes the wall an exact 1:1 ruler.
+37 samples, zero non-monotonic steps, steady-state slope after the ~0.3 s ramp:
+**0.403 m/s**. Corroborated by an independent method — one wheel driven, the other
+stopped, yaw recovered by circular scan correlation — at **0.397 m/s**, agreeing to
+1.5%. Still n=1 for the translation run; the agreement is what carries it.
 
-```bash
-python3 pi_deploy.py --motor friday --motor-calibrate 100 --i-am-watching \
-  --motor-max-duty 0.7 --motor-min-duty 72
-```
+The old value (0.476) was taken at the duty-191 ceiling and was ~18% high, so dead
+reckoning had been overstating distance by about that much for every run since
+`MOTOR_MAX_DUTY` went to 0.85.
 
-Drives straight 3 s at duty 100. Measure the distance, compute m/s, repeat at two or
-three duties to see whether the relation is even linear (on a loaded brushed motor it
-often is not). Then set `RobotConfig.wheel_speed_max`.
+**Do not measure this with full-scan matching.** It is degenerate among parallel walls:
+many `(dx, dy, dtheta)` fit equally well and the estimate wanders with uniformly *low*
+residuals. An oblique wall (`normal_x` ~0.5) is worse still — it inverted the sign and
+reported confident reverse motion during a forward drive. Check `normal_x`.
 
-**Known consequence:** with floor 72, the slowest achievable speed is high relative to
-the policy's range, and reverse (`v_min = -0.15`) may be unreachable — every reverse
-command becomes a stop. The driver logs this at startup. Read that line.
+**Consequence now retired:** at 0.403 the stiction floor is 80/216.75 × 0.403 =
+0.149 m/s, which is *below* `v_min = -0.15`, so reverse is reachable and the driver's
+"REVERSE IS UNREACHABLE" start-up warning no longer fires.
+
+**Two findings that are still open**, both measured during this work:
+* the wheels differ by ~17% (left 0.428, right 0.366 m/s at identical duty), so
+  open-loop straight driving always curves and no encoder exists to correct it;
+* she coasts ~0.22 m after the motors cut (0.405 m under power, 0.629 m settled).
 
 ### B4 — Cameras (optional)
 

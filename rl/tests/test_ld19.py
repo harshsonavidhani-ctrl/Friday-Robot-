@@ -32,9 +32,31 @@ def build_frame(start_deg, end_deg, dists_mm):
     return bytes(f)
 
 
-def make_thread():
+def prime(th, span=11.0):
+    """Feed one revolution and its wrap, which the driver DISCARDS by contract.
+
+    A real thread attaches mid-sweep, so the bins behind its first wrap cover only
+    the arc the sensor happened to cross after start-up -- measured on hardware as
+    47 of 72 beams reading max_range. LD19Thread therefore treats the first wrap as
+    nothing but the marker for where a revolution ends. Tests have to get past that
+    marker before any sweep of theirs can publish.
+    """
+    a = 0.0
+    while a < 360.0:
+        end = min(a + span, 359.99)
+        th._handle_frame(build_frame(a, end, [BACKGROUND_M * 1000] * 12))
+        a += span
+    th._handle_frame(build_frame(0.0, 11.0, [BACKGROUND_M * 1000] * 12))
+
+
+def make_thread(primed=True):
+    """primed=False for tests that assert on raw frame counters -- priming feeds
+    a revolution of frames, which would inflate _frames and _crc_ok."""
     slot = SensorSlot("lidar", 1.0, True)
-    return LD19Thread(slot, cfg, "/dev/null"), slot
+    th = LD19Thread(slot, cfg, "/dev/null")
+    if primed:
+        prime(th)
+    return th, slot
 
 
 def sweep(th, span=11.0):
@@ -81,7 +103,7 @@ if scan is not None:
     check("scan width matches config", scan.shape == (cfg.n_beams,), str(scan.shape))
 
 # 3. CRC rejects corruption
-th2, slot2 = make_thread()
+th2, slot2 = make_thread(primed=False)
 good = build_frame(0.0, 11.0, [1000] * 12)
 bad = bytearray(good)
 bad[10] ^= 0xFF                       # flip bits in a distance field
