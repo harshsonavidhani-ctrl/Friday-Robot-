@@ -495,6 +495,7 @@ class LD19Thread(SensorThread):
         self._buf = bytearray()
         self._bins = np.full(cfg.n_beams, np.inf, np.float32)
         self._prev_start: float | None = None
+        self._have_full_rev = False
         self._frames = self._crc_ok = self._scans = self._reconnects = 0
         self._read_errors = self._soft_retries = 0
 
@@ -550,6 +551,7 @@ class LD19Thread(SensorThread):
             self._ser.reset_input_buffer()
             self._buf.clear()
             self._prev_start = None                  # partial revolution is now invalid
+            self._have_full_rev = False              # ...and so is the next one we assemble
             self._bins[:] = np.inf
             LOGGER.info("LD19 reconnected to %s (attempt %d)", self.port, self._reconnects)
         except Exception as exc:                     # noqa: BLE001
@@ -670,13 +672,35 @@ class LD19Thread(SensorThread):
 
         # A wrap past 0 deg means one full revolution is complete -> publish it.
         if self._prev_start is not None and start_deg < self._prev_start - 180.0:
-            scan = np.where(np.isinf(self._bins), self.cfg.lidar_max_range, self._bins)
-            self.slot.publish(np.clip(scan, 0.0, self.cfg.lidar_max_range).astype(np.float32))
+            if self._have_full_rev:
+                scan = np.where(np.isinf(self._bins), self.cfg.lidar_max_range, self._bins)
+                self.slot.publish(np.clip(scan, 0.0, self.cfg.lidar_max_range).astype(np.float32))
+                self._scans += 1
+                if self._scans % 100 == 0:
+                    LOGGER.debug("LD19: %d scans, CRC pass %.1f%%",
+                                 self._scans, 100.0 * self._crc_ok / max(self._frames, 1))
+            else:
+                # THE FIRST WRAP ONLY MARKS WHERE A REVOLUTION ENDS. The bins behind it
+                # were filled from wherever in the sweep this thread happened to attach,
+                # so every bin the sensor had not swept yet still holds inf and would go
+                # out as lidar_max_range -- MEASURED on a cold start as 47 of 72 beams
+                # wrong by up to 4.64 m, while the other 25 were already accurate to
+                # 0.003 m. Publishing that is worse than publishing nothing: the control
+                # loop's only test is `scan_age > lidar_deadline`, which asks whether a
+                # scan is FRESH and never whether it is COMPLETE, and MapperThread
+                # ray-casts those phantom max-range beams into the PERSISTENT map as
+                # free space that was never observed.
+                #
+                # `_prev_start = None` in _reconnect was written to prevent exactly this
+                # and does not: clearing it only defers wrap detection by one frame, and
+                # the very next wrap still publishes the same partial sweep. This flag is
+                # what that comment intended. Cost is one revolution, ~53 ms at the
+                # measured 19 Hz, against a 5 s start-up budget.
+                self._have_full_rev = True
+                LOGGER.debug("LD19: discarded the partial first revolution "
+                             "(%d/%d bins never swept)",
+                             int(np.isinf(self._bins).sum()), self.cfg.n_beams)
             self._bins[:] = np.inf
-            self._scans += 1
-            if self._scans % 100 == 0:
-                LOGGER.debug("LD19: %d scans, CRC pass %.1f%%",
-                             self._scans, 100.0 * self._crc_ok / max(self._frames, 1))
         self._prev_start = start_deg
 
     def _teardown(self) -> None:
@@ -3461,6 +3485,45 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     loop.slots["lidar"]._stamp = time.monotonic() - 10.0
     row = loop.tick()
     check("stale lidar triggers stop", row["gate"] == "stale_lidar" and row["v"] == 0.0)
+
+    # 9. the LD19's FIRST revolution is partial and must never be published. The thread
+    #    attaches mid-sweep, so the bins behind the first wrap cover only the arc the
+    #    sensor happened to sweep after start-up; every other bin still holds inf and
+    #    would go out as lidar_max_range. Measured on a cold start: 47 of 72 beams wrong
+    #    by up to 4.64 m. Nothing downstream can catch it -- the control loop only tests
+    #    whether a scan is FRESH, and MapperThread writes those phantom max-range beams
+    #    into the PERSISTENT map as free space that was never observed.
+    def _ld19_frame(start_deg: float, end_deg: float, dist_mm: int) -> bytes:
+        body = bytearray(46)
+        body[0], body[1] = LD19Thread.HEADER, LD19Thread.VERLEN
+        struct.pack_into("<H", body, 2, 2000)                      # speed, unused here
+        struct.pack_into("<H", body, 4, int(start_deg * 100) % 36000)
+        for i in range(LD19Thread.POINTS):
+            struct.pack_into("<H", body, 6 + 3 * i, dist_mm)
+            body[8 + 3 * i] = 200                                  # intensity
+        struct.pack_into("<H", body, 42, int(end_deg * 100) % 36000)
+        struct.pack_into("<H", body, 44, 0)
+        return bytes(body) + bytes([ld19_crc8(bytes(body))])
+
+    probe_slot = SensorSlot("lidar_probe", cfg.lidar_deadline, critical=False)
+    ld19 = LD19Thread(probe_slot, cfg, "/dev/null", 0.0, 230400, False, False, ())
+    # Attach at 180 deg: a real thread starts wherever the sensor happens to be.
+    for a in range(180, 360, 15):
+        ld19._handle_frame(_ld19_frame(a, a + 15, 1000))
+    ld19._handle_frame(_ld19_frame(0, 15, 1000))                   # first wrap
+    first_scan, _ = probe_slot.read()
+    check("LD19 discards its partial first revolution", first_scan is None,
+          "published a half-swept scan" if first_scan is not None else "")
+
+    #    ...and the SECOND wrap, which is a genuine full revolution, must publish.
+    for a in range(15, 360, 15):
+        ld19._handle_frame(_ld19_frame(a, a + 15, 1000))
+    ld19._handle_frame(_ld19_frame(0, 15, 1000))                   # second wrap
+    second_scan, _ = probe_slot.read()
+    ok = second_scan is not None and float(np.max(second_scan)) < cfg.lidar_max_range - 1e-6
+    check("LD19 publishes the first COMPLETE revolution", ok,
+          "" if ok else ("no scan" if second_scan is None
+                         else f"max={float(np.max(second_scan)):.3f} m -- unswept bins leaked"))
 
     LOGGER.info("--- self-test %s (%d failure(s)) ---", "PASSED" if not failures else "FAILED", failures)
     return failures
