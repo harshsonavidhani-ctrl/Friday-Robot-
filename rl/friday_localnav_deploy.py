@@ -391,6 +391,36 @@ def main(argv: list[str] | None = None) -> int:
     cfg = RobotConfig()
     verify_against_robot_config(cfg)
 
+    # These four come from the CLI and RobotConfig's defaults are deliberately
+    # neutral, so they are not optional -- pi_deploy.main() sets all four and this
+    # main() is a parallel entry point that has to do the same. Omitting them was a
+    # real, measured bug, and neither symptom looked like a missing assignment:
+    #
+    #   * self_mask_deg defaulted to () -- NO chassis mask. The robot's own body sat
+    #     0.21 m from the LiDAR and, because the governor takes min() over every
+    #     beam, it pinned the scan minimum on every tick. Forward speed was clamped
+    #     to zero with 1.34 m of clear floor ahead, and it read as "the policy will
+    #     not drive" rather than as a config gap. pi_deploy warns about precisely
+    #     this -- the warning just lives in the main() we do not call.
+    #   * lidar_offset_deg defaulted to 0.0, discarding the MEASURED -51.8 deg
+    #     mounting rotation. Beam 0 then points 51.8 deg off the nose, so the whole
+    #     72-beam observation handed to the policy is rotated. The policy is not
+    #     wrong in that situation; it is being asked to navigate a rotated world.
+    cfg.cam_enabled = not args.no_cameras
+    cfg.tof_enabled = not args.no_tof
+    cfg.self_mask_deg = pi_deploy.parse_self_mask(args.lidar_self_mask)
+    cfg.lidar_offset_deg = args.lidar_offset_deg
+    if cfg.self_mask_deg:
+        LOGGER.info("LiDAR chassis self-mask: %s (raw bearings, pre-offset); "
+                    "mounting offset %.1f deg",
+                    ", ".join(f"{lo:g}-{hi:g}" for lo, hi in cfg.self_mask_deg),
+                    cfg.lidar_offset_deg)
+    else:
+        LOGGER.warning("No LiDAR self-mask. If any beam sees the robot's own body it "
+                       "will pin the scan minimum and forward motion stays forbidden.")
+    if not cfg.tof_enabled:
+        LOGGER.warning("ToF DISABLED -- emergency reflex braking is OFF. Bench use only.")
+
     slots, threads, sim = pi_deploy.build_sensors(cfg, args)
     for t in threads:
         t.start()
@@ -408,6 +438,15 @@ def main(argv: list[str] | None = None) -> int:
 
     loop = LeRobotExperimentalControlLoop(cfg, policy, motors, slots, sim=sim,
                                           supervisor=supervisor, voice=voice)
+
+    # Same omission as the self-mask above: pi_deploy.main() wires this from the CLI
+    # and this parallel main() did not, so --no-reverse-fallback was accepted and
+    # silently ignored. It matters more than a normally-ignored flag would, because
+    # the fallback is what turns every reverse request into a pivot: measured over one
+    # 316-tick run, the policy asked to reverse 117 times and NOT ONE executed, while
+    # the recovery controller produced 84 pivots and zero translation. A robot that
+    # cannot back out of a doorway can only spin there, which is exactly what it did.
+    loop.reverse_fallback = not args.no_reverse_fallback
     voice.say("boot", "Friday is starting autonomous exploration.",
               priority=1, cooldown_s=0.0)
     try:

@@ -40,11 +40,55 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 LOGGER = logging.getLogger("friday.voice")
+
+_FRIDAY_TTS: object | None = None
+_FRIDAY_TTS_TRIED = False
+
+
+def _load_friday_tts():
+    """Friday's OWN voice (Piper via `friday/tts.py`), or None if unavailable.
+
+    Preferred over espeak because it is the voice she already speaks with
+    everywhere else -- the shaped Piper model from config.TTS_VOICE, through the
+    USB soundcard, and `tts.speak()` animates the face's mouth while it plays.
+    Using espeak here would give the same robot two different voices.
+
+    It also avoids `apt install espeak-ng`, which CLAUDE.md Part 1 forbids: a
+    system package install is exactly the class of change that killed this Pi
+    once. Nothing here leaves the project folder.
+
+    `tts` lives at the repo root next to config.py and this file is one level
+    down in rl/, so the parent has to be on sys.path. Importing it is safe --
+    the module is only imports, constants and locks, with no device grabbed at
+    import time. Cached because it pulls in config.py.
+    """
+    global _FRIDAY_TTS, _FRIDAY_TTS_TRIED
+    if _FRIDAY_TTS_TRIED:
+        return _FRIDAY_TTS
+    _FRIDAY_TTS_TRIED = True
+    try:
+        root = str(Path(__file__).resolve().parent.parent)
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        import tts as friday_tts
+        voice_model = Path(friday_tts.config.TTS_VOICE)
+        if not voice_model.exists():
+            LOGGER.warning("Friday TTS present but the Piper voice is missing (%s); "
+                           "falling back.", voice_model)
+            _FRIDAY_TTS = None
+        else:
+            _FRIDAY_TTS = friday_tts
+    except Exception as exc:                           # pragma: no cover
+        LOGGER.debug("Friday TTS unavailable (%s)", exc)
+        _FRIDAY_TTS = None
+    return _FRIDAY_TTS
 
 # Priorities. Higher pre-empts lower.
 P_ROUTINE = 0        # "I found an unexplored area..."
@@ -97,6 +141,17 @@ class VoiceAnnouncer:
             if self._engine is None:
                 self.backend = "log"
 
+        if self.backend == "friday":
+            # The Piper model takes ~10 s to load and it loads on FIRST USE, which
+            # would otherwise land on the first real announcement -- measured at
+            # 20.2 s for utterance one versus 5.5 s for the next. preload() exists
+            # for exactly this and returns immediately, warming the voice on its own
+            # thread while the robot is still starting its sensors.
+            try:
+                _load_friday_tts().preload()
+            except Exception as exc:                   # never block start-up on voice
+                LOGGER.debug("Piper preload skipped (%s)", exc)
+
         self._thread = threading.Thread(target=self._worker, name="voice", daemon=True)
         self._thread.start()
         LOGGER.info("Voice feedback: backend=%s enabled=%s", self.backend, self.enabled)
@@ -106,6 +161,10 @@ class VoiceAnnouncer:
     def _pick_backend(requested: str) -> str:
         if requested != "auto":
             return requested
+        # Friday's own Piper voice first: same voice as the rest of the robot, and
+        # it needs no system package. Only fall through to espeak if it is missing.
+        if _load_friday_tts() is not None:
+            return "friday"
         for exe in ("espeak-ng", "espeak"):
             if shutil.which(exe):
                 return exe
@@ -180,7 +239,14 @@ class VoiceAnnouncer:
                 p.terminate()
             except Exception:
                 pass
-        self._thread.join(timeout=1.0)
+        # A Piper utterance runs ~5.5 s and cannot be cut short the way an espeak
+        # subprocess can -- there is no self._proc to terminate, because tts.speak()
+        # owns the device itself. Joining for 1 s left the worker mid-playback while
+        # the interpreter tore down onnxruntime underneath it, which surfaced as
+        # "terminate called without an active exception" and exit code 134 on a run
+        # that had otherwise finished cleanly. Wait long enough for the phrase to
+        # land, but stay bounded so shutdown can never hang.
+        self._thread.join(timeout=12.0 if self.backend == "friday" else 1.0)
 
     # ------------------------------------------------------------------- worker ----
     def _worker(self) -> None:
@@ -209,7 +275,15 @@ class VoiceAnnouncer:
 
     def _speak(self, text: str) -> None:
         b = self.backend
-        if b in ("espeak-ng", "espeak"):
+        if b == "friday":
+            # BLOCKING, by design and safely: this runs on the announcer's worker
+            # thread, never the control loop. tts.speak() holds its own lock so
+            # overlapping utterances serialise instead of fighting for the device.
+            friday_tts = _load_friday_tts()
+            if friday_tts is None:                     # went away after start-up
+                return
+            friday_tts.speak(text)
+        elif b in ("espeak-ng", "espeak"):
             cmd = [b, "-s", str(self.rate_wpm)]
             if self.voice:
                 cmd += ["-v", self.voice]
