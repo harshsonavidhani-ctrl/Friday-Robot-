@@ -3145,31 +3145,48 @@ def motor_bench_test(cfg: RobotConfig, motors: MotorDriver) -> None:
 
 
 def motor_duty_sweep(cfg: RobotConfig, motors: "FridayMotorDriver",
-                     start: int = 20, step: int = 8, hold: float = 1.4) -> None:
+                     start: int = 20, step: int = 8, hold: float = 1.4,
+                     direction: int = 1, announce=None) -> None:
     """Ramp PWM duty upward so you can see where the wheels actually start turning.
 
     This measures the ONE number the m/s -> duty mapping cannot be honest without: the
     stiction threshold. Below it a brushed motor sits energised and humming, which is
     what you just heard. Note the duty at which each side begins to rotate steadily,
     and that becomes --motor-min-duty.
+
+    `direction` is +1 for forward, -1 for REVERSE, and the reverse figure is not
+    cosmetic. --motor-min-duty 72 was measured driving forward, and the deployed code
+    reuses it for reverse -- but break-away is a function of the direction you are
+    breaking away IN. Measured consequence: wedged 0.09 m from a wall, recovery issued
+    81 reverse commands at that floor and the robot did not move at all, ending the
+    run 0.02 m CLOSER than it started. A pivot already needs 190 rather than 72 for
+    exactly this reason, so assuming reverse matches forward was never safe.
     """
     ceiling = int(255 * motors.max_duty)
+    label = "FORWARD" if direction >= 0 else "REVERSE"
     LOGGER.warning("=" * 74)
-    LOGGER.warning("DUTY SWEEP -- wheels WILL turn. Robot on a stand.")
+    LOGGER.warning("DUTY SWEEP (%s) -- wheels WILL turn. Robot on a stand.", label)
     LOGGER.warning("Watch for the duty where the wheels start turning STEADILY (not humming).")
     LOGGER.warning("Cap is %d (max_duty=%.2f). Raise --motor-max-duty if it never moves.", ceiling, motors.max_duty)
     LOGGER.warning("=" * 74)
     time.sleep(2.0)
 
+    sign = 1 if direction >= 0 else -1
     first_move = None
     try:
         for duty in range(start, ceiling + 1, step):
-            LOGGER.info(">>> duty %3d  (%3.0f%% of cap)  %s",
-                        duty, 100.0 * duty / max(ceiling, 1),
+            LOGGER.info(">>> %s duty %3d  (%3.0f%% of cap)  %s",
+                        label, duty, 100.0 * duty / max(ceiling, 1),
                         "<-- watch here" if first_move is None else "")
+            # Said ALOUD, because the person who has to spot the break-away is
+            # watching the wheels, not a terminal. Without this the measurement
+            # depends on correlating a moving wheel with a scrolling log.
+            if announce is not None:
+                announce(duty)
             deadline = time.monotonic() + hold
             while time.monotonic() < deadline:
-                motors.drive_duty(duty, duty)     # re-send: also pets the watchdog
+                # re-send: also pets the watchdog
+                motors.drive_duty(sign * duty, sign * duty)
                 time.sleep(cfg.dt)
             motors.drive_duty(0, 0)
             time.sleep(0.35)                      # settle back to rest between steps

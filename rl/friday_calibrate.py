@@ -263,6 +263,32 @@ def stage6_timing(rep: Report, slots, cfg, sess, seconds: float):
             f"max {t.max():.1f} ms (budget {budget:.0f})")
 
 
+def _build_sweep_voice():
+    """Return announce(duty) speaking through Friday's own voice, or a no-op.
+
+    The sweep is a two-person measurement done by one person: whoever runs it has to
+    watch the wheels for the moment humming becomes rotation, while the duty it
+    corresponds to scrolls past in a terminal they are not looking at. Speaking the
+    number removes that correlation problem entirely. Falls back to silence rather
+    than failing the bring-up -- a missing voice must never block calibration.
+    """
+    try:
+        import friday_voice
+        tts = friday_voice._load_friday_tts()
+        if tts is None:
+            return None
+        tts.preload()
+
+        def announce(duty: int) -> None:
+            try:
+                tts.speak(str(int(duty)))
+            except Exception:
+                pass
+        return announce
+    except Exception:
+        return None
+
+
 def stage7_stiction(rep: Report, cfg, args):
     print("\nSTAGE 7  motor stiction floor  --  WHEELS WILL TURN")
     import pi_deploy
@@ -272,9 +298,22 @@ def stage7_stiction(rep: Report, cfg, args):
         invert_left=args.motor_invert_left, invert_right=args.motor_invert_right,
         min_duty=0, creep_cutoff=0.0, turn_min_duty=None)
     try:
-        pi_deploy.motor_duty_sweep(cfg, drv)
+        # BOTH directions. --motor-min-duty was measured driving forward and is
+        # reused for reverse, but break-away depends on the direction you break away
+        # in -- a pivot already needs 190 where straight-line needs 72. Reverse is
+        # also the manoeuvre recovery depends on to escape a wall, and it was
+        # measured issuing 81 reverse commands at duty 72 without moving at all.
+        say = _build_sweep_voice()
+        # Coarse steps on purpose: the point is a number a human can call out, and
+        # 20-odd 8-duty levels is not that. 20 per step gives ~9 clearly separated
+        # levels per direction.
+        pi_deploy.motor_duty_sweep(cfg, drv, start=40, step=20, hold=2.0,
+                                   direction=1, announce=say)
+        time.sleep(2.5)
+        pi_deploy.motor_duty_sweep(cfg, drv, start=40, step=20, hold=2.0,
+                                   direction=-1, announce=say)
         rep.add("stiction sweep", PASS,
-                "note the lowest duty giving STEADY rotation -> --motor-min-duty")
+                "note the lowest duty giving STEADY rotation, EACH direction")
     finally:
         drv.emergency_stop()
         drv.close() if hasattr(drv, "close") else None
