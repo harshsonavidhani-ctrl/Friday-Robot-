@@ -150,6 +150,21 @@ class RobotConfig:
     # forward, so letting them veto forward motion only made her undriveable in any
     # room with a wall in it. Rotation and reverse still see the whole sweep.
     governor_forward_arc_deg: float = 90.0
+    # Mirror of the forward arc, used ONLY to gate reverse. Nothing on this robot
+    # looks backwards otherwise: the ToF is a forward 8x8 patch, and the governor's
+    # braking law reads the front hemisphere, so before this a reverse command was
+    # executed with no obstacle check of any kind behind her.
+    governor_rear_arc_deg: float = 90.0
+    # Reverse gets robot_radius + collision_margin and NOT the additional
+    # hard_stop_extra the forward law uses. Deliberate: forward runs at up to 0.50 m/s
+    # while the only executable reverse is 0.15 m/s, so the stopping distance being
+    # bought is roughly 3x smaller -- and over-gating reverse recreates the failure
+    # that cost a whole session, where she could not back out of a doorway and could
+    # only spin in it. See `rear_stop`.
+    rear_stop_extra: float = 0.0
+    # How many rear beams must agree before reverse is refused. 1 would be a bare
+    # minimum and is what makes a single bad return veto an escape.
+    rear_min_valid_beams: int = 3
     collision_margin: float = 0.04
     hard_stop_extra: float = 0.10       # extra margin over robot_radius + collision_margin
 
@@ -245,6 +260,11 @@ class RobotConfig:
     @property
     def dt(self) -> float:
         return 1.0 / self.control_hz
+
+    @property
+    def rear_stop(self) -> float:
+        """Clearance behind at or below which reverse is forbidden."""
+        return self.robot_radius + self.collision_margin + self.rear_stop_extra
 
     @property
     def hard_stop(self) -> float:
@@ -1347,6 +1367,9 @@ class LidarGovernor:
     def __init__(self, cfg: RobotConfig) -> None:
         self.cfg = cfg
         self._fwd_mask: np.ndarray | None = None
+        self._rear_mask: np.ndarray | None = None
+        self.last_rear_min = float("inf")   # for telemetry; inf until a scan arrives
+        self.rear_blocks = 0
 
     def _forward_mask(self, n: int) -> np.ndarray:
         """Beams within +/- governor_forward_arc_deg of the nose, as a boolean mask.
@@ -1361,6 +1384,13 @@ class LidarGovernor:
             bearing = (np.arange(n) * (360.0 / n) + 180.0) % 360.0 - 180.0
             self._fwd_mask = np.abs(bearing) <= self.cfg.governor_forward_arc_deg
         return self._fwd_mask
+
+    def _rear_mask_for(self, n: int) -> np.ndarray:
+        """Beams within +/- governor_rear_arc_deg of the TAIL. Cached like the front."""
+        if self._rear_mask is None or self._rear_mask.size != n:
+            bearing = (np.arange(n) * (360.0 / n) + 180.0) % 360.0 - 180.0
+            self._rear_mask = np.abs(np.abs(bearing) - 180.0) <= self.cfg.governor_rear_arc_deg
+        return self._rear_mask
 
     def __call__(self, v: float, omega: float, scan_m: np.ndarray) -> tuple[float, float, bool]:
         c = self.cfg
@@ -1382,7 +1412,48 @@ class LidarGovernor:
         elif d_min < c.safe_distance:
             span = max(c.safe_distance - c.hard_stop, 1e-6)
             v_out = min(v_out, c.v_max * (d_min - c.hard_stop) / span)
+
+        # ---- REVERSE, which until now nothing checked at all -----------------------
+        #
+        # The clamp above only ever lowers v, so reverse passed through it untouched,
+        # and the ToF is a forward-facing patch. A reverse command was therefore
+        # executed with NO obstacle check behind the robot, by either sensor. Harsh
+        # reported her backing into things; this is why.
+        #
+        # The gate is BINARY rather than the proportional law used going forward,
+        # because proportional braking cannot work in reverse on this drivetrain: the
+        # only executable reverse is v_min = -0.150 m/s against a 0.149 m/s stiction
+        # floor, so any scaled-down reverse falls under the floor and executes as a
+        # full stop anyway. Pretending to brake smoothly would be theatre.
+        v_out = self.gate_reverse(v_out, scan_m)
         return v_out, omega_out, v_out != v
+
+    def gate_reverse(self, v: float, scan_m: np.ndarray) -> float:
+        """Forbid reverse into a blocked rear. Idempotent; safe to apply repeatedly.
+
+        Called from __call__, and AGAIN after the escape and recovery stages, which
+        run downstream of the governor and issue reverse of their own -- recovery's
+        `_maneuver` returns v_min to back off. Gating only inside __call__ would leave
+        exactly the commands most likely to reverse into something ungated, which is
+        the case Harsh actually hit.
+        """
+        rear = scan_m[self._rear_mask_for(scan_m.size)]
+        if rear.size:
+            # k-th smallest, NOT the minimum. One spurious beam must not veto the
+            # robot's main escape maneuver. Measured over a 90 s run: 5 of 316 ticks
+            # carried a return below 0.22 m -- geometrically impossible, since that is
+            # inside her own body radius -- and a min-based gate turns each of those
+            # into a refused reverse. This is the same reasoning ToFReflex applies to
+            # its 8x8 patch, and the same speckle trap that made a min-based corridor
+            # metric report 0.57 m of clearance where a 60-scan median saw 4.78 m.
+            k = min(self.cfg.rear_min_valid_beams, rear.size) - 1
+            self.last_rear_min = float(np.sort(rear)[k])
+        else:
+            self.last_rear_min = float("inf")
+        if v < 0.0 and self.last_rear_min <= self.cfg.rear_stop:
+            self.rear_blocks += 1
+            return 0.0
+        return v
 
 
 class ToFReflex:
@@ -2542,6 +2613,22 @@ class ControlLoop:
                             self.planner.targets_abandoned += 1
                     self.recovery.blacklist_requested = False
 
+        # ---- 2d. REAR GATE, applied to whatever 2b and 2c decided ------------------
+        #
+        # The governor already gated reverse, but stages 2b (escape) and 2c (recovery)
+        # run downstream of it and issue reverse of their own -- `_maneuver` returns
+        # v_min to back off. Re-applying here means no stage can reverse into a blocked
+        # rear, whoever authored the command. It only ever raises v toward 0, so it
+        # cannot grant authority, and it is idempotent when nothing is behind.
+        v_before_rear = v
+        v = self.governor.gate_reverse(v, scan)
+        if v != v_before_rear:
+            self.stats["rear_blocks"] = self.stats.get("rear_blocks", 0) + 1
+            gate = "rear_blocked"
+            rec.add("rear_gate", v, omega,
+                    f"reverse refused: {self.governor.last_rear_min:.2f} m behind, "
+                    f"inside the {c.rear_stop:.2f} m rear stop")
+
         # ---- 3. visual gate (advisory) --------------------------------------------
         frames = {}
         if c.cam_enabled:
@@ -2902,10 +2989,16 @@ class ControlLoop:
         LOGGER.info("no-reverse turns: %d  (policy asked to back up; this drivetrain "
                     "cannot, so it turned toward open space instead)",
                     self.stats["no_reverse_turns"])
-        LOGGER.info("interventions: reflex=%d visual=%d governor=%d stale=%d overruns=%d",
+        LOGGER.info("interventions: reflex=%d visual=%d governor=%d rear=%d stale=%d "
+                    "overruns=%d",
                     self.stats["reflex_stops"], self.stats["visual_stops"],
-                    self.stats["governor_limits"], self.stats["stale_stops"],
-                    self.stats["overruns"])
+                    self.stats["governor_limits"], self.stats.get("rear_blocks", 0),
+                    self.stats["stale_stops"], self.stats["overruns"])
+        # Counted separately from `governor` because the rear gate answers a different
+        # question and its label never survives to the blackbox: stage 4 overwrites
+        # `gate` with REFLEX_STOP whenever the reflex also fires, which on this robot
+        # is most of the time. Without this line there is no way to tell a reverse
+        # refused for safety from a reverse never requested.
         for name, slot in self.slots.items():
             LOGGER.info("  sensor %-6s updates=%-7d stale=%s", name, slot.updates, slot.is_stale())
         LOGGER.info("=" * 74)
@@ -3464,6 +3557,39 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
     check("a wall behind does not block forward", v > 0.0, f"v={v:.3f}")
 
+    # 1c. A wall behind MUST block REVERSE. Nothing checked this before: the forward
+    #     braking law only ever lowers v, so reverse passed through untouched, and the
+    #     ToF is a forward-facing patch -- so a reverse command was executed with no
+    #     obstacle check behind the robot by either sensor. She backed into things.
+    rear_i = cfg.n_beams // 2
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    # A real obstacle spans several beams; the gate requires rear_min_valid_beams to
+    # agree, so the test has to present one rather than a single hot beam.
+    scan[rear_i - 1:rear_i + 2] = cfg.rear_stop - 0.05
+    v, _, _ = loop.governor(cfg.v_min, 0.0, scan)
+    check("a wall behind blocks reverse", v >= 0.0, f"v={v:.3f}")
+
+    # ...and ONE spurious beam must NOT. 5 of 316 ticks in a 90 s run carried a return
+    # below 0.22 m, which is inside her own body and therefore impossible; a min-based
+    # gate turns each into a refused escape.
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    scan[rear_i] = 0.04
+    v, _, _ = loop.governor(cfg.v_min, 0.0, scan)
+    check("one spurious rear beam does not veto reverse", v < 0.0, f"v={v:.3f}")
+
+    # 1d. ...and a CLEAR rear must still allow it. Over-gating reverse is not a safe
+    #     default: it is how she ended up able only to spin in a doorway.
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    scan[0] = cfg.hard_stop - 0.05                      # blocked ahead, clear astern
+    v, _, _ = loop.governor(cfg.v_min, 0.0, scan)
+    check("a clear rear still permits reverse escape", v < 0.0, f"v={v:.3f}")
+
+    # 1e. A wall behind must not start blocking FORWARD as a side effect of 1c.
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    scan[rear_i - 1:rear_i + 2] = cfg.rear_stop - 0.05
+    v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
+    check("the rear gate does not leak into forward", v > 0.0, f"v={v:.3f}")
+
     # 2. governor must scale speed inside the bubble
     scan[0] = (cfg.hard_stop + cfg.safe_distance) / 2.0
     v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
@@ -3514,6 +3640,28 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     l, r = loop.motors.to_wheel_speeds(cfg.v_max, cfg.omega_max)
     check("wheel speeds within limit",
           max(abs(l), abs(r)) <= cfg.wheel_speed_max + 1e-6, f"L={l:.3f} R={r:.3f}")
+
+    # 7b. THE WHOLE CHAIN, not just the governor: with the rear blocked, no stage may
+    #     output reverse. 1c-1e test the governor in isolation, but escape (2b) and
+    #     recovery (2c) run downstream of it and author reverse of their own, so the
+    #     isolated tests would pass while the robot still backed into a wall.
+    boxed = np.full(cfg.n_beams, 3.0, np.float32)
+    boxed[0] = cfg.hard_stop - 0.05                     # blocked ahead -> wants reverse
+    boxed[cfg.n_beams // 2 - 1:cfg.n_beams // 2 + 2] = cfg.rear_stop - 0.05   # behind too
+    # Recovery is FORCED to demand reverse. Waiting for it to trigger naturally made
+    # this test pass with the gate deleted -- it never reached a boxed_in trigger in
+    # the tick budget, so it proved nothing. The point is the WIRING: that whatever
+    # recovery returns is gated, not that recovery happens to fire.
+    real_update = loop.recovery.update
+    loop.recovery.update = lambda *a, **k: (cfg.v_min, 0.0, "forced reverse for selftest")
+    worst_v = 0.0
+    try:
+        for _ in range(10):
+            loop.slots["lidar"].publish(boxed)
+            worst_v = min(worst_v, float(loop.tick()["v"]))
+    finally:
+        loop.recovery.update = real_update
+    check("no stage reverses into a blocked rear", worst_v >= 0.0, f"min v={worst_v:.3f}")
 
     # 8. stale LiDAR must stop the robot
     loop.slots["lidar"]._stamp = time.monotonic() - 10.0
