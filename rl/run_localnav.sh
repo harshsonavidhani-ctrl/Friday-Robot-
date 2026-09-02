@@ -44,22 +44,32 @@ restore_mcp() {
 }
 trap restore_mcp EXIT INT TERM
 
-if [ "$MCP_WAS_UP" = "1" ]; then
-    echo "Stopping friday-mcp to release the serial ports..."
-    systemctl --user stop friday-mcp.service
-    sleep 3
-fi
-
-# Fail loudly rather than fighting for frames: if anything still holds a serial
-# port, the LiDAR contention above is about to happen and the run is worthless.
-holders="$(
+port_holders() {
     for p in $(ls /proc | grep -E '^[0-9]+$'); do
         for f in /proc/"$p"/fd/*; do
             t="$(readlink "$f" 2>/dev/null || true)"
             case "$t" in /dev/ttyUSB*|/dev/ttyACM*) echo "$t <- pid $p";; esac
         done
     done 2>/dev/null | sort -u
-)"
+}
+
+if [ "$MCP_WAS_UP" = "1" ]; then
+    echo "Stopping friday-mcp to release the serial ports..."
+    systemctl --user stop friday-mcp.service
+    # `systemctl stop` returns when the job is queued, NOT when the process has
+    # actually closed its file descriptors -- measured at ~5 s here. A fixed
+    # `sleep 3` therefore aborted a real run against ports that were about to be
+    # free. Poll for the release instead, and keep a ceiling so a genuinely wedged
+    # holder still trips the guard below rather than hanging.
+    for _ in $(seq 1 20); do
+        [ -z "$(port_holders)" ] && break
+        sleep 1
+    done
+fi
+
+# Fail loudly rather than fighting for frames: if anything still holds a serial
+# port, the LiDAR contention above is about to happen and the run is worthless.
+holders="$(port_holders)"
 if [ -n "$holders" ]; then
     echo "ABORT: serial ports are still held; the LiDAR would lose frames:" >&2
     echo "$holders" >&2
@@ -72,6 +82,6 @@ fi
 rc=0
 "$PY" "$HERE/friday_localnav_deploy.py" \
     --motor-max-duty 0.85 \
-    --motor-min-duty 72 \
+    --motor-min-duty 80 \
     "$@" || rc=$?
 exit "$rc"

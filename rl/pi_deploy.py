@@ -3155,12 +3155,17 @@ def motor_duty_sweep(cfg: RobotConfig, motors: "FridayMotorDriver",
     and that becomes --motor-min-duty.
 
     `direction` is +1 for forward, -1 for REVERSE, and the reverse figure is not
-    cosmetic. --motor-min-duty 72 was measured driving forward, and the deployed code
-    reuses it for reverse -- but break-away is a function of the direction you are
-    breaking away IN. Measured consequence: wedged 0.09 m from a wall, recovery issued
-    81 reverse commands at that floor and the robot did not move at all, ending the
-    run 0.02 m CLOSER than it started. A pivot already needs 190 rather than 72 for
-    exactly this reason, so assuming reverse matches forward was never safe.
+    cosmetic. The floor was 72, measured driving forward, and the deployed code reused
+    it for reverse. Measured consequence: wedged 0.09 m from a wall, recovery issued 81
+    reverse commands at that floor and the robot did not move at all, ending the run
+    0.02 m CLOSER than it started.
+
+    RESOLVED 2026-09-02 by running this sweep in both directions with the motor
+    inversion finally correct: break-away is 80 forward and 80 reverse. The old 72 sat
+    BELOW the real threshold, so every reverse command energised the motors just under
+    break-away and they hummed. Reverse turning out to match forward is a result, not
+    an assumption -- a pivot still needs 190, because scrubbing sideways is a different
+    load.
     """
     ceiling = int(255 * motors.max_duty)
     label = "FORWARD" if direction >= 0 else "REVERSE"
@@ -3572,7 +3577,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "hears nothing for this long -- the safety layer that survives this "
                         "process dying.")
     # MEASURED on this robot and recorded in HANDOFF.md section 2: "Stiction floor:
-    # duty 72 -- below this the motors hum and do not turn."
+    # duty 80 -- below this the motors hum and do not turn."
     #
     # This used to default to 0, and a default of 0 is not "no opinion" -- it DISABLES
     # the stiction floor, the creep cutoff (0.5 x 0 = 0) and anything that asks the
@@ -3584,10 +3589,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     #
     # A measured hardware constant does not belong in an optional argument that every
     # example command has to remember to pass.
-    p.add_argument("--motor-min-duty", type=int, default=72,
+    p.add_argument("--motor-min-duty", type=int, default=80,
                    help="Stiction floor: below this the motors hum and do not turn. "
-                        "72 is measured on this robot. 0 DISABLES the floor and the "
-                        "creep cutoff -- the motors will buzz instead of moving.")
+                        "80 is measured on this robot, forward AND reverse. 0 DISABLES "
+                        "the floor and the creep cutoff -- the motors buzz instead of "
+                        "moving.")
     # MEASURED BY OBSERVATION 2026-08-28. Harsh watched four labelled pivots (100,
     # 130, 160, 190) and reported that only 190 turned acceptably -- "last pivot was
     # improved but needs more increase in speed while turning".

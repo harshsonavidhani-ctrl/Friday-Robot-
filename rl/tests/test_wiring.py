@@ -229,8 +229,8 @@ check("--motor-turn-min-duty defaults to the measured 190",
 # A default of 0 here is not "no opinion": it disables the stiction floor AND the
 # creep cutoff, so small commands go out as small duties and the motors hum for the
 # whole run while the robot sits still. It happened.
-check("--motor-min-duty defaults to the measured 72",
-      args.motor_min_duty == 72, f"{args.motor_min_duty}")
+check("--motor-min-duty defaults to the measured 80",
+      args.motor_min_duty == 80, f"{args.motor_min_duty}")
 
 # The floor must be reportable in m/s, because the no-reverse fallback is gated on
 # it -- a floor of 0 silently disabled that too.
