@@ -96,13 +96,21 @@ t = run(rc, 10, 0.0, 0.0, 0.0, boxed=True)
 check("boxed-in is detected immediately", t == 0, f"at tick {t}")
 check("...and attributed to boxed_in", rc.triggers["boxed_in"] == 1)
 
-# 3. THE RECOVERY ACTION ITSELF must be a pivot in place, never a drive.
+# 3. THE RECOVERY ACTION ITSELF. It must NEVER command forward motion -- that is the
+# invariant. What it may do instead depends on the trap.
+#
+# boxed_in means "forward blocked", and a pivot cannot escape nose-against-a-wall:
+# inside the pivot sweep the ToF reflex freezes rotation too, correctly. So recovery
+# BACKS OFF there. It used to pivot unconditionally, which measured 84 pivots and zero
+# translation while she sat 5.5 cm from a wall.
 rc = RecoveryController(cfg)
 out = rc.update(SCAN, 0.0, 0.0, 0.0, True, np.zeros(3), 0, 1.0)
 check("recovery returns a command", out is not None)
 v, omega, why = out
-check("recovery commands ZERO forward speed", v == 0.0, f"v={v}")
-check("...and a full-rate pivot", abs(omega) == cfg.omega_max, f"omega={omega}")
+check("recovery NEVER commands forward motion", v <= 0.0, f"v={v}")
+check("boxed-in backs off instead of pivoting", v == cfg.v_min, f"v={v}")
+check("...while still turning toward open space", 0 < abs(omega) <= cfg.omega_max,
+      f"omega={omega}")
 check("...toward the open side given", omega > 0)
 out2 = RecoveryController(cfg).update(SCAN, 0.0, 0.0, 0.0, True, np.zeros(3), 0, -1.0)
 check("...and the other way when the other side is open", out2[1] < 0)

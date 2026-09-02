@@ -39,10 +39,28 @@ forever, is not recovering -- it is stuck in a louder way. Each successive failu
 turns further and holds longer, and after the last level the planner's current target
 is blacklisted, because at that point the destination is the problem.
 
-Recovery only ever commands a PIVOT IN PLACE. A pivot cannot approach anything -- the
-footprint does not translate -- so it reduces no safety margin, and the governor,
-reflex and limiter all still run on the result. Reverse is not used because this
-drivetrain cannot execute it (see the capability adapter in pi_deploy).
+RECOVERY PIVOTS, AND WHEN THAT CANNOT WORK IT BACKS OFF
+-------------------------------------------------------
+This module used to command a pivot in place and NOTHING else, on the stated grounds
+that "this drivetrain cannot execute reverse". That premise was measured and is false:
+reverse was being thrown away by the capability adapter before it ever reached the
+driver, and with the adapter disabled it executes (the driver lifts a -0.150 m/s
+request to the stiction floor). See the pi_deploy commit of 2026-09-02.
+
+The old behaviour failed exactly where it mattered most. `boxed_in` means "forward
+blocked", and nose-against-an-obstacle is the one trap a pivot cannot escape: inside
+the pivot sweep the ToF reflex freezes rotation as well -- correctly, or she would
+grind along whatever she is touching. Measured: 86 recovery ticks produced 84 pivots
+and ZERO translation while she sat 5.5 cm from a wall.
+
+So a pivot is still the first move for the traps a turn CAN fix (oscillation,
+spinning, no-progress). For `boxed_in`, and for any escalation -- where "pivoting did
+not work" is itself evidence that pivoting is not the manoeuvre -- recovery reverses
+while turning toward open space.
+
+None of this bypasses the safety chain. Recovery issues a REQUEST; the governor, the
+reflex and the limiter all still run on it, and forward motion stays vetoed by the
+reflex regardless of what is asked for here.
 """
 
 from __future__ import annotations
@@ -133,6 +151,7 @@ class RecoveryController:
         self.verify_left = 0
         self.events: list[RecoveryEvent] = []
         self.active_event: RecoveryEvent | None = None
+        self.trigger: str | None = None
         self.triggers = {"oscillation": 0, "spinning": 0, "no_progress": 0,
                          "boxed_in": 0, "retreading": 0}
         self.recoveries = 0
@@ -195,8 +214,7 @@ class RecoveryController:
                 self.state = "VERIFY"
                 self.verify_left = VERIFY_TICKS
                 return None
-            return (0.0, self.turn_sign * self.cfg.omega_max,
-                    f"recovery level {self.level + 1}: pivoting toward open space")
+            return self._maneuver(f"recovery level {self.level + 1}")
 
         # --- did it work? ---------------------------------------------------------
         if self.state == "VERIFY":
@@ -204,8 +222,7 @@ class RecoveryController:
             still = self._detect(scan, boxed_in)
             if still is not None and self.verify_left <= 0:
                 self._escalate(still, pose, tick)
-                return (0.0, self.turn_sign * self.cfg.omega_max,
-                        f"recovery level {self.level + 1}: still stuck, turning further")
+                return self._maneuver(f"recovery level {self.level + 1}: still stuck")
             if self.verify_left <= 0:
                 # Cleared. Record it and stand down.
                 if self.active_event is not None:
@@ -225,12 +242,12 @@ class RecoveryController:
         if found is None:
             return None
         self._begin(found, pose, tick, open_side)
-        return (0.0, self.turn_sign * self.cfg.omega_max,
-                f"recovery level 1: {found[0]}")
+        return self._maneuver(f"recovery level 1: {found[0]}")
 
     def _begin(self, found: tuple[str, str], pose: np.ndarray, tick: int,
                open_side: float) -> None:
         trigger, detail = found
+        self.trigger = trigger
         self.triggers[trigger] = self.triggers.get(trigger, 0) + 1
         self.recoveries += 1
         self.level = 0
@@ -242,7 +259,34 @@ class RecoveryController:
             pose=tuple(float(x) for x in pose))
         self.events.append(self.active_event)
 
+    def _maneuver(self, note: str) -> tuple[float, float, str]:
+        """The command a recovery actually issues.
+
+        This used to be a pivot, unconditionally and at every one of the three exit
+        points -- `(0.0, turn_sign * omega_max)`, forward speed hardcoded to zero. So
+        recovery could ROTATE and nothing else: measured over one run, 86 recovery
+        ticks produced 84 pivots and ZERO translation.
+
+        That is the wrong move for the case it most needs to handle. `boxed_in` means
+        "forward blocked and no reverse available" -- its own detector says so -- and
+        nose-against-an-obstacle is the one situation where turning cannot help:
+        inside the pivot sweep the reflex freezes rotation anyway (correctly, or she
+        would grind along whatever she is touching). Backing off is the only escape
+        that exists, so recovery now takes it, and turns toward open space while it
+        does. Escalation does the same, because "pivoting did not work" is evidence
+        that pivoting is not the manoeuvre.
+
+        Nothing here bypasses the safety chain: the reverse is a REQUEST, clamped by
+        the governor and the reflex exactly like any other. It just stops asking for
+        the one thing that provably cannot work.
+        """
+        if self.trigger == "boxed_in" or self.level >= 1:
+            return (self.cfg.v_min, self.turn_sign * self.cfg.omega_max * 0.5,
+                    f"{note}: backing off toward open space")
+        return (0.0, self.turn_sign * self.cfg.omega_max, f"{note}: pivoting toward open space")
+
     def _escalate(self, found: tuple[str, str], pose: np.ndarray, tick: int) -> None:
+        self.trigger = found[0]
         self.level = min(self.level + 1, len(LEVELS) - 1)
         self.escalations += 1
         self.remaining = LEVELS[self.level]["ticks"]
