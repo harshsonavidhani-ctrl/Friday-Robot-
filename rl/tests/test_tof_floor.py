@@ -12,7 +12,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pi_deploy
 from pi_deploy import (RobotConfig, ToFReflex, tof_obstacles_mm,
-                       TOF_FLOOR_PROFILE_MM, TOF_NO_RETURN_MM)
+                       TOF_FLOOR_PROFILE_MM, TOF_NO_RETURN_MM, TOF_FLOOR_FROM_ROW)
+
+GROUND0 = TOF_FLOOR_FROM_ROW          # index of the FIRST (furthest) ground row
 
 cfg = RobotConfig()
 FLOOR = TOF_FLOOR_PROFILE_MM          # rows 4..7
@@ -126,6 +128,50 @@ f[2][4] = 120
 obs, _ = tof_obstacles_mm(f)
 scale, stop = reflex.evaluate(np.minimum(obs / 1000.0, cfg.tof_max_range))
 check("a single hot cell does not stop the robot", not stop, f"stop={stop}")
+
+
+
+# --- the far ground row is allowed to be patchy -------------------------------------
+#
+# REGRESSION, 2026-09-03. floor_intact was unanimous over all 32 ground cells, so one
+# non-returning cell anywhere set it False. Row 4 looks along the shallowest incidence
+# over the longest path and drops cells on an ordinary floor every frame -- measured at
+# 5.59/8 returning against 8.00/8 for rows 5-7. floor_intact was therefore False on 177
+# of 182 frames, DFRobotToFThread publishes nothing when the floor is not intact and
+# nothing is ahead, the slot went stale, and Friday announced "A sensor has stopped
+# responding" about a sensor streaming a clean 15 Hz.
+f = frame()
+for col in (2, 4, 6):
+    f[GROUND0][col] = 0            # far row drops cells, as it does
+_, intact = tof_obstacles_mm(f)
+check("a patchy FAR ground row is still an intact floor", intact)
+
+# ...and the near rows still carry the claim. They are what "the path immediately in
+# front of the bumper is empty" is actually an argument about, so losing them must
+# still read as cannot-see.
+f = frame()
+for off in range(1, len(TOF_FLOOR_PROFILE_MM)):
+    for col in range(8):
+        f[GROUND0 + off][col] = 0
+_, intact = tof_obstacles_mm(f)
+check("...but losing the NEAR ground rows is still cannot-see", not intact)
+
+# A single dead near cell is noise, not a cliff -- the quorum has to tolerate one.
+f = frame()
+f[GROUND0 + 2][3] = 0
+_, intact = tof_obstacles_mm(f)
+check("one dead near cell does not condemn the floor", intact)
+
+# Occlusion detection must be untouched on the FAR row: a cell that reads short is an
+# object whichever row it is in, and that is the bug that let her bump something at
+# 16 mm in 2026-08-27.
+f = frame()
+for col in (3, 4, 5):
+    f[GROUND0][col] = TOF_FLOOR_PROFILE_MM[0] - 120
+obstacles, _ = tof_obstacles_mm(f)
+check("a short FAR ground cell is still reported as an obstacle",
+      float(obstacles.min()) < TOF_FLOOR_PROFILE_MM[0],
+      f"nearest={float(obstacles.min()):.0f} mm")
 
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

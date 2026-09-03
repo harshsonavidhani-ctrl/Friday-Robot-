@@ -955,6 +955,27 @@ MOTOR_LOCK_TIMEOUT_S = 1.0
 FACE_DISPLAY_SIZE = (1920, 1080)  # 7" front display, native mode
 FACE_DEFAULT_EMOTION = "neutral"
 FACE_FPS = 30
+# How long the face takes to actually SHOW a change, end to end. It is a separate
+# process that polls its state file every POLL_S (0.08 s) and then cross-fades over
+# TRANSITION_S (0.28 s) -- both in friday_face.py, which cannot be imported here
+# because it pulls in pygame. Keep this in step with those two by hand if they change.
+#
+# tts.speak() subtracts it from the end of the LAST sentence so the fade back out of
+# the speaking face LANDS on the end of the sound instead of starting there. Harsh:
+# "the speaking animation lasts a little longer when it stops speaking". At the start
+# of a sentence the same lag is already absorbed by pw-play opening its stream, so it
+# is only the tail that needs anticipating.
+FACE_SETTLE_S = 0.36
+# How long pw-play takes to open its stream before the first sample is audible.
+# MEASURED 2026-09-03 over four back-to-back plays of the same 2.784 s WAV:
+# 0.177, 0.204, 0.201, 0.210 s beyond the file's own duration. It is the stream
+# setup, not the file, so it is a constant offset rather than a rate -- which is
+# why it can be subtracted once rather than modelled.
+#
+# It applies to BOTH ends. tts.speak() adds it back when anticipating the end of the
+# last sentence, because the audio it is anticipating starts this much after play()
+# is called. Re-measure it if AUDIO_PLAY_LATENCY or the sink changes.
+AUDIO_START_LAG_S = 0.20
 
 
 # --- Dashboard -----------------------------------------------------------

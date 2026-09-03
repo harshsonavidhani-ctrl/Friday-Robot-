@@ -351,6 +351,18 @@ def sentences(text: str) -> list[str]:
     return parts or ([text.strip()] if text.strip() else [])
 
 
+def _wav_seconds(path: Path) -> float:
+    """How long this WAV plays for. 0.0 if it cannot be read -- a bad answer here
+    must cost the mouth's timing, never the speech."""
+    try:
+        with wave.open(str(path), "rb") as source:
+            rate = source.getframerate()
+            return source.getnframes() / rate if rate else 0.0
+    except Exception as exc:                        # noqa: BLE001
+        log.debug("could not measure %s: %s", path, exc)
+        return 0.0
+
+
 def _render(chunk: str) -> Path:
     """One sentence to a temp WAV, loudened."""
     handle, name = tempfile.mkstemp(suffix=".wav")
@@ -422,48 +434,88 @@ def _resample(samples, from_rate: int, to_rate: int):
     return np.asarray(resampled, dtype=np.float32), to_rate
 
 
-@contextlib.contextmanager
-def _mouth_moving():
-    """Show the speaking face for as long as she is actually speaking.
+class _Mouth:
+    """The speaking face, switched on by the AUDIO rather than by the intent.
 
     The panel has a "speaking" expression and nothing was ever switching to
     it, so Friday talked with a neutral face -- which reads as a stuck screen
     rather than a robot with something to say.
 
+    WHY IT IS NOT SIMPLY THE WHOLE OF speak(). It used to be, and the mouth
+    therefore started moving the instant speak() was called -- before the voice
+    was loaded and before Piper had synthesised a single sample. MEASURED on
+    this Pi 2026-09-03, with the voice already resident so the ~9.5 s model load
+    is not even in the number: the face went to "speaking" at +0.002 s and the
+    first audio came out at +6.088 s. Six seconds of silent mouth-flapping,
+    every time she spoke. That is the desync Harsh reported.
+
+    So the mouth is armed here and started from inside the playback loop, one
+    statement before the audio is handed to the device. The face process polls
+    its state file every 80 ms and cross-fades over 280 ms, so the animation
+    comes up while pw-play is still opening the stream -- which lands the mouth
+    on the sound instead of a beat behind it.
+
     WHAT IT RESTORES MATTERS. The previous emotion, not neutral: if she was
     pleased about something before she said it, she should still be pleased
-    afterwards. Forcing neutral would make every sentence flatten her.
+    afterwards. Forcing neutral would make every sentence flatten her. It is
+    read at start(), not at construction, so it is whatever was actually showing
+    when the mouth took over rather than whatever was showing when some caller
+    decided to speak.
 
-    BEST-EFFORT, ALWAYS. The face is a separate process and may not be
-    running. Losing the animation must never cost the words, so every call
-    here is wrapped and failures are logged, not raised -- and the restore is
-    in a finally, so a synthesis error cannot leave her stuck mid-sentence
+    BEST-EFFORT, ALWAYS. The face is a separate process and may not be running.
+    Losing the animation must never cost the words, so every call here is
+    wrapped and failures are logged, not raised. stop() is idempotent and runs
+    from a finally, so a synthesis error cannot leave her stuck mid-sentence
     wearing a talking face forever.
     """
-    import face_control                  # local: face_control imports nothing
 
-    previous = None
+    def __init__(self) -> None:
+        self._previous: str | None = None
+        self._on = False
+
+    def start(self) -> None:
+        if self._on:
+            return
+        self._on = True
+        import face_control              # local: face_control imports nothing
+        try:
+            previous = face_control.get_emotion()
+            # NEVER RESTORE INTO "speaking". If the face is somehow already
+            # showing it when we get here, something else set it and putting it
+            # back would leave Friday talking forever with nothing to say.
+            # Settle to neutral instead -- wrong for one beat, rather than
+            # stuck for good.
+            if previous == "speaking":
+                log.debug("face was already 'speaking' — will settle to neutral")
+                previous = config.FACE_DEFAULT_EMOTION
+            self._previous = previous
+            face_control.set_emotion("speaking")
+        except Exception as exc:                    # noqa: BLE001
+            log.debug("could not show the speaking face: %s", exc)
+
+    def stop(self) -> None:
+        """Put the face back. Idempotent, and safe to call when never started."""
+        if not self._on:
+            return
+        self._on = False
+        if self._previous is None:
+            return
+        import face_control
+        try:
+            face_control.set_emotion(self._previous)
+        except Exception as exc:                    # noqa: BLE001
+            log.warning("could not restore the %s face after speaking: %s",
+                        self._previous, exc)
+
+
+@contextlib.contextmanager
+def _mouth_moving():
+    """Arm the speaking face; the caller starts it when audio actually begins."""
+    mouth = _Mouth()
     try:
-        previous = face_control.get_emotion()
-        # NEVER RESTORE INTO "speaking". If the face is somehow already
-        # showing it when we get here, something else set it and putting it
-        # back would leave Friday talking forever with nothing to say. Settle
-        # to neutral instead -- wrong for one beat, rather than stuck for good.
-        if previous == "speaking":
-            log.debug("face was already 'speaking' — will settle to neutral")
-            previous = config.FACE_DEFAULT_EMOTION
-        face_control.set_emotion("speaking")
-    except Exception as exc:                        # noqa: BLE001
-        log.debug("could not show the speaking face: %s", exc)
-    try:
-        yield
+        yield mouth
     finally:
-        if previous is not None:
-            try:
-                face_control.set_emotion(previous)
-            except Exception as exc:                # noqa: BLE001
-                log.warning("could not restore the %s face after speaking: %s",
-                            previous, exc)
+        mouth.stop()
 
 
 def speak(text: str) -> str:
@@ -482,7 +534,7 @@ def speak(text: str) -> str:
         return f"[debug silence — not spoken] {text}"
 
     chunks = sentences(text)
-    with _speak_lock, _mouth_moving():
+    with _speak_lock, _mouth_moving() as mouth:
         voice()                         # raises TTSError if unavailable
         rendered: queue.Queue = queue.Queue(maxsize=2)
 
@@ -499,22 +551,56 @@ def speak(text: str) -> str:
         worker.start()
 
         spoken = 0
+        produced = 0                    # every chunk yields exactly one queue item
         while True:
             item = rendered.get()
             if item is StopIteration:
                 break
+            produced += 1
             if item is None:
                 continue
+            # ANTICIPATE THE END OF THE LAST SENTENCE. The face polls its state file
+            # every 80 ms and then cross-fades for 280 ms, so restoring it when
+            # play() returns leaves the speaking mouth on screen for about a third
+            # of a second of silence -- the tail Harsh reported. The producer puts
+            # exactly one item per chunk, so the last item is known before it is
+            # played; the restore is scheduled to complete as the audio ends rather
+            # than to begin there. If playback overruns the estimate the mouth stops
+            # a fraction early, which is the right way round to be wrong.
+            timer = None
+            if produced == len(chunks):
+                # + the stream-setup lag, because the sound this is anticipating
+                # does not begin until that much after play() is called.
+                lead = (_wav_seconds(item) - config.FACE_SETTLE_S
+                        + config.AUDIO_START_LAG_S)
+                if lead > 0.0:
+                    timer = threading.Timer(lead, mouth.stop)
+                    timer.daemon = True
+                    timer.start()
             try:
+                # THE MOUTH STARTS HERE, not at the top of speak(): everything
+                # above this line is model loading and synthesis, which on this
+                # Pi measured 6.088 s before the first sample reached the device.
+                # Idempotent, so only the first sentence pays for it and the
+                # face is not rewritten between sentences.
+                mouth.start()
                 play(item)
                 spoken += 1
             except Exception as exc:                # noqa: BLE001
                 log.error("playback failed: %s", exc)
             finally:
+                if timer is not None:
+                    timer.cancel()      # no-op once it has already fired
                 try:
                     item.unlink()
                 except OSError:
                     pass
+        # BEFORE joining the synthesis worker, not after. The worker has already
+        # finished producing by the time the queue yields StopIteration, but the
+        # join is still up to a second of the mouth moving over silence if
+        # anything goes wrong in there -- and the whole point of this change is
+        # that the animation ends when the sound does.
+        mouth.stop()
         worker.join(timeout=1.0)
 
     return (f"said {spoken} sentence{'s' if spoken != 1 else ''} "

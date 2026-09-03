@@ -863,6 +863,26 @@ TOF_FLOOR_PITCH_MIN, TOF_FLOOR_PITCH_MAX = 0.80, 1.25
 # How far a ground row may drift before the floor is no longer "intact". Beyond this
 # the answer is cannot-see, never clear -- a floor that stopped reading is a cliff.
 TOF_FLOOR_INTACT_MM = 70
+# THE FURTHEST GROUND ROW IS ALLOWED TO BE PATCHY, and this is not a tolerance dialled
+# in to make a test pass -- it is what the sensor does. Row 4 looks along the shallowest
+# incidence over the longest path, so it returns the weakest signal of the four, and on
+# an ordinary floor it drops cells every single frame. MEASURED 2026-09-03 over 182
+# frames in two different spots: rows 5, 6 and 7 returned 8.00/8 cells in EVERY frame,
+# row 4 returned 5.59/8.
+#
+# floor_intact used to be unanimous over all 32 ground cells -- one non-returning cell
+# anywhere set it False. With row 4 patchy by nature that made it False on 177 of 182
+# frames, and DFRobotToFThread publishes nothing when the floor is not intact and no
+# obstacle is visible. So the slot went stale, the control loop stopped the robot on a
+# stale critical sensor, and Friday announced "A sensor has stopped responding" while
+# the sensor was streaming a clean 15 Hz the whole time. That is the freeze Harsh saw.
+#
+# The near rows carry the safety claim anyway: "an intact floor is positive evidence the
+# near path is empty" is an argument about the floor immediately in front of the bumper,
+# which is rows 5-7. Row 4's job is occlusion detection, which still works from whatever
+# cells it does return -- its SILENCE is just not evidence of anything.
+TOF_FLOOR_NEAR_FROM_OFFSET = 1        # ground-row offsets >= this must be present
+TOF_FLOOR_NEAR_QUORUM = 0.75          # ...and this fraction of their cells must agree
 # ~0.7% of frames carry a spurious 250-315 mm return in the centre cells just above
 # the horizon -- SPAD crosstalk echoing the strong floor return below. One of them was
 # enough to brake the robot 0.2 s into a move. A real object is in every frame; an
@@ -893,17 +913,28 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
                     TOF_FLOOR_PITCH_MAX)
 
     # --- ground rows: only shortfalls against the stretched profile ---
-    floor_intact = True
+    # `floor_intact` is decided on the NEAR rows by quorum, not on all 32 cells by
+    # unanimity -- see TOF_FLOOR_NEAR_QUORUM for the measurement that forced this.
+    # Occlusion detection is unchanged and still runs on every ground cell, near or far:
+    # a cell that reads SHORT is an object whichever row it is in.
+    near_seen = near_ok = 0
     for off, row in enumerate(ground):
         expected = profile[off] * pitch
+        near = off >= TOF_FLOOR_NEAR_FROM_OFFSET
         for col, v in enumerate(row):
+            if near:
+                near_seen += 1
             if not 0 < v < TOF_NO_RETURN_MM:
-                floor_intact = False                     # the floor stopped reading
-                continue
+                continue                                 # no return: no information
             if v < expected - TOF_FLOOR_OBSTACLE_MM:
                 out[horizon + off, col] = float(v)       # an occlusion IS the object
             elif abs(v - expected) > TOF_FLOOR_INTACT_MM:
-                floor_intact = False                     # further than floor: a drop
+                continue                                 # further than floor: a drop
+            elif near:
+                near_ok += 1                             # clean floor, close in
+    # A drop-off or a floor that genuinely stopped reading still fails this: it takes
+    # the near rows out, not the far one.
+    floor_intact = near_seen > 0 and near_ok >= TOF_FLOOR_NEAR_QUORUM * near_seen
 
     # --- ahead rows: every return is a thing, minus the horizon-row echo ---
     echo = profile[0] if profile else None
