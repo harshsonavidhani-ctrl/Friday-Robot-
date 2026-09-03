@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from friday_expression import FaceExpression
 from friday_voice import P_NOTABLE, P_ROUTINE, P_URGENT, VoiceAnnouncer
 
 LOGGER = logging.getLogger("friday.explore")
@@ -62,6 +63,9 @@ LOGGER = logging.getLogger("friday.explore")
 # ======================================================================================
 # States
 # ======================================================================================
+EVENT_HOLD_S = 2.5   # how long "I reached it" / "I found one" stays on her face
+
+
 class Phase:
     BOOTSTRAP = "bootstrap"     # spin up sensors, take a first look around
     SELECT = "select"           # choose an exploration target
@@ -168,6 +172,14 @@ class ExplorationSupervisor:
         self._last_coverage_report = 0.0
         self._prev_target: np.ndarray | None = None
         self._was_stuck = False
+        # THE FACE. Nothing in the autonomous path set it before -- tts.speak() was the
+        # only writer in the whole stack, so through a run that drove, found frontiers,
+        # braked and recovered, her face showed whatever it had at boot. It lives here
+        # because this object already holds exactly the state the expression depends
+        # on, and deriving it twice is how two answers drift apart.
+        self.face = FaceExpression()
+        self._reached_at = 0.0
+        self._found_at = 0.0
 
     # ------------------------------------------------------------------ main tick --
     def update(self, m, scan: np.ndarray, row: dict | None = None) -> np.ndarray | None:
@@ -184,6 +196,7 @@ class ExplorationSupervisor:
 
         # ---- PERCEIVE / UNDERSTAND: what do the live sensors say right now? -------
         self._announce_perception(scan, row)
+        self._update_face(row, now)
 
         # ---- RECOVER holds the wheel until its timer expires ----------------------
         if self.st.phase == Phase.RECOVER:
@@ -212,6 +225,7 @@ class ExplorationSupervisor:
 
             if d <= self.cfg.reach_radius:
                 self.st.targets_reached += 1
+                self._reached_at = now
                 self.st.phase = Phase.OBSERVE
                 self._say("arrived", "Target area reached. Updating my map.",
                           priority=P_ROUTINE, cooldown_s=10.0)
@@ -286,6 +300,7 @@ class ExplorationSupervisor:
         self._ticks_since_plan = 0
         if changed:
             self.st.targets_selected += 1
+            self._found_at = time.monotonic()
             d = math.hypot(target[0] - px, target[1] - py)
             if self.st.phase in (Phase.BOOTSTRAP, Phase.SELECT, Phase.OBSERVE):
                 n = max(int(round(d)), 1)
@@ -443,6 +458,26 @@ class ExplorationSupervisor:
         left = float(np.mean(scan[n // 8: 3 * n // 8]))
         right = float(np.mean(scan[5 * n // 8: 7 * n // 8]))
         return 1.0 if left >= right else -1.0
+
+    # ------------------------------------------------------------------ the face --
+    def _update_face(self, row: dict | None, now: float) -> None:
+        """Show what she is actually doing. Best-effort; never costs a control tick.
+
+        `just_reached` and `just_found` are held briefly rather than tested as edges:
+        at 10 Hz a one-tick expression is 100 ms, which is shorter than the face's own
+        280 ms cross-fade -- it would never finish appearing. EVENT_HOLD_S is long
+        enough to read and short enough not to lie about the present.
+        """
+        gate = (row or {}).get("gate", "ok")
+        fwd = (row or {}).get("fwd_min")
+        if fwd is None:
+            fwd = (row or {}).get("lidar_min")
+        self.face.update(
+            self.st.phase, gate,
+            fwd_min=float(fwd) if isinstance(fwd, (int, float)) else None,
+            just_reached=(now - self._reached_at) < EVENT_HOLD_S,
+            just_found=(now - self._found_at) < EVENT_HOLD_S,
+        )
 
     # ------------------------------------------------------- perception reporting --
     def _announce_perception(self, scan: np.ndarray, row: dict | None) -> None:

@@ -156,9 +156,30 @@ slots = {"lidar": SensorSlot("lidar", cfg.lidar_deadline, True),
 loop = ControlLoop(cfg, PolicyRunner(HERE / "exploration_model.onnx", cfg),
                    NullMotorDriver(cfg), slots)
 loop.map_enabled = False
+# BOXED IN MEANS FORWARD IS BLOCKED, not walled on all four sides. A uniform 0.30 m
+# scan is a robot inside a box smaller than itself, and since rear_stop went to 0.36 m
+# to stop her reversing into walls, the rear gate now (correctly) refuses the reverse
+# and takes authority -- so this fixture was testing the rear gate, not recovery. The
+# case where the rear IS blocked is asserted separately at 7b.
+def boxed_in_scan():
+    """Front AND rear walled, sides open -- a robot stuck across a narrow corridor.
+
+    Front-only is not stuck any more: reverse-lifting means she simply backs out,
+    which is the correct escape and leaves recovery with nothing to do. Walled on all
+    four sides is not stuck either, it is a box smaller than the robot, and there the
+    rear gate legitimately owns every tick (asserted at 7b). Recovery is for the case
+    in between -- no way forward, no way back, but room to turn."""
+    n = cfg.n_beams
+    s = np.full(n, 2.00, np.float32)
+    s[:n // 8] = 0.30                               # ahead
+    s[-n // 8:] = 0.30
+    s[3 * n // 8: 5 * n // 8] = 0.30                # astern
+    return s
+
+
 auths, raw_ok = [], True
 for i in range(60):
-    slots["lidar"].publish(np.full(cfg.n_beams, 0.30, np.float32))   # boxed in
+    slots["lidar"].publish(boxed_in_scan())
     loop.tick()
     r = loop.last_record
     auths.append(r.authority)
@@ -169,6 +190,21 @@ check("a recovery tick reports RECOVERY_CONTROLLER",
 check("the raw policy output survives recovery untouched", raw_ok)
 check("recovery ticks are counted", loop.stats["recovery_ticks"] > 0,
       f"{loop.stats['recovery_ticks']}")
+
+# 7b. ...and when the REAR is blocked too, the rear gate outranks recovery. Recovery's
+#     `_maneuver` authors a reverse of its own, downstream of the governor, which is
+#     exactly why the gate is re-applied at stage 2d. Harsh, 2026-09-03: "it wasn't
+#     able to detect a wall behind it ... it kept moving backwards without noticing".
+loop_r = ControlLoop(cfg, PolicyRunner(HERE / "exploration_model.onnx", cfg),
+                     NullMotorDriver(cfg), slots)
+loop_r.map_enabled = False
+worst_v = 0.0
+for i in range(60):
+    slots["lidar"].publish(np.full(cfg.n_beams, 0.30, np.float32))   # walled all round
+    loop_r.tick()
+    worst_v = min(worst_v, loop_r.last_record.final_v)
+check("no stage reverses into a wall 0.30 m behind, recovery included",
+      worst_v >= 0.0, f"most negative v={worst_v:.3f}")
 
 # 8. --no-recovery must genuinely disable it.
 loop2 = ControlLoop(cfg, PolicyRunner(HERE / "exploration_model.onnx", cfg),
