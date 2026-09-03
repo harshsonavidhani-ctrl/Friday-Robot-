@@ -3902,11 +3902,16 @@ class ControlLoop:
         s = self.stats
         if self.navigator is not None and (s["nav_decisions"] or s["nav_handoffs"]):
             total = max(s["nav_decisions"] + s["nav_handoffs"], 1)
-            LOGGER.info("navigator: %d ticks steered (%.0f%%), %d handed back; "
+            n = self.navigator
+            LOGGER.info("navigator: %d ticks steered (%.0f%%), %d handed back "
+                        "(%d blocked ahead, %d no drivable arc); "
                         "open %d / corridor %d / cluttered %d",
                         s["nav_decisions"], 100.0 * s["nav_decisions"] / total,
-                        s["nav_handoffs"], s["nav_open"], s["nav_corridor"],
-                        s["nav_cluttered"])
+                        s["nav_handoffs"], n.handoff_blocked, n.handoff_no_arc,
+                        s["nav_open"], s["nav_corridor"], s["nav_cluttered"])
+            LOGGER.info("  near field: %d ticks barriered (inside the reflex's stop "
+                        "distance), %d ticks merely slowed by it",
+                        n.tof_informed, n.tof_slowed)
             # SWITCHES are the number that matters -- a direction reversal a rival had
             # to earn. Expiries are just COMMIT_MAX_S elapsing and say nothing about
             # flip-flopping; counting them together read as "94 broken vs 28 held" and

@@ -131,10 +131,16 @@ class Navigator:
         self.commit_expiries = 0
         self.commit_switches = 0
         self.handoffs = 0                 # ticks handed back to the old behaviour
+        # ...and WHY, because "declined" covers two different situations and lumping
+        # them is the same mistake `commit_breaks` made. `blocked` is the assessment
+        # refusing to plan at all; `no_arc` is every candidate colliding.
+        self.handoff_blocked = 0
+        self.handoff_no_arc = 0
         # Ticks where the ToF contributed an obstacle the LiDAR could not see. If this
         # is large while the reflex still fires constantly, the two are STILL
         # disagreeing and the near-field model needs looking at again.
         self.tof_informed = 0
+        self.tof_slowed = 0
 
     # ------------------------------------------------------------- assessment --
     def assess(self, scan_m: np.ndarray,
@@ -249,18 +255,54 @@ class Navigator:
         the two agree about what an obstacle is. Sharing that rule is the entire point:
         a planner and a veto that disagree produce exactly the fight seen above.
         """
+        pts, _ = self._tof_constraint(depth)
+        return pts
+
+    def _tof_constraint(self, depth) -> tuple[np.ndarray, float]:
+        """(barrier points, speed scale) from the near field, on the REFLEX'S OWN TERMS.
+
+        A PLANNER MUST NOT BE STRICTER THAN THE EMERGENCY LAYER IT FEEDS. The first
+        version of this turned ANY ToF return into a hard barrier across the full
+        corridor -- so a return at 0.45 m deleted essentially every forward arc, while
+        `ToFReflex` at that same range would merely have scaled speed to 0.5 and driven
+        on. The navigator was overruling the reflex in the conservative direction, and
+        handing the tick back instead. MEASURED: handbacks went 5% -> 49% when the ToF
+        feed was added, and the reflex itself only fired on 30% of ticks.
+
+        So the two now share the reflex's exact thresholds, not just its quorum:
+
+            d <= tof_stop_distance   forward is genuinely unsafe -> BARRIER (and the
+                                     caller hands the tick to escape/recovery, which is
+                                     what the reflex would force anyway)
+            d <  tof_slow_distance   -> no barrier, SPEED SCALED by the same
+                                     proportional law the reflex uses, so she keeps
+                                     steering and simply slows
+            otherwise                -> the near field has nothing to say
+
+        The barrier itself stays FOV-free: a full-corridor wall at that range, because
+        no ToF field of view has ever been measured on this robot (see the module note).
+        Conservative there is fine -- it now only applies where the reflex stops her too.
+        """
         empty = np.zeros((0, 2), dtype=np.float32)
         if depth is None:
-            return empty
+            return empty, 1.0
         d = np.asarray(depth, dtype=np.float64).reshape(-1)
         valid = d[np.isfinite(d) & (d > 0.0) & (d < self.cfg.tof_max_range)]
         k = int(getattr(self.cfg, "tof_min_valid_zones", 3))
         if valid.size < k:
-            return empty                      # too few zones agree: speckle, not a thing
+            return empty, 1.0                 # too few zones agree: speckle, not a thing
         rng = float(np.sort(valid)[k - 1])
+
+        stop = float(self.cfg.tof_stop_distance)
+        slow = float(self.cfg.tof_slow_distance)
+        if rng > stop:
+            if rng >= slow:
+                return empty, 1.0
+            return empty, float((rng - stop) / max(slow - stop, 1e-6))
+
         half = float(self.cfg.corridor_half)
         ys = np.linspace(-half, half, 5)
-        return np.stack([np.full_like(ys, rng), ys], axis=1).astype(np.float32)
+        return np.stack([np.full_like(ys, rng), ys], axis=1).astype(np.float32), 0.0
 
     # -------------------------------------------------------------- commitment --
     def _apply_commitment(self, candidates_omega: float, margin: float,
@@ -337,6 +379,7 @@ class Navigator:
 
         if a.situation == BLOCKED:
             self.handoffs += 1
+            self.handoff_blocked += 1
             self.release()
             return None
 
@@ -351,14 +394,24 @@ class Navigator:
             want = (a.widest_gap_bearing if desired_bearing is None else
                     0.5 * (a.widest_gap_bearing + desired_bearing))
 
-        near = self._tof_obstacle_points(tof_depth)
+        near, tof_scale = self._tof_constraint(tof_depth)
         if near.shape[0]:
             self.tof_informed += 1
-        res = self.planner.choose(scan_m, v_allow * speed, omega_want,
+        elif tof_scale < 1.0:
+            self.tof_slowed += 1
+        # The ToF's proportional band SLOWS her rather than deleting her options -- the
+        # same thing the reflex does with it, one stage later. Floored at the drivetrain
+        # floor: a cap under the stiction floor is a stop wearing a speed's clothing,
+        # and it would hand back a tick she could have driven slowly.
+        allow = v_allow * speed
+        if tof_scale < 1.0:
+            allow = max(allow * tof_scale, min(v_floor, allow))
+        res = self.planner.choose(scan_m, allow, omega_want,
                                   desired_bearing=want, blind_beams=blind_beams,
                                   v_floor=v_floor, extra_obstacles=near)
         if res is None:
             self.handoffs += 1
+            self.handoff_no_arc += 1
             self.release()
             return None
 

@@ -335,6 +335,37 @@ check("an obstacle ONLY the ToF can see still changes the command",
       f"lidar-only v={blind.v:.2f} w={blind.omega:+.2f} -> with ToF "
       f"v={seeing.v:.2f} w={seeing.omega:+.2f}" if (blind and seeing) else "handed back")
 
+# A PLANNER MUST NOT BE STRICTER THAN THE EMERGENCY LAYER IT FEEDS.
+#
+# REGRESSION, measured 2026-09-04: the first version made ANY ToF return a hard barrier
+# across the full corridor, so a return at 0.45 m deleted every forward arc -- while
+# ToFReflex at that range merely scales speed to 0.5 and drives on. The navigator was
+# overruling the reflex in the conservative direction and handing the tick back instead:
+# handbacks went 5% -> 49% while the reflex itself fired on only 30% of ticks.
+mid = np.full((8, 8), cfg.tof_max_range, dtype=np.float32)
+mid[4:7, 3:6] = 0.45                          # inside slow, well outside stop
+pts_mid, scale_mid = Navigator(cfg, DynamicWindowPlanner(cfg))._tof_constraint(mid)
+check("a return the reflex would only SLOW for raises no barrier",
+      pts_mid.shape[0] == 0, f"{pts_mid.shape[0]} barrier points at 0.45 m")
+check("...it scales speed by the reflex's own law instead",
+      abs(scale_mid - (0.45 - cfg.tof_stop_distance)
+          / (cfg.tof_slow_distance - cfg.tof_stop_distance)) < 1e-6,
+      f"scale={scale_mid:.3f}")     # 1e-6, not 1e-9: the frame is float32
+
+# The two must agree at the threshold: inside the stop distance, both refuse.
+inside = np.full((8, 8), cfg.tof_max_range, dtype=np.float32)
+inside[4:7, 3:6] = cfg.tof_stop_distance - 0.02
+pts_in, scale_in = Navigator(cfg, DynamicWindowPlanner(cfg))._tof_constraint(inside)
+check("inside the reflex's stop distance it DOES raise a barrier",
+      pts_in.shape[0] > 0 and scale_in == 0.0, f"{pts_in.shape[0]} points")
+
+# And beyond the reflex's interest, the near field says nothing at all.
+far_tof = np.full((8, 8), cfg.tof_max_range, dtype=np.float32)
+far_tof[4:7, 3:6] = cfg.tof_slow_distance + 0.10
+pts_far, scale_far = Navigator(cfg, DynamicWindowPlanner(cfg))._tof_constraint(far_tof)
+check("beyond the reflex's slow distance the near field is silent",
+      pts_far.shape[0] == 0 and scale_far == 1.0, f"scale={scale_far:.2f}")
+
 # AND IT MUST ACT BEFORE THE REFLEX DOES, or it has changed nothing. The reflex brakes
 # from tof_slow_distance (0.60 m) and stops at tof_stop_distance (0.30 m). Steering away
 # only once the brakes are already on is the old behaviour with extra steps; the whole
@@ -346,11 +377,21 @@ def nav_at(range_m: float):
         clear_scan(), v_allow=cfg.v_max, omega_want=0.0, desired_bearing=0.0,
         tof_depth=t)
 
-early = nav_at(cfg.tof_slow_distance + 0.20)     # 0.80 m: reflex is not involved yet
-check("she is already steering away BEFORE the reflex would brake",
-      early is not None and abs(early.omega) > 0.3 and early.v > 0.3,
-      f"v={early.v:.2f} omega={early.omega:+.2f} at "
-      f"{cfg.tof_slow_distance + 0.20:.2f} m" if early else "None")
+# This used to assert she turned away at 0.80 m, and that assertion was WRONG once the
+# navigator was aligned to the reflex: at 0.80 m the reflex does not care, and the LiDAR
+# -- the sensor that actually has bearing information -- can see 0.80 m perfectly well,
+# since it is far above the 0.22 m floor. The ToF's unique contribution is the near band
+# the LiDAR structurally cannot report, so being silent out there is correct, not a
+# regression. What must hold is that she is slowed BEFORE the reflex would stop her, and
+# that her options are not deleted while doing it.
+early = nav_at(cfg.tof_slow_distance - 0.05)     # 0.55 m: reflex brakes, does not stop
+full = nav_at(cfg.tof_slow_distance + 0.20)      # 0.80 m: outside the reflex's interest
+check("the near field slows her before the reflex would stop her",
+      early is not None and full is not None and early.v < full.v,
+      f"0.80 m -> v={full.v:.2f}; 0.55 m -> v={early.v:.2f}"
+      if (early and full) else "None")
+check("...without deleting her options, which is what handing back would mean",
+      early is not None, "still steering, not handed back")
 
 # ...and the response is graduated, not a cliff: closer means slower.
 far, near_ = nav_at(0.55), nav_at(0.45)
