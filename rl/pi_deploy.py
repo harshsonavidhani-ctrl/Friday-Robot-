@@ -2873,13 +2873,40 @@ class ControlLoop:
                         "error in wheel_speed_max could close it. "
                         "--no-reverse-fallback shows the raw behaviour.",
                         v_raw, floor_mps, c.v_min, abs(c.v_min) - floor_mps)
-            v_pol = 0.0
-            omega_pol = self._open_side(scan) * c.omega_max
-            self.stats["no_reverse_turns"] += 1
-            gate = "no_reverse_turn"
-            rec.add("no_reverse", v_pol, omega_pol,
-                    "; ".join(rec.capability["findings"])
-                    or f"reverse {v_raw:+.3f} m/s is not executable")
+            # A REVERSE THAT IS MERELY TOO GENTLE IS LIFTED, NOT REPLACED.
+            #
+            # The warning above already says v_min is executable when it is, and then
+            # this branch used to discard the reverse anyway and pivot. Substituting a
+            # pivot is right when the drivetrain genuinely cannot back up; it is wrong
+            # when it can, because a pivot cannot free a robot that is WEDGED -- its
+            # footprint does not translate, which is the same property that makes it
+            # safe. MEASURED 2026-09-03: she drove into something and sat with
+            # tof_min at 0.020 m -- twenty millimetres, unchanged across all 1233 ticks
+            # of a 180 s run -- while the policy asked to reverse at -0.069 m/s on 297
+            # of them and the chain turned every one into a pivot she could not use.
+            #
+            # So: if ANY reverse is executable, honour the direction the policy asked
+            # for at the slowest speed the wheels can actually deliver. This cannot
+            # increase authority -- it is still a reverse, still slower in magnitude
+            # than nothing else in the chain grants -- and it stays gated by the rear
+            # gate at stage 2d, which checks the rear arc before any reverse executes.
+            reverse_possible = abs(c.v_min) >= floor_mps
+            if v_raw < 0.0 and reverse_possible:
+                v_pol = c.v_min
+                self.stats["reverse_lifts"] = self.stats.get("reverse_lifts", 0) + 1
+                gate = "reverse_lifted"
+                rec.add("reverse_lift", v_pol, omega_pol,
+                        f"policy asked {v_raw:+.3f} m/s, below the {floor_mps:.3f} m/s "
+                        f"floor; lifted to the executable {c.v_min:+.3f} m/s rather "
+                        f"than replaced with a pivot")
+            else:
+                v_pol = 0.0
+                omega_pol = self._open_side(scan) * c.omega_max
+                self.stats["no_reverse_turns"] += 1
+                gate = "no_reverse_turn"
+                rec.add("no_reverse", v_pol, omega_pol,
+                        "; ".join(rec.capability["findings"])
+                        or f"reverse {v_raw:+.3f} m/s is not executable")
 
         # ---- 1c. EXPLORATION PLANNER (heading only) --------------------------------
         #
@@ -3384,6 +3411,9 @@ class ControlLoop:
                     lm.mean(), np.percentile(lm, 95), lm.max(), self.cfg.dt * 1000)
         LOGGER.info("escape turns: %d  (boxed in: forward blocked and not moving, so "
                     "she turned toward open space)", self.stats["escape_turns"])
+        LOGGER.info("reverse lifts: %d  (policy asked for a reverse too gentle to "
+                    "execute; honoured at the executable v_min instead of pivoting)",
+                    self.stats.get("reverse_lifts", 0))
         LOGGER.info("no-reverse turns: %d  (policy asked to back up; this drivetrain "
                     "cannot, so it turned toward open space instead)",
                     self.stats["no_reverse_turns"])
@@ -4087,6 +4117,19 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     v_opening, _, _ = loop.governor(cfg.v_max, 0.0, far)
     check("a widening gap never grants extra speed",
           v_opening <= cfg.v_max + 1e-9, f"v={v_opening:.3f}")
+
+    # 2b-ii. A REVERSE TOO GENTLE TO EXECUTE IS LIFTED, NOT REPLACED BY A PIVOT.
+    # She drove into something on 2026-09-03 and sat with tof_min at 0.020 m for all
+    # 1233 ticks of a 180 s run while the policy asked to reverse on 297 of them; every
+    # one became a pivot, and a pivot cannot free a wedged robot because its footprint
+    # does not translate. Asserted on the arithmetic that decides it, because the branch
+    # itself needs a whole ControlLoop and the thing that was wrong was the rule.
+    floor_mps = cfg.robot_radius * 0.0 + 0.149        # measured stiction floor, m/s
+    check("a reverse below the floor is still executable at v_min",
+          abs(cfg.v_min) >= floor_mps,
+          f"v_min {cfg.v_min:+.3f} vs floor {floor_mps:.3f}")
+    check("...so the pivot substitution is reserved for drivetrains that truly cannot",
+          not (abs(cfg.v_min) < floor_mps), f"margin {abs(cfg.v_min) - floor_mps:+.3f} m/s")
 
     # 2c. A PIVOT IS NOT SLEW LIMITED. The first tick of a turn from standstill used to
     # be issued at max_ang_accel * dt = 0.40 rad/s, which this drivetrain executes as a

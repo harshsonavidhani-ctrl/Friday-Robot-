@@ -400,6 +400,13 @@ def main(argv: list[str] | None = None) -> int:
     cfg.tof_enabled = not args.no_tof
     cfg.self_mask_deg = pi_deploy.parse_self_mask(args.lidar_self_mask)
     cfg.lidar_offset_deg = args.lidar_offset_deg
+    # Same class of gap as the two above, and it cost a run: these flags are parsed by
+    # pi_deploy's parser but APPLIED in pi_deploy's main(), which this file does not
+    # call -- so anything added there is silently inert here. A 180 s run asked for
+    # --blackbox-seconds 200 and got the 30 s default, which is a 316-row ring buffer,
+    # so 150 s of the run was overwritten before it was ever written out.
+    cfg.blackbox_seconds = max(1.0, float(getattr(args, "blackbox_seconds", 30.0)))
+    cfg.lidar_min_valid_range = max(0.0, float(getattr(args, "lidar_min_range", 0.0)))
     if cfg.self_mask_deg:
         LOGGER.info("LiDAR chassis self-mask: %s (raw bearings, pre-offset); "
                     "mounting offset %.1f deg",
