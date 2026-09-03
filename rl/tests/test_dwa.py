@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pi_deploy import RobotConfig                                  # noqa: E402
 from dwa import DynamicWindowPlanner, SIM_TIME_S, SIM_STEPS        # noqa: E402
 from navigator import (Navigator, OPEN, CORRIDOR, CLUTTERED,       # noqa: E402
-                       BLOCKED, COMMIT_MARGIN)
+                       BLOCKED, COMMIT_MARGIN, COMMIT_MAX_S)
 
 cfg = RobotConfig()
 fails = 0
@@ -170,11 +170,21 @@ nav2._commit_sign, nav2._commit_since = +1, time.monotonic()
 _, held, why = nav2._apply_commitment(-1.0, COMMIT_MARGIN * 2.0, CLUTTERED)
 check("a clearly better rival does break it", not held, why)
 
-# A changed situation invalidates the commitment: the reason for it is gone.
+# REGRESSION, measured on hardware 2026-09-04: commitment used to be released whenever
+# the situation LABEL changed, and over a 6-minute run that broke 121 commitments
+# against 56 held. The label flickers between CORRIDOR and CLUTTERED as she moves --
+# it is a threshold on a noisy range -- so the mechanism meant to provide steadiness
+# was itself chasing the noise. A label change is not evidence about direction.
 nav2._commit_sign, nav2._commit_since = +1, time.monotonic()
 nav2._commit_situation = CORRIDOR
-_, held, _ = nav2._apply_commitment(-1.0, 0.0, OPEN)
-check("changing situation releases the commitment", not held)
+_, held, why = nav2._apply_commitment(+1.0, 0.0, CLUTTERED)
+check("a flickering situation label does NOT break a commitment", held, why)
+
+# It must still expire on its own, or commitment becomes stubbornness.
+nav2._commit_sign = +1
+nav2._commit_since = time.monotonic() - (COMMIT_MAX_S + 1.0)
+_, held, why = nav2._apply_commitment(-1.0, 0.0, CLUTTERED)
+check("...but it still expires with age", not held, why)
 
 print("--- end to end through Navigator.decide ---")
 

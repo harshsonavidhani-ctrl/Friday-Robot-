@@ -3907,7 +3907,7 @@ class ControlLoop:
                         "(a HIGH handback count means she is spending her time in "
                         "places with no drivable way forward)",
                         self.navigator.commitments, self.navigator.commit_breaks,
-                        self.navigator.planner.last_ms)
+                        self.navigator.planner.mean_ms)
         LOGGER.info("escape turns: %d  (boxed in: forward blocked and not moving, so "
                     "she turned toward open space)", self.stats["escape_turns"])
         LOGGER.info("reverse lifts: %d  (policy asked for a reverse too gentle to "

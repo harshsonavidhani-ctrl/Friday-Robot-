@@ -174,6 +174,14 @@ class DynamicWindowPlanner:
         self.chosen = 0
         self.blocked = 0
         self.last_ms = 0.0
+        # Running total, because the summary used to print `last_ms` labelled "mean".
+        # One sample taken at teardown read 77.9 ms and looked like a budget disaster;
+        # a mean is the number that can actually be compared against the 100 ms budget.
+        self.total_ms = 0.0
+
+    @property
+    def mean_ms(self) -> float:
+        return self.total_ms / self.calls if self.calls else 0.0
 
     # ---------------------------------------------------------------- geometry --
     def _beam_trig(self, n: int) -> tuple[np.ndarray, np.ndarray]:
@@ -277,6 +285,7 @@ class DynamicWindowPlanner:
         if v_allow <= 0.0:
             self.blocked += 1
             self.last_ms = (time.perf_counter() - t0) * 1000.0
+            self.total_ms += self.last_ms
             return None
 
         lo = min(float(v_floor), v_allow)
@@ -307,6 +316,7 @@ class DynamicWindowPlanner:
         if not safe.any():
             self.blocked += 1
             self.last_ms = (time.perf_counter() - t0) * 1000.0
+            self.total_ms += self.last_ms
             return None
 
         # ---- score the survivors ------------------------------------------------
@@ -330,6 +340,7 @@ class DynamicWindowPlanner:
         best = int(np.argmax(score))
         self.chosen += 1
         self.last_ms = (time.perf_counter() - t0) * 1000.0
+        self.total_ms += self.last_ms
         return DWAResult(
             v=float(vv[best]),
             omega=float(ww[best]),

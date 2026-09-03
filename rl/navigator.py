@@ -41,9 +41,16 @@ import numpy as np
 # Front clearance above which the way ahead counts as genuinely open. Chosen against
 # `safe_distance` (0.55): below that the governor is already bleeding speed off, so
 # calling it "open" would be claiming something the chain below disagrees with.
-OPEN_AHEAD_M = 1.10
+#
+# MEASURED AND RETUNED, 2026-09-04. At 1.10 m / 0.90 m this robot read OPEN on 6 ticks
+# out of 1634 in a real six-minute run, and CLUTTERED on 1324 -- so she sat permanently
+# in the most conservative speed band, and the speed authority granted for open running
+# was being multiplied away (0.30 x 0.55 = 0.165 m/s, barely over the stiction floor).
+# These are tuning numbers taken from that distribution, not derived constants, and the
+# room they were measured in is small.
+OPEN_AHEAD_M = 0.90
 # Side room below which she is between two things -- a doorway, a hallway, furniture.
-CORRIDOR_SIDE_M = 0.90
+CORRIDOR_SIDE_M = 0.70
 # Front clearance below which nothing forward is worth planning; hand back to the
 # escape/recovery machinery, which owns reverse and pivots and is already tested.
 BLOCKED_AHEAD_M = 0.40
@@ -67,7 +74,7 @@ COMMIT_MAX_S = 3.0
 # Fractions of the caller's allowance, never of v_max: this file cannot raise a cap.
 SPEED_OPEN = 1.00
 SPEED_CORRIDOR = 0.75      # a doorway is not the place to find out about slew
-SPEED_CLUTTERED = 0.55
+SPEED_CLUTTERED = 0.65     # was 0.55: see OPEN_AHEAD_M for why that band was too slow
 
 OPEN = "open"
 CORRIDOR = "corridor"
@@ -209,12 +216,24 @@ class Navigator:
         now = time.monotonic()
         sign = 0 if abs(candidates_omega) < 1e-3 else (1 if candidates_omega > 0 else -1)
 
-        if self._commit_sign == 0 or situation != self._commit_situation:
+        # A COMMITMENT DOES NOT BELONG TO A SITUATION LABEL. It used to be released
+        # whenever `situation` changed, and MEASURED on hardware that destroyed it: 121
+        # commitments broken against 56 held over a 6-minute run, because the label
+        # flickers between CORRIDOR and CLUTTERED as she moves and the boundary between
+        # them is a threshold on a noisy range. Releasing on a flickering label is the
+        # same failure as explorer.py's target chasing the cheapest frontier -- the
+        # thing meant to provide steadiness was itself following the noise.
+        #
+        # What may end a commitment is now only: it has run long enough (COMMIT_MAX_S),
+        # the situation became BLOCKED (release() is called for that on the way out), or
+        # a rival genuinely beat it by COMMIT_MARGIN. A label change is not evidence.
+        if self._commit_sign == 0:
             self._commit_sign, self._commit_since = sign, now
             self._commit_situation = situation
             if sign:
                 self.commitments += 1
             return candidates_omega, False, "new commitment"
+        self._commit_situation = situation
 
         if now - self._commit_since > COMMIT_MAX_S:
             self._commit_sign, self._commit_since = sign, now
