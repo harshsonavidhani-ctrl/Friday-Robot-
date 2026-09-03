@@ -987,6 +987,76 @@ TOF_FLOOR_NEAR_QUORUM = 0.75          # ...and this fraction of their cells must
 # artefact cannot move a median.
 TOF_CORROBORATE_FRAMES = 3
 
+# ---- THE FLOOR IS FITTED FROM THE FRAME, NOT FROM THE CONSTANTS ABOVE ----------------
+#
+# Harsh, 2026-09-04: "The performance is worse than it was before... it is not
+# discovering new paths on its own."
+#
+# MEASURED, 2026-09-03 23:0x vs 2026-09-04 00:0x, same robot, same room. The four
+# ground rows read 314/236/168/127 mm, which is TOF_FLOOR_PROFILE_MM scaled by a clean
+# and consistent 1.06. Hours later, after the down camera was moved and the bumper
+# disturbed, the same rows read 231/141/116/89 -- ratios of 0.78, 0.63, 0.72, 0.74.
+#
+# THOSE RATIOS ARE NOT A PITCH. A pitch scales every row by the SAME factor. These do
+# not, because the sensor was re-aimed: the floor now starts at row 3 instead of row 4,
+# and that is a SHIFT ALONG THE ROW AXIS. A scalar multiplier cannot represent a shift,
+# so the fit was pinned at TOF_FLOOR_PITCH_MIN = 0.80 against a true value of 0.735 and
+# the model was simply wrong. Every ground row then read "shorter than the floor should
+# be", which is the definition of an obstacle -- so the ToF reported the FLOOR as a wall
+# 33 mm from the bumper and the reflex hard-stopped on 73% of ticks. She stood still for
+# 847 of 1368 ticks and travelled 4.7 m in six minutes.
+#
+# This is the same bug class as the one that once stopped her driving at all, and
+# re-measuring the constants would only postpone it to the next time a bracket moves.
+# So the floor is now fitted PER FRAME from the frame's own row medians, which is
+# invariant to any mounting angle:
+#
+#   * A floor RECEDES upward. Each row's median must exceed the row below it, and not
+#     by so much that it has jumped past the horizon onto a wall. That walk finds the
+#     ground rows without being told where they start.
+#   * An object standing on the floor OCCLUDES, so it reads SHORTER than the floor. A
+#     full-width object therefore breaks the recede test and the walk stops below it --
+#     which correctly makes it an obstacle rather than a new floor.
+#   * A cell is an obstacle when it is short against ITS OWN ROW's median, so no row
+#     is ever compared against a distance meant for a different row.
+#
+# The constants above are kept as sanity bounds and as the fallback when a frame is too
+# sparse to fit, never as the primary model.
+TOF_FLOOR_ROW_QUORUM = 4        # cells a row must return before its median is trusted
+TOF_FLOOR_MIN_GROWTH = 1.05     # a floor row must be at least this much further than
+                                # the one below it, or it is not floor
+TOF_FLOOR_MAX_GROWTH = 2.00     # ...and not this much further, or the beam has left
+                                # the floor and landed on a wall
+TOF_FLOOR_MAX_MM = 900          # absolute backstop on how far a ground row may read
+TOF_FLOOR_MIN_ROWS = 2          # fewer ground rows than this = the floor is not visible
+TOF_FLOOR_NEAR_ROWS = 3         # the bottom rows that carry the "path is clear" claim
+
+
+def tof_floor_rows(frame) -> tuple[int, list]:
+    """(index of the topmost GROUND row, per-row median mm or None).
+
+    Ground rows are [horizon, TOF_ROWS). Fitted from the frame, so it follows the
+    sensor wherever it is aimed -- see the note above for the measurement that made
+    that necessary.
+    """
+    med: list = []
+    for row in frame:
+        vals = sorted(v for v in row if 0 < v < TOF_NO_RETURN_MM)
+        med.append(float(statistics.median(vals))
+                   if len(vals) >= TOF_FLOOR_ROW_QUORUM else None)
+    horizon = TOF_ROWS
+    prev = None
+    for r in range(TOF_ROWS - 1, -1, -1):        # bottom row upward
+        m = med[r]
+        if m is None or m > TOF_FLOOR_MAX_MM:
+            break
+        if prev is not None and not (prev * TOF_FLOOR_MIN_GROWTH <= m
+                                     <= prev * TOF_FLOOR_MAX_GROWTH):
+            break
+        prev = m
+        horizon = r
+    return horizon, med
+
 
 def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
     """One raw 8x8 frame -> (per-cell obstacle range in mm, floor_intact).
@@ -995,38 +1065,66 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
     fed straight to ToFReflex without the floor tripping it. Ported from
     friday/sensors.py `_forward_from_frame`; every rule below cost a real debugging
     session and the reasons are recorded there.
+
+    The floor is fitted PER FRAME (tof_floor_rows), not read off a fixed row-indexed
+    profile -- see the note above tof_floor_rows for the mounting shift that made a
+    fixed profile actively dangerous (it turned the floor itself into a phantom wall
+    33 mm from the bumper). TOF_FLOOR_PROFILE_MM/PITCH remain only as the fallback for
+    a frame too sparse to fit its own floor.
     """
-    horizon = TOF_FLOOR_FROM_ROW
-    profile = TOF_FLOOR_PROFILE_MM
     out = np.full((TOF_ROWS, TOF_COLS), float(TOF_NO_RETURN_MM), np.float32)
 
-    # --- pitch, from the ground rows, before anything is called an obstacle ---
-    ground = frame[horizon:horizon + len(profile)]
-    ratios = [v / profile[off]
-              for off, row in enumerate(ground) for v in row
-              if 0 < v < TOF_NO_RETURN_MM]
-    pitch = 1.0
-    if len(ratios) >= 8:
-        pitch = min(max(statistics.median(ratios), TOF_FLOOR_PITCH_MIN),
-                    TOF_FLOOR_PITCH_MAX)
+    horizon, _ = tof_floor_rows(frame)
+    n_ground = TOF_ROWS - horizon
+    expected: dict[int, float] = {}
 
-    # --- ground rows: only shortfalls against the stretched profile ---
-    # `floor_intact` is decided on the NEAR rows by quorum, not on all 32 cells by
-    # unanimity -- see TOF_FLOOR_NEAR_QUORUM for the measurement that forced this.
-    # Occlusion detection is unchanged and still runs on every ground cell, near or far:
-    # a cell that reads SHORT is an object whichever row it is in.
+    if n_ground >= TOF_FLOOR_MIN_ROWS:
+        # Fitted: each ground row's reference is the FARTHEST valid return in IT. An
+        # occluding object only ever reads SHORTER than the floor it sits on, so the
+        # max survives any minority of occluded cells -- the row's own MEDIAN does
+        # not (a 3-of-8 occlusion already drags the median past the 45 mm margin,
+        # which hid the object in exactly this row during testing).
+        for r in range(horizon, TOF_ROWS):
+            valid = [v for v in frame[r] if 0 < v < TOF_NO_RETURN_MM]
+            if valid:
+                expected[r] = float(max(valid))
+    else:
+        # Too sparse to fit this frame's own floor -- fall back to the fixed,
+        # pitch-scaled profile. Never the primary model; see the note above.
+        horizon = TOF_FLOOR_FROM_ROW
+        profile = TOF_FLOOR_PROFILE_MM
+        ground_fallback = frame[horizon:horizon + len(profile)]
+        ratios = [v / profile[off]
+                  for off, row in enumerate(ground_fallback) for v in row
+                  if 0 < v < TOF_NO_RETURN_MM]
+        pitch = 1.0
+        if len(ratios) >= 8:
+            pitch = min(max(statistics.median(ratios), TOF_FLOOR_PITCH_MIN),
+                        TOF_FLOOR_PITCH_MAX)
+        for off in range(len(profile)):
+            expected[horizon + off] = profile[off] * pitch
+
+    # --- ground rows: only shortfalls against each row's own fitted reference ---
+    # `floor_intact` is decided on the NEAR rows (the TOF_FLOOR_NEAR_ROWS rows closest
+    # to the bumper, by absolute row index -- not by offset from horizon, since horizon
+    # now moves) by quorum, not on all cells by unanimity -- see TOF_FLOOR_NEAR_QUORUM
+    # for the measurement that forced this. Occlusion detection runs on every ground
+    # cell, near or far: a cell that reads SHORT is an object whichever row it is in.
+    near_rows = set(range(TOF_ROWS - TOF_FLOOR_NEAR_ROWS, TOF_ROWS))
     near_seen = near_ok = 0
-    for off, row in enumerate(ground):
-        expected = profile[off] * pitch
-        near = off >= TOF_FLOOR_NEAR_FROM_OFFSET
-        for col, v in enumerate(row):
+    for r in range(horizon, TOF_ROWS):
+        exp = expected.get(r)
+        near = r in near_rows
+        for col, v in enumerate(frame[r]):
             if near:
                 near_seen += 1
             if not 0 < v < TOF_NO_RETURN_MM:
                 continue                                 # no return: no information
-            if v < expected - TOF_FLOOR_OBSTACLE_MM:
-                out[horizon + off, col] = float(v)       # an occlusion IS the object
-            elif abs(v - expected) > TOF_FLOOR_INTACT_MM:
+            if exp is None:
+                continue                                 # no fitted reference: no claim
+            if v < exp - TOF_FLOOR_OBSTACLE_MM:
+                out[r, col] = float(v)                   # an occlusion IS the object
+            elif abs(v - exp) > TOF_FLOOR_INTACT_MM:
                 continue                                 # further than floor: a drop
             elif near:
                 near_ok += 1                             # clean floor, close in
@@ -1035,7 +1133,7 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
     floor_intact = near_seen > 0 and near_ok >= TOF_FLOOR_NEAR_QUORUM * near_seen
 
     # --- ahead rows: every return is a thing, minus the horizon-row echo ---
-    echo = profile[0] if profile else None
+    echo = expected.get(horizon)
     ahead: list[tuple[int, int, int]] = []
     for r, row in enumerate(frame[:horizon]):
         is_horizon = r == horizon - 1
@@ -1047,15 +1145,15 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
             ahead.append((r, col, v))
 
     # An INTACT floor is positive evidence the near path is empty: an object standing
-    # nearer than row 4's intercept would have occluded the ground rows first. So an
-    # ahead-row return closer than the floor we can still see is multipath.
+    # nearer than the horizon row's intercept would have occluded the ground rows
+    # first. So an ahead-row return closer than the floor we can still see is
+    # multipath.
     # THIS FILTER IS FOR THE AHEAD ROWS ONLY. Applying it to the ground rows deleted
     # every genuine near obstacle -- an occlusion reads SHORT, which is exactly what
     # the filter discarded -- and the robot drove into something until the reflex
     # caught it at 16 mm.
-    if floor_intact and ahead:
-        reach = profile[0] * pitch if profile else 0.0
-        ahead = [(r, c, v) for r, c, v in ahead if v >= reach]
+    if floor_intact and ahead and echo is not None:
+        ahead = [(r, c, v) for r, c, v in ahead if v >= echo]
     for r, c, v in ahead:
         out[r, c] = float(v)
 
