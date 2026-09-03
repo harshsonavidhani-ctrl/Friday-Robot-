@@ -330,6 +330,7 @@ class RobotConfig:
 
     # ---- exploration map ----
     map_size_m: float = 24.0            # rolling world grid edge (robot starts centred)
+    blackbox_seconds: float = 30.0      # ring-buffer depth; set from --blackbox-seconds
 
     @property
     def dt(self) -> float:
@@ -2079,7 +2080,29 @@ class FridayMotorDriver(MotorDriver):
 
         # The Uno resets when DTR toggles on open; nothing sent during the bootloader
         # window is heard, so wait it out before the handshake.
-        self._ser = serial.Serial(port, baud, timeout=1.0, write_timeout=0.2)
+        #
+        # A DEAD ADAPTER MUST NOT LOOK LIKE A BUG IN THIS FILE. /dev/ttyUSB0 survives
+        # the FTDI falling off the USB bus -- the node is created at boot and the
+        # kernel does not tear it down -- so resolve_serial_port() finds a perfectly
+        # good-looking symlink and the open then fails deep inside pyserial's DTR
+        # handling with a bare OSError(5) and a traceback that points at serialposix.
+        # MEASURED 2026-09-03: dmesg had "Unable to read latency timer: -32" seven
+        # seconds after boot and "device not accepting address, error -71" repeatedly
+        # after that, while lsusb showed the FTDI flapping in and out of existence.
+        # Nothing in software can fix that, so the least it can do is say so.
+        try:
+            self._ser = serial.Serial(port, baud, timeout=1.0, write_timeout=0.2)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not open the motor controller on {port}: {exc}. The device "
+                f"node exists but the adapter is not answering, which on this robot "
+                f"means the FTDI has dropped off the USB bus rather than that "
+                f"anything is wrong with this program -- the node outlives the "
+                f"device. Confirm with `lsusb | grep FTDI` (absent = gone) and "
+                f"`dmesg | tail` (errors -32/-71 = the adapter is flapping). It is a "
+                f"cable, connector or hub-power fault: reseat the FTDI's USB "
+                f"connection. The wheels stay stopped until it is back."
+            ) from exc
         time.sleep(2.0)
         self._ser.reset_input_buffer()
 
@@ -2529,7 +2552,10 @@ class ControlLoop:
         self.escape_after_ticks = 5
         self._stuck_ticks = 0
         self._warned_no_reverse = False
-        self.blackbox = BlackBox(30.0, cfg.control_hz)
+        # Ring buffer. 30 s at 10 Hz is 316 rows, and a longer run silently loses its
+        # BEGINNING -- which is where a run that starts badly puts its evidence.
+        # Sized from --blackbox-seconds so a long exploration can keep all of it.
+        self.blackbox = BlackBox(getattr(cfg, 'blackbox_seconds', 30.0), cfg.control_hz)
 
         self.last_action = np.zeros(2, np.float32)
         self._obs = np.zeros(cfg.obs_dim, np.float32)
@@ -3905,6 +3931,43 @@ def policy_proof(cfg: RobotConfig, loop: ControlLoop) -> int:
     return rc
 
 
+def build_motors(cfg: RobotConfig, args) -> MotorDriver:
+    """The ONE place a motor driver is constructed from parsed arguments.
+
+    There were two, and they had already drifted: friday_localnav_deploy -- which is
+    the file every real exploration run actually uses -- passed max_duty, watchdog,
+    the inversions, min_duty, creep_cutoff and turn_min_duty, and silently dropped
+    turn_kick_duty, turn_kick_cooldown_s and pulse_creep_duty. So the pivot break-away
+    kick and the creep pulse ran on their defaults no matter what was typed on the
+    command line, and nothing said so. A flag that is accepted and ignored is worse
+    than one that is rejected.
+
+    Anything added to FridayMotorDriver from here on is passed by this function and
+    therefore reaches both entry points, which is the whole point of it existing.
+    """
+    if args.motor == "friday":
+        motors = FridayMotorDriver(
+            cfg, resolve_serial_port("motor", args.motor_port),
+            max_duty=args.motor_max_duty, watchdog_s=args.motor_watchdog,
+            invert_left=args.motor_invert_left, invert_right=args.motor_invert_right,
+            min_duty=args.motor_min_duty, creep_cutoff=args.motor_creep_cutoff,
+            turn_min_duty=args.motor_turn_min_duty,
+            turn_min_omega=args.motor_turn_min_omega,
+            turn_kick_duty=args.motor_turn_kick_duty,
+            turn_kick_cooldown_s=args.motor_turn_kick_cooldown,
+            pulse_creep_duty=args.motor_pulse_duty,
+        )
+        LOGGER.warning("MOTORS ARE LIVE (max_duty=%.2f). Wheels can turn.",
+                       args.motor_max_duty)
+        return motors
+    if args.motor == "serial":
+        return SerialMotorDriver(cfg, args.motor_port)
+    motors = NullMotorDriver(cfg, verbose=args.verbose)
+    LOGGER.warning("Motor driver = NULL: commands are logged, wheels will NOT turn. "
+                   "Use --motor friday once you have bench-tested.")
+    return motors
+
+
 def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     """Assert the safety chain actually behaves, using synthetic inputs.
 
@@ -4232,6 +4295,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--calibrate", type=float, metavar="SECONDS", default=None,
                    help="Record the clear-floor visual baseline and exit.")
     p.add_argument("--duration", type=float, default=None, help="Stop after N seconds.")
+    p.add_argument("--blackbox-seconds", type=float, default=30.0,
+                   help="How much history the black box keeps. It is a RING BUFFER: a "
+                        "run longer than this loses its beginning, which is where a run "
+                        "that started badly put its evidence. Set it to the run length.")
     p.add_argument("--lidar-port", type=str, default="auto",
                    help="'auto' finds it under /dev/serial/by-id (stable across reboots).")
     p.add_argument("--lidar-type", choices=["ld19", "rplidar"], default="ld19",
@@ -4421,6 +4488,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = RobotConfig()
     cfg.cam_enabled = not args.no_cameras
     cfg.tof_enabled = not args.no_tof
+    cfg.blackbox_seconds = max(1.0, float(args.blackbox_seconds))
     cfg.lidar_min_valid_range = max(0.0, float(args.lidar_min_range))
     cfg.self_mask_deg = parse_self_mask(args.lidar_self_mask)
     cfg.lidar_offset_deg = args.lidar_offset_deg
@@ -4469,24 +4537,7 @@ def main(argv: list[str] | None = None) -> int:
         t.start()
 
     motors: MotorDriver
-    if args.motor == "friday":
-        motors = FridayMotorDriver(
-            cfg, resolve_serial_port("motor", args.motor_port),
-            max_duty=args.motor_max_duty, watchdog_s=args.motor_watchdog,
-            invert_left=args.motor_invert_left, invert_right=args.motor_invert_right,
-            min_duty=args.motor_min_duty, creep_cutoff=args.motor_creep_cutoff, turn_min_duty=args.motor_turn_min_duty,
-            turn_min_omega=args.motor_turn_min_omega,
-            turn_kick_duty=args.motor_turn_kick_duty,
-            turn_kick_cooldown_s=args.motor_turn_kick_cooldown,
-            pulse_creep_duty=args.motor_pulse_duty,
-        )
-        LOGGER.warning("MOTORS ARE LIVE (max_duty=%.2f). Wheels can turn.", args.motor_max_duty)
-    elif args.motor == "serial":
-        motors = SerialMotorDriver(cfg, args.motor_port)
-    else:
-        motors = NullMotorDriver(cfg, verbose=args.verbose)
-        LOGGER.warning("Motor driver = NULL: commands are logged, wheels will NOT turn. "
-                       "Use --motor serial once you have bench-tested.")
+    motors = build_motors(cfg, args)
 
     exit_code = 0
     loop = None

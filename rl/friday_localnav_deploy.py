@@ -361,22 +361,12 @@ def build_motors(cfg: RobotConfig, args) -> "pi_deploy.MotorDriver":
     would never have moved. Failing safe is right; failing safe while reporting
     success is not.
     """
-    if args.motor == "friday":
-        motors = pi_deploy.FridayMotorDriver(
-            cfg, pi_deploy.resolve_serial_port("motor", args.motor_port),
-            max_duty=args.motor_max_duty, watchdog_s=args.motor_watchdog,
-            invert_left=args.motor_invert_left, invert_right=args.motor_invert_right,
-            min_duty=args.motor_min_duty, creep_cutoff=args.motor_creep_cutoff,
-            turn_min_duty=args.motor_turn_min_duty,
-        )
-        LOGGER.warning("MOTORS ARE LIVE (max_duty=%.2f). Wheels can turn.",
-                       args.motor_max_duty)
-        return motors
-    if args.motor == "serial":
-        return pi_deploy.SerialMotorDriver(cfg, args.motor_port)
-    motors = pi_deploy.NullMotorDriver(cfg, verbose=args.verbose)
-    LOGGER.warning("Motor driver = NULL: commands are logged, wheels will NOT turn.")
-    return motors
+    # ONE construction site, in pi_deploy. This file used to build the driver itself
+    # and had already fallen behind main()'s version: turn_kick_duty,
+    # turn_kick_cooldown_s and pulse_creep_duty were never passed, so the pivot
+    # break-away kick and the creep pulse silently ran on defaults in every real
+    # exploration run -- which all go through THIS file, not through main().
+    return pi_deploy.build_motors(cfg, args)
 
 
 def main(argv: list[str] | None = None) -> int:
