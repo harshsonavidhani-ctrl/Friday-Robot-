@@ -57,7 +57,13 @@ check("a missing camera is ABSENT, never a guessed index",
 if "up" in found:
     check("the up camera resolves to a Video Capture node",
           cams._is_capture_node(found["up"].path), found["up"].path)
-    meta = found["up"].path.replace("video0", "video1")
+    # The metadata sibling is the -video-index1 link, NOT video<n+1> by arithmetic.
+    # This used to be found["up"].path.replace("video0", "video1"), which silently
+    # did NOTHING once the up camera enumerated as /dev/video2 -- so the test handed
+    # the REAL capture node to a check that asserts rejection, and failed. The by-id
+    # name is the only thing that survives a re-enumeration; index arithmetic is the
+    # exact mistake this whole module exists to avoid.
+    meta = found["up"].by_id.replace("-video-index0", "-video-index1")
     if Path(meta).exists():
         check("...and its metadata sibling is correctly REJECTED",
               not cams._is_capture_node(meta), meta)
