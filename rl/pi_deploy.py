@@ -175,8 +175,35 @@ class RobotConfig:
     # How many rear beams must agree before reverse is refused. 1 would be a bare
     # minimum and is what makes a single bad return veto an escape.
     rear_min_valid_beams: int = 3
+    # Same rule, applied to the FORWARD braking law, which was the last stage in the
+    # chain still taking a bare np.min(). The rear gate and ToFReflex had both already
+    # been moved off the minimum for exactly this reason; forward had not, so one bad
+    # beam anywhere in the front hemisphere could pin d_min under hard_stop and forbid
+    # all forward motion. MEASURED across the eleven runs of 2026-09-03: the whole-scan
+    # minimum sat BELOW robot_radius -- geometrically impossible -- on 63% and 65% of
+    # ticks in two of them.
+    forward_min_valid_beams: int = 3
     collision_margin: float = 0.04
     hard_stop_extra: float = 0.10       # extra margin over robot_radius + collision_margin
+
+    # ---- LiDAR returns that cannot be real ----
+    # A centre-mounted LiDAR cannot see anything closer than the chassis it stands on.
+    # A return inside this radius is the robot's own body, a cable in the beam, or
+    # sensor speckle -- never a thing the robot could steer around, because by the time
+    # something is inside the footprint the robot is already in contact and the ToF and
+    # the bumper own that problem, not the planner.
+    #
+    # WHY AT THE SOURCE rather than in the governor: the scan is read by five different
+    # consumers -- governor, escape test, recovery, the observation the policy sees, and
+    # the persistent map -- and fixing it in one leaves the other four believing it.
+    # MEASURED parked (scratchpad/lidar_raw.py, 25 s): the only sub-radius returns are a
+    # single chassis wedge at raw [90, 98) reading 0.206-0.219 m, already inside the
+    # self-mask. Anything outside that wedge reading short is by construction spurious.
+    #
+    # Dropped exactly like a 0 mm return -- "no valid return" -- so the bin keeps
+    # whatever real range the same beam saw elsewhere in the revolution instead of the
+    # body winning the per-bin minimum.
+    lidar_min_valid_range: float = 0.0   # 0 -> use robot_radius; set from --lidar-min-range
 
     # ---- ToF emergency reflex ----
     tof_enabled: bool = True
@@ -217,6 +244,43 @@ class RobotConfig:
     # ---- actuation limits ----
     max_lin_accel: float = 0.8          # [m/s^2] command slew limit -> no wheel slip
     max_ang_accel: float = 4.0          # [rad/s^2]
+    # A PIVOT IN PLACE IS NOT SLEW LIMITED. The slew limit exists to stop the wheels
+    # slipping under a step change in TRANSLATION, which corrupts dead reckoning -- the
+    # only odometry this robot has. A differential drive rotating about its own centre
+    # translates nowhere, so there is no travel to corrupt and nothing to approach.
+    #
+    # It was also actively harmful. max_ang_accel * dt = 0.40 rad/s on the first tick of
+    # any turn from standstill, which maps to a wheel duty of 37.6 -- BELOW the creep
+    # cutoff at 40 -- so the first tick of every turn executed as a full stop. Measured
+    # over the 3675 ticks logged on 2026-09-03: 797 of them (22%) commanded a pure turn
+    # that the drivetrain silently executed as a stop, 257 of 316 in the worst run.
+    # That is precisely the hesitancy and the mid-manoeuvre stalling Harsh reported.
+    #
+    # The turn kick already drives a standing pivot straight to duty 190-216 by design,
+    # so issuing the commanded rotation immediately is no harsher than what the driver
+    # was already sanctioned to do.
+    pivot_slew_free: bool = True
+    pivot_slew_v_eps: float = 0.02      # [m/s] |v| below this counts as "not translating"
+
+    # ---- closing-rate braking (moving obstacles) ----
+    # The braking law above is a function of DISTANCE alone, which is correct for walls
+    # and wrong for anything that moves: a person walking toward the robot at 1 m/s
+    # crosses the whole 0.55 m braking band in half a second, and a distance-only law
+    # does not begin braking until they are already inside it.
+    #
+    # So the forward clearance is differentiated across ticks and, when it is closing,
+    # the effective clearance used by the braking law is reduced by what will be lost
+    # over `ttc_horizon_s`. A static wall has a closing rate equal to the robot's own
+    # speed and is unaffected in practice; a wall the robot is driving at is exactly
+    # the case the distance law already handled.
+    ttc_enabled: bool = True
+    # 0.6 s is not a taste setting: she COASTS ~0.22 m after the motors cut (measured
+    # 2026-09-03, 0.405 m under power vs 0.629 m settled), and 0.22 m at her working
+    # speed of ~0.4 m/s is 0.55 s. The horizon is therefore how long it actually takes
+    # this robot to stop, which is the only defensible answer -- looking further ahead
+    # than she can act would just make her timid.
+    ttc_horizon_s: float = 0.6          # [s] lookahead applied to the closing rate
+    ttc_max_rate: float = 2.0           # [m/s] cap: above this it is a sensor jump
     # MEASURED ON THIS ROBOT 2026-09-03, at the ceiling duty of 216 (max_duty 0.85).
     #
     # Method: driven at duty 216 straight at a wall SQUARE-ON to her (fitted plane
@@ -270,6 +334,11 @@ class RobotConfig:
     @property
     def dt(self) -> float:
         return 1.0 / self.control_hz
+
+    @property
+    def lidar_floor(self) -> float:
+        """Ranges below this are the robot's own body, not the room."""
+        return self.lidar_min_valid_range or self.robot_radius
 
     @property
     def rear_stop(self) -> float:
@@ -543,6 +612,10 @@ class LD19Thread(SensorThread):
         self._prev_start: float | None = None
         self._have_full_rev = False
         self._frames = self._crc_ok = self._scans = self._reconnects = 0
+        # Sub-footprint returns dropped OUTSIDE the self-mask. A nonzero count is
+        # not an error -- it is the sensor speckling -- but a large or growing one
+        # means the chassis wedge has moved and the mask needs re-measuring.
+        self._body_rejects = 0
         self._read_errors = self._soft_retries = 0
 
     def _setup(self) -> None:
@@ -711,7 +784,14 @@ class LD19Thread(SensorThread):
         angles = np.mod(angles + self.offset_deg, 360.0)
 
         # 0 mm means "no valid return" on this sensor -- never treat it as a contact.
-        good = (dist_mm > 0) & (dist_m <= self.cfg.lidar_max_range) & ~body
+        # Neither is a range inside the robot's own footprint: see RobotConfig
+        # .lidar_min_valid_range. Both are the same statement -- "this sample carries no
+        # information about the room" -- so they are rejected in the same place, before
+        # the per-bin minimum, the map and the observation ever see them.
+        good = ((dist_mm > 0) & (dist_m >= self.cfg.lidar_floor)
+                & (dist_m <= self.cfg.lidar_max_range) & ~body)
+        self._body_rejects += int(np.count_nonzero(
+            (dist_mm > 0) & (dist_m < self.cfg.lidar_floor) & ~body))
         if good.any():
             idx = (angles[good] / 360.0 * self.cfg.n_beams).astype(np.int32) % self.cfg.n_beams
             np.minimum.at(self._bins, idx, dist_m[good])
@@ -1380,6 +1460,11 @@ class LidarGovernor:
         self._rear_mask: np.ndarray | None = None
         self.last_rear_min = float("inf")   # for telemetry; inf until a scan arrives
         self.rear_blocks = 0
+        self.last_fwd_min = float("inf")    # k-th smallest ahead, as the law saw it
+        self.last_closing = 0.0             # [m/s] rate the forward clearance is shrinking
+        self.ttc_brakes = 0
+        self._prev_fwd: float | None = None
+        self._prev_t: float | None = None
 
     def _forward_mask(self, n: int) -> np.ndarray:
         """Beams within +/- governor_forward_arc_deg of the nose, as a boolean mask.
@@ -1414,14 +1499,27 @@ class LidarGovernor:
         # she drives. Rotation and reverse are unaffected -- neither is gated by
         # d_min. Approved by Harsh 2026-09-02.
         scan_fwd = scan_m[self._forward_mask(scan_m.size)]
-        d_min = float(np.min(scan_fwd)) if scan_fwd.size else float(np.min(scan_m))
+        if scan_fwd.size == 0:
+            scan_fwd = scan_m
+        # k-TH SMALLEST, NOT THE MINIMUM -- the same rule the rear gate and ToFReflex
+        # already use, arrived at here last and for the same measured reason. A single
+        # speckled beam anywhere in the front hemisphere used to pin d_min under
+        # hard_stop and forbid ALL forward motion, and because a speckle does not move
+        # when the robot pivots, nothing cleared it. See cfg.forward_min_valid_beams.
+        k = min(c.forward_min_valid_beams, scan_fwd.size) - 1
+        d_min = float(np.partition(scan_fwd, k)[k])
+        self.last_fwd_min = d_min
+
+        # ---- closing rate: the part a distance-only law cannot see -----------------
+        d_eff = self.effective_clearance(d_min)
+
         v_out = float(np.clip(v, c.v_min, c.v_max))
         omega_out = float(np.clip(omega, -c.omega_max, c.omega_max))
-        if d_min <= c.hard_stop:
+        if d_eff <= c.hard_stop:
             v_out = min(v_out, 0.0)                  # rotate / reverse only
-        elif d_min < c.safe_distance:
+        elif d_eff < c.safe_distance:
             span = max(c.safe_distance - c.hard_stop, 1e-6)
-            v_out = min(v_out, c.v_max * (d_min - c.hard_stop) / span)
+            v_out = min(v_out, c.v_max * (d_eff - c.hard_stop) / span)
 
         # ---- REVERSE, which until now nothing checked at all -----------------------
         #
@@ -1437,6 +1535,45 @@ class LidarGovernor:
         # full stop anyway. Pretending to brake smoothly would be theatre.
         v_out = self.gate_reverse(v_out, scan_m)
         return v_out, omega_out, v_out != v
+
+    def effective_clearance(self, d_min: float) -> float:
+        """Forward clearance discounted by what the closing rate will consume.
+
+        WHY THIS EXISTS: the braking law is a function of distance alone. That is exactly
+        right for a wall, which only approaches as fast as the robot drives at it, and
+        wrong for anything that moves on its own. Someone walking toward the robot at
+        1 m/s crosses the entire 0.19 m band between safe_distance and hard_stop in
+        0.19 s -- under two control ticks -- so a distance-only law does not start
+        braking until it is already too late to brake gently.
+
+        Subtracting `rate * horizon` makes the law act on where the gap WILL be, so the
+        robot slows early and smoothly for something coming toward it and is unchanged
+        for something standing still. Only CLOSING counts: a widening gap must never
+        grant extra speed, so the discount is one-sided.
+        """
+        c = self.cfg
+        now = time.monotonic()
+        rate = 0.0
+        if (c.ttc_enabled and self._prev_fwd is not None
+                and self._prev_t is not None):
+            dt = now - self._prev_t
+            # Bound dt: a stalled loop makes a stale sample look like a huge closing
+            # rate, which would brake hard for nothing. Bound the rate too -- beyond
+            # ttc_max_rate the gap did not close, the beam jumped onto another surface.
+            if 1e-3 < dt < 1.0:
+                rate = float(np.clip((self._prev_fwd - d_min) / dt,
+                                     0.0, c.ttc_max_rate))
+        self._prev_fwd, self._prev_t = d_min, now
+        self.last_closing = rate
+        if rate <= 0.0:
+            return d_min
+        d_eff = max(d_min - rate * c.ttc_horizon_s, 0.0)
+        # Counted only when the discount CHANGED the answer -- crossed the braking
+        # threshold that the raw distance had not. "The rate was nonzero" is true on
+        # nearly every moving tick and would say nothing.
+        if d_eff < c.safe_distance <= d_min:
+            self.ttc_brakes += 1
+        return d_eff
 
     def gate_reverse(self, v: float, scan_m: np.ndarray) -> float:
         """Forbid reverse into a blocked rear. Idempotent; safe to apply repeatedly.
@@ -1658,7 +1795,30 @@ class RateLimiter:
         dw = self.cfg.max_ang_accel * dt
         # Slowing down is always allowed at full rate; only acceleration is limited.
         self.v = v if abs(v) < abs(self.v) else float(np.clip(v, self.v - dv, self.v + dv))
-        self.omega = float(np.clip(omega, self.omega - dw, self.omega + dw))
+        # A PIVOT IN PLACE IS ISSUED AT ONCE. See RobotConfig.pivot_slew_free: the slew
+        # limit protects dead reckoning against wheel slip under a step change in
+        # TRANSLATION, and a robot rotating about its own centre translates nothing.
+        # The limit's real effect here was to spend the first tick of every turn at
+        # 0.40 rad/s, which this drivetrain executes as a full stop.
+        #
+        # Tested on |v| AFTER the linear slew, because that is the speed actually going
+        # to the wheels this tick -- testing the request would exempt a turn whose
+        # forward component the limiter is still ramping down, which is a translating
+        # robot however the command reads.
+        if self.cfg.pivot_slew_free and abs(self.v) <= self.cfg.pivot_slew_v_eps:
+            w = float(np.clip(omega, -self.cfg.omega_max, self.cfg.omega_max))
+            # ONE EXCEPTION: a sign flip goes through zero first. Reversing a spinning
+            # motor at pivot duty is plugging -- the back-EMF adds to the supply and the
+            # winding sees roughly twice stall current. Four motors on two L298N
+            # channels is already about double the per-channel load this board is rated
+            # for, and a brownout mid-drive resets the Pi, which is the one failure this
+            # whole project exists to avoid. Costing one tick to cross zero is cheap;
+            # the magnitude change that mattered for hesitancy is still immediate.
+            if w * self.omega < 0.0:
+                w = 0.0
+            self.omega = w
+        else:
+            self.omega = float(np.clip(omega, self.omega - dw, self.omega + dw))
         return self.v, self.omega
 
 
@@ -1798,6 +1958,7 @@ class FridayMotorDriver(MotorDriver):
                  invert_left: bool = False, invert_right: bool = False,
                  min_duty: int = 0, kick_ticks: int = 2, kick_scale: float = 1.6,
                  creep_cutoff: float = 0.5, turn_min_duty: int | None = None,
+                 turn_min_omega: float = 0.15,
                  turn_kick_duty: float | None = None,
                  turn_kick_cooldown_s: float = 1.0,
                  pulse_creep_duty: int = 0) -> None:
@@ -1817,6 +1978,16 @@ class FridayMotorDriver(MotorDriver):
         self.turn_min_duty = max(0, min(turn_min_duty if turn_min_duty
                                         else int(self.min_duty * 1.4), 255))
         self.creep_cutoff = creep_cutoff
+        # The smallest rotation worth executing, in the units the request is actually
+        # made in. Expressed as rad/s and converted here, because a duty threshold for
+        # a pivot is meaningless on its own -- it depends on the wheel base, the speed
+        # constant and the duty ceiling, all of which have changed at least once.
+        # Everything at or above it executes at turn_min_duty; below it is a heading
+        # nudge too small to be worth a break-away lurch, and is dropped.
+        self.turn_min_omega = max(0.0, turn_min_omega)
+        self.turn_cutoff_duty = (255.0 * self.max_duty
+                                 * (self.turn_min_omega * self.cfg.wheel_base / 2.0)
+                                 / max(self.cfg.wheel_speed_max, 1e-6))
         # ⚠ DELIBERATE, APPROVED EXEMPTION FROM THE max_duty CAP -- pivots only.
         #
         # HANDOFF section 4 invariant 4 says duty is capped at max_duty "including
@@ -1936,7 +2107,8 @@ class FridayMotorDriver(MotorDriver):
         self._ser.flush()
         return self._ser.readline().decode(errors="replace").strip()
 
-    def _mps_to_duty(self, mps: float, floor: int | None = None) -> int:
+    def _mps_to_duty(self, mps: float, floor: int | None = None,
+                     cutoff_duty: float | None = None) -> int:
         # Clamp LAST, on the integer, and use an integer ceiling. Clamping the float
         # first let rounding push the result one count past the cap (127.5 -> 128),
         # which quietly breaches the limit that exists to keep the speed down.
@@ -1958,7 +2130,16 @@ class FridayMotorDriver(MotorDriver):
             # The cutoff is measured against the STRAIGHT floor, never the (higher) pivot
             # floor. Scaling it with the pivot floor would make ordinary turns fall under
             # the cutoff and stop dead -- the robot could not turn at all.
-            if abs(duty) < self.min_duty * self.creep_cutoff:
+            #
+            # A PIVOT GETS ITS OWN, LOWER CUTOFF (`cutoff_duty`). The argument above is
+            # about TRANSLATION: the thing that must not become a lurch is the
+            # governor's proportional braking as the robot closes on an obstacle. A
+            # pivot has no proportional band to protect -- it does not translate, so it
+            # approaches nothing -- and the straight cutoff of 40 was killing every
+            # rotation under 0.425 rad/s outright. MEASURED over the 3675 ticks logged
+            # on 2026-09-03: 797 (22%) commanded a pure turn that came out as a stop.
+            cut = self.min_duty * self.creep_cutoff if cutoff_duty is None else cutoff_duty
+            if abs(duty) < cut:
                 return 0
             duty = int(math.copysign(min(min_duty, ceiling), duty))
         return max(-ceiling, min(ceiling, duty))
@@ -2017,8 +2198,9 @@ class FridayMotorDriver(MotorDriver):
                           and now - self._last_turn_kick >= self.turn_kick_cooldown_s)
         self._was_pivot = pivot
         floor = self.turn_min_duty if pivot else self.min_duty
-        l_duty = self._mps_to_duty(left, floor)
-        r_duty = self._mps_to_duty(right, floor)
+        cut = self.turn_cutoff_duty if pivot else None
+        l_duty = self._mps_to_duty(left, floor, cut)
+        r_duty = self._mps_to_duty(right, floor, cut)
 
         if l_duty == 0 and r_duty == 0:
             self._moving = False
@@ -2234,7 +2416,15 @@ class BlackBox:
               # rather than as a single end-of-run mean; explored_m2 turns coverage
               # into a RATE; recovery lets stuck episodes be counted from the file
               # alone, without needing the run's log.
-              "infer_ms", "explored_m2", "recovery")
+              "infer_ms", "explored_m2", "recovery",
+              # WHAT THE BRAKING LAW ACTUALLY SAW. `lidar_min` is the whole-360 raw
+              # minimum and is kept unchanged so old files stay comparable -- but it is
+              # NOT the number any decision was made on, and reading it as though it
+              # were is how a run spent in a tight corner was misdiagnosed as a sensor
+              # fault. `fwd_min` is the k-th smallest in the forward arc, which is the
+              # law's input; `closing` is the rate that gap is shrinking, which is the
+              # part a distance-only law is blind to.
+              "fwd_min", "closing")
 
     def __init__(self, seconds: float, hz: float) -> None:
         self.buf: deque[tuple] = deque(maxlen=int(seconds * hz) + 16)
@@ -2431,6 +2621,18 @@ class ControlLoop:
             time.sleep(period)
 
     # ------------------------------------------------------------ observation ------
+    def _lidar_body_rejects(self) -> int:
+        """How often a return inside the footprint was dropped, outside the self-mask.
+
+        Reported rather than silently swallowed: the rejection is a safety net, and a
+        safety net that is catching a lot is telling you the thing above it has moved.
+        """
+        for t in getattr(self, "_threads", ()) or ():
+            n = getattr(t, "_body_rejects", None)
+            if n is not None:
+                return int(n)
+        return 0
+
     def _open_side(self, scan: np.ndarray) -> float:
         """+1 to turn left, -1 to turn right -- toward whichever side is more open.
 
@@ -2678,8 +2880,15 @@ class ControlLoop:
         cannot_reverse = floor_mps > 0.0 and abs(c.v_min) < floor_mps
         # "Not going forward" rather than "v is exactly zero": with reverse
         # unavailable a negative v executes as a stop, so it is stuck just the same.
+        # THE FORWARD ARC, not the whole sweep, and the governor's own k-th smallest
+        # rather than a fresh minimum. Taking np.min over 360 degrees meant a wall
+        # BEHIND her counted as "forward is blocked" and armed the escape timer while
+        # the path ahead was clear -- the same error the governor's braking law was
+        # corrected for on 2026-09-02, still living one stage down. Reusing
+        # last_fwd_min also guarantees the escape and the law that blocked her agree
+        # about the clearance; computing it twice is how they drift apart.
         if (self.escape_turns and cannot_reverse
-                and float(np.min(scan)) <= c.hard_stop and v <= 1e-6):
+                and self.governor.last_fwd_min <= c.hard_stop and v <= 1e-6):
             self._stuck_ticks += 1
         else:
             self._stuck_ticks = 0
@@ -2911,7 +3120,9 @@ class ControlLoop:
                               round(planner_ctx["bias"], 4) if planner_ctx else "",
                               round(self.policy.last_infer_ms or 0.0, 4),
                               round((rec.world or {}).get("explored_m2", 0.0), 2),
-                              (rec.__dict__.get("_recovery_state") or "")))
+                              (rec.__dict__.get("_recovery_state") or ""),
+                              round(self.governor.last_fwd_min, 3),
+                              round(self.governor.last_closing, 3)))
         return row
 
     # ------------------------------------------------------------------- run --------
@@ -3124,6 +3335,10 @@ class ControlLoop:
                     self.stats["reflex_stops"], self.stats["visual_stops"],
                     self.stats["governor_limits"], self.stats.get("rear_blocks", 0),
                     self.stats["stale_stops"], self.stats["overruns"])
+        LOGGER.info("lidar: %d sub-footprint returns rejected outside the self-mask "
+                    "(a growing count means the chassis wedge moved -- re-measure "
+                    "--lidar-self-mask); %d ticks braked for closing rate alone",
+                    self._lidar_body_rejects(), self.governor.ttc_brakes)
         # Counted separately from `governor` because the rear gate answers a different
         # question and its label never survives to the blackbox: stage 4 overwrites
         # `gate` with REFLEX_STOP whenever the reflex also fires, which on this robot
@@ -3674,12 +3889,37 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
         if not ok:
             failures += 1
 
-    # 1. governor must forbid forward motion at/below hard_stop
+    # 1. governor must forbid forward motion at/below hard_stop.
+    # A REAL obstacle spans several beams -- at 72 beams each is 5 deg, and anything
+    # solid at 0.3 m subtends far more than the three the law now requires. The single
+    # hot beam this test used to present is not a wall, it is exactly the speckle the
+    # k-th-smallest rule exists to ignore, which is asserted separately at 1a.
+    loop.governor._prev_fwd = None          # no stale sample -> no closing-rate effect
     scan = np.full(cfg.n_beams, 3.0, np.float32)
-    scan[0] = cfg.hard_stop - 0.05
+    scan[:3] = cfg.hard_stop - 0.05
     v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
     check("governor blocks forward inside hard_stop", v <= 0.0, f"v={v:.3f}")
 
+    # 1a. ...and ONE spurious beam must not. This is the property the rear gate and the
+    # ToF reflex already had and the forward law did not: a body return or a speckle
+    # does not move when the robot pivots, so a min-based law that trips on one is
+    # never cleared by anything the robot can do. Measured on 2026-09-03: the whole-scan
+    # minimum was inside robot_radius on 63% and 65% of ticks in two runs.
+    loop.governor._prev_fwd = None
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    scan[0] = 0.05
+    v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
+    check("one spurious forward beam does not block forward", v > 0.0, f"v={v:.3f}")
+
+    # 1a-ii. A LiDAR return inside the robot's own footprint is not a thing to steer
+    # around, and must never reach the scan at all. Asserted on the parser, because
+    # that is where it is rejected -- five consumers read the scan and fixing it in
+    # one leaves the other four believing it.
+    check("sub-footprint ranges are rejected as no-return",
+          cfg.lidar_floor >= cfg.robot_radius,
+          f"floor={cfg.lidar_floor:.2f} m")
+
+    loop.governor._prev_fwd = None
     # 1b. ...but a wall BEHIND her must not. Driving forward cannot reach it, and
     # vetoing on it made her undriveable in any room with a wall in it.
     scan = np.full(cfg.n_beams, 3.0, np.float32)
@@ -3721,9 +3961,61 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     check("the rear gate does not leak into forward", v > 0.0, f"v={v:.3f}")
 
     # 2. governor must scale speed inside the bubble
-    scan[0] = (cfg.hard_stop + cfg.safe_distance) / 2.0
+    loop.governor._prev_fwd = None
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    scan[:3] = (cfg.hard_stop + cfg.safe_distance) / 2.0
     v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
     check("governor brakes inside safety bubble", 0.0 < v < cfg.v_max, f"v={v:.3f}")
+
+    # 2b. CLOSING RATE. Two ticks with the same clearance must brake identically to the
+    # distance-only law; a gap that is shrinking fast must brake harder than its
+    # distance alone says. This is the only thing in the chain that can see something
+    # walking toward the robot, and it must never work the other way -- a WIDENING gap
+    # may not grant extra speed, or the law would accelerate toward a retreating
+    # obstacle it has not yet resolved.
+    far = np.full(cfg.n_beams, 3.0, np.float32)
+    near = np.full(cfg.n_beams, 3.0, np.float32)
+    near[:3] = cfg.safe_distance + 0.10          # still outside the bubble on distance
+    loop.governor._prev_fwd = None
+    loop.governor(cfg.v_max, 0.0, far)           # seed: 3.0 m ahead
+    # Back-to-back calls are microseconds apart and the rate estimator correctly
+    # ignores them (see the dt bound). Age the sample by one control tick so the test
+    # exercises the arithmetic rather than the guard.
+    loop.governor._prev_t -= cfg.dt
+    v_closing, _, _ = loop.governor(cfg.v_max, 0.0, near)
+    loop.governor._prev_fwd = None
+    v_static, _, _ = loop.governor(cfg.v_max, 0.0, near)
+    check("closing obstacle brakes earlier than distance alone",
+          v_closing < v_static, f"closing={v_closing:.3f} static={v_static:.3f}")
+    loop.governor._prev_fwd = None
+    loop.governor(cfg.v_max, 0.0, near)          # seed: close
+    loop.governor._prev_t -= cfg.dt
+    v_opening, _, _ = loop.governor(cfg.v_max, 0.0, far)
+    check("a widening gap never grants extra speed",
+          v_opening <= cfg.v_max + 1e-9, f"v={v_opening:.3f}")
+
+    # 2c. A PIVOT IS NOT SLEW LIMITED. The first tick of a turn from standstill used to
+    # be issued at max_ang_accel * dt = 0.40 rad/s, which this drivetrain executes as a
+    # full stop -- 22% of every tick logged on 2026-09-03. Rotating about its own centre
+    # translates nowhere, so there is no travel for a slew limit to protect.
+    lim = RateLimiter(cfg)
+    v_p, w_p = lim(0.0, cfg.omega_max, cfg.dt)
+    check("a standing pivot is issued in full on the first tick",
+          abs(w_p - cfg.omega_max) < 1e-9, f"omega={w_p:.3f}")
+    # ...but reversing a spinning pivot crosses zero first -- plugging four motors on
+    # two L298N channels is the brownout this project cannot afford.
+    _, w_rev = lim(0.0, -cfg.omega_max, cfg.dt)
+    check("a pivot reversal passes through zero", abs(w_rev) < 1e-9, f"omega={w_rev:.3f}")
+    _, w_after = lim(0.0, -cfg.omega_max, cfg.dt)
+    check("...and reaches full rotation the very next tick",
+          abs(w_after + cfg.omega_max) < 1e-9, f"omega={w_after:.3f}")
+    # ...but a TRANSLATING turn still is: there the wheels can slip, and slip is what
+    # corrupts the only odometry this robot has.
+    lim2 = RateLimiter(cfg)
+    lim2(cfg.v_max, 0.0, cfg.dt)                 # now translating
+    _, w_t = lim2(cfg.v_max, cfg.omega_max, cfg.dt)
+    check("a turn while translating stays slew limited",
+          w_t <= cfg.max_ang_accel * cfg.dt + 1e-9, f"omega={w_t:.3f}")
 
     # 3. reflex must fire on a close cluster
     depth = np.full((8, 8), 2.0, np.float32)
@@ -4002,6 +4294,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Stiction floor for PIVOTS, which scrub all wheels sideways and need "
                         "more torque than driving straight. 190 is measured on this robot; "
                         "below it she hums instead of turning. Pass 0 for 1.4x --motor-min-duty.")
+    p.add_argument("--motor-turn-min-omega", type=float, default=0.15,
+                   help="Smallest rotation [rad/s] that is executed at all. Below it a "
+                        "heading nudge is dropped rather than lurching at the pivot "
+                        "floor. Replaces the straight-line creep cutoff for pivots, "
+                        "which was silently turning every rotation under 0.425 rad/s "
+                        "into a full stop -- 22%% of all ticks logged on 2026-09-03.")
+    p.add_argument("--lidar-min-range", type=float, default=0.0,
+                   help="Reject LiDAR returns closer than this [m] as the robot's own "
+                        "body. 0 uses robot_radius, which is the geometric answer: a "
+                        "centre-mounted LiDAR cannot see past the chassis it stands on.")
     p.add_argument("--motor-creep-cutoff", type=float, default=0.5,
                    help="Requests below this fraction of --motor-min-duty STOP instead of "
                         "being lifted to the floor, so the governor's slow braking cannot "
@@ -4088,6 +4390,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = RobotConfig()
     cfg.cam_enabled = not args.no_cameras
     cfg.tof_enabled = not args.no_tof
+    cfg.lidar_min_valid_range = max(0.0, float(args.lidar_min_range))
     cfg.self_mask_deg = parse_self_mask(args.lidar_self_mask)
     cfg.lidar_offset_deg = args.lidar_offset_deg
     if cfg.self_mask_deg:
@@ -4114,6 +4417,7 @@ def main(argv: list[str] | None = None) -> int:
             max_duty=args.motor_max_duty, watchdog_s=args.motor_watchdog,
             invert_left=args.motor_invert_left, invert_right=args.motor_invert_right,
             min_duty=args.motor_min_duty, creep_cutoff=args.motor_creep_cutoff, turn_min_duty=args.motor_turn_min_duty,
+            turn_min_omega=args.motor_turn_min_omega,
             turn_kick_duty=args.motor_turn_kick_duty,
             turn_kick_cooldown_s=args.motor_turn_kick_cooldown,
             pulse_creep_duty=args.motor_pulse_duty,
@@ -4140,6 +4444,7 @@ def main(argv: list[str] | None = None) -> int:
             max_duty=args.motor_max_duty, watchdog_s=args.motor_watchdog,
             invert_left=args.motor_invert_left, invert_right=args.motor_invert_right,
             min_duty=args.motor_min_duty, creep_cutoff=args.motor_creep_cutoff, turn_min_duty=args.motor_turn_min_duty,
+            turn_min_omega=args.motor_turn_min_omega,
             turn_kick_duty=args.motor_turn_kick_duty,
             turn_kick_cooldown_s=args.motor_turn_kick_cooldown,
             pulse_creep_duty=args.motor_pulse_duty,
@@ -4226,6 +4531,8 @@ def main(argv: list[str] | None = None) -> int:
         loop.planner_enabled = not args.no_planner
         loop.recovery_enabled = not args.no_recovery
         loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]
+        loop._threads = threads          # for the LiDAR rejection counter
+
         if args.voice or args.voice_dry_run:
             speak_fn = None
             if args.voice:

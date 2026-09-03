@@ -170,12 +170,32 @@ check("the room behind the mask is still reported",
 
 # Same sweep with the mask off must still see the body -- otherwise the test above
 # would pass for the wrong reason (e.g. the frames never reaching the bins at all).
+# The geometric floor (cfg.lidar_floor) now rejects sub-footprint ranges too, so the
+# control has to lower it as well; leaving it in place would catch the body and the
+# control would pass whether or not the mask ever did anything.
 th6, slot6 = make_thread()
 th6.self_mask_deg = ()
-sweep_with_body(th6)
-scan6 = slot6.read()[0]
+floor_was = cfg.lidar_min_valid_range
+cfg.lidar_min_valid_range = 0.01
+try:
+    sweep_with_body(th6)
+    scan6 = slot6.read()[0]
+finally:
+    cfg.lidar_min_valid_range = floor_was
 check("without the mask the body IS seen (control)",
       abs(float(scan6.min()) - BODY_M) < 0.02, f"min={float(scan6.min()):.2f} m")
+
+# ...and the geometric floor is a SECOND, independent net under the mask: with the mask
+# off and the floor at its real value the body must not reach the scan at all. This is
+# the property that makes a leaking or mis-measured self-mask a degradation rather than
+# a robot that cannot drive -- the failure mode Harsh actually hit.
+th7, slot7 = make_thread()
+th7.self_mask_deg = ()
+sweep_with_body(th7)
+scan7 = slot7.read()[0]
+check("the geometric floor catches the body when the mask does not",
+      float(scan7.min()) >= cfg.lidar_floor,
+      f"min={float(scan7.min()):.2f} m vs floor {cfg.lidar_floor:.2f} m")
 
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)
