@@ -103,6 +103,8 @@ import cameras as _cameras  # noqa: E402
 from narrator import Narrator  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
+import friday_freespace as fs_mod  # noqa: E402
+from friday_freespace import FreeSpaceNavigator  # noqa: E402
 
 # Optional dependencies are imported lazily so `--simulate` runs on a bare machine.
 try:
@@ -302,6 +304,24 @@ class RobotConfig:
     visual_hazard_threshold: float = 0.65   # sustained score above this -> full stop
     visual_consec_frames: int = 3           # temporal consistency -> fewer false stops
     visual_min_speed_scale: float = 0.25    # a hazard never brakes below this fraction
+    # ---- free-space vision (friday_freespace) ----
+    # Harsh, 2026-09-03: "analyse all the available space in the environment and move
+    # according to the space available... when the sensors are not working the device
+    # uses the camera's vision to navigate like a self-driving vehicle."
+    freespace_enabled: bool = True
+    # ADVISORY. A nudge toward the open side, applied only while she is navigating
+    # normally. Small on purpose: the LiDAR is the authority on where things are, and
+    # a strong camera term fighting it is just a new way to zig-zag.
+    freespace_gain: float = 0.55            # [rad/s per rad of camera bearing]
+    freespace_max_nudge: float = 0.45       # [rad/s] ceiling on that
+    # FALLBACK. Only when a critical sensor has gone stale and the OTHER one has not,
+    # so something still covers the range this cannot. The camera is blind inside
+    # 0.87 m by geometry (see friday_freespace.CAM_HEIGHT_M), which is exactly the ToF's
+    # patch, so a fallback with both sensors down would be driving on nothing.
+    freespace_fallback: bool = True
+    freespace_v_max: float = 0.18           # [m/s] hard cap while driving on vision
+    freespace_stop_range: float = 1.00      # [m] closer than this ahead -> do not drive
+    freespace_heading_gain: float = 1.10    # [rad/s per rad] steering while on vision
 
     # ---- staleness deadlines [s] ----
     lidar_deadline: float = 0.40        # SAFETY CRITICAL -> stop when exceeded
@@ -2606,7 +2626,14 @@ class BlackBox:
               # reversing ticks read as "nothing was ever behind her" instead of as
               # "the threshold was too tight to fire" -- there was no column that could
               # tell those apart. Reverse is single-sensor; it needs its own evidence.
-              "rear_min")
+              "rear_min",
+              # WHAT THE CAMERAS SAW. The zig-zag analysis could not answer "was the
+              # camera pointing her somewhere sensible" because nothing recorded it --
+              # and for the first months of this project the honest answer was that
+              # there was no camera at all (cv2 was missing from the venv, so every
+              # frame was None). `cam_conf` is the column that makes that visible:
+              # a run of zeros means she is blind, whatever the logs say.
+              "cam_bearing", "cam_range", "cam_conf")
 
     def __init__(self, seconds: float, hz: float) -> None:
         self.buf: deque[tuple] = deque(maxlen=int(seconds * hz) + 16)
@@ -2657,6 +2684,11 @@ class ControlLoop:
         self.governor = LidarGovernor(cfg)
         self.reflex = ToFReflex(cfg)
         self.visual = VisualHazardMonitor(cfg, baseline)   # None => fail-open, disabled
+        # Where the space is, from the cameras. Advisory while the LiDAR is healthy;
+        # the only thing steering when it is not. See friday_freespace.
+        self.freespace = FreeSpaceNavigator()
+        self.free_view = self.freespace.last
+        self._cam_seen: dict[str, int] = {}
         # Up camera: measured image statistics, reported and never acted on. Explicitly
         # NOT object detection -- nothing here names what is in view, because nothing
         # that could is implemented.
@@ -2836,6 +2868,97 @@ class ControlLoop:
         # the chosen side is not a collision risk; the governor and reflex still run.
         return 1.0 if left >= right else -1.0
 
+    # ------------------------------------------------------------ cameras ---------
+    def _read_cameras(self) -> dict:
+        """Both camera slots, with anything older than cam_deadline dropped."""
+        frames: dict = {}
+        if not self.cfg.cam_enabled:
+            return frames
+        for key in ("cam_up", "cam_down"):
+            if key in self.slots:
+                fr, age = self.slots[key].read()
+                frames[key] = (fr if (fr is not None and age <= self.cfg.cam_deadline)
+                               else None)
+        return frames
+
+    def _update_freespace(self, frames: dict):
+        """Re-run the free-space estimate, but only on frames we have not seen.
+
+        The cameras publish at 15 fps and this loop runs at 10 Hz, so roughly a third
+        of ticks would otherwise re-analyse an image whose answer is already known.
+        Each analysis is ~3.6 ms measured; two cameras every tick is 7 ms of a budget
+        this loop already misses on 47% of ticks.
+        """
+        if not self.cfg.freespace_enabled:
+            return self.free_view
+        fresh = False
+        for key in ("cam_up", "cam_down"):
+            slot = self.slots.get(key)
+            if slot is None or frames.get(key) is None:
+                continue
+            if self._cam_seen.get(key) != slot.updates:
+                self._cam_seen[key] = slot.updates
+                fresh = True
+        if fresh:
+            self.free_view = self.freespace.update(frames.get("cam_up"),
+                                                   frames.get("cam_down"))
+        elif not any(f is not None for f in frames.values()):
+            # Both cameras gone. Do not keep steering on a remembered picture.
+            self.free_view = self.freespace.update(None, None)
+        return self.free_view
+
+    def _vision_drive(self, gate: str, scan, scan_age, depth_age):
+        """Drive on the cameras alone, because a critical sensor has gone stale.
+
+        Harsh, 2026-09-03: "make sure that when the sensors are not working the device
+        (YOU) uses the camera's vision to navigate through the environment like a
+        self-driving vehicle."
+
+        THE RULE THAT MAKES THIS SAFE TO DO AT ALL: it engages only when ONE of the
+        two critical sensors is stale. The camera is blind inside 0.87 m -- that is
+        geometry, not tuning (friday_freespace.CAM_HEIGHT_M) -- and that blind zone is
+        precisely the ToF's patch. With both sensors down there would be nothing
+        watching the metre she is about to drive through, so that case still stops,
+        exactly as before.
+
+        Capped at freespace_v_max, which is a third of v_max, because the distances
+        here come from an estimated camera height and an assumed level mount. Driving
+        on a number you cannot verify is the moment to go slowly.
+        """
+        c = self.cfg
+        view = self._update_freespace(self._read_cameras())
+        if not (c.freespace_fallback and view.usable):
+            return None
+        v = 0.0
+        if view.centre_range > c.freespace_stop_range and not view.near_blocked:
+            span = max(c.lidar_max_range - c.freespace_stop_range, 1e-6)
+            reach = (view.centre_range - c.freespace_stop_range) / span
+            v = float(np.clip(c.freespace_v_max * (0.35 + 0.65 * reach),
+                              0.0, c.freespace_v_max))
+        omega = float(np.clip(c.freespace_heading_gain * view.bearing,
+                              -c.omega_max, c.omega_max))
+        # Whichever sensor IS still alive keeps its veto. A stale LiDAR does not make
+        # the ToF's opinion less true, and the reflex thread is running regardless.
+        if scan is not None and scan_age <= c.lidar_deadline:
+            v, omega, _ = self.governor(v, omega, scan)
+        v, omega = self.limiter(v, omega, c.dt)
+        self.motors.drive(v, omega)
+        self.stats["vision_ticks"] = self.stats.get("vision_ticks", 0) + 1
+        rec = tlm.DecisionRecord(tick=self.stats["ticks"], obs_dim=c.obs_dim,
+                                 model_name=self.policy.model_name, model_loaded=True,
+                                 gate=gate, lidar_age=scan_age, tof_age=depth_age)
+        rec.add("vision_fallback", v, omega,
+                f"{view.source} sees {view.centre_range:.2f} m ahead, open "
+                f"{math.degrees(view.bearing):+.0f} deg (conf {view.confidence:.2f})")
+        rec.wire = self.motors.last_wire
+        self.last_record = rec
+        lidar_min = float(np.min(scan)) if scan is not None else float("nan")
+        return {"gate": gate, "v": v, "omega": omega,
+                "lidar_min": lidar_min, "tof_min": float("nan"), "visual": 0.0,
+                "v_policy": 0.0, "omega_policy": 0.0,
+                "v_raw": float("nan"), "omega_raw": float("nan"),
+                "authority": tlm.SRC_SAFETY, "loop_ms": 0.0}
+
     def _build_observation(self, scan: np.ndarray) -> np.ndarray:
         c = self.cfg
         frontier = self.map.update_and_frontier(scan)
@@ -2874,6 +2997,20 @@ class ControlLoop:
         depth, depth_age = self.slots["tof"].read()
 
         # ---- FAIL-SAFE: a stale safety-critical sensor means STOP, never "clear" ----
+        #
+        # ...unless the OTHER critical sensor is still healthy and the cameras can see,
+        # in which case she navigates on vision at a third of her top speed rather than
+        # standing still until someone reseats a USB plug. _vision_drive() carries the
+        # reasoning and returns None whenever it is not entitled to act, which puts the
+        # original stop back exactly as it was.
+        lidar_stale = scan is None or scan_age > c.lidar_deadline
+        tof_stale = c.tof_enabled and (depth is None or depth_age > c.tof_deadline)
+        if lidar_stale != tof_stale:
+            row = self._vision_drive("vision_" + ("lidar" if lidar_stale else "tof"),
+                                     scan, scan_age, depth_age)
+            if row is not None:
+                self.stats["ticks"] += 1
+                return row
         if scan is None or scan_age > c.lidar_deadline:
             self.motors.emergency_stop()
             self.limiter.reset()
@@ -3183,15 +3320,12 @@ class ControlLoop:
                     f"inside the {c.rear_stop:.2f} m rear stop")
 
         # ---- 3. visual gate (advisory) --------------------------------------------
-        frames = {}
+        frames = self._read_cameras()
         if c.cam_enabled:
-            for key in ("cam_up", "cam_down"):
-                if key in self.slots:
-                    fr, age = self.slots[key].read()
-                    frames[key] = fr if (fr is not None and age <= c.cam_deadline) else None
             # UP camera: measured context only, never motion authority. Its statistics
             # are recorded and reported; nothing downstream reads them.
             self.context.update(frames.get("cam_up"))
+            self._update_freespace(frames)
         # FLOOR HAZARD IS A DOWN-CAMERA QUESTION ONLY.
         #
         # VisualHazardMonitor scores a bottom-centre band -- "the floor the robot is
@@ -3221,6 +3355,36 @@ class ControlLoop:
         rec.add("visual", v, omega,
                 f"hazard score {self.visual.last_score:.2f} vs "
                 f"{c.visual_hazard_threshold:.2f}" if (vis_stop or vis_scale < 1.0) else "")
+
+        # ---- 3b. free-space advisory (a nudge, never an override) -----------------
+        #
+        # Harsh asked for the cameras to be used to "move according to the space
+        # available", and this is that -- at the authority it has earned. The camera
+        # tells her which way is OPEN, which is a shape and survives the fact that its
+        # height and tilt are estimated; the LiDAR remains the authority on where
+        # things ARE. So it adds a bounded turn rate and can touch nothing else.
+        #
+        # ONLY WHILE SHE IS ACTUALLY NAVIGATING. During an escape, a recovery or a
+        # reflex stop something more urgent has already decided where she is pointing,
+        # and a camera nudge on top of that is the same mistake as steering by two
+        # opinions at once -- which is a description of the zig-zag.
+        view = self.free_view
+        if (c.freespace_enabled and view.usable and v > 0.0
+                and gate in ("ok", "planner", "visual_slow", "governor", "tof_slow")):
+            nudge = float(np.clip(c.freespace_gain * view.bearing,
+                                  -c.freespace_max_nudge, c.freespace_max_nudge))
+            if abs(nudge) > 1e-3:
+                omega = float(np.clip(omega + nudge, -c.omega_max, c.omega_max))
+                self.stats["vision_nudges"] = self.stats.get("vision_nudges", 0) + 1
+                rec.add("freespace", v, omega,
+                        f"open {math.degrees(view.bearing):+.0f} deg ({view.source}, "
+                        f"conf {view.confidence:.2f}) -> nudge {nudge:+.2f} rad/s")
+        if c.freespace_enabled and view.near_blocked and v > 0.0:
+            # The down camera sees the half-metre the ToF's 8x8 patch samples between
+            # its zones. It slows her; it does not stop her -- that camera falls off
+            # the USB bus repeatedly on this robot and must not be able to end a run.
+            v = min(v, c.v_max * c.visual_min_speed_scale)
+            rec.add("freespace_near", v, omega, "down camera: floor gone at the bumper")
 
         # ---- 4. ToF reflex (hard veto) --------------------------------------------
         # Set by the emergency branch when the obstacle is far enough that turning in
@@ -3349,7 +3513,10 @@ class ControlLoop:
                               (rec.__dict__.get("_recovery_state") or ""),
                               round(self.governor.last_fwd_min, 3),
                               round(self.governor.last_closing, 3),
-                              round(min(self.governor.last_rear_min, 99.9), 3)))
+                              round(min(self.governor.last_rear_min, 99.9), 3),
+                              round(math.degrees(self.free_view.bearing), 1),
+                              round(self.free_view.centre_range, 2),
+                              round(self.free_view.confidence, 2)))
         return row
 
     # ------------------------------------------------------------------- run --------
@@ -3561,10 +3728,16 @@ class ControlLoop:
                     "cannot, so it turned toward open space instead)",
                     self.stats["no_reverse_turns"])
         LOGGER.info("interventions: reflex=%d visual=%d governor=%d rear=%d stale=%d "
-                    "overruns=%d",
+                    "scrape=%d overruns=%d",
                     self.stats["reflex_stops"], self.stats["visual_stops"],
                     self.stats["governor_limits"], self.stats.get("rear_blocks", 0),
-                    self.stats["stale_stops"], self.stats["overruns"])
+                    self.stats["stale_stops"], self.governor.scrape_brakes,
+                    self.stats["overruns"])
+        LOGGER.info("cameras: free-space updates=%d failures=%d, nudges=%d, "
+                    "ticks driven on vision=%d",
+                    self.freespace.updates, self.freespace.failures,
+                    self.stats.get("vision_nudges", 0),
+                    self.stats.get("vision_ticks", 0))
         LOGGER.info("lidar: %d sub-footprint returns rejected outside the self-mask "
                     "(a growing count means the chassis wedge moved -- re-measure "
                     "--lidar-self-mask); %d ticks braked for closing rate alone",
@@ -4454,10 +4627,66 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
         loop.recovery.update = real_update
     check("no stage reverses into a blocked rear", worst_v >= 0.0, f"min v={worst_v:.3f}")
 
-    # 8. stale LiDAR must stop the robot
+    # 8. stale LiDAR must stop the robot -- WHEN THERE IS NOTHING ELSE TO SEE WITH.
+    #    The cameras are cleared first so this asserts the original fail-safe rather
+    #    than whatever the free-space fallback happened to be holding.
+    loop.freespace.last = loop.free_view = fs_mod.FreeSpaceView(
+        np.zeros(9, np.float32), 0.0, 0.0, 0.0, "none")
+    loop._cam_seen.clear()
+    for key in ("cam_up", "cam_down"):
+        if key in loop.slots:
+            loop.slots[key]._value = None
     loop.slots["lidar"]._stamp = time.monotonic() - 10.0
     row = loop.tick()
-    check("stale lidar triggers stop", row["gate"] == "stale_lidar" and row["v"] == 0.0)
+    check("stale lidar with no camera still triggers stop",
+          row["gate"] == "stale_lidar" and row["v"] == 0.0, str(row["gate"]))
+
+    # 8a. ...but with the ToF healthy and a camera that can see, she navigates on
+    #     vision instead of standing still until someone reseats a USB plug. Harsh
+    #     asked for exactly this: "when the sensors are not working the device (YOU)
+    #     uses the camera's vision to navigate through the environment".
+    def _open_scene():
+        img = np.full((240, 320), 170, np.uint8)
+        img[:96, :] = 140                       # a wall well above the horizon
+        return img
+
+    loop.slots["tof"].publish(np.full((8, 8), cfg.tof_max_range, np.float32))
+    if "cam_up" in loop.slots:
+        loop.slots["cam_up"].publish(_open_scene())
+        loop._cam_seen.clear()
+        loop.slots["lidar"]._stamp = time.monotonic() - 10.0
+        row = loop.tick()
+        check("a stale lidar falls back to camera vision, not to a stop",
+              row["gate"] == "vision_lidar" and row["v"] > 0.0,
+              f"gate={row['gate']} v={row['v']:.3f}")
+        check("...and vision drives well under the normal speed limit",
+              row["v"] <= cfg.freespace_v_max + 1e-6,
+              f"v={row['v']:.3f} cap={cfg.freespace_v_max:.2f}")
+
+        # 8b. THE RULE THAT MAKES 8a SAFE. The camera cannot see the ground inside
+        #     0.87 m -- geometry, not tuning -- and that blind zone is the ToF's patch.
+        #     With BOTH critical sensors stale there is nothing watching the metre she
+        #     is about to drive through, so it must still be a stop.
+        loop.slots["lidar"]._stamp = time.monotonic() - 10.0
+        loop.slots["tof"]._stamp = time.monotonic() - 10.0
+        loop._cam_seen.clear()
+        loop.slots["cam_up"].publish(_open_scene())
+        row = loop.tick()
+        check("both sensors stale is a stop, however well the camera sees",
+              row["v"] == 0.0 and row["gate"].startswith("stale"),
+              f"gate={row['gate']} v={row['v']:.3f}")
+
+    # 8c. The advisory nudge is BOUNDED. It is a hint from a camera whose height and
+    #     tilt are estimates; it may lean her toward the open side and may not take
+    #     the wheel. An unbounded camera term fighting the LiDAR is a new zig-zag.
+    hard_left = fs_mod.FreeSpaceView(np.ones(9, np.float32),
+                                     math.radians(90.0), 3.0, 1.0, "up")
+    nudge = float(np.clip(cfg.freespace_gain * hard_left.bearing,
+                          -cfg.freespace_max_nudge, cfg.freespace_max_nudge))
+    check("the camera advisory is capped well under omega_max",
+          abs(nudge) <= cfg.freespace_max_nudge < cfg.omega_max,
+          f"|nudge|={abs(nudge):.2f} cap={cfg.freespace_max_nudge:.2f} "
+          f"omega_max={cfg.omega_max:.2f}")
 
     # 9. the LD19's FIRST revolution is partial and must never be published. The thread
     #    attaches mid-sweep, so the bins behind the first wrap cover only the arc the

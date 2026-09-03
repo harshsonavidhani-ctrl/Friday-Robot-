@@ -44,6 +44,22 @@ restore_mcp() {
 }
 trap restore_mcp EXIT INT TERM
 
+# The dashboard streams both cameras through ffmpeg whenever someone has its camera
+# panel open, and a V4L2 device is exclusive -- so CameraThread cannot open what
+# ffmpeg is holding and the run goes camera-blind. That is NOT an abort: a camera is
+# advisory and a blind run is still a real run, unlike the LiDAR contention above.
+# It is worth saying out loud, because a camera-blind run looks exactly like a
+# working one in the logs, and for months it WAS every run (cv2 was missing from the
+# venv entirely -- see friday_freespace.py).
+camera_holders() {
+    for p in $(ls /proc | grep -E '^[0-9]+$'); do
+        for f in /proc/"$p"/fd/*; do
+            t="$(readlink "$f" 2>/dev/null || true)"
+            case "$t" in /dev/video*) echo "$t <- pid $p $(tr '\0' ' ' < /proc/"$p"/cmdline 2>/dev/null | cut -c1-40)";; esac
+        done
+    done 2>/dev/null | sort -u
+}
+
 port_holders() {
     for p in $(ls /proc | grep -E '^[0-9]+$'); do
         for f in /proc/"$p"/fd/*; do
@@ -74,6 +90,19 @@ if [ -n "$holders" ]; then
     echo "ABORT: serial ports are still held; the LiDAR would lose frames:" >&2
     echo "$holders" >&2
     exit 1
+fi
+
+if ! "$PY" -c "import cv2" 2>/dev/null; then
+    echo "WARNING: cv2 is not importable from $PY -- both cameras will be dead and" >&2
+    echo "         the free-space navigator disabled. Fix with:" >&2
+    echo "         $PY -m pip install opencv-python-headless" >&2
+fi
+
+cams="$(camera_holders)"
+if [ -n "$cams" ]; then
+    echo "WARNING: something already holds a camera; this run may be camera-blind." >&2
+    echo "$cams" >&2
+    echo "         (the dashboard streams them while its camera panel is open)" >&2
 fi
 
 # NOT exec: exec REPLACES this shell, which discards the EXIT trap above and
