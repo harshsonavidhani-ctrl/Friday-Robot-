@@ -49,6 +49,7 @@ conversation.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 
@@ -83,6 +84,21 @@ EMOTION_FACES = {"happy", "love", "proud", "excited", "curious", "surprised",
                  "sad", "wink", "angry", "neutral", "bored"}
 
 
+def _emotion_stamp() -> tuple[int, int] | None:
+    """(mtime_ns, size) of the emotion file, or None if it is not there.
+
+    face_control writes it with a rename, so the mtime moves on every write
+    even when the name is unchanged -- which is what makes a re-assertion by
+    another process count as activity.
+    """
+    try:
+        import face_control
+        st = os.stat(face_control.EMOTION_FILE)
+    except (OSError, ImportError):
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 class FaceDirector:
     """Arbitrates every request for Friday's face."""
 
@@ -98,6 +114,9 @@ class FaceDirector:
         self._pending: tuple[str, int, float] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # The stamp of the last write WE made, so a write by anyone else is
+        # recognisable. See _adopt_foreign_write().
+        self._own_stamp: tuple[int, int] | None = None
 
     # -- lifecycle --
     def start(self) -> "FaceDirector":
@@ -236,6 +255,53 @@ class FaceDirector:
         self._priority = priority
         self._since = now
         self._until = now + hold if hold else 0.0
+        self._own_stamp = _emotion_stamp()
+
+    # -- other writers --
+    def _adopt_foreign_write(self, now: float) -> bool:
+        """Notice an emotion someone else wrote, and treat it as activity.
+
+        THE DIRECTOR IS NOT THE ONLY WRITER. face_control.py from the command
+        line, the dashboard, and friday_expression.FaceExpression during an
+        autonomous run all write state/emotion.txt directly -- and until this
+        existed the director could not see any of them. Two things went wrong:
+
+          * The idle clock kept running. Harsh, 2026-09-03: "while tinkering
+            between the different facial expressions the screen goes blank."
+            It was the drift reaching stage 3 and writing "sleeping" over what
+            he had just set -- and "sleeping" is closed eyes on a black panel,
+            which is a blank screen. During a six-minute exploration run it
+            landed at the five-minute mark, every time.
+
+          * `self._current` went stale, so `_apply()` would see the name it
+            THOUGHT was up, match, and return without writing -- refusing to
+            restore its own face.
+
+        Adopting at IDLE priority is deliberate: someone else's face is shown
+        and its clock restarts, but the voice pipeline still outranks it and
+        the drift resumes normally once the writing actually stops.
+        """
+        stamp = _emotion_stamp()
+        if stamp is None or stamp == self._own_stamp:
+            return False
+        self._own_stamp = stamp
+        try:
+            import face_control
+            name = face_control.get_emotion()
+        except Exception as exc:                # noqa: BLE001
+            log.debug("could not read the face back: %s", exc)
+            return False
+        self._last_activity = now
+        self._idle_stage = 0
+        if name == self._current:
+            return False
+        log.debug("face adopted %s -> %s (written elsewhere)",
+                  self._current or "-", name)
+        self._current = name
+        self._priority = IDLE
+        self._since = now
+        self._until = 0.0
+        return True
 
     # -- decay and idle drift --
     def _tick(self) -> None:
@@ -248,6 +314,8 @@ class FaceDirector:
     def _step(self) -> None:
         now = time.monotonic()
         with self._lock:
+            # Before anything else: has someone else moved the face?
+            self._adopt_foreign_write(now)
             # A face that was deferred behind the dwell gets its turn as soon
             # as the dwell is over, so nothing requested is ever simply lost.
             if (self._pending is not None

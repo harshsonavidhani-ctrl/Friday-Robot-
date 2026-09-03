@@ -145,16 +145,42 @@ class RobotConfig:
 
     # ---- LiDAR safety governor (mirrors SafetyGovernor in train.py) ----
     safe_distance: float = 0.55         # begin braking below this clearance [m]
-    # Half-angle of the arc the FORWARD braking law considers, measured from the nose.
-    # 90 deg = the front hemisphere. Beams behind this cannot be reached by driving
-    # forward, so letting them veto forward motion only made her undriveable in any
-    # room with a wall in it. Rotation and reverse still see the whole sweep.
+    # Kept only so old --help output, logs and saved configs still parse. The forward
+    # braking law no longer uses an arc at all; see corridor_half_width below.
     governor_forward_arc_deg: float = 90.0
     # Mirror of the forward arc, used ONLY to gate reverse. Nothing on this robot
     # looks backwards otherwise: the ToF is a forward 8x8 patch, and the governor's
     # braking law reads the front hemisphere, so before this a reverse command was
     # executed with no obstacle check of any kind behind her.
     governor_rear_arc_deg: float = 90.0
+    # ---- swept-corridor forward clearance ----
+    #
+    # THE ARC ABOVE IS THE WRONG QUESTION and it is what made her zig-zag down an
+    # open corridor. Harsh, 2026-09-03: "traversing in a zig-zag way in an open
+    # straight hallway/corridor... the collision rate INCREASED".
+    #
+    # A beam at 90 deg and 0.60 m is a wall BESIDE her. She is 0.22 m in radius, so
+    # she drives straight past it -- but `min over the front hemisphere` called it
+    # 0.60 m of forward clearance, which is under safe_distance (0.55) in any normal
+    # hallway and at hard_stop (0.36) in a narrow one. Measured over the 6-minute run
+    # of 2026-09-03 18:44: fwd_min p50 = 0.415 m and 419 degrees of turning per metre
+    # travelled, in a corridor the ToF could see 1.6 m down.
+    #
+    # What a car asks instead: project every return onto the direction of travel and
+    # keep only what is inside the body's swept corridor. x = d*cos(bearing) is how
+    # far ahead it is, y = d*sin(bearing) how far to the side; a return with
+    # |y| > half-width cannot be hit by driving straight, whatever d is.
+    corridor_half_width: float = 0.0       # 0 -> robot_radius + collision_margin
+    # She turns while she drives, so the swept corridor is wider than the body. Widen
+    # it in proportion to the commanded turn rate rather than assuming the worst case
+    # all the time, which is what the 90 deg arc effectively did.
+    corridor_turn_widen: float = 0.10      # [m] extra half-width per rad/s
+    corridor_max_widen: float = 0.18       # [m] ceiling on that
+    # The one thing the corridor rule alone would miss: something level with her and
+    # close enough to scrape as she turns. Anything inside this radius ANYWHERE in the
+    # front hemisphere still brakes, whatever its lateral offset. This is what keeps
+    # the old arc's real safety value without its cost.
+    scrape_distance: float = 0.0           # 0 -> robot_radius + collision_margin
     # Relocalisation search, deliberately much wider than SLAM's tracking window
     # (0.20 m / 12 deg): that corrects a tick of drift, this has to absorb the robot
     # being nudged between sessions.
@@ -165,16 +191,57 @@ class RobotConfig:
     # carry warnings: a gate of 5.0 "would reject every good answer it was ever
     # given" because a correct match scores 2.1-3.7, and my own first guess of 3.0
     # duly rejected a valid match at 2.46. See SLAM_POSE_MIN_SHARPNESS.
-    # Reverse gets robot_radius + collision_margin and NOT the additional
-    # hard_stop_extra the forward law uses. Deliberate: forward runs at up to 0.50 m/s
-    # while the only executable reverse is 0.15 m/s, so the stopping distance being
-    # bought is roughly 3x smaller -- and over-gating reverse recreates the failure
-    # that cost a whole session, where she could not back out of a doorway and could
-    # only spin in it. See `rear_stop`.
-    rear_stop_extra: float = 0.0
+    # THE ARGUMENT BELOW WAS RIGHT ABOUT SPEED AND WRONG ABOUT MARGIN, and Harsh hit
+    # it on 2026-09-03: "it wasn't able to detect a wall behind it and if an obstacle
+    # was moved from behind it kept moving backwards without noticing the wall".
+    #
+    #   Reverse gets robot_radius + collision_margin and NOT the additional
+    #   hard_stop_extra the forward law uses. Deliberate: forward runs at up to
+    #   0.50 m/s while the only executable reverse is 0.15 m/s, so the stopping
+    #   distance being bought is roughly 3x smaller -- and over-gating reverse
+    #   recreates the failure that cost a whole session, where she could not back
+    #   out of a doorway and could only spin in it.
+    #
+    # What that reasoning left out is that stopping distance is not the only thing the
+    # margin has to cover, and that reverse has NO proportional band ahead of it. Going
+    # forward the governor has already bled speed off between safe_distance (0.55) and
+    # hard_stop (0.36), so she arrives slow. Reverse is binary -- it must be, because
+    # any scaled-down reverse falls under the stiction floor -- so she arrives at the
+    # FULL v_min every time, and the gate is the only thing between her and the wall.
+    #
+    # The budget at 0.15 m/s, with the coast MEASURED at 0.22 m from 0.403 m/s:
+    #     coast, scaled by v^2   (0.15/0.403)^2 * 0.22 =  0.031 m
+    #     coast, scaled by v     (0.15/0.403)   * 0.22 =  0.082 m   <- pessimistic case
+    #     one more control tick at loop p95 217 ms      =  0.033 m
+    #                                                     -------
+    #     worst case before she can possibly be stopped   0.115 m
+    #
+    # The old rear_stop of 0.26 m left 0.26 - 0.22 = 0.04 m against a naive reading of
+    # the coast and, against the honest budget above, less margin than the error bars.
+    # 0.10 m of extra -- the same number forward uses -- puts rear_stop at 0.36 m and
+    # buys real room. It does NOT recreate the doorway failure: that was a robot with
+    # no executable reverse at all being forced to spin, and reverse-lifting (stage 1b)
+    # is what actually fixed it.
+    rear_stop_extra: float = 0.10
     # How many rear beams must agree before reverse is refused. 1 would be a bare
     # minimum and is what makes a single bad return veto an escape.
-    rear_min_valid_beams: int = 3
+    #
+    # 2, NOT the 3 the forward law uses, and the asymmetry is the point: FORWARD HAS
+    # TWO SENSORS AND REVERSE HAS ONE. The ToF is a forward-facing bumper patch, so
+    # going forward the LiDAR can afford to be conservative -- the reflex is watching
+    # the same space with 64 independent zones. Behind her the LiDAR is the only thing
+    # there is, and a miss is a collision with nothing to catch it.
+    #
+    # What k costs in blindness, at 5 deg per beam:
+    #     k=3  an object must be  8 cm wide at 0.3 m, 13 cm at 0.5 m, 21 cm at 0.8 m
+    #     k=2  an object must be  5 cm wide at 0.3 m,  9 cm at 0.5 m, 14 cm at 0.8 m
+    # A chair or table leg is 3-5 cm. At k=3 she reverses into furniture legs by
+    # construction; k=2 at least reaches them at close range.
+    #
+    # The speckle this guards against is also much rarer than when k=3 was chosen:
+    # sub-footprint returns are now rejected at the source (lidar_min_valid_range), and
+    # the runs since have logged ZERO of them outside the self-mask.
+    rear_min_valid_beams: int = 2
     # Same rule, applied to the FORWARD braking law, which was the last stage in the
     # chain still taking a bare np.min(). The rear gate and ToFReflex had both already
     # been moved off the minimum for exactly this reason; forward had not, so one bad
@@ -335,6 +402,16 @@ class RobotConfig:
     @property
     def dt(self) -> float:
         return 1.0 / self.control_hz
+
+    @property
+    def corridor_half(self) -> float:
+        """Half-width of the corridor the body sweeps driving straight."""
+        return self.corridor_half_width or (self.robot_radius + self.collision_margin)
+
+    @property
+    def scrape_radius(self) -> float:
+        """Inside this, anything in front of her is a scrape whatever its bearing."""
+        return self.scrape_distance or (self.robot_radius + self.collision_margin)
 
     @property
     def lidar_floor(self) -> float:
@@ -1488,7 +1565,6 @@ class LidarGovernor:
 
     def __init__(self, cfg: RobotConfig) -> None:
         self.cfg = cfg
-        self._fwd_mask: np.ndarray | None = None
         self._rear_mask: np.ndarray | None = None
         self.last_rear_min = float("inf")   # for telemetry; inf until a scan arrives
         self.rear_blocks = 0
@@ -1497,20 +1573,78 @@ class LidarGovernor:
         self.ttc_brakes = 0
         self._prev_fwd: float | None = None
         self._prev_t: float | None = None
+        self._trig: tuple[np.ndarray, np.ndarray] | None = None
+        self.last_scrape = float("inf")   # nearest thing in the front hemisphere
+        self.last_band = 0                # beams inside the swept corridor
+        self.scrape_brakes = 0
 
-    def _forward_mask(self, n: int) -> np.ndarray:
-        """Beams within +/- governor_forward_arc_deg of the nose, as a boolean mask.
+    def _beam_trig(self, n: int) -> tuple[np.ndarray, np.ndarray]:
+        """(cos, sin) of every beam bearing, cached per beam count.
 
-        Cached per beam count: the arc never changes at runtime, and rebuilding it
-        every tick would be pure waste inside a 100 ms budget.
+        Beam i looks along i * (360/n) degrees with beam 0 down the nose, so cos is
+        how much of a return lies AHEAD and sin how much lies to the SIDE.
         """
-        if self._fwd_mask is None or self._fwd_mask.size != n:
-            # Beam i looks along i * (360/n) degrees with beam 0 down the nose. Fold
-            # to [-180, 180) so the wrap behind the robot is one comparison rather
-            # than two index ranges.
-            bearing = (np.arange(n) * (360.0 / n) + 180.0) % 360.0 - 180.0
-            self._fwd_mask = np.abs(bearing) <= self.cfg.governor_forward_arc_deg
-        return self._fwd_mask
+        if self._trig is None or self._trig[0].size != n:
+            bearing = np.arange(n, dtype=np.float64) * (2.0 * np.pi / n)
+            self._trig = (np.cos(bearing), np.sin(bearing))
+        return self._trig
+
+    def forward_clearance(self, scan_m: np.ndarray, omega: float = 0.0) -> float:
+        """How far she can drive straight before her body reaches something.
+
+        Not "how close is the nearest thing in front" -- that is the question the
+        90 deg arc asked, and a hallway answers it with its own walls. See
+        cfg.corridor_half_width for the measurement that forced this.
+
+        Two rules, and the second is why this is still safe:
+
+          1. CORRIDOR. Keep only returns inside the strip the body sweeps,
+             |d*sin(bearing)| <= half-width, and measure them along the direction of
+             travel, d*cos(bearing). A wall 0.6 m to the side is 0.6 m to the side.
+          2. SCRAPE GUARD. Anything inside her own footprint radius, at ANY forward
+             bearing, still brakes. The corridor rule cannot see the thing she is
+             about to catch with a shoulder as she turns; this can.
+        """
+        c = self.cfg
+        scan = self._despeckle(scan_m)
+        cos, sin = self._beam_trig(scan.size)
+        x = scan * cos
+        y = scan * sin
+        widen = min(c.corridor_max_widen, abs(float(omega)) * c.corridor_turn_widen)
+        half = c.corridor_half + widen
+        band = x[(x > 0.0) & (np.abs(y) <= half)]
+        self.last_band = int(band.size)
+        # The plain minimum, because the scan is already de-speckled. A k-th smallest
+        # here would be wrong twice over: far down a corridor the band holds only three
+        # or four beams, so the 3rd smallest IS the maximum, and a thin obstacle dead
+        # ahead would be averaged away.
+        d_min = float(band.min()) if band.size else float(c.lidar_max_range)
+
+        near = scan[x > 0.0]
+        self.last_scrape = float(near.min()) if near.size else float("inf")
+        if self.last_scrape <= c.scrape_radius and self.last_scrape < d_min:
+            self.scrape_brakes += 1
+            d_min = self.last_scrape
+        return d_min
+
+    def _despeckle(self, scan_m: np.ndarray) -> np.ndarray:
+        """Rolling median along the beam axis: a lone short return is deleted.
+
+        The speckle rule this project keeps rediscovering, moved from the STATISTIC to
+        the SCAN, which is where it belongs. `k`-th smallest over a set only works when
+        the set is big; the swept corridor is a handful of beams when the room is open,
+        and there the 3rd smallest of 3 is the maximum. In ANGLE the rule is exact and
+        size-independent instead: a real obstacle occupies adjacent beams, a speckle
+        does not, and a 3-wide median keeps the first and erases the second.
+
+        np.roll wraps, which is right -- the scan is a circle.
+        """
+        w = max(1, int(self.cfg.forward_min_valid_beams)) | 1     # force odd
+        if w < 3 or scan_m.size < w:
+            return scan_m
+        r = w // 2
+        return np.median(np.stack([np.roll(scan_m, i) for i in range(-r, r + 1)]),
+                         axis=0)
 
     def _rear_mask_for(self, n: int) -> np.ndarray:
         """Beams within +/- governor_rear_arc_deg of the TAIL. Cached like the front."""
@@ -1521,25 +1655,14 @@ class LidarGovernor:
 
     def __call__(self, v: float, omega: float, scan_m: np.ndarray) -> tuple[float, float, bool]:
         c = self.cfg
-        # The braking law gates FORWARD travel, so it must look where she is going.
-        # This used to be np.min() over the whole 360 deg sweep, which meant a wall
-        # BEHIND or beside her vetoed driving forward -- measured at 299 governor
-        # interventions in 410 ticks, in a room with a clear path ahead. Driving
-        # forward cannot collide with what is behind, so the rear beams have no
-        # standing here. The arc is deliberately the whole front hemisphere: a beam
-        # exactly level with her still counts, because she has width and turns while
-        # she drives. Rotation and reverse are unaffected -- neither is gated by
-        # d_min. Approved by Harsh 2026-09-02.
-        scan_fwd = scan_m[self._forward_mask(scan_m.size)]
-        if scan_fwd.size == 0:
-            scan_fwd = scan_m
-        # k-TH SMALLEST, NOT THE MINIMUM -- the same rule the rear gate and ToFReflex
-        # already use, arrived at here last and for the same measured reason. A single
-        # speckled beam anywhere in the front hemisphere used to pin d_min under
-        # hard_stop and forbid ALL forward motion, and because a speckle does not move
-        # when the robot pivots, nothing cleared it. See cfg.forward_min_valid_beams.
-        k = min(c.forward_min_valid_beams, scan_fwd.size) - 1
-        d_min = float(np.partition(scan_fwd, k)[k])
+        # The braking law gates FORWARD travel, so it must look where she is GOING --
+        # down the corridor her body sweeps, not over an angular arc. This was
+        # np.min() over the whole sweep first (a wall behind her vetoed driving
+        # forward: 299 interventions in 410 ticks), then the front hemisphere (a wall
+        # BESIDE her vetoed it: the 2026-09-03 zig-zag). forward_clearance() carries
+        # the geometry and the scrape guard that keeps the hemisphere's real value.
+        # Rotation and reverse are unaffected -- neither is gated by d_min.
+        d_min = self.forward_clearance(scan_m, omega)
         self.last_fwd_min = d_min
 
         # ---- closing rate: the part a distance-only law cannot see -----------------
@@ -2478,7 +2601,12 @@ class BlackBox:
               # fault. `fwd_min` is the k-th smallest in the forward arc, which is the
               # law's input; `closing` is the rate that gap is shrinking, which is the
               # part a distance-only law is blind to.
-              "fwd_min", "closing")
+              "fwd_min", "closing",
+              # AND WHAT THE REAR GATE SAW. Its absence is why "rear=0" across 334
+              # reversing ticks read as "nothing was ever behind her" instead of as
+              # "the threshold was too tight to fire" -- there was no column that could
+              # tell those apart. Reverse is single-sensor; it needs its own evidence.
+              "rear_min")
 
     def __init__(self, seconds: float, hz: float) -> None:
         self.buf: deque[tuple] = deque(maxlen=int(seconds * hz) + 16)
@@ -3004,8 +3132,22 @@ class ControlLoop:
             # demonstrably crossing the room. On hardware the driver IS the truth,
             # because the creep cutoff and stiction floor make executed != commanded.
             ex = (v, omega) if self.sim is not None else self.motors.executed()
+            # THE INTENT, NOT THE GATED COMMAND. `no_progress` asks "was she commanded
+            # to move, and did she fail to?" -- and it used to be handed `v` from after
+            # the governor and the rear gate. So the instant a safety gate refused her,
+            # `asked` fell to zero and the detector concluded she was not trying, when
+            # in fact being refused is the MOST stuck a robot can be. The gate doing its
+            # job destroyed the evidence recovery needed to fire.
+            #
+            # Found by raising rear_stop to 0.36 m: with the rear now correctly blocked
+            # she could no longer reverse, and recovery -- which exists for exactly that
+            # situation -- went from 8 triggering ticks to 0.
+            #
+            # v_pol is the policy's output after the capability adapter and the planner
+            # and before any safety stage, so it is what the robot WANTED. `ex` stays
+            # the executed twist, so the comparison is still intent against reality.
             forced = self.recovery.update(
-                scan, ex[0], ex[1], v, boxed_in, self.map.pose,
+                scan, ex[0], ex[1], v_pol, boxed_in, self.map.pose,
                 self.stats["ticks"], self._open_side(scan))
             rec._recovery_state = self.recovery.state
             if forced is not None:
@@ -3206,7 +3348,8 @@ class ControlLoop:
                               round((rec.world or {}).get("explored_m2", 0.0), 2),
                               (rec.__dict__.get("_recovery_state") or ""),
                               round(self.governor.last_fwd_min, 3),
-                              round(self.governor.last_closing, 3)))
+                              round(self.governor.last_closing, 3),
+                              round(min(self.governor.last_rear_min, 99.9), 3)))
         return row
 
     # ------------------------------------------------------------------- run --------
@@ -4043,6 +4186,43 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
           cfg.lidar_floor >= cfg.robot_radius,
           f"floor={cfg.lidar_floor:.2f} m")
 
+    # 1a-iii. THE CORRIDOR. This is the whole zig-zag fix, and it is the assertion
+    #     that would have caught it: a hallway narrower than 2 * safe_distance put its
+    #     own walls inside the old front-hemisphere arc, so the braking law sat in the
+    #     braking band the entire length of a corridor with nothing in it. She braked,
+    #     turned away, met the other wall, and turned back -- 419 degrees of turning
+    #     per metre travelled over the 6-minute run of 2026-09-03 18:44.
+    loop.governor._prev_fwd = None
+    scan = np.full(cfg.n_beams, 5.0, np.float32)
+    side = int(round(cfg.n_beams / 4))                  # 90 deg
+    scan[side - 4:side + 4] = 0.55                      # walls 0.55 m either side
+    scan[3 * side - 4:3 * side + 4] = 0.55
+    v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
+    check("a corridor she fits down does not brake her", v >= cfg.v_max - 1e-6,
+          f"v={v:.3f} clearance={loop.governor.last_fwd_min:.2f} m")
+
+    # 1a-iv. ...and the guard that keeps the old arc's real value. The corridor rule
+    #     alone cannot see the thing she is about to catch with a shoulder while she
+    #     turns, so anything inside her own footprint at ANY forward bearing still
+    #     brakes. Three beams, because one is speckle.
+    loop.governor._prev_fwd = None
+    scan = np.full(cfg.n_beams, 5.0, np.float32)
+    scan[side - 1:side + 2] = cfg.scrape_radius - 0.02  # level with her, touching
+    v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
+    check("something touching her shoulder still brakes", v <= 0.0,
+          f"v={v:.3f} scrape={loop.governor.last_scrape:.2f} m")
+
+    # 1a-v. A thin obstacle dead ahead spans only a few beams once it is far enough
+    #     away that the corridor is narrow. Taking the k-th smallest of a 3-beam band
+    #     would be taking its MAXIMUM, and she would drive straight through it.
+    loop.governor._prev_fwd = None
+    scan = np.full(cfg.n_beams, 5.0, np.float32)
+    scan[0] = scan[1] = cfg.hard_stop - 0.05
+    scan[-1] = 5.0
+    v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
+    check("a narrow obstacle dead ahead is not averaged away", v <= 0.0,
+          f"v={v:.3f} clearance={loop.governor.last_fwd_min:.2f} m")
+
     loop.governor._prev_fwd = None
     # 1b. ...but a wall BEHIND her must not. Driving forward cannot reach it, and
     # vetoing on it made her undriveable in any room with a wall in it.
@@ -4083,6 +4263,42 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
     scan[rear_i - 1:rear_i + 2] = cfg.rear_stop - 0.05
     v, _, _ = loop.governor(cfg.v_max, 0.0, scan)
     check("the rear gate does not leak into forward", v > 0.0, f"v={v:.3f}")
+
+    # 1d. THE WALL SHE REVERSED INTO. Harsh, 2026-09-03: "it wasn't able to detect a
+    # wall behind it and if an obstacle was moved from behind it kept moving backwards
+    # without noticing the wall". rear=0 across 334 reversing ticks was not "nothing
+    # was behind her" -- it was a 0.26 m threshold on a robot that coasts, arriving at
+    # the full v_min because reverse has no proportional band to slow her first.
+    loop.governor._prev_fwd = None
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    rear_i = cfg.n_beams // 2
+    scan[rear_i - 1:rear_i + 2] = 0.30           # a wall 0.30 m behind: inside the coast
+    v, _, _ = loop.governor(cfg.v_min, 0.0, scan)
+    check("a wall 0.30 m behind now blocks reverse (0.26 m gate let it through)",
+          v >= 0.0, f"v={v:.3f} vs rear_stop {cfg.rear_stop:.2f}")
+
+    # ...and the margin must actually cover the way she stops. She coasts 0.22 m from
+    # 0.403 m/s; scaled to the 0.15 m/s reverse that is 0.031-0.082 m depending on
+    # whether coast goes as v or v^2, plus 0.033 m for one more tick at loop p95.
+    check("rear_stop covers the coast plus a control tick",
+          cfg.rear_stop - cfg.robot_radius >= 0.115,
+          f"margin {cfg.rear_stop - cfg.robot_radius:.3f} m vs 0.115 m budget")
+
+    # 1e. REVERSE IS SINGLE-SENSOR, so it may not be less sensitive than forward. The
+    # ToF is a forward-facing bumper patch; behind her the LiDAR is all there is.
+    check("the rear needs fewer agreeing beams than the front, not more",
+          cfg.rear_min_valid_beams <= cfg.forward_min_valid_beams,
+          f"rear k={cfg.rear_min_valid_beams} front k={cfg.forward_min_valid_beams}")
+    # A narrow obstacle -- a chair leg is 3-5 cm -- must still be seen at close range.
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    scan[rear_i:rear_i + 2] = 0.30               # 2 beams: ~5 cm wide at 0.3 m
+    v, _, _ = loop.governor(cfg.v_min, 0.0, scan)
+    check("a narrow obstacle behind blocks reverse", v >= 0.0, f"v={v:.3f}")
+    # ...but one lone beam still must not, or a speckle vetoes every escape she has.
+    scan = np.full(cfg.n_beams, 3.0, np.float32)
+    scan[rear_i] = 0.05
+    v, _, _ = loop.governor(cfg.v_min, 0.0, scan)
+    check("one speckled rear beam still does not veto reverse", v < 0.0, f"v={v:.3f}")
 
     # 2. governor must scale speed inside the bubble
     loop.governor._prev_fwd = None
