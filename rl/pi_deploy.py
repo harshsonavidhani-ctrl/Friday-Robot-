@@ -3359,7 +3359,11 @@ class ControlLoop:
             decision = self.navigator.decide(
                 scan, v_allow=v_allow, omega_want=omega_pol,
                 desired_bearing=target_bearing, blind_beams=self.map.blind_beams,
-                v_floor=max(self.motors.min_speed_mps(), 0.05))
+                v_floor=max(self.motors.min_speed_mps(), 0.05),
+                # The near field, so the planner and the reflex stop disagreeing about
+                # what is in front of her. Without this the navigator plans through the
+                # band below the LiDAR's 0.22 m floor and the reflex brakes for it.
+                tof_depth=depth if not tof_stale else None)
             if decision is not None:
                 v_pol, omega_pol = decision.v, decision.omega
                 gate = "navigator"

@@ -131,6 +131,10 @@ class Navigator:
         self.commit_expiries = 0
         self.commit_switches = 0
         self.handoffs = 0                 # ticks handed back to the old behaviour
+        # Ticks where the ToF contributed an obstacle the LiDAR could not see. If this
+        # is large while the reflex still fires constantly, the two are STILL
+        # disagreeing and the near-field model needs looking at again.
+        self.tof_informed = 0
 
     # ------------------------------------------------------------- assessment --
     def assess(self, scan_m: np.ndarray,
@@ -215,6 +219,49 @@ class Navigator:
         return float(np.arctan2(np.mean(np.sin(b)), np.mean(np.cos(b)))), \
             float(b.max() - b.min())
 
+    # ------------------------------------------------------ the near field ------
+    def _tof_obstacle_points(self, depth) -> np.ndarray:
+        """The near field the LiDAR cannot see, as obstacle points. (N, 2), robot frame.
+
+        WHY THIS EXISTS. The navigator planned against the LiDAR alone, and the LiDAR
+        DISCARDS every return below `lidar_floor` (0.22 m, her own body radius) and is
+        masked across the chassis wedge entirely. The ToF reflex stops at 0.30 m and
+        brakes from 0.60 m. So there was a band right in front of the bumper that one
+        component could see and the other planned through: she would commit to an arc
+        into something only the ToF knew about, drive at it, and be slammed to a halt.
+        MEASURED 2026-09-04: navigator engaged on 94% of ticks while the reflex fired on
+        59% of them -- two components steering the same robot from different worlds.
+        Ending every run wedged is what that looks like from across the room.
+
+        NO FIELD OF VIEW IS ASSUMED, because this project has never measured one and
+        `config.py` has no constant for it. Deriving it from the floor profile was tried
+        and rejected: the equal-angle flat-floor fit put the sensor 12 mm above the
+        ground with 13 mm residuals, which is not a geometry, it is a coincidence.
+
+        Instead the return is modelled as what the reflex already treats it as -- SOMETHING
+        ACROSS HER PATH AT THIS RANGE -- laid out over the width of the corridor her own
+        body sweeps. `corridor_half` is measured and already used by the governor, so the
+        model introduces no new unknown. It is deliberately conservative: it can make her
+        turn away from something slightly narrower than her corridor, and it cannot fail
+        to notice something wider.
+
+        The k-th smallest is `tof_min_valid_zones`, the SAME quorum the reflex uses, so
+        the two agree about what an obstacle is. Sharing that rule is the entire point:
+        a planner and a veto that disagree produce exactly the fight seen above.
+        """
+        empty = np.zeros((0, 2), dtype=np.float32)
+        if depth is None:
+            return empty
+        d = np.asarray(depth, dtype=np.float64).reshape(-1)
+        valid = d[np.isfinite(d) & (d > 0.0) & (d < self.cfg.tof_max_range)]
+        k = int(getattr(self.cfg, "tof_min_valid_zones", 3))
+        if valid.size < k:
+            return empty                      # too few zones agree: speckle, not a thing
+        rng = float(np.sort(valid)[k - 1])
+        half = float(self.cfg.corridor_half)
+        ys = np.linspace(-half, half, 5)
+        return np.stack([np.full_like(ys, rng), ys], axis=1).astype(np.float32)
+
     # -------------------------------------------------------------- commitment --
     def _apply_commitment(self, candidates_omega: float, margin: float,
                           situation: str) -> tuple[float, bool, str]:
@@ -277,7 +324,8 @@ class Navigator:
     def decide(self, scan_m: np.ndarray, v_allow: float, omega_want: float,
                desired_bearing: float | None = None,
                blind_beams: np.ndarray | None = None,
-               v_floor: float = 0.15) -> Decision | None:
+               v_floor: float = 0.15,
+               tof_depth=None) -> Decision | None:
         """Assess, plan, commit. None means "not mine -- use the existing behaviour".
 
         The None path is load-bearing: BLOCKED and "no safe arc" both return it, and
@@ -303,9 +351,12 @@ class Navigator:
             want = (a.widest_gap_bearing if desired_bearing is None else
                     0.5 * (a.widest_gap_bearing + desired_bearing))
 
+        near = self._tof_obstacle_points(tof_depth)
+        if near.shape[0]:
+            self.tof_informed += 1
         res = self.planner.choose(scan_m, v_allow * speed, omega_want,
                                   desired_bearing=want, blind_beams=blind_beams,
-                                  v_floor=v_floor)
+                                  v_floor=v_floor, extra_obstacles=near)
         if res is None:
             self.handoffs += 1
             self.release()

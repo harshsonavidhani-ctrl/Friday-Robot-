@@ -288,6 +288,82 @@ check("a corridor is driven slower than an open room",
       f"corridor {d_corr.v:.2f} vs open {d_open.v:.2f}"
       if (d_corr and d_open) else "None")
 
+print("--- the near field: what the LiDAR structurally cannot see ---")
+
+# THE WEDGE. The LiDAR discards everything below `lidar_floor` (0.22 m, her own body)
+# and is masked across the chassis; the ToF reflex stops at 0.30 m. So an object in that
+# band is invisible to the planner and fatal to the reflex, and she drives into it and
+# is slammed to a halt -- measured as navigator engaged 94% of ticks while the reflex
+# fired on 59% of them, and every run ending wedged.
+nav_tof = Navigator(cfg, DynamicWindowPlanner(cfg))
+clear_tof = np.full((8, 8), cfg.tof_max_range, dtype=np.float32)
+
+# A totally clear ToF must add nothing at all.
+check("a clear ToF contributes no obstacles",
+      nav_tof._tof_obstacle_points(clear_tof).shape[0] == 0)
+check("a missing ToF contributes no obstacles",
+      nav_tof._tof_obstacle_points(None).shape[0] == 0)
+
+# One hot zone is speckle, not an object -- the SAME quorum the reflex uses, so the two
+# cannot disagree about what counts.
+speckle = clear_tof.copy()
+speckle[3, 4] = 0.25
+check("a single hot ToF zone is speckle, not an obstacle",
+      nav_tof._tof_obstacle_points(speckle).shape[0] == 0)
+
+# ...and a real cluster is an obstacle laid across the corridor she sweeps.
+real = clear_tof.copy()
+real[4:7, 3:6] = 0.28
+pts = nav_tof._tof_obstacle_points(real)
+check("a real ToF cluster becomes obstacle points", pts.shape[0] > 0,
+      f"{pts.shape[0]} points at x={pts[0][0]:.2f} m" if pts.shape[0] else "none")
+check("...spanning the corridor her body sweeps, not a single ray",
+      pts.shape[0] and abs(pts[:, 1].max() - pts[:, 1].min() - 2 * cfg.corridor_half) < 1e-6,
+      f"span {pts[:, 1].max() - pts[:, 1].min():.3f} m vs corridor {2*cfg.corridor_half:.3f} m")
+
+# THE POINT OF ALL OF IT: with the LiDAR reporting a wide open room, an obstacle only
+# the ToF can see must still change what she does.
+nav_a = Navigator(cfg, DynamicWindowPlanner(cfg))
+blind = nav_a.decide(clear_scan(), v_allow=cfg.v_max, omega_want=0.0,
+                     desired_bearing=0.0, tof_depth=clear_tof)
+nav_b = Navigator(cfg, DynamicWindowPlanner(cfg))
+seeing = nav_b.decide(clear_scan(), v_allow=cfg.v_max, omega_want=0.0,
+                      desired_bearing=0.0, tof_depth=real)
+check("an obstacle ONLY the ToF can see still changes the command",
+      blind is not None and (seeing is None or abs(seeing.omega) > abs(blind.omega)
+                             or seeing.v < blind.v),
+      f"lidar-only v={blind.v:.2f} w={blind.omega:+.2f} -> with ToF "
+      f"v={seeing.v:.2f} w={seeing.omega:+.2f}" if (blind and seeing) else "handed back")
+
+# AND IT MUST ACT BEFORE THE REFLEX DOES, or it has changed nothing. The reflex brakes
+# from tof_slow_distance (0.60 m) and stops at tof_stop_distance (0.30 m). Steering away
+# only once the brakes are already on is the old behaviour with extra steps; the whole
+# point is to have turned before then.
+def nav_at(range_m: float):
+    t = np.full((8, 8), cfg.tof_max_range, dtype=np.float32)
+    t[4:7, 3:6] = range_m
+    return Navigator(cfg, DynamicWindowPlanner(cfg)).decide(
+        clear_scan(), v_allow=cfg.v_max, omega_want=0.0, desired_bearing=0.0,
+        tof_depth=t)
+
+early = nav_at(cfg.tof_slow_distance + 0.20)     # 0.80 m: reflex is not involved yet
+check("she is already steering away BEFORE the reflex would brake",
+      early is not None and abs(early.omega) > 0.3 and early.v > 0.3,
+      f"v={early.v:.2f} omega={early.omega:+.2f} at "
+      f"{cfg.tof_slow_distance + 0.20:.2f} m" if early else "None")
+
+# ...and the response is graduated, not a cliff: closer means slower.
+far, near_ = nav_at(0.55), nav_at(0.45)
+check("...and slows further as it closes",
+      far is not None and near_ is not None and near_.v < far.v,
+      f"0.55 m -> v={far.v:.2f}; 0.45 m -> v={near_.v:.2f}"
+      if (far and near_) else "None")
+
+# Inside the stop distance there is no honest forward answer, and it must say so rather
+# than invent one -- escape and recovery own reverse, and they are already tested.
+check("inside the reflex stop distance it hands the tick back",
+      nav_at(cfg.tof_stop_distance - 0.02) is None)
+
 print("--- speed authority is off by default, and bounded when on ---")
 
 # The default must preserve the chain's stated invariant exactly: with authority 0 the

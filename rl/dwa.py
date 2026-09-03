@@ -279,7 +279,8 @@ class DynamicWindowPlanner:
     def choose(self, scan_m: np.ndarray, v_allow: float, omega_want: float,
                desired_bearing: float | None = None,
                blind_beams: np.ndarray | None = None,
-               v_floor: float = 0.15) -> DWAResult | None:
+               v_floor: float = 0.15,
+               extra_obstacles: np.ndarray | None = None) -> DWAResult | None:
         """Best drivable arc, or None if nothing forward survives.
 
         `v_allow`  -- the fastest this stage may return. Comes in already reduced by
@@ -319,6 +320,14 @@ class DynamicWindowPlanner:
         extent = float(np.sqrt(np.max(x * x + y * y))) if x.size else 0.0
         obstacles = self._obstacle_points(scan_m, blind_beams,
                                           keep_within_m=extent + CLEARANCE_CAP_M)
+        # Points from a sensor other than the LiDAR -- in practice the bumper ToF's near
+        # field, which the LiDAR structurally cannot report (see Navigator's
+        # _tof_obstacle_points). Appended AFTER the range cutoff above, which exists to
+        # discard distant LiDAR returns; these are near by construction.
+        if extra_obstacles is not None and len(extra_obstacles):
+            extra = np.asarray(extra_obstacles, dtype=np.float32).reshape(-1, 2)
+            obstacles = (extra if obstacles.shape[0] == 0
+                         else np.vstack([obstacles, extra]))
         clear_r = float(self.cfg.robot_radius + self.cfg.collision_margin)
 
         if obstacles.shape[0] == 0:
