@@ -179,8 +179,9 @@ def analyse(path):
     if has_raw and "infer_ms" in rows[0]:
         print("\n-- CONTROL SOURCE SHARE --")
         auth = Counter(r["authority"] for r in rows)
-        for a in ("RL_POLICY", "EXPLORATION_PLANNER", "SAFETY_OVERRIDE",
-                  "RECOVERY_CONTROLLER", "CAPABILITY_ADAPTER", "MOTION_SMOOTHING"):
+        for a in ("RL_POLICY", "EXPLORATION_PLANNER", "LOCAL_NAVIGATOR",
+                  "SAFETY_OVERRIDE", "RECOVERY_CONTROLLER", "CAPABILITY_ADAPTER",
+                  "MOTION_SMOOTHING"):
             c = auth.get(a, 0)
             print(f"   {a:<22}{c:5d}  {100 * c / n:5.1f}%")
 

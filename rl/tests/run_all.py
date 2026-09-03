@@ -32,6 +32,9 @@ what the hardware is doing:
                     that has to be able to say no
     test_narrator   voice that cannot block the control loop and cannot invent an
                     observation
+    test_dwa        pick a DRIVABLE arc rather than proposing one to be vetoed: the
+                    zig-zag, the hesitation, and the commitment that stops her
+                    re-deciding her life ten times a second
 """
 import subprocess
 import sys
@@ -43,7 +46,8 @@ SUITES = ["test_ld19.py", "test_reconnect.py", "test_motors.py",
           "test_frontier.py", "test_odometry.py", "test_wiring.py",
           "test_creep_pulse.py", "test_escape.py", "test_telemetry.py",
           "test_world.py", "test_explorer.py", "test_recovery.py",
-          "test_cameras.py", "test_freespace.py", "test_narrator.py"]
+          "test_cameras.py", "test_freespace.py", "test_narrator.py",
+          "test_dwa.py"]
 
 failed = []
 for suite in SUITES:

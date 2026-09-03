@@ -444,6 +444,13 @@ def main(argv: list[str] | None = None) -> int:
     # the recovery controller produced 84 pivots and zero translation. A robot that
     # cannot back out of a doorway can only spin there, which is exactly what it did.
     loop.reverse_fallback = not args.no_reverse_fallback
+    # ...and the same omission again for the local navigator, wired here AT THE SAME
+    # TIME as the flag was added rather than discovered missing on hardware later. This
+    # is the fourth flag in this list; the pattern is the bug, not any one of them.
+    # `run_localnav.sh` drives THIS main(), so a flag that only pi_deploy.main() reads
+    # is a flag that does nothing on the robot.
+    loop.navigator_enabled = not args.no_navigator
+    cfg.nav_speed_authority = float(getattr(args, "navigator_speed_authority", 0.0))
     voice.say("boot", "Friday is starting autonomous exploration.",
               priority=1, cooldown_s=0.0)
     try:

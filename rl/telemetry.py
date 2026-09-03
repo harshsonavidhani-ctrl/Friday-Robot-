@@ -48,6 +48,7 @@ STAGE_ORDER = (
     "policy",           # raw ONNX output -- the only stage that CREATES a command
     "no_reverse",       # control adaptation: unexecutable reverse -> pivot
     "planner",          # frontier target: bounded HEADING bias, never speed
+    "navigator",        # local nav: the best DRIVABLE arc, capped by the policy's v
     "recovery",         # stuck: a deliberate, escalating, bounded escape
     "governor",         # LiDAR braking; may only reduce
     "escape",           # control adaptation: boxed in -> decisive pivot
@@ -76,8 +77,14 @@ STAGE_ORDER = (
 # used to be "RULE". `escape` fires because the ROBOT is stuck; `no_reverse` fires
 # because the COMMAND cannot be executed. A robot reporting "recovery" while merely
 # translating a reverse tells you to go look for a trap that is not there.
+#   LOCAL_NAVIGATOR      a choice between COMMANDS THAT ARE ALL ALLOWED -- which of the
+#                        drivable arcs actually goes somewhere. It is not a veto and not
+#                        a brake, and filing it under SAFETY_OVERRIDE (which is what an
+#                        unregistered stage name defaults to) would have inflated the
+#                        very number it was built to reduce.
 SRC_POLICY = "RL_POLICY"
 SRC_PLANNER = "EXPLORATION_PLANNER"
+SRC_NAVIGATOR = "LOCAL_NAVIGATOR"
 SRC_SAFETY = "SAFETY_OVERRIDE"
 SRC_RECOVERY = "RECOVERY_CONTROLLER"
 SRC_CAPABILITY = "CAPABILITY_ADAPTER"
@@ -85,6 +92,7 @@ SRC_SMOOTHING = "MOTION_SMOOTHING"
 
 POLICY_STAGES = frozenset({"policy"})
 PLANNER_STAGES = frozenset({"planner"})
+NAVIGATOR_STAGES = frozenset({"navigator"})
 # `_open_side()` -- "turn toward whichever side has more open space" -- is called from
 # BOTH of these, and that is why its architectural role was ambiguous. It is not itself
 # a controller; it is a SHARED PRIMITIVE, a direction chooser that reads the live scan.
@@ -118,6 +126,8 @@ class Stage:
             return SRC_POLICY
         if self.name in PLANNER_STAGES:
             return SRC_PLANNER
+        if self.name in NAVIGATOR_STAGES:
+            return SRC_NAVIGATOR
         if self.name in RECOVERY_STAGES:
             return SRC_RECOVERY
         if self.name in CAPABILITY_STAGES:
@@ -184,6 +194,11 @@ class DecisionRecord:
     # the planner is off, which is a different fact from "the planner had nothing to
     # say" and is rendered differently.
     planner: dict | None = None
+    # Local navigator: the situation it assessed, whether it was holding a committed
+    # direction, and the clearance of the arc it chose. None when it declined the tick
+    # (nothing forward was drivable) or is switched off -- which, as with `planner`
+    # above, is a different fact from "it ran and found nothing".
+    navigator: dict | None = None
     # Result of asking "can the drivetrain execute what the policy asked for?", run
     # every tick so "checked and fine" is distinguishable from "never checked".
     capability: dict | None = None

@@ -175,6 +175,13 @@ slots = {"lidar": SensorSlot("lidar", cfg.lidar_deadline, True),
 loop = ControlLoop(cfg, PolicyRunner(HERE / "exploration_model.onnx", cfg),
                    NullMotorDriver(cfg), slots)
 loop.map_enabled = False
+# ISOLATE THE UNIT UNDER TEST. The local navigator runs downstream of the planner and,
+# when it fires, legitimately has the last word -- so `authority` reads LOCAL_NAVIGATOR
+# and this planner-provenance check would be measuring the wrong component. The
+# planner's influence is not lost when it is on: its bearing error becomes the
+# navigator's steering objective, and its stage stays in the chain, which is asserted
+# separately below.
+loop.navigator_enabled = False
 pl = ExplorationPlanner(loop.world, period_s=999.0)
 pl.target = _FakeTarget((99.0, -99.0))
 pl.target_since = time.monotonic()
@@ -193,6 +200,28 @@ check("the record carries the planner's own context",
       and "bearing_error" in loop.last_record.planner)
 check("raw policy output is still untouched by the bias",
       loop.last_record.stages[0].omega == loop.last_record.omega_raw)
+
+# 7b. ...and with the navigator ON, the planner must not become invisible. It gives up
+# the LAST WORD -- that is correct, the navigator is what finally chooses the arc -- but
+# a component whose contribution cannot be seen in the chain cannot be diagnosed, which
+# is the lesson `telemetry.py`'s six action sources already encode.
+loop2 = ControlLoop(cfg, PolicyRunner(HERE / "exploration_model.onnx", cfg),
+                    NullMotorDriver(cfg), slots)
+loop2.map_enabled = False
+loop2.navigator_enabled = True
+pl2 = ExplorationPlanner(loop2.world, period_s=999.0)
+pl2.target = _FakeTarget((99.0, -99.0))
+pl2.target_since = time.monotonic()
+pl2.reached_m = 0.0
+loop2.planner = pl2
+for _ in range(5):
+    slots["lidar"].publish(np.full(cfg.n_beams, 3.0, np.float32))
+    loop2.tick()
+names = [s.name for s in loop2.last_record.stages]
+check("with the navigator on, the planner is still in the chain",
+      "planner" in names, f"stages: {names}")
+check("...and its context is still recorded",
+      loop2.last_record.planner is not None)
 
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

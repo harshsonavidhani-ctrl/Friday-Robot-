@@ -100,7 +100,9 @@ if str(HERE) not in sys.path:
 import telemetry as tlm  # noqa: E402
 from explorer import ExplorationPlanner, steering_bias  # noqa: E402
 import cameras as _cameras  # noqa: E402
+from dwa import DynamicWindowPlanner  # noqa: E402
 from narrator import Narrator  # noqa: E402
+from navigator import Navigator  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
 import friday_freespace as fs_mod  # noqa: E402
@@ -329,6 +331,10 @@ class RobotConfig:
     cam_deadline: float = 1.50          # advisory -> degrade, do not stop
 
     # ---- actuation limits ----
+    # Fraction of v_max the local navigator may command on an arc it has simulated
+    # clear, even when the policy asked for less. 0.0 = off: it may only ever reduce,
+    # and she stays exactly as decisive as the network. See stage 1d in tick().
+    nav_speed_authority: float = 0.0
     max_lin_accel: float = 0.8          # [m/s^2] command slew limit -> no wheel slip
     max_ang_accel: float = 4.0          # [rad/s^2]
     # A PIVOT IN PLACE IS NOT SLEW LIMITED. The slew limit exists to stop the wheels
@@ -2775,6 +2781,13 @@ class ControlLoop:
         self.map_enabled = True
         self.planner: ExplorationPlanner | None = None
         self.planner_enabled = True
+        # LOCAL NAVIGATION. The planner says WHERE (a frontier, at 0.5 Hz); this says
+        # HOW to get there right now, by simulating candidate arcs against the live
+        # scan at full control rate. It sits between the policy and the governor and,
+        # like every stage there, may only ever reduce the command. See navigator.py
+        # for the measurement that motivated it (515-1799 deg of turning per metre).
+        self.navigator = Navigator(cfg, DynamicWindowPlanner(cfg))
+        self.navigator_enabled = True
         # Broader stuck detection than the boxed-in check below. It sees oscillation,
         # spinning and no-progress, which are invisible in any single tick.
         self.recovery = RecoveryController(cfg, self.world)
@@ -2822,7 +2835,13 @@ class ControlLoop:
         self.stats = {"ticks": 0, "reflex_stops": 0, "visual_stops": 0,
                       "governor_limits": 0, "stale_stops": 0, "overruns": 0,
                       "no_reverse_turns": 0, "escape_turns": 0, "planner_biases": 0,
-                      "recovery_ticks": 0}
+                      "recovery_ticks": 0,
+                      # Local navigator. `nav_handoffs` is the honest one: ticks where
+                      # nothing forward was drivable and the old behaviour kept the
+                      # tick. In an open room it should be near zero.
+                      "nav_decisions": 0, "nav_handoffs": 0,
+                      "nav_open": 0, "nav_corridor": 0, "nav_cluttered": 0,
+                      "nav_blocked": 0}
         self.loop_ms: deque[float] = deque(maxlen=200)
         self._last_tick_t: float | None = None
         # Populated by every tick, including the fail-safe early returns. Exists from
@@ -3283,8 +3302,10 @@ class ControlLoop:
         # the safety chain's; a planner can never make this robot go faster at
         # anything. The governor, visual gate, reflex and limiter all run below.
         planner_ctx = None
+        target_bearing = None
         if self.planner is not None:
             err = self.planner.bearing_error(self.map.pose)
+            target_bearing = err
             bias, why = steering_bias(err, omega_pol, c.omega_max)
             planner_ctx = {"bearing_error": err, "bias": bias, "reason": why}
             if bias != 0.0:
@@ -3294,6 +3315,63 @@ class ControlLoop:
                 rec.add("planner", v_pol, omega_pol, why)
             self.planner.note_progress(self.map.pose)
         rec.planner = planner_ctx
+
+        # ---- 1d. LOCAL NAVIGATOR (is the command she just asked for DRIVABLE?) -----
+        #
+        # Everything downstream of the policy can only say no, and the governor's clamp
+        # is `v_out = min(v_out, 0.0)` -- forward is zeroed, omega passes through. So a
+        # robot refused permission to drive still has full permission to turn, and
+        # turns. That is the 515 deg/m (best run) to 1799 deg/m (worst) measured on
+        # 2026-09-04, and it is why she looked hesitant rather than deliberate.
+        #
+        # This stage answers a different question from every other one: not "is this
+        # command dangerous" but "of the commands available, which one actually goes
+        # somewhere". It simulates ~105 candidate arcs against the live scan and keeps
+        # the best survivor.
+        #
+        # THREE THINGS KEEP IT SAFE, and none of them is trust in this code:
+        #   * it is capped at `v_pol` -- it can only slow her down, never speed her up;
+        #   * it only samples FORWARD arcs, so reverse, escape turns and recovery are
+        #     untouched and still own every case where backing up is the answer;
+        #   * a None means "nothing forward is drivable", and the tick then runs
+        #     exactly the code it ran before this stage existed.
+        # The governor, visual gate, ToF reflex and rate limiter all still run below.
+        nav_ctx = None
+        if (self.navigator is not None and self.navigator_enabled
+                and scan is not None and v_pol > 0.0):
+            # SPEED AUTHORITY, and it is OFF (0.0) unless asked for.
+            #
+            # With authority 0 this stage is capped at `v_pol`, so it may only ever
+            # slow her down -- the chain's invariant holds exactly as written, and the
+            # navigator changes only WHICH WAY she goes. The cost is that she is only
+            # ever as decisive as the policy, and this policy is timid: measured mean
+            # v_raw +0.206 m/s, and it asks for 0.026 in an open room.
+            #
+            # Above 0, the navigator may command up to that fraction of v_max on an arc
+            # it has SIMULATED CLEAR over LOOKAHEAD_M against the live scan -- which is
+            # strictly more evidence about the next 0.6 m than the policy has. It is
+            # still gated on the policy wanting to go forward at all, and the governor,
+            # visual gate, ToF reflex and limiter all still run below it and can still
+            # take it away. This is a deliberate, bounded exemption from "a planner can
+            # never make this robot go faster", and it is Harsh's call, not a default.
+            authority = float(getattr(c, "nav_speed_authority", 0.0))
+            v_allow = max(v_pol, c.v_max * authority) if authority > 0.0 else v_pol
+            decision = self.navigator.decide(
+                scan, v_allow=v_allow, omega_want=omega_pol,
+                desired_bearing=target_bearing, blind_beams=self.map.blind_beams,
+                v_floor=max(self.motors.min_speed_mps(), 0.05))
+            if decision is not None:
+                v_pol, omega_pol = decision.v, decision.omega
+                gate = "navigator"
+                nav_ctx = {"situation": decision.situation,
+                           "committed": decision.committed,
+                           "clearance": decision.clearance}
+                rec.add("navigator", v_pol, omega_pol, decision.why)
+                self.stats["nav_decisions"] += 1
+                self.stats[f"nav_{decision.situation}"] += 1
+            else:
+                self.stats["nav_handoffs"] += 1
+        rec.navigator = nav_ctx
 
         # ---- 2. LiDAR governor ----------------------------------------------------
         v, omega, limited = self.governor(v_pol, omega_pol, scan)
@@ -3817,6 +3895,19 @@ class ControlLoop:
         LOGGER.info("ticks=%d  explored=%.1f m^2", self.stats["ticks"], self.map.explored_m2)
         LOGGER.info("loop ms: mean %.2f | p95 %.2f | max %.2f (budget %.0f)",
                     lm.mean(), np.percentile(lm, 95), lm.max(), self.cfg.dt * 1000)
+        s = self.stats
+        if self.navigator is not None and (s["nav_decisions"] or s["nav_handoffs"]):
+            total = max(s["nav_decisions"] + s["nav_handoffs"], 1)
+            LOGGER.info("navigator: %d ticks steered (%.0f%%), %d handed back; "
+                        "open %d / corridor %d / cluttered %d",
+                        s["nav_decisions"], 100.0 * s["nav_decisions"] / total,
+                        s["nav_handoffs"], s["nav_open"], s["nav_corridor"],
+                        s["nav_cluttered"])
+            LOGGER.info("  commitments %d held, %d broken; arc choice %.2f ms mean "
+                        "(a HIGH handback count means she is spending her time in "
+                        "places with no drivable way forward)",
+                        self.navigator.commitments, self.navigator.commit_breaks,
+                        self.navigator.planner.last_ms)
         LOGGER.info("escape turns: %d  (boxed in: forward blocked and not moving, so "
                     "she turned toward open space)", self.stats["escape_turns"])
         LOGGER.info("reverse lifts: %d  (policy asked for a reverse too gentle to "
@@ -4854,6 +4945,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-recovery", action="store_true",
                    help="Disable oscillation/spin/no-progress detection and recovery. "
                         "The boxed-in escape turn is separate and stays on.")
+    p.add_argument("--navigator-speed-authority", type=float, default=0.0,
+                   metavar="FRACTION",
+                   help="Fraction of v_max the local navigator may drive at on an arc "
+                        "it has simulated clear, even if the policy asked for less. "
+                        "0 (default) = it may only ever slow her down, so she is only "
+                        "as decisive as the network -- which measures a mean of "
+                        "0.21 m/s. 0.6 is a reasonable first try. The governor, ToF "
+                        "reflex and rate limiter all still run below it.")
+    p.add_argument("--no-navigator", action="store_true",
+                   help="Disable the local navigator (arc selection + situational "
+                        "commitment) and let the policy's command go straight to the "
+                        "governor, exactly as before. Use it to A/B the thing it was "
+                        "built to fix: turning per metre, and what fraction of ticks "
+                        "end in a safety override.")
     p.add_argument("--no-planner", action="store_true",
                    help="Disable frontier target selection. The RL policy then drives "
                         "alone, exactly as before Phase 3 -- useful for an A/B of "
@@ -5197,6 +5302,8 @@ def main(argv: list[str] | None = None) -> int:
         loop.status_every = max(0, int(args.status_every))
         loop.map_enabled = not args.no_map
         loop.planner_enabled = not args.no_planner
+        loop.navigator_enabled = not args.no_navigator
+        cfg.nav_speed_authority = float(args.navigator_speed_authority)
         loop.recovery_enabled = not args.no_recovery
         loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]
         loop._threads = threads          # for the LiDAR rejection counter
