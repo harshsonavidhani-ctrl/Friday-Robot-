@@ -123,7 +123,13 @@ class Navigator:
         self.assessments: dict[str, int] = {OPEN: 0, CORRIDOR: 0,
                                             CLUTTERED: 0, BLOCKED: 0}
         self.commitments = 0
-        self.commit_breaks = 0
+        # EXPIRY AND REVERSAL ARE NOT THE SAME EVENT and must not share a counter.
+        # They were both `commit_breaks`, and the resulting "94 broken vs 28 held" read
+        # as constant flip-flopping when COMMIT_MAX_S = 3 s over a 360 s run accounts
+        # for ~120 expiries on its own. Only `commit_switches` is evidence of the
+        # behaviour this mechanism exists to suppress.
+        self.commit_expiries = 0
+        self.commit_switches = 0
         self.handoffs = 0                 # ticks handed back to the old behaviour
 
     # ------------------------------------------------------------- assessment --
@@ -210,9 +216,20 @@ class Navigator:
             float(b.max() - b.min())
 
     # -------------------------------------------------------------- commitment --
-    def _apply_commitment(self, candidates_omega: float, score_now: float,
+    def _apply_commitment(self, candidates_omega: float, margin: float,
                           situation: str) -> tuple[float, bool, str]:
-        """Bias toward the direction already chosen, unless a rival clearly beats it."""
+        """Bias toward the direction already chosen, unless a rival clearly beats it.
+
+        `margin` is how much better the winning arc is THAN THE BEST ARC IN THE
+        COMMITTED DIRECTION -- a difference, not a score.
+
+        MEASURED, 2026-09-04: this was being passed the winner's ABSOLUTE score, which
+        in production runs about 1.5 against a COMMIT_MARGIN of 0.18, so "has the rival
+        earned it" was true on every single reversal and the commitment could never
+        hold. Two hardware runs reported 121/56 and 94/28 broken-to-held because of it.
+        A threshold is only a threshold if the quantity compared against it is on the
+        same scale.
+        """
         now = time.monotonic()
         sign = 0 if abs(candidates_omega) < 1e-3 else (1 if candidates_omega > 0 else -1)
 
@@ -237,20 +254,19 @@ class Navigator:
 
         if now - self._commit_since > COMMIT_MAX_S:
             self._commit_sign, self._commit_since = sign, now
-            self.commit_breaks += 1
+            self.commit_expiries += 1
             return candidates_omega, False, "commitment expired"
 
         if sign == self._commit_sign or sign == 0:
             return candidates_omega, True, "holding line"
 
-        # A genuine reversal. It is allowed, but it has to have earned it -- the caller
-        # only gets here when the winning arc points the other way, and `score_now` is
-        # how much better it was. Under the margin, keep the old direction's arc.
-        if score_now >= COMMIT_MARGIN:
+        # A genuine reversal. It is allowed, but it has to have earned it by
+        # COMMIT_MARGIN over the best arc still available in the committed direction.
+        if margin >= COMMIT_MARGIN:
             self._commit_sign, self._commit_since = sign, now
-            self.commit_breaks += 1
-            return candidates_omega, False, f"switched (margin {score_now:.2f})"
-        return candidates_omega, True, f"held against rival ({score_now:.2f})"
+            self.commit_switches += 1
+            return candidates_omega, False, f"switched (margin {margin:.2f})"
+        return candidates_omega, True, f"held against rival ({margin:.2f})"
 
     def release(self) -> None:
         """Forget the commitment. Called when something else takes the wheel."""
@@ -295,12 +311,27 @@ class Navigator:
             self.release()
             return None
 
+        # The margin is measured against the best arc STILL AVAILABLE in the committed
+        # direction. If that direction has no surviving arc at all there is nothing to
+        # hold on to, and the commitment must yield rather than steer her into the one
+        # place the collision check just rejected.
+        held_sign = self._commit_sign
+        rival = res.alternatives.get(held_sign) if held_sign else None
+        margin = (res.score - rival[0]) if rival else float("inf")
+
         omega, committed, commit_why = self._apply_commitment(
-            res.omega, res.score, a.situation)
+            res.omega, margin, a.situation)
+
+        v = res.v
+        if committed and rival is not None:
+            # HOLDING MEANS DRIVING THE COMMITTED DIRECTION'S ARC. This used to return
+            # the rival's omega even while reporting "held", so holding and switching
+            # produced identical commands and the whole mechanism was inert.
+            _, v, omega = rival
 
         self._last_situation = a.situation
         return Decision(
-            v=res.v,
+            v=v,
             omega=omega,
             situation=a.situation,
             committed=committed,

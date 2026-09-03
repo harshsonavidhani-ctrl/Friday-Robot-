@@ -3903,11 +3903,16 @@ class ControlLoop:
                         s["nav_decisions"], 100.0 * s["nav_decisions"] / total,
                         s["nav_handoffs"], s["nav_open"], s["nav_corridor"],
                         s["nav_cluttered"])
-            LOGGER.info("  commitments %d held, %d broken; arc choice %.2f ms mean "
+            # SWITCHES are the number that matters -- a direction reversal a rival had
+            # to earn. Expiries are just COMMIT_MAX_S elapsing and say nothing about
+            # flip-flopping; counting them together read as "94 broken vs 28 held" and
+            # made a working mechanism look broken.
+            LOGGER.info("  commitments %d taken, %d reversed by a better option, "
+                        "%d expired on age; arc choice %.2f ms mean "
                         "(a HIGH handback count means she is spending her time in "
                         "places with no drivable way forward)",
-                        self.navigator.commitments, self.navigator.commit_breaks,
-                        self.navigator.planner.mean_ms)
+                        self.navigator.commitments, self.navigator.commit_switches,
+                        self.navigator.commit_expiries, self.navigator.planner.mean_ms)
         LOGGER.info("escape turns: %d  (boxed in: forward blocked and not moving, so "
                     "she turned toward open space)", self.stats["escape_turns"])
         LOGGER.info("reverse lifts: %d  (policy asked for a reverse too gentle to "

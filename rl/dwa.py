@@ -74,7 +74,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -136,6 +136,13 @@ class DWAResult:
     safe: int                 # candidates that survived collision checking
     ms: float                 # wall time spent choosing
     why: str
+    # Best surviving arc for each turn direction: -1 right, 0 straight, +1 left, as
+    # sign -> (score, v, omega). A caller holding a commitment needs TWO things this
+    # used to make impossible: the real MARGIN between the winner and the best arc in
+    # the direction it is committed to, and that direction's actual arc to drive. With
+    # only the winner it could compare the winner's absolute score against a margin
+    # constant -- always true -- and then "hold" by returning the rival's omega.
+    alternatives: dict = field(default_factory=dict)
 
 
 class DynamicWindowPlanner:
@@ -209,7 +216,8 @@ class DynamicWindowPlanner:
         return horizons[:, None] * frac[None, :]
 
     def _obstacle_points(self, scan_m: np.ndarray,
-                         blind_beams: np.ndarray | None) -> np.ndarray:
+                         blind_beams: np.ndarray | None,
+                         keep_within_m: float = float("inf")) -> np.ndarray:
         """Scan -> (N, 2) obstacle points in the robot frame. Invalid beams dropped.
 
         THREE KINDS OF BEAM ARE NOT OBSTACLES, and conflating any of them with free
@@ -233,11 +241,19 @@ class DynamicWindowPlanner:
 
         min_valid = float(getattr(self.cfg, "lidar_floor", self.cfg.robot_radius))
         valid = np.isfinite(r) & (r >= min_valid) & (r < self.cfg.lidar_max_range)
+        # A RETURN FAR ENOUGH AWAY CANNOT AFFECT EITHER ANSWER. The arcs reach at most
+        # `extent` from the origin, so nothing beyond extent + clearance_cap can collide
+        # with one OR change a clearance score that saturates at CLEARANCE_CAP_M. The
+        # caller passes that bound, and dropping the rest is exact, not an approximation
+        # -- it is the difference between an (M, K, 72) array and an (M, K, 8) one in an
+        # open room, which is the whole cost of this stage.
+        valid &= r <= keep_within_m
         if blind_beams is not None and np.size(blind_beams):
             valid[np.asarray(blind_beams, dtype=np.int32)] = False
         if not valid.any():
-            return np.zeros((0, 2), dtype=np.float64)
-        return np.stack([r[valid] * cos_b[valid], r[valid] * sin_b[valid]], axis=1)
+            return np.zeros((0, 2), dtype=np.float32)
+        return np.stack([r[valid] * cos_b[valid],
+                         r[valid] * sin_b[valid]], axis=1).astype(np.float32)
 
     def _arcs(self, vs: np.ndarray, omegas: np.ndarray) -> tuple[np.ndarray, np.ndarray,
                                                                 np.ndarray]:
@@ -297,7 +313,12 @@ class DynamicWindowPlanner:
         vv, ww = vv.ravel(), ww.ravel()                    # (M,)
         x, y, theta_end = self._arcs(vv, ww)               # (M, K), (M, K), (M,)
 
-        obstacles = self._obstacle_points(scan_m, blind_beams)
+        # How far any candidate actually reaches, measured from the arcs themselves
+        # rather than assumed from v_max -- the horizons are per-candidate, so a bound
+        # derived from constants would be wrong the moment one of them changes.
+        extent = float(np.sqrt(np.max(x * x + y * y))) if x.size else 0.0
+        obstacles = self._obstacle_points(scan_m, blind_beams,
+                                          keep_within_m=extent + CLEARANCE_CAP_M)
         clear_r = float(self.cfg.robot_radius + self.cfg.collision_margin)
 
         if obstacles.shape[0] == 0:
@@ -307,10 +328,20 @@ class DynamicWindowPlanner:
             clearance = np.full(vv.shape, np.inf)
             safe = np.ones(vv.shape, dtype=bool)
         else:
-            dx = x[:, :, None] - obstacles[None, None, :, 0]
-            dy = y[:, :, None] - obstacles[None, None, :, 1]
-            d = np.sqrt(dx * dx + dy * dy)                 # (M, K, N)
-            clearance = d.min(axis=(1, 2))                 # (M,)
+            # SQUARED DISTANCES, AND ONE SQRT PER CANDIDATE RATHER THAN PER SAMPLE.
+            # This inner block is the whole cost of the stage: (M, K, N) is 105 x 12 x
+            # 72 = 90,720 elements, and taking sqrt over all of them to then keep 105
+            # minima was ~90k wasted transcendentals per tick. Comparing squares is
+            # exactly equivalent (both sides non-negative) and the sqrt moves to the
+            # 105 values actually used. float32 halves the memory traffic, which is
+            # what this array is really limited by on a Pi -- and 24-bit mantissa is
+            # far more precision than a centimetre-accurate LiDAR justifies.
+            xf = x.astype(np.float32, copy=False)
+            yf = y.astype(np.float32, copy=False)
+            dx = xf[:, :, None] - obstacles[None, None, :, 0]
+            dy = yf[:, :, None] - obstacles[None, None, :, 1]
+            d2 = dx * dx + dy * dy                         # (M, K, N), squared metres
+            clearance = np.sqrt(d2.min(axis=(1, 2)))       # (M,)
             safe = clearance > clear_r
 
         if not safe.any():
@@ -338,6 +369,17 @@ class DynamicWindowPlanner:
         score = np.where(safe, score, -np.inf)
 
         best = int(np.argmax(score))
+
+        # Best surviving arc per turn direction, so a committed caller can measure a
+        # real margin and drive its own direction's arc instead of the rival's.
+        sign_of = np.sign(np.round(ww, 6)).astype(int)
+        alternatives: dict = {}
+        for s in (-1, 0, 1):
+            m = safe & (sign_of == s)
+            if m.any():
+                j = int(np.argmax(np.where(m, score, -np.inf)))
+                alternatives[s] = (float(score[j]), float(vv[j]), float(ww[j]))
+
         self.chosen += 1
         self.last_ms = (time.perf_counter() - t0) * 1000.0
         self.total_ms += self.last_ms
@@ -351,4 +393,5 @@ class DynamicWindowPlanner:
             ms=self.last_ms,
             why=(f"arc v={vv[best]:.2f} w={ww[best]:+.2f} clear={clearance[best]:.2f}m "
                  f"({int(safe.sum())}/{int(vv.size)} safe)"),
+            alternatives=alternatives,
         )

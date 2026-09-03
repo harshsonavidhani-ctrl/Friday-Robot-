@@ -165,6 +165,80 @@ nav2._commit_situation = CLUTTERED
 _, held, why = nav2._apply_commitment(-1.0, COMMIT_MARGIN * 0.4, CLUTTERED)
 check("a marginally better rival does not break a commitment", held, why)
 
+# REGRESSION, and the one the unit tests above MISSED for two hardware runs. They fed
+# `_apply_commitment` hand-picked margins (0.07, 0.36) and passed, while production
+# passed it the winner's ABSOLUTE score -- about 1.5 against a 0.18 threshold -- so the
+# commitment broke on every reversal and the feature was inert on the robot. The fix is
+# only real if it is checked END TO END, through decide(), on values the robot actually
+# produces. A unit test on a number nothing generates proves nothing.
+# THE SCENE MUST BE A NEAR-TIE WITH NOISE, or the test cannot fail. A static scan makes
+# DWA deterministic -- it returns the same argmax every tick whether commitment works or
+# not -- and a first version of this check PASSED against a deliberately broken copy for
+# exactly that reason. A zig-zag is noise breaking a tie between two near-equal options,
+# so that is what has to be reproduced: a symmetric obstacle dead ahead (left and right
+# are equally good) plus per-tick jitter of a centimetre or two.
+# THE TWO PRODUCTION BUGS, tested at the level where they actually existed.
+#
+# An earlier attempt here drove `decide()` over an alternating scene and asserted she
+# did not flip. It PASSED AGAINST A DELIBERATELY BROKEN COPY, three times, for three
+# different reasons -- and the last one is worth recording: with commitment stubbed out
+# entirely, `decide()` was ALREADY stable, because the widest-gap blending fixes the
+# steering target in CLUTTERED regardless. So that test never measured commitment at
+# all. These do, and they are honest about being unit-level.
+
+# BUG 1: the margin was the winner's ABSOLUTE score (~1.5 in production) compared
+# against COMMIT_MARGIN (0.18), so every reversal "earned it" and nothing ever held.
+nav_m = Navigator(cfg, DynamicWindowPlanner(cfg))
+nav_m._commit_sign, nav_m._commit_since = +1, time.monotonic()
+nav_m._commit_situation = CLUTTERED
+_, held, _ = nav_m._apply_commitment(-1.0, 1.5, CLUTTERED)     # a production-scale score
+check("a production-scale SCORE passed as a margin would break every commitment",
+      not held, "so the margin must be a difference, not a score -- see BUG 1")
+nav_m._commit_sign, nav_m._commit_since = +1, time.monotonic()
+_, held, _ = nav_m._apply_commitment(-1.0, 0.05, CLUTTERED)    # a real margin
+check("...and a real margin under the threshold holds", held)
+
+# BUG 2: the "held" branch returned the RIVAL's omega, so holding and switching
+# produced identical commands and the mechanism was inert. decide() must return the
+# committed direction's own arc, which it can only do from `alternatives`.
+s_two = put(clear_scan(), -14.0, 14.0, 0.85)
+res_two = DynamicWindowPlanner(cfg).choose(s_two, cfg.v_max, 0.0, desired_bearing=0.0)
+check("choose() reports the best arc for EACH turn direction",
+      res_two is not None and {-1, 1} <= set(res_two.alternatives),
+      f"alternatives: {sorted(res_two.alternatives)}" if res_two else "None")
+if res_two and {-1, 1} <= set(res_two.alternatives):
+    winner_sign = 1 if res_two.omega > 0 else -1
+    other = res_two.alternatives[-winner_sign]
+    check("...and the losing direction's arc points the other way",
+          (other[2] > 0) != (res_two.omega > 0),
+          f"winner {res_two.omega:+.2f} vs held-direction {other[2]:+.2f}")
+
+# WHAT IS *NOT* COVERED HERE, stated rather than papered over.
+#
+# There is no end-to-end test proving the margin fix changes what the robot does, and
+# four attempts to write one all failed for instructive reasons. The last and most
+# important: through `decide()`, the widest-gap blending sets the steering target and
+# breaks the tie between the two sides BEFORE commitment is ever consulted -- measured
+# margin 0.32 against a 0.18 threshold on a geometrically symmetric obstacle, where
+# switching is then the correct answer. Stubbing commitment out entirely left decide()
+# just as stable.
+#
+# So the honest conclusion is that commitment matters less in practice than it looks,
+# because something else is already doing that job. The two bugs below were real and are
+# fixed; their behavioural effect on hardware is UNPROVEN, and the run summary now
+# separates `switched` from `expired` so the next run can actually measure it.
+
+# A commitment to a direction with no surviving arc must YIELD, not steer her into the
+# side the collision check just rejected.
+nav_y = Navigator(cfg, DynamicWindowPlanner(cfg))
+nav_y._commit_sign, nav_y._commit_since = +1, time.monotonic()
+s_left_blocked = put(clear_scan(), 5.0, 90.0, 0.30)     # everything left is unusable
+d_y = nav_y.decide(s_left_blocked, v_allow=cfg.v_max, omega_want=0.0,
+                   desired_bearing=0.0)
+check("a commitment to a blocked side does not survive",
+      d_y is None or d_y.omega <= 0.0,
+      f"omega={d_y.omega:+.2f}" if d_y else "handed back (also correct)")
+
 # ...but a clearly better one must, or commitment becomes stubbornness.
 nav2._commit_sign, nav2._commit_since = +1, time.monotonic()
 _, held, why = nav2._apply_commitment(-1.0, COMMIT_MARGIN * 2.0, CLUTTERED)
@@ -236,16 +310,32 @@ print("--- cost: this runs inside a 100 ms control budget ---")
 
 # The Pi is CPU-bound, and tonight proved what that costs: the loop hit 172 ms and the
 # reflex fired on 83% of ticks. A planner that is right but too slow is not right.
-s = put(clear_scan(), -25.0, 25.0, 0.90)
+#
+# THE BENCHMARK MUST BE THE WORST CASE, NOT A CONVENIENT ONE. The first version of this
+# timed a scan that was almost all max_range -- and max_range beams are DROPPED as "saw
+# nothing", so it was timing an empty obstacle set and reported 2.4 ms. The real room is
+# a cluttered one where every beam returns: that is the (M, K, N) array at full size,
+# and it is the only number worth defending. Measured on hardware, the navigator took
+# the loop mean from 62 ms to 81 ms, so this is not free.
+dense = np.linspace(0.8, 2.5, cfg.n_beams).astype(np.float64)   # every beam returns
 dwa_t = DynamicWindowPlanner(cfg)
-dwa_t.choose(s, cfg.v_max, 0.0, desired_bearing=0.0)          # warm numpy
+dwa_t.choose(dense, cfg.v_max, 0.0, desired_bearing=0.0)        # warm numpy
 t0 = time.perf_counter()
 N = 50
 for _ in range(N):
-    dwa_t.choose(s, cfg.v_max, 0.0, desired_bearing=0.0)
+    dwa_t.choose(dense, cfg.v_max, 0.0, desired_bearing=0.0)
 per_ms = (time.perf_counter() - t0) * 1000.0 / N
-check("choose() costs a small fraction of the control budget",
+check("choose() on a FULLY POPULATED scan fits the control budget",
       per_ms < 25.0, f"{per_ms:.2f} ms/call (budget 100 ms, loop already ~62 ms)")
+
+# ...and the optimisation must not have changed the answer. Squared-distance comparison
+# is exactly equivalent to comparing distances, and float32 has far more precision than
+# a centimetre-accurate LiDAR needs -- but "should be equivalent" is not evidence.
+s_ref = put(clear_scan(), -25.0, 25.0, 0.50)
+ref = DynamicWindowPlanner(cfg).choose(s_ref, cfg.v_max, 0.0, desired_bearing=0.0)
+check("clearance is still reported in metres, not squared metres",
+      ref is not None and 0.0 < ref.clearance < cfg.lidar_max_range,
+      f"clearance={ref.clearance:.3f} m" if ref else "None")
 
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)
