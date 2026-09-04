@@ -53,7 +53,13 @@ fi
 # restored by the same trap, so a crash or a Ctrl-C cannot leave her faceless.
 # --keep-services opts out when you want the face up for a demo and can accept the
 # steering cost.
-CPU_UNITS="friday-face.service friday-brain.service"
+# friday-dashboard is here for a different reason from the other two: it is not the CPU,
+# it is that its ffmpeg children hold BOTH /dev/video nodes exclusively whenever anyone
+# has the camera panel open, and a V4L2 device does not survive two streaming readers.
+# The script used to only WARN about that, which meant a run could go camera-blind --
+# and a camera-blind run looks exactly like a working one in the log. Measured
+# 2026-09-04: with the panel open, both cameras returned zero frames to the robot.
+CPU_UNITS="friday-face.service friday-brain.service friday-dashboard.service"
 STOPPED_UNITS=""
 KEEP_SERVICES=0
 for a in "$@"; do

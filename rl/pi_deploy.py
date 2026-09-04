@@ -278,7 +278,28 @@ class RobotConfig:
 
     # ---- ToF emergency reflex ----
     tof_enabled: bool = True
-    tof_stop_distance: float = 0.30     # [m] any zone closer than this -> emergency stop
+    # CALIBRATED FROM THE APPROACH SPEEDS SHE ACTUALLY REACHES, 2026-09-04.
+    #
+    # At 0.30 the reflex fired on 75% of ticks of a 12-minute run, and the tof_min
+    # median DURING those ticks was 0.217 m: she spent the run stopped a hand's width
+    # from things, which is the "hesitation" Harsh keeps seeing. 0.30 m of clear space
+    # in front of the BUMPER (not the centre -- every ToF range is bumper-relative) is
+    # a lot of margin for a robot 0.22 m in radius.
+    #
+    # What the margin has to cover, measured over the 2158 ticks she spent in the
+    # 0.20-0.35 m band of that run:
+    #     mean |v| 0.049 m/s, p95 0.150, worst single tick 0.445
+    #     worst case = 0.015 m coasted in one 30 Hz reflex period
+    #                + 0.124 m braking at max_lin_accel  =  0.139 m
+    # So 0.24 leaves 0.10 m of margin against the worst approach ever recorded, and
+    # 0.22 m against the p95 one, while cutting the ticks that trip it from 71% (at
+    # 0.28) to 42%. The curve is steep exactly here -- 0.26 is 53%, 0.24 is 42% -- so
+    # this is where the hesitation is bought back cheapest.
+    #
+    # It is still the LAST line: the LiDAR governor brakes from safe_distance 0.55 and
+    # hard-stops at 0.36, and the navigator's near-field barrier steers around returns
+    # at EVERY range (see navigator._tof_constraint) long before any of this.
+    tof_stop_distance: float = 0.24     # [m] any zone closer than this -> emergency stop
     tof_slow_distance: float = 0.60     # [m] begin proportional braking
     tof_min_valid_zones: int = 3        # ignore isolated speckle; need N zones to agree
     tof_max_range: float = 4.00
@@ -302,7 +323,16 @@ class RobotConfig:
     cam_indices: tuple[int, int] = (0, 1)
     cam_width: int = 320
     cam_height: int = 240
-    cam_fps: int = 15
+    # THIS CAMERA DELIVERS EXACTLY HALF WHAT IT IS ASKED FOR. Measured through
+    # cv2.VideoCapture on the up camera (Logitech C270), 120 frames each:
+    #     request 15 fps -> 7.6 fps      request 30 fps -> 15.3 fps
+    # at both 320x240 and 160x120, so it is the negotiated frame interval and not
+    # bandwidth, resolution or exposure (auto_exposure and exposure_dynamic_framerate
+    # were both ruled out by measurement). 15 was therefore buying 7.6 fps of vision
+    # for a 10 Hz control loop -- the free-space profile was a third of a second stale
+    # whenever it mattered. Asking for 30 costs nothing extra: the decode is 1.4 ms and
+    # cap.read() is a blocking WAIT, so the thread was idle for the other 130 ms.
+    cam_fps: int = 30
     visual_hazard_threshold: float = 0.65   # sustained score above this -> full stop
     visual_consec_frames: int = 3           # temporal consistency -> fewer false stops
     visual_min_speed_scale: float = 0.25    # a hazard never brakes below this fraction
@@ -1037,6 +1067,31 @@ TOF_FLOOR_MAX_MM = 900          # absolute backstop on how far a ground row may 
 TOF_FLOOR_MIN_ROWS = 2          # fewer ground rows than this = the floor is not visible
 TOF_FLOOR_NEAR_ROWS = 3         # the bottom rows that carry the "path is clear" claim
 
+# ---- cliffs (stairs, landings, the edge of a rug over a step) -----------------------
+# How much FURTHER than its fitted floor a near cell must read before the floor counts
+# as having fallen away. Above TOF_FLOOR_INTACT_MM (70), which is the "off-model" band,
+# so a drop has to be a drop and not merely a floor the fit describes badly.
+TOF_CLIFF_BEYOND_MM = 90
+# How many near-row cells must agree before it is a cliff and not a dark patch. A real
+# edge crosses the beam pattern and takes several cells at once; absorbing carpet takes
+# one. Same argument and same order of magnitude as tof_min_valid_zones.
+TOF_CLIFF_MIN_CELLS = 4
+# THE FIT CANNOT SEE A DROP THAT TAKES THE WHOLE FIELD AT ONCE, and this is the bound
+# that catches it. A floor receding uniformly is geometrically indistinguishable from a
+# sensor aimed further out -- every row still grows on the same curve, every cell still
+# matches its own row's reference, and `floor_intact` comes back True. Caught by a test
+# only after the test was checked against broken code: the partial-edge case passed
+# through the OCCLUSION path and hid it.
+#
+# So the bottom row gets an absolute ceiling, because it is the steepest look-down and
+# the one with the least room for legitimate variation. MEASURED on this robot: 120 mm
+# at the original mounting, 89 mm after the bumper was disturbed and the sensor
+# re-aimed. 300 mm is 2.5x the first and 3.4x the second -- far outside anything a
+# mounting change has ever produced here, and far inside the 520 mm a one-step drop
+# gives. If it ever fires on real floor the sensor has moved enormously, and that is
+# worth stopping for and saying out loud either way.
+TOF_FLOOR_BOTTOM_MAX_MM = 300
+
 # ---- relocalising into a map that is still mostly unknown ---------------------------
 # Below this many occupied cells, `score` is dominated by how little has been mapped
 # rather than by how well the sweep fits, and ControlLoop.relocalise falls back to
@@ -1132,6 +1187,7 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
     # cell, near or far: a cell that reads SHORT is an object whichever row it is in.
     near_rows = set(range(TOF_ROWS - TOF_FLOOR_NEAR_ROWS, TOF_ROWS))
     near_seen = near_ok = 0
+    cliff: list[tuple[int, int, float]] = []
     for r in range(horizon, TOF_ROWS):
         exp = expected.get(r)
         near = r in near_rows
@@ -1139,18 +1195,70 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
             if near:
                 near_seen += 1
             if not 0 < v < TOF_NO_RETURN_MM:
-                continue                                 # no return: no information
+                # NO RETURN WHERE THE FLOOR SHOULD BE IS A CLIFF -- but only in the
+                # near rows, and this is the measurement that makes the distinction
+                # legitimate rather than a guess: over 182 frames on ordinary floor,
+                # rows 5/6/7 returned 8.00 of 8 cells in EVERY frame, while row 4
+                # returned 5.59. Row 4's silence is normal and means nothing. A near
+                # row going quiet means the beam went somewhere the floor is not.
+                if near and exp is not None:
+                    cliff.append((r, col, exp))
+                continue
             if exp is None:
                 continue                                 # no fitted reference: no claim
             if v < exp - TOF_FLOOR_OBSTACLE_MM:
                 out[r, col] = float(v)                   # an occlusion IS the object
+            elif v > exp + TOF_CLIFF_BEYOND_MM:
+                # THE FLOOR FELL AWAY. Down a step the beam keeps going and comes back
+                # long -- the same geometry that makes an obstacle read SHORT makes a
+                # drop read LONG, so the two are distinguishable by sign, and this one
+                # used to be discarded with a `continue`.
+                if near:
+                    cliff.append((r, col, exp))
             elif abs(v - exp) > TOF_FLOOR_INTACT_MM:
-                continue                                 # further than floor: a drop
+                continue                                 # off-model but not a drop
             elif near:
                 near_ok += 1                             # clean floor, close in
     # A drop-off or a floor that genuinely stopped reading still fails this: it takes
     # the near rows out, not the far one.
     floor_intact = near_seen > 0 and near_ok >= TOF_FLOOR_NEAR_QUORUM * near_seen
+
+    # --- the cliff, if enough of the near floor agrees it is gone -------------------
+    #
+    # Harsh, 2026-09-04: "I also want her to be able to identify cliff-like obstacle
+    # such that she does not fall on the stairs."
+    #
+    # A drop is entered into `out` AS AN OBSTACLE, at the range where the floor should
+    # have been. That is deliberate and it is why this needs no new machinery: the
+    # navigator's near-field barrier already steers around everything in this array,
+    # and the reflex already stops for it. "Do not drive there" is the same instruction
+    # whether the thing there is a table leg or a staircase, and the distance to the
+    # EDGE is exactly the distance to the last floor that was still there.
+    #
+    # The quorum is what keeps a dark rug or one absorbing pixel from becoming a
+    # staircase: a real edge crosses the beam pattern and takes several cells at once,
+    # a speckle takes one. It is the same argument, and the same order of number, as
+    # tof_min_valid_zones -- and the 3-frame median in DFRobotToFThread has to agree
+    # as well before any of this reaches the reflex.
+    # A DROP THAT TAKES THE WHOLE NEAR FIELD re-fits as "the floor is further away":
+    # every row still grows on the expected curve and every cell still matches its own
+    # row, so nothing above notices. The bottom row's absolute range is the one thing
+    # that cannot be explained away -- see TOF_FLOOR_BOTTOM_MAX_MM.
+    bottom = expected.get(TOF_ROWS - 1)
+    if bottom is not None and bottom > TOF_FLOOR_BOTTOM_MAX_MM:
+        floor_intact = False
+        # REPORTED AT WHERE THE FLOOR SHOULD HAVE BEEN, not at the bound that detected
+        # it. When the whole near field has gone there is no edge left in view to
+        # measure, so the honest range is the nearest place floor was ever seen on this
+        # robot -- the measured profile's bottom row. Reporting it at the detection
+        # bound instead put the hazard at 300 mm, outside tof_stop_distance, and the
+        # reflex drove on through it.
+        for col in range(TOF_COLS):
+            cliff.append((TOF_ROWS - 1, col, float(TOF_FLOOR_PROFILE_MM[-1])))
+
+    if len(cliff) >= TOF_CLIFF_MIN_CELLS:
+        for r, col, exp in cliff:
+            out[r, col] = min(float(out[r, col]), float(exp))
 
     # --- ahead rows: every return is a thing, minus the horizon-row echo ---
     echo = expected.get(horizon)
@@ -2878,6 +2986,7 @@ class ControlLoop:
         self.stats = {"ticks": 0, "reflex_stops": 0, "visual_stops": 0,
                       "governor_limits": 0, "stale_stops": 0, "overruns": 0,
                       "no_reverse_turns": 0, "escape_turns": 0, "planner_biases": 0,
+                      "reverse_floor_lifts": 0,
                       "recovery_ticks": 0,
                       # Local navigator. `nav_handoffs` is the honest one: ticks where
                       # nothing forward was drivable and the old behaviour kept the
@@ -3630,6 +3739,40 @@ class ControlLoop:
                     f"reverse refused: {self.governor.last_rear_min:.2f} m behind, "
                     f"inside the {c.rear_stop:.2f} m rear stop")
 
+        # ---- 2e. MAKE THE REVERSE EXECUTABLE, whoever asked for it -----------------
+        #
+        # Harsh, 2026-09-04: "we dont want her to hesitate while making turns and
+        # traversing in the reverse direction... move the lift below recovery".
+        #
+        # Stage 1b already lifts a too-gentle reverse to the slowest the wheels can
+        # actually turn -- but only when THE POLICY asked to reverse. MEASURED in the
+        # 12-minute run of 2026-09-04 17:21: she spent one 611-tick (65 s) stretch with
+        # the ToF pinned at 0.14 m and `lidar_min` FROZEN at 0.38 m, commanded to pivot
+        # and not actually rotating, while the rear was 1.26 m CLEAR. Across that run
+        # 36% of all ticks were spin-in-place. The reverses that were issued averaged
+        # -0.063 m/s against a 0.149 m/s stiction floor, so every one of them executed
+        # as a stop -- and stage 1b never saw them, because the POLICY was asking to go
+        # FORWARD (+0.42). The reverse came from recovery, which runs downstream of the
+        # lift.
+        #
+        # So the lift runs again HERE, below escape (2b), recovery (2c) and the rear
+        # gate (2d), where it can see the reverse whoever authored it.
+        #
+        # THIS CANNOT GRANT AUTHORITY TO REVERSE. It only ever changes the MAGNITUDE of
+        # an already-negative v, and it runs AFTER the rear gate -- so a reverse the
+        # rear gate refused has already been raised to 0.0 and is not negative any
+        # more, which means there is nothing here for this to act on. It is bounded by
+        # v_min, and the governor, visual gate, reflex and limiter all still run below.
+        floor_mps = self.motors.min_speed_mps()
+        if v < 0.0 and floor_mps > 0.0 and abs(v) < floor_mps:
+            lifted = max(-floor_mps, c.v_min)
+            if lifted < 0.0:
+                rec.add("reverse_floor", lifted, omega,
+                        f"reverse {v:+.3f} m/s is under the {floor_mps:.3f} m/s stiction "
+                        f"floor and would execute as a stop; issued at {lifted:+.3f}")
+                v = lifted
+                self.stats["reverse_floor_lifts"] += 1
+
         lap("governor+escape+rear")
         # ---- 3. visual gate (advisory) --------------------------------------------
         frames = self._read_cameras()
@@ -4112,6 +4255,10 @@ class ControlLoop:
         LOGGER.info("reverse lifts: %d  (policy asked for a reverse too gentle to "
                     "execute; honoured at the executable v_min instead of pivoting)",
                     self.stats.get("reverse_lifts", 0))
+        LOGGER.info("reverse floor lifts: %d  (a reverse from ANY stage -- escape, "
+                    "recovery, the policy -- that was under the stiction floor and "
+                    "would have executed as a stop, reissued at the slowest speed the "
+                    "wheels can actually turn)", self.stats["reverse_floor_lifts"])
         LOGGER.info("no-reverse turns: %d  (policy asked to back up; this drivetrain "
                     "cannot, so it turned toward open space instead)",
                     self.stats["no_reverse_turns"])
@@ -5015,6 +5162,49 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
         loop.recovery.update = real_update
     check("no stage reverses into a blocked rear", worst_v >= 0.0, f"min v={worst_v:.3f}")
 
+    # 7c. THE REVERSE FLOOR LIFT (stage 2e), both halves.
+    #
+    # It exists because a reverse under the stiction floor executes as a STOP, and
+    # stage 1b only ever saw the ones the POLICY authored. Measured in the 12-minute
+    # run of 2026-09-04 17:21: recovery issued reverses averaging -0.063 m/s against a
+    # 0.149 m/s floor, all of them silently nothing, while she spun in place for 65 s
+    # with 1.26 m of clear space behind her.
+    # NullMotorDriver reports no stiction floor (correctly -- it has no wheels), so
+    # this whole check was dead code the first time it was written: the guard was false
+    # and nothing ran. The floor is what makes the bug possible, so the sim is given
+    # the REAL one measured on this drivetrain, 0.149 m/s at min_duty 80.
+    floor_mps = 0.149
+    real_floor = loop.motors.min_speed_mps
+    loop.motors.min_speed_mps = lambda: floor_mps
+    if abs(cfg.v_min) >= floor_mps:
+        gentle = -floor_mps * 0.4                       # far too gentle to execute
+        loop.recovery.update = lambda *a, **k: (gentle, 0.0, "sub-floor reverse")
+        try:
+            # Rear CLEAR: the lift must make it executable.
+            clear_rear = np.full(cfg.n_beams, 3.0, np.float32)
+            clear_rear[0] = cfg.hard_stop - 0.05        # blocked ahead, so she wants out
+            best_v = 0.0
+            for _ in range(10):
+                loop.slots["lidar"].publish(clear_rear)
+                best_v = min(best_v, float(loop.tick()["v"]))
+            check("a sub-floor reverse from RECOVERY is lifted to an executable speed",
+                  best_v <= -floor_mps + 1e-6,
+                  f"min v={best_v:.3f} vs floor {-floor_mps:.3f}")
+
+            # Rear BLOCKED: the rear gate has already raised it to 0, so there is
+            # nothing negative left for the lift to act on. THIS IS THE PROPERTY THAT
+            # MAKES THE LIFT SAFE -- it changes a magnitude, it never grants authority,
+            # and it runs after the gate precisely so that ordering holds.
+            worst_v = 0.0
+            for _ in range(10):
+                loop.slots["lidar"].publish(boxed)
+                worst_v = min(worst_v, float(loop.tick()["v"]))
+            check("...and it cannot resurrect a reverse the rear gate refused",
+                  worst_v >= 0.0, f"min v={worst_v:.3f}")
+        finally:
+            loop.recovery.update = real_update
+            loop.motors.min_speed_mps = real_floor
+
     # 8. stale LiDAR must stop the robot -- WHEN THERE IS NOTHING ELSE TO SEE WITH.
     #    The cameras are cleared first so this asserts the original fail-safe rather
     #    than whatever the free-space fallback happened to be holding.
@@ -5038,11 +5228,25 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
         img[:96, :] = 140                       # a wall well above the horizon
         return img
 
+    # STALENESS CANNOT BE TESTED AGAINST A LIVE PUBLISHER. Under --simulate a
+    # SimSensorThread republishes the ToF at 15 Hz and the LiDAR at 10, so winding a
+    # slot's _stamp back 10 s is undone by the next publish a few milliseconds later.
+    # These checks therefore raced: "both sensors stale is a stop" failed roughly one
+    # run in five, on nothing but scheduling. A safety assertion that has to be re-run
+    # to be believed is not an assertion. So the slot is FROZEN -- its publish becomes
+    # a no-op -- for exactly as long as the check needs it to be stale.
+    def _freeze(name):
+        slot = loop.slots[name]
+        real = slot.publish
+        slot.publish = lambda *a, **k: None
+        slot._stamp = time.monotonic() - 10.0
+        return lambda: setattr(slot, "publish", real)
+
     loop.slots["tof"].publish(np.full((8, 8), cfg.tof_max_range, np.float32))
     if "cam_up" in loop.slots:
         loop.slots["cam_up"].publish(_open_scene())
         loop._cam_seen.clear()
-        loop.slots["lidar"]._stamp = time.monotonic() - 10.0
+        thaw_lidar = _freeze("lidar")
         row = loop.tick()
         check("a stale lidar falls back to camera vision, not to a stop",
               row["gate"] == "vision_lidar" and row["v"] > 0.0,
@@ -5055,14 +5259,16 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
         #     0.87 m -- geometry, not tuning -- and that blind zone is the ToF's patch.
         #     With BOTH critical sensors stale there is nothing watching the metre she
         #     is about to drive through, so it must still be a stop.
+        thaw_tof = _freeze("tof")
         loop.slots["lidar"]._stamp = time.monotonic() - 10.0
-        loop.slots["tof"]._stamp = time.monotonic() - 10.0
         loop._cam_seen.clear()
         loop.slots["cam_up"].publish(_open_scene())
         row = loop.tick()
         check("both sensors stale is a stop, however well the camera sees",
               row["v"] == 0.0 and row["gate"].startswith("stale"),
               f"gate={row['gate']} v={row['v']:.3f}")
+        thaw_tof()
+        thaw_lidar()
 
     # 8c. The advisory nudge is BOUNDED. It is a hint from a camera whose height and
     #     tilt are estimates; it may lean her toward the open side and may not take

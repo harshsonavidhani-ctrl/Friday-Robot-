@@ -52,6 +52,7 @@ STAGE_ORDER = (
     "recovery",         # stuck: a deliberate, escalating, bounded escape
     "governor",         # LiDAR braking; may only reduce
     "escape",           # control adaptation: boxed in -> decisive pivot
+    "reverse_floor",    # control adaptation: sub-stiction reverse -> slowest executable
     "visual",           # camera hazard; advisory, may only reduce
     "tof",              # ToF reflex; hard veto
     "limiter",          # slew limit; may only reduce rate of change
@@ -98,7 +99,11 @@ NAVIGATOR_STAGES = frozenset({"navigator"})
 # a controller; it is a SHARED PRIMITIVE, a direction chooser that reads the live scan.
 # The two callers use it for different reasons and are classified by the reason.
 RECOVERY_STAGES = frozenset({"escape", "recovery"})   # the robot is stuck
-CAPABILITY_STAGES = frozenset({"no_reverse"})  # the command is unexecutable
+# Both are the same class of adaptation -- "the drivetrain cannot execute what was
+# asked" -- and differ only in which way they resolve it. `no_reverse` substitutes a
+# pivot when NO reverse is executable; `reverse_floor` raises a too-gentle reverse to
+# the slowest one that is, wherever in the chain it was authored.
+CAPABILITY_STAGES = frozenset({"no_reverse", "reverse_floor"})
 RULE_STAGES = RECOVERY_STAGES | CAPABILITY_STAGES   # kept: "not policy, not safety"
 SAFETY_STAGES = frozenset({"governor", "visual", "tof"})
 # The slew limiter is NOT a safety override and must not be counted as one. It changes

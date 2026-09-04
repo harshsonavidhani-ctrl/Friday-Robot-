@@ -173,5 +173,91 @@ check("a short FAR ground cell is still reported as an obstacle",
       float(obstacles.min()) < TOF_FLOOR_PROFILE_MM[0],
       f"nearest={float(obstacles.min()):.0f} mm")
 
+# ======================================================================================
+# CLIFFS. Harsh, 2026-09-04: "I also want her to be able to identify cliff-like
+# obstacle such that she does not fall on the stairs."
+#
+# A drop reads LONG (the beam keeps going) or returns NOTHING. An obstacle reads SHORT.
+# The sign is what tells them apart, and the long case used to be discarded outright.
+# ======================================================================================
+print("--- cliffs ---")
+
+CLIFF_ROWS = range(GROUND0 + 1, 8)          # the near rows, 5-7
+
+
+def cliff_frame(mode):
+    """A floor whose near rows have fallen away: 'long' returns or no return at all.
+
+    EVERY cell in the near rows, not a subset. A PARTIAL long row is a different case
+    and it passes for a different reason: the row reference is the max of the row, so
+    a few long cells raise the reference and the remaining CLEAN cells fall more than
+    TOF_FLOOR_OBSTACLE_MM below it and are reported as occlusions. That still stops her
+    -- but it proves the occlusion path works, not the cliff path, and the first
+    version of this test was passing on exactly that. (Verified by disabling the cliff
+    emission: the partial-row case still passed, the full-row case failed.)
+    """
+    f = frame()
+    for r in CLIFF_ROWS:
+        for col in range(8):
+            f[r][col] = 0 if mode == "gone" else FLOOR[r - GROUND0] + 400
+    return f
+
+
+for mode in ("long", "gone"):
+    obs, intact = tof_obstacles_mm(cliff_frame(mode))
+    # The edge is reported AT THE FLOOR RANGE -- the distance to the last floor that
+    # was still there, which is the distance she must not cross.
+    check(f"a drop that reads {mode} becomes an obstacle at the floor's own range",
+          nearest(obs) <= FLOOR[1] + 1, f"nearest={nearest(obs):.0f} mm")
+    # ...and that is enough for the reflex, with no new machinery anywhere.
+    depth = np.asarray(obs, dtype=np.float32) / 1000.0
+    _, stop = ToFReflex(cfg).evaluate(depth)
+    check(f"...and the reflex stops for it ({mode})", stop, f"stop={stop}")
+
+# ONE dark cell is a dark cell. Absorbing carpet, a shadow, a seam in the lino -- all
+# of these take a single cell, and none of them is a staircase. The quorum is the whole
+# defence against turning the floor into a cliff, which is the failure that once made
+# her unable to drive at all.
+# Asserted through the REFLEX, not through a >= on the range. `nearest(obs) >= FLOOR[-1]`
+# was the first version and it is vacuous: a cliff is emitted AT the floor range, so
+# 120 >= 120 held whether the quorum worked or not. Verified by weakening
+# TOF_CLIFF_MIN_CELLS to 1 -- nothing failed. What the quorum is actually for is not
+# stopping the robot, so ask that.
+f = frame()
+f[7][4] = 0
+obs, _ = tof_obstacles_mm(f)
+_, stop = ToFReflex(cfg).evaluate(np.asarray(obs, dtype=np.float32) / 1000.0)
+check("one dead near cell is not a cliff and does not stop her", not stop,
+      f"stop={stop} nearest={nearest(obs):.0f} mm")
+
+# THREE is the number that actually tests TOF_CLIFF_MIN_CELLS, and it took a mutation
+# to find that out. One and two dead cells pass whatever the quorum is set to, because
+# ToFReflex takes the 3rd-smallest zone and one or two hazard cells never reach it --
+# so those cases prove nothing about this constant. At three, quorum 4 stays silent and
+# quorum 1 would stop her, which is the difference the constant exists to make.
+f = frame()
+f[7][3] = 0
+f[7][4] = 0
+f[6][4] = 0
+obs, _ = tof_obstacles_mm(f)
+_, stop = ToFReflex(cfg).evaluate(np.asarray(obs, dtype=np.float32) / 1000.0)
+check("three dead near cells are still under the cliff quorum", not stop,
+      f"stop={stop} nearest={nearest(obs):.0f} mm")
+
+# Clean floor must stay silent, or every one of the above is worthless.
+obs, intact = tof_obstacles_mm(frame())
+check("clean floor raises no cliff", nearest(obs) >= NEAR_MM and intact,
+      f"nearest={nearest(obs):.0f} mm intact={intact}")
+
+# A drop BEYOND the near rows is not acted on: row 4 drops cells on ordinary floor
+# every single frame (measured 5.59 of 8 over 182 frames), so its silence is normal and
+# treating it as a cliff would stop her on clean ground.
+f = frame()
+for col in range(8):
+    f[GROUND0][col] = 0
+obs, _ = tof_obstacles_mm(f)
+check("a silent FAR row is not a cliff", nearest(obs) >= NEAR_MM,
+      f"nearest={nearest(obs):.0f} mm")
+
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)
