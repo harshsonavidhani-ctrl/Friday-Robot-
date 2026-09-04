@@ -1,0 +1,47 @@
+[Unit]
+# Friday's MODE: confident_explore -- the autonomous exploration run of
+# 2026-09-04 21:18, frozen. Harsh: "save this as a MODE of friday ... friday
+# explore will trigger the saved autonomous run".
+#
+# THIS UNIT EXISTS FOR ONE REASON: SO THE BRAIN CAN START A RUN WITHOUT
+# KILLING ITSELF.
+#
+# friday_localnav_deploy needs exclusive access to the LiDAR and motor serial
+# ports, so rl/run_localnav.sh stops friday-mcp for the duration and restores
+# it on exit. An MCP tool that shelled out to the script directly would
+# therefore stop the very server it was answering from, and the tool call
+# would die mid-flight leaving the run orphaned. `systemctl --user start` on a
+# separate unit returns immediately and the run outlives the caller.
+#
+# USER-scope, exactly like friday-mcp, friday-face and friday-dashboard, and
+# for the same containment reason: it lives in ~/.config/systemd/user/, it
+# touches nothing in /etc, and if it is wrong the Pi still boots, still joins
+# WiFi and still accepts SSH. See CLAUDE.md Part 1.
+Description=Friday's confident autonomous exploration (mode: confident_explore)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/harsh/friday/rl
+# The mode script reads rl/modes/confident_explore.env, which is the single
+# source of truth for the flags. Do not put flags here -- two places to change
+# is how a "frozen" configuration quietly stops being the one that was
+# measured.
+ExecStart=/home/harsh/friday/rl/modes/explore.sh
+# The run is 20 minutes by default and run_localnav.sh restores friday-mcp,
+# friday-face, friday-brain and friday-dashboard through an EXIT trap. Give
+# that trap room to finish rather than SIGKILLing it half way, which would
+# leave her services down.
+TimeoutStopSec=90
+KillSignal=SIGINT
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# 134 is SIGABRT from the known `FATAL: exception not rethrown` at teardown,
+# which happens AFTER the map, the black box and the summary are written. The
+# run's output is complete, so systemd must not paint a good run red.
+SuccessExitStatus=0 134
+
+# DELIBERATELY NO [Install] SECTION. This must never be enabled at boot: a Pi
+# that starts driving itself around the room on power-up is precisely the
+# behaviour every safety layer in this project exists to prevent. It is
+# started on request and only on request.
