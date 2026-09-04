@@ -323,6 +323,34 @@ def play(path: Path) -> None:
     environment = dict(os.environ)
     environment.setdefault("XDG_RUNTIME_DIR", config.AUDIO_RUNTIME_DIR)
 
+    # ALSA FIRST WHEN PIPEWIRE HAS NO USABLE SINK FOR HER SPEAKER.
+    #
+    # pipewire will not always offer an output profile for this card. MEASURED
+    # 2026-09-05: it advertised only `off`, `pro-audio` and `input:mono-fallback`
+    # -- no ordinary output at all -- because ACP probed the card while the
+    # webcam was streaming and the playback interface could not be allocated, so
+    # the probe concluded there was no output to have.
+    #
+    # The card itself is fine: `aplay -D hw:3,0` plays a tone the moment nothing
+    # is streaming. Going through pipewire in that state costs a 20 s timeout per
+    # sentence and then falls back here anyway, which is the difference between a
+    # robot that sounds slow and one that sounds broken.
+    #
+    # So: if the resolver cannot find a sink on her card, do not ask pipewire at
+    # all -- go straight to the device.
+    if audio_routing.speaker(config.SPEAKER_DEVICE) is None and shutil.which("aplay"):
+        try:
+            subprocess.run(["aplay", "-q", "-D", config.SPEAKER_DEVICE_ALSA,
+                            str(path)],
+                           check=True, capture_output=True,
+                           timeout=config.TTS_TIMEOUT_S)
+            return
+        except Exception as exc:                      # noqa: BLE001
+            # Her own card is unreachable too -- fall through to pipewire, which
+            # will at least put the sound out of SOMETHING (the built-in jack).
+            log.warning("her speaker is not reachable through ALSA either (%s); "
+                        "trying pipewire's default output", exc)
+
     if shutil.which("pw-play"):
         # RESOLVED, NOT HARD-CODED. config.SPEAKER_DEVICE names a card AND a
         # profile, and this Pi's USB audio card re-enumerates under whichever
