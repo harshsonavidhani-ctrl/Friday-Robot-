@@ -107,6 +107,7 @@ from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
 import friday_freespace as fs_mod  # noqa: E402
 from friday_freespace import FreeSpaceNavigator  # noqa: E402
+from friday_vision import ObjectDetector  # noqa: E402
 
 # Optional dependencies are imported lazily so `--simulate` runs on a bare machine.
 try:
@@ -359,6 +360,15 @@ class RobotConfig:
     lidar_deadline: float = 0.40        # SAFETY CRITICAL -> stop when exceeded
     tof_deadline: float = 0.50          # SAFETY CRITICAL -> stop when exceeded
     cam_deadline: float = 1.50          # advisory -> degrade, do not stop
+
+    # ---- object detection (perception only; see friday_vision) ----
+    # OFF unless a model is present. It names what she is looking at for the
+    # narration and the log; nothing in the motion chain reads it. 1 Hz because
+    # inference measured 355-375 ms on this Pi and the control loop must keep its
+    # 100 ms deadline.
+    detect_enabled: bool = True
+    detect_period_s: float = 1.0
+    detect_threads: int = 2
 
     # ---- actuation limits ----
     # Fraction of v_max the local navigator may command on an arc it has simulated
@@ -976,6 +986,10 @@ class LD19Thread(SensorThread):
 # NOT the VL53L5CX-over-I2C this file was written for -- it is a DFRobot 8x8 matrix ToF
 # behind a Raspberry Pi Pico that presents as USB serial and streams ASCII rows:
 #     y0:d0,d1,...,d7,\n   ... one line per row, TOF_ROWS lines per frame, mm
+# Where the object-detection model lives. Absent is a normal, supported state.
+DETECT_MODEL_PATH = (Path(__file__).resolve().parent.parent
+                     / "assets" / "models" / "vision" / "ssd_mobilenet_v1_10.onnx")
+
 TOF_ROWS, TOF_COLS = 8, 8
 TOF_NO_RETURN_MM = 4000
 
@@ -1093,16 +1107,18 @@ TOF_CLIFF_MIN_CELLS = 4
 TOF_FLOOR_BOTTOM_MAX_MM = 300
 
 # ---- relocalising into a map that is still mostly unknown ---------------------------
-# Below this many occupied cells, `score` is dominated by how little has been mapped
-# rather than by how well the sweep fits, and ControlLoop.relocalise falls back to
-# judging the match on sharpness plus agreement with the saved pose. 3x the
-# SLAM_MATCH_MIN_CELLS floor of 150: comfortably inside the regime where a room is
-# still a rumour, and far below anything that would count as a surveyed map.
-SPARSE_MAP_CELLS = 450
+# How unambiguous the match must be to stand in for the score gate. `sharp` is peak
+# over median across the whole search window, so it is scale-free: a sweep that fits
+# nowhere in the window produces a flat surface and cannot reach this however wrong the
+# map is. MEASURED on this robot: 29.7, 11.3, 7.1 and 4.2 on maps that were correct and
+# placed within 2 cm of the parked pose. Set at 3.0 -- above the 1.4 floor used for
+# confirming a pose you already trust, because this is overruling a gate rather than
+# agreeing with one, and below every real match observed.
 # How far the winning pose may sit from the saved one and still be believed on
 # sharpness alone. She was parked there at the end of the last run; if nobody picked
 # her up, the honest answer is a few centimetres. Deliberately much tighter than the
 # search window, which is what makes this a corroboration and not a rubber stamp.
+RELOC_TRUST_SHARPNESS = 3.0
 RELOC_TRUST_M = 0.30
 RELOC_TRUST_DEG = 15.0
 
@@ -1470,6 +1486,7 @@ class CameraThread(SensorThread):
         super().__init__(f"cam_{role}", slot)
         self.cfg, self.role, self.serial = cfg, role, serial
         self.explicit_path = path
+        self.colour_slot = None
         self._cap = None
         self.device: str | None = None
         self.reconnects = 0
@@ -1573,6 +1590,12 @@ class CameraThread(SensorThread):
                 time.sleep(0.02)
             return
         self.slot.publish(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+        # ...and the COLOUR frame, when anyone asked for one. The object detector
+        # needs RGB and this thread already has the decoded BGR in hand, so the
+        # alternative was decoding the same JPEG twice. Costs a reference; the slot
+        # only exists when a consumer created it.
+        if self.colour_slot is not None:
+            self.colour_slot.publish(frame)
 
     def _teardown(self) -> None:
         if self._cap is not None:
@@ -2957,6 +2980,7 @@ class ControlLoop:
         self.context = _cameras.ContextMonitor()
         # Set by main() so telemetry can report per-role device paths and reconnects.
         self.cam_threads: list = []
+        self.detector = None
         LOGGER.info("Visual hazard gate: %s", "ACTIVE" if self.visual.enabled else "DISABLED (uncalibrated)")
         self.limiter = RateLimiter(cfg)
         self.reverse_fallback = True
@@ -3121,12 +3145,27 @@ class ControlLoop:
         # was left. Both are required, and the displacement bound is tight -- if she
         # has been carried anywhere, either the peak moves outside it or the window
         # does not contain the truth and the peak goes flat.
-        sparse = n_occupied < SPARSE_MAP_CELLS
-        if not ok and sparse and sharp >= min_sharp \
+        # DENSITY WAS THE WRONG GATE ON THIS BRANCH, and one hardware run said so.
+        # The first version only allowed it below 450 occupied cells, on the assumption
+        # that `score` becomes meaningful once a map has some structure. It does not:
+        # the map reached 753 cells and still scored 0.058, because score is the
+        # fraction of THE SWEEP that lands on already-occupied cells, and an indoor map
+        # is nearly all free space no matter how long you drive. The threshold merely
+        # decided which runs got to keep their map, and the good one was rejected.
+        #
+        # What actually carries the argument is the pair below, and neither mentions
+        # density: an UNAMBIGUOUS peak, and a peak that agrees with where she was
+        # parked. If she has been carried anywhere, the sweep matches nothing in the
+        # window and the surface goes flat -- sharpness is peak over median, so a
+        # failed match cannot fake it. The bar is set above min_sharp deliberately:
+        # 1.4 is the floor for trusting a pose you already believe, and this is being
+        # used to overrule a scoring gate, which is a stronger claim.
+        if not ok and sharp >= RELOC_TRUST_SHARPNESS \
                 and moved_m <= RELOC_TRUST_M and moved_deg <= RELOC_TRUST_DEG:
             ok = True
-            why = (f" [accepted on sharpness: only {n_occupied} occupied cells, so the "
-                   f"score measures how little is mapped, not how badly it fits]")
+            why = (f" [accepted on sharpness {sharp:.1f} at {moved_m:.2f} m from the "
+                   f"saved pose: with {n_occupied} occupied cells the score measures "
+                   f"how little is mapped, not how badly this fits]")
 
         LOGGER.info("Relocalisation: score %.3f (min %.2f), sharpness %.2f (min %.2f), "
                     "moved %.2f m / %.0f deg from the saved pose -- %s%s",
@@ -4002,6 +4041,15 @@ class ControlLoop:
             self._reflex_thread.start()
             LOGGER.info("Reflex thread running at %.0f Hz", self.cfg.reflex_hz)
 
+        # PERCEPTION, not control -- see friday_vision for why that line is drawn
+        # where it is. Absent model, absent camera and absent cv2 all degrade to
+        # "she has nothing to say about the room", which costs the run nothing.
+        if getattr(self.cfg, "detect_enabled", False) and "cam_up_rgb" in self.slots:
+            self.detector = ObjectDetector(
+                DETECT_MODEL_PATH, self.slots["cam_up_rgb"],
+                period_s=self.cfg.detect_period_s, threads=self.cfg.detect_threads)
+            self.detector.start()
+
         if self.map_enabled:
             if self.world.load():
                 s = self.world.stats()
@@ -4107,6 +4155,9 @@ class ControlLoop:
         self.motors.emergency_stop()
         if self._reflex_thread is not None:
             self._reflex_thread.join(timeout=1.0)
+        if self.detector is not None:
+            self.detector.stop()
+            self.detector.join(timeout=2.0)
         try:
             self.narrator.finish(self.autonomy_state())
         except Exception:                              # noqa: BLE001
@@ -4268,6 +4319,12 @@ class ControlLoop:
                     self.stats["governor_limits"], self.stats.get("rear_blocks", 0),
                     self.stats["stale_stops"], self.governor.scrape_brakes,
                     self.stats["overruns"])
+        if self.detector is not None and self.detector.enabled:
+            seen = self.detector.snapshot()
+            LOGGER.info("object detection: %d frames, %.0f ms mean, %d failures; "
+                        "currently sees %s", self.detector.frames,
+                        self.detector.mean_ms, self.detector.failures,
+                        ", ".join(f"{d.label}({d.score:.2f})" for d in seen) or "nothing")
         LOGGER.info("cameras: free-space updates=%d failures=%d, nudges=%d, "
                     "ticks driven on vision=%d",
                     self.freespace.updates, self.freespace.failures,
@@ -4345,6 +4402,10 @@ def build_sensors(cfg: RobotConfig, args) -> tuple[dict[str, SensorSlot], list[S
         # and they are not.
         "cam_up": SensorSlot("cam_up", cfg.cam_deadline, critical=False),
         "cam_down": SensorSlot("cam_down", cfg.cam_deadline, critical=False),
+        # The up camera's frame in COLOUR, for the object detector only. Separate
+        # from cam_up because everything else in this file wants grayscale and
+        # would otherwise have to know which it was handed.
+        "cam_up_rgb": SensorSlot("cam_up_rgb", cfg.cam_deadline, critical=False),
     }
     threads: list[SensorThread] = []
 
@@ -4398,8 +4459,11 @@ def build_sensors(cfg: RobotConfig, args) -> tuple[dict[str, SensorSlot], list[S
                                "The thread starts anyway and will pick it up when it "
                                "returns -- the down camera on this robot is known to "
                                "re-enumerate on its own.", role, serial)
-            threads.append(CameraThread(slots[f"cam_{role}"], cfg, role,
-                                        serial=serial, path=override))
+            cam = CameraThread(slots[f"cam_{role}"], cfg, role,
+                               serial=serial, path=override)
+            if role == "up" and getattr(cfg, "detect_enabled", False):
+                cam.colour_slot = slots["cam_up_rgb"]
+            threads.append(cam)
     return slots, threads, None
 
 
