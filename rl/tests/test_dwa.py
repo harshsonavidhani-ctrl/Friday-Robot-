@@ -473,5 +473,78 @@ check("clearance is still reported in metres, not squared metres",
       ref is not None and 0.0 < ref.clearance < cfg.lidar_max_range,
       f"clearance={ref.clearance:.3f} m" if ref else "None")
 
+# ======================================================================================
+# THE L-SHAPED CORNER. Harsh, 2026-09-04, after the best run yet: "it was still
+# stuttering in a L-SHAPED corner/turns it hesitates a lot there".
+#
+# Turning INTO a corner blocks the inside of the turn -- that is what a corner is -- so
+# the committed direction loses every collision-free arc for a tick or two mid-turn.
+# That was read as "the other way is infinitely better" (decide() sets margin=inf when
+# the committed side has no arc), so she switched; the mirror image happened next tick
+# and she switched back. Measured over the 20-minute run: omega changed sign 103 times
+# per 1000 driving ticks in the 0.30-0.60 m band against 22 in open space.
+# ======================================================================================
+print("--- the L-shaped corner ---")
+
+from navigator import COMMIT_STARVE_TICKS                          # noqa: E402
+
+nav = Navigator(cfg, DynamicWindowPlanner(cfg))
+nav._commit_sign = 1                       # committed to turning LEFT, mid-corner
+nav._commit_since = time.monotonic()
+
+# The inside of the turn has no surviving arc; the planner's winner is on the right.
+held, switches = [], []
+for tick in range(COMMIT_STARVE_TICKS - 1):
+    _, committed, why = nav._apply_commitment(-0.8, float("inf"), CLUTTERED,
+                                              starved=True)
+    held.append(nav._commit_sign)
+check("a starved tick does not flip the commitment",
+      all(s == 1 for s in held) and len(held) == COMMIT_STARVE_TICKS - 1,
+      f"commit_sign after {len(held)} starved ticks: {held}")
+
+# ...and the moment the inside of the turn opens again, she resumes it rather than
+# having thrown the manoeuvre away.
+_, committed, why = nav._apply_commitment(+0.8, 0.05, CLUTTERED, starved=False)
+check("...and she resumes the turn when the inside opens up",
+      nav._commit_sign == 1 and committed, f"sign={nav._commit_sign} why={why}")
+
+# A DEAD END IS STILL A DEAD END. Held intent must not become a robot driving at a
+# wall: once the direction is genuinely gone it has to be given up, and quickly.
+# An ABSOLUTE bound, not `range(COMMIT_STARVE_TICKS)`. The first version of this
+# looped exactly COMMIT_STARVE_TICKS times, so it scaled with the constant and passed
+# happily when the constant was mutated to 9999 -- a robot that would hold a dead-end
+# commitment for a quarter of an hour. What matters is that a dead end is recognised
+# FAST, so the deadline is written here in ticks and does not move.
+DEAD_END_TICKS = 5                         # 0.5 s at 10 Hz
+nav2 = Navigator(cfg, DynamicWindowPlanner(cfg))
+nav2._commit_sign = 1
+nav2._commit_since = time.monotonic()
+for _ in range(DEAD_END_TICKS):
+    nav2._apply_commitment(-0.8, float("inf"), CLUTTERED, starved=True)
+check(f"a direction that is genuinely gone is given up within {DEAD_END_TICKS} ticks",
+      nav2._commit_sign == -1 and nav2.commit_starve_switches == 1,
+      f"sign={nav2._commit_sign} starve_switches={nav2.commit_starve_switches} "
+      f"(COMMIT_STARVE_TICKS={COMMIT_STARVE_TICKS})")
+
+# THE SAFETY PROPERTY. Holding the INTENT must never mean driving the rejected arc.
+# While starved, _apply_commitment reports committed=False precisely so decide() uses
+# the planner's collision-free winner and never the committed side's.
+nav3 = Navigator(cfg, DynamicWindowPlanner(cfg))
+nav3._commit_sign = 1
+nav3._commit_since = time.monotonic()
+om, committed, _ = nav3._apply_commitment(-0.8, float("inf"), CLUTTERED, starved=True)
+check("holding the intent still drives the SAFE arc, not the committed one",
+      committed is False and abs(om + 0.8) < 1e-9,
+      f"committed={committed} omega={om:+.2f}")
+
+# And a rival that genuinely scores better on an AVAILABLE arc still wins, so this
+# has not turned the commitment into a lock.
+nav4 = Navigator(cfg, DynamicWindowPlanner(cfg))
+nav4._commit_sign = 1
+nav4._commit_since = time.monotonic()
+nav4._apply_commitment(-0.8, COMMIT_MARGIN + 0.5, CLUTTERED, starved=False)
+check("a genuinely better rival still takes the decision",
+      nav4._commit_sign == -1, f"sign={nav4._commit_sign}")
+
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

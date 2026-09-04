@@ -1118,6 +1118,12 @@ TOF_FLOOR_BOTTOM_MAX_MM = 300
 # sharpness alone. She was parked there at the end of the last run; if nobody picked
 # her up, the honest answer is a few centimetres. Deliberately much tighter than the
 # search window, which is what makes this a corroboration and not a rubber stamp.
+# The three outcomes of relocalise(). See its docstring: only REJECTED is evidence
+# that she moved, and only REJECTED justifies rebuilding the map.
+RELOC_ACCEPTED = "accepted"
+RELOC_REJECTED = "rejected"
+RELOC_CANNOT_RUN = "cannot_run"
+
 RELOC_TRUST_SHARPNESS = 3.0
 RELOC_TRUST_M = 0.30
 RELOC_TRUST_DEG = 15.0
@@ -3041,8 +3047,8 @@ class ControlLoop:
         self.last_record: tlm.DecisionRecord | None = None
 
     # ------------------------------------------------------------------ reflex ------
-    def relocalise(self, timeout_s: float = 4.0) -> bool:
-        """Find the robot in the map it just loaded. True if it succeeded.
+    def relocalise(self, timeout_s: float = 4.0) -> str:
+        """Find the robot in the map it just loaded. One of RELOC_* below.
 
         Reuses Friday's own SLAM matcher (`slam.core.match_pose` over a
         `LikelihoodField`) rather than a second implementation -- two matchers that
@@ -3050,8 +3056,37 @@ class ControlLoop:
 
         The prior is the pose the map was SAVED at, which is where she was when the
         last run ended. That is the honest assumption: she is usually left where she
-        stopped. If she was picked up and carried, the match fails and the caller
-        throws the map away, which is the correct outcome and not an error.
+        stopped.
+
+        THREE OUTCOMES, NOT TWO, AND THE THIRD IS THE WHOLE POINT.
+        =========================================================
+
+        This used to return a bool, and the caller threw the map away on False. That
+        conflated two completely different situations:
+
+          RELOC_REJECTED    the match RAN and said "you are not there". That is
+                            positive evidence she was moved, and it is the only case
+                            where continuing to write into the old map would corrupt
+                            it -- measured once as 335 disconnected occupied blobs,
+                            one wall written at three different offsets.
+
+          RELOC_CANNOT_RUN  the match never happened at all: no saved pose, too few
+                            occupied cells to match against, too few usable beams in
+                            the sweep, no scan inside the timeout. THERE IS NO
+                            EVIDENCE OF ANYTHING HERE, least of all that she moved.
+
+        Harsh, 2026-09-04: *"fix the relocalise() like it will not throw away the map
+        and just use like it will be an experience for it"*. And the failure that
+        prompted it was squarely the second kind -- "Only 19 usable beams (need 40)"
+        because she was parked in an open room where 53 of 72 beams saw nothing
+        inside 4 m. A 299.6 m^2 map built over three runs was archived and rebuilt
+        from 4.0 m^2 because the sweep was uninformative, which is not a reason to
+        believe anything about where she is.
+
+        So CANNOT_RUN now keeps the map and adopts the saved pose. That is the best
+        available estimate and it is right whenever she starts where she stopped,
+        which is the normal case; and when it is wrong, the run that follows is one
+        in which the LiDAR could see almost nothing anyway.
 
         The search window is deliberately far wider than SLAM's own tracking window
         (0.20 m / 12 deg): tracking corrects a tick of drift, this has to absorb
@@ -3065,14 +3100,14 @@ class ControlLoop:
         except Exception as exc:                      # noqa: BLE001
             LOGGER.warning("Relocalisation unavailable (%s); cannot place the robot "
                            "in the restored map.", exc)
-            return False
+            return RELOC_CANNOT_RUN
 
         prior = self.world.loaded_pose
         if prior is None:
             LOGGER.warning("The restored map has no saved pose, so there is no prior "
                            "to relocalise from. Maps written before this existed "
                            "cannot be placed.")
-            return False
+            return RELOC_CANNOT_RUN
 
         deadline = time.monotonic() + timeout_s
         scan = None
@@ -3084,7 +3119,7 @@ class ControlLoop:
             time.sleep(0.05)
         if scan is None:
             LOGGER.warning("No LiDAR scan within %.1f s; cannot relocalise.", timeout_s)
-            return False
+            return RELOC_CANNOT_RUN
 
         # A map worth matching against, and a sweep worth matching with. Both floors
         # are measured constants with their reasons recorded in config.py: below
@@ -3098,15 +3133,17 @@ class ControlLoop:
             LOGGER.warning("The restored map has only %d occupied cells (need %d); "
                            "too little structure to relocalise against.",
                            n_occupied, min_cells)
-            return False
+            return RELOC_CANNOT_RUN
 
         n = scan.size
         bearing = np.arange(n) * (2.0 * math.pi / n)
         good = scan < self.cfg.lidar_max_range - 0.02
         if int(good.sum()) < min_beams:
-            LOGGER.warning("Only %d usable beams (need %d); too few to relocalise.",
+            LOGGER.warning("Only %d usable beams (need %d); too few to relocalise. "
+                           "This says the SWEEP was uninformative, not that she moved "
+                           "-- an open room puts most beams past lidar_max_range.",
                            int(good.sum()), min_beams)
-            return False
+            return RELOC_CANNOT_RUN
         pts = np.stack([scan[good] * np.cos(bearing[good]),
                         scan[good] * np.sin(bearing[good])], axis=1)
 
@@ -3172,10 +3209,10 @@ class ControlLoop:
                     score, min_score, sharp, min_sharp, moved_m, moved_deg,
                     "ACCEPTED" if ok else "REJECTED", why)
         if not ok:
-            return False
+            return RELOC_REJECTED
         self.world.set_pose(x, y, th)
         self.map.set_pose(x, y, th)
-        return True
+        return RELOC_ACCEPTED
 
     def _archive_map(self) -> str:
         """Move the unplaceable map aside, with its pose and visit trace, and say where.
@@ -4059,25 +4096,47 @@ class ControlLoop:
                             s["sweeps_total"], s["visited_m2"],
                             "" if self.world.visits_loaded
                             else "  (visit trace MISSING -- map only)")
-                if not self.relocalise():
-                    # A map you cannot place yourself in is WORSE than no map. The
-                    # pose re-initialises to zero every run, so an unrelocalised map
-                    # is a picture of the room taken from somewhere the robot is not,
-                    # and the frontier planner will steer confidently toward places
-                    # that are not there. Measured after three runs of this: 335
-                    # disconnected occupied blobs, largest 17 cells, because one wall
-                    # had been written at three different offsets. Discard and rebuild.
-                    # SET ASIDE, NOT DELETED. Harsh, 2026-09-04: "DO NOT discard the
-                    # maps." Starting fresh is still right -- an unplaceable map sends
-                    # the frontier planner to addresses that do not exist -- but the
-                    # file is 12 minutes of driving and there is no reason for the
-                    # rebuild to consume it. It moves aside with its pose and visit
-                    # trace so it can be inspected, merged or restored later.
+                verdict = self.relocalise()
+                if verdict == RELOC_CANNOT_RUN:
+                    # THE MATCH NEVER HAPPENED, so nothing was learned -- least of all
+                    # that she moved. Keep the map and carry on from the pose it was
+                    # saved at, which is the best estimate available and is right
+                    # whenever she starts where she stopped.
+                    #
+                    # Harsh, 2026-09-04: "fix the relocalise() like it will not throw
+                    # away the map and just use like it will be an experience for it".
+                    # MEASURED that same evening: a 299.6 m^2 map built over three runs
+                    # was archived and rebuilt from 4.0 m^2 because the startup sweep
+                    # had "only 19 usable beams (need 40)" -- she was parked in an open
+                    # room, so 53 of her 72 beams saw nothing inside 4 m. An
+                    # uninformative sweep is not evidence about her position.
+                    prior = self.world.loaded_pose
+                    if prior is not None:
+                        self.world.set_pose(float(prior[0]), float(prior[1]),
+                                            float(prior[2]))
+                        self.map.set_pose(float(prior[0]), float(prior[1]),
+                                          float(prior[2]))
+                    LOGGER.warning(
+                        "KEEPING the restored map and starting from its saved pose. "
+                        "Relocalisation could not be attempted, which is not evidence "
+                        "she was moved -- and rebuilding would throw away %.1f m^2 for "
+                        "no reason. If she HAS been carried, the map will disagree with "
+                        "the room and the next run's match will say so.",
+                        self.world.stats()["explored_m2"])
+                elif verdict == RELOC_REJECTED:
+                    # THE MATCH RAN AND SAID NO. This is the one case that is positive
+                    # evidence she is somewhere else, and the only one where continuing
+                    # to write into the old map would corrupt it: measured after three
+                    # runs of exactly that, 335 disconnected occupied blobs, largest 17
+                    # cells, one wall written at three different offsets.
+                    #
+                    # SET ASIDE, NOT DELETED ("DO NOT discard the maps"): it moves aside
+                    # with its pose and visit trace to be inspected, merged or restored.
                     kept = self._archive_map()
-                    LOGGER.warning("Could not place the robot in the restored map, so "
-                                   "this run rebuilds from scratch -- every target "
-                                   "named from it would be at the wrong address. The "
-                                   "old map is NOT deleted: %s", kept)
+                    LOGGER.warning("The match RAN and placed her somewhere else, so "
+                                   "this run rebuilds -- every target named from the "
+                                   "old map would be at the wrong address. It is NOT "
+                                   "deleted: %s", kept)
                     self.world = WorldMap(max_range=self.cfg.lidar_max_range)
             else:
                 LOGGER.info("No world map at %s -- starting a fresh one.",
@@ -4295,11 +4354,13 @@ class ControlLoop:
             # to earn. Expiries are just COMMIT_MAX_S elapsing and say nothing about
             # flip-flopping; counting them together read as "94 broken vs 28 held" and
             # made a working mechanism look broken.
-            LOGGER.info("  commitments %d taken, %d reversed by a better option, "
-                        "%d expired on age; arc choice %.2f ms mean "
+            LOGGER.info("  commitments %d taken, %d reversed by a better option "
+                        "(%d of those because the committed side ran out of arcs -- "
+                        "the L-corner flip), %d expired on age; arc choice %.2f ms mean "
                         "(a HIGH handback count means she is spending her time in "
                         "places with no drivable way forward)",
                         self.navigator.commitments, self.navigator.commit_switches,
+                        self.navigator.commit_starve_switches,
                         self.navigator.commit_expiries, self.navigator.planner.mean_ms)
         LOGGER.info("escape turns: %d  (boxed in: forward blocked and not moving, so "
                     "she turned toward open space)", self.stats["escape_turns"])

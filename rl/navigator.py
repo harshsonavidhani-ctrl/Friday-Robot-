@@ -68,6 +68,23 @@ COMMIT_MARGIN = 0.18
 # A commitment older than this is re-opened regardless. Commitment is for crossing a
 # doorway, not for driving into a wall with conviction.
 COMMIT_MAX_S = 3.0
+# How many CONSECUTIVE ticks the committed direction must have no surviving arc at all
+# before that counts as the direction being gone rather than a moment of the turn.
+#
+# THIS IS THE L-SHAPED CORNER FIX. Harsh, 2026-09-04: "it was still stuttering in a
+# L-SHAPED corner/turns it hesitates a lot there". Turning INTO a corner means forward
+# is blocked on the inside of the turn -- that is what a corner IS -- so the committed
+# direction routinely loses every collision-free arc for a tick or two mid-manoeuvre.
+# That was being read as "the other way is infinitely better" (see the margin of inf in
+# decide()), so she switched, the mirror image happened on the next tick, and she
+# switched back. MEASURED over the 20-minute run of 2026-09-04 21:18: omega changed
+# sign 103 times per 1000 driving ticks in the 0.30-0.60 m band, against 22 in open
+# space -- the flipping is concentrated exactly where both walls are in range.
+#
+# 3 ticks is 300 ms at 10 Hz: long enough to outlast scan jitter and the geometry of a
+# turn, short enough that a genuine dead end is recognised in a third of a second. She
+# never drives a rejected arc while this holds -- see _apply_commitment.
+COMMIT_STARVE_TICKS = 3
 # ...and it is dropped immediately if the committed side stops being drivable at all.
 
 # --- per-situation speed policy ------------------------------------------------------
@@ -115,6 +132,7 @@ class Navigator:
 
         # live commitment
         self._commit_sign = 0             # -1 right, +1 left, 0 none
+        self._commit_starved = 0          # consecutive ticks with no arc on that side
         self._commit_since = 0.0
         self._commit_situation = ""
         self._last_situation = ""
@@ -130,6 +148,9 @@ class Navigator:
         # behaviour this mechanism exists to suppress.
         self.commit_expiries = 0
         self.commit_switches = 0
+        # The subset of switches caused by the committed side running out of arcs
+        # rather than by a rival scoring better. In a corner these were ALL of them.
+        self.commit_starve_switches = 0
         self.handoffs = 0                 # ticks handed back to the old behaviour
         # ...and WHY, because "declined" covers two different situations and lumping
         # them is the same mistake `commit_breaks` made. `blocked` is the assessment
@@ -317,7 +338,8 @@ class Navigator:
 
     # -------------------------------------------------------------- commitment --
     def _apply_commitment(self, candidates_omega: float, margin: float,
-                          situation: str) -> tuple[float, bool, str]:
+                          situation: str,
+                          starved: bool = False) -> tuple[float, bool, str]:
         """Bias toward the direction already chosen, unless a rival clearly beats it.
 
         `margin` is how much better the winning arc is THAN THE BEST ARC IN THE
@@ -358,10 +380,33 @@ class Navigator:
             return candidates_omega, False, "commitment expired"
 
         if sign == self._commit_sign or sign == 0:
+            self._commit_starved = 0
             return candidates_omega, True, "holding line"
+
+        # THE COMMITTED DIRECTION HAS NO SURVIVING ARC AT ALL. That is not evidence
+        # that the other way is better; going INTO a corner blocks the inside of the
+        # turn, which is what a corner is. Keep the commitment for a few ticks and let
+        # it come back.
+        #
+        # SHE STILL DRIVES THE SAFE ARC THIS TICK -- `committed=False` is returned, so
+        # decide() uses the planner's winner and never the rejected side. All that is
+        # held is which way she MEANS to go, so that when the inside of the turn opens
+        # up again she resumes it instead of having flipped away.
+        if starved:
+            self._commit_starved += 1
+            if self._commit_starved < COMMIT_STARVE_TICKS:
+                return (candidates_omega, False,
+                        f"committed side starved {self._commit_starved}/"
+                        f"{COMMIT_STARVE_TICKS}, holding the intent")
+            self._commit_sign, self._commit_since = sign, now
+            self._commit_starved = 0
+            self.commit_switches += 1
+            self.commit_starve_switches += 1
+            return candidates_omega, False, "switched (committed side genuinely gone)"
 
         # A genuine reversal. It is allowed, but it has to have earned it by
         # COMMIT_MARGIN over the best arc still available in the committed direction.
+        self._commit_starved = 0
         if margin >= COMMIT_MARGIN:
             self._commit_sign, self._commit_since = sign, now
             self.commit_switches += 1
@@ -371,6 +416,7 @@ class Navigator:
     def release(self) -> None:
         """Forget the commitment. Called when something else takes the wheel."""
         self._commit_sign = 0
+        self._commit_starved = 0
         self._commit_situation = ""
 
     # ------------------------------------------------------------------ decide --
@@ -439,10 +485,14 @@ class Navigator:
         # place the collision check just rejected.
         held_sign = self._commit_sign
         rival = res.alternatives.get(held_sign) if held_sign else None
+        # STARVED is "the committed direction has no collision-free arc this tick",
+        # which is a different fact from "the rival scores better" and used to be
+        # collapsed into the same infinite margin. See COMMIT_STARVE_TICKS.
+        starved = held_sign != 0 and rival is None
         margin = (res.score - rival[0]) if rival else float("inf")
 
         omega, committed, commit_why = self._apply_commitment(
-            res.omega, margin, a.situation)
+            res.omega, margin, a.situation, starved=starved)
 
         v = res.v
         if committed and rival is not None:
