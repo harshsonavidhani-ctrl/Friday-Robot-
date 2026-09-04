@@ -88,6 +88,42 @@ check("sends identity handshake", mock.sent[0] == "P")
 check("arms watchdog", any(s.startswith("W") for s in mock.sent),
       [s for s in mock.sent if s.startswith("W")])
 
+# 1b. A BOARD THAT IS STILL BOOTING IS NOT AN UNIDENTIFIED BOARD.
+#
+# Opening the port asserts DTR, which RESETS the Arduino, and its bootloader takes
+# ~1.5-2 s before the sketch replies to anything. The driver used to query ONCE after a
+# fixed 2.0 s sleep, which sits right on that edge. MEASURED 2026-09-04: a run handshook
+# fine at 04:44, an identical one at 05:07 got '' and refused to drive, and a manual
+# probe seconds later -- same port, same board, 2.5 s of patience -- answered on its
+# first try. A race with the bootloader must not read as "this is not Friday's board".
+class SlowBootArduino(MockArduino):
+    """Silent for the first `quiet` identity queries, exactly as a booting board is."""
+
+    def __init__(self, quiet=2, **kw):
+        super().__init__(**kw)
+        self.quiet = quiet
+        self.probes = 0
+
+    def write(self, data):
+        if data.decode().strip() == "P":
+            self.probes += 1
+            self.sent.append("P")
+            self._out = b"" if self.probes <= self.quiet else (self.ident + "\n").encode()
+            return len(data)
+        return super().write(data)
+
+d_slow, slow = make_driver(SlowBootArduino(quiet=2))
+check("a board still booting is retried, not rejected",
+      slow.probes >= 3, f"identity queried {slow.probes}x")
+
+# ...and the gate itself is NOT weakened: silence forever is still a refusal.
+try:
+    make_driver(SlowBootArduino(quiet=99))
+    check("a board that NEVER identifies itself is still refused", False,
+          "it connected anyway")
+except RuntimeError:
+    check("a board that NEVER identifies itself is still refused", True)
+
 # 2. refuses an unidentified board -- the safety gate
 try:
     make_driver(MockArduino(ident="SOME-OTHER-BOARD"))

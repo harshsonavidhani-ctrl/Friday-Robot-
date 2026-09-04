@@ -2231,6 +2231,11 @@ class FridayMotorDriver(MotorDriver):
     """
 
     IDENT = "FRIDAY-MOTORS"
+    # Opening the port resets the board (DTR), so the identity query has to survive the
+    # bootloader. Four tries at 0.75 s on top of the initial 2.0 s settle -- comfortably
+    # past the ~2 s boot, and still a hard refusal if nothing ever identifies itself.
+    HANDSHAKE_TRIES = 4
+    HANDSHAKE_RETRY_S = 0.75
 
     def __init__(self, cfg: RobotConfig, port: str, baud: int = 115200,
                  max_duty: float = 0.60, watchdog_s: float = 0.5,
@@ -2353,13 +2358,37 @@ class FridayMotorDriver(MotorDriver):
         time.sleep(2.0)
         self._ser.reset_input_buffer()
 
-        reply = self._command("P")
+        # ONE QUERY AT A FIXED DELAY IS A RACE AGAINST THE BOOTLOADER, NOT A CHECK.
+        # Opening this port asserts DTR, which RESETS the Arduino; the bootloader then
+        # takes ~1.5-2 s before the sketch answers anything at all. The fixed 2.0 s
+        # above is right at that edge, so on a loaded Pi it is a coin flip.
+        # MEASURED 2026-09-04: a run handshook fine at 04:44, an identical one at 05:07
+        # got '' and refused to drive, and a manual probe moments later -- same port,
+        # same board, 2.5 s of patience -- answered 'FRIDAY-MOTORS 1' on the first try.
+        # A transient must not read as "the board is not Friday's".
+        #
+        # THE GATE IS NOT WEAKENED. An unidentified board still refuses; it is simply
+        # asked more than once before that conclusion is drawn.
+        reply = ""
+        for attempt in range(self.HANDSHAKE_TRIES):
+            reply = self._command("P")
+            if reply.startswith(self.IDENT):
+                if attempt:
+                    LOGGER.info("Motor board answered on handshake attempt %d/%d "
+                                "(it was still booting)", attempt + 1,
+                                self.HANDSHAKE_TRIES)
+                break
+            if attempt + 1 < self.HANDSHAKE_TRIES:
+                time.sleep(self.HANDSHAKE_RETRY_S)
+                self._ser.reset_input_buffer()
         if not reply.startswith(self.IDENT):
             self._ser.close()
             raise RuntimeError(
-                f"{port} answered {reply!r}, not {self.IDENT}. Refusing to drive an "
-                f"unidentified board -- flash friday_motors.ino, or check you are on the "
-                f"Arduino's port (yours is the FTDI FT232R, not the LiDAR's CP2102)."
+                f"{port} answered {reply!r}, not {self.IDENT}, on {self.HANDSHAKE_TRIES} "
+                f"attempts over {2.0 + self.HANDSHAKE_TRIES * self.HANDSHAKE_RETRY_S:.1f} s. "
+                f"Refusing to drive an unidentified board -- flash friday_motors.ino, or "
+                f"check you are on the Arduino's port (yours is the FTDI FT232R, not the "
+                f"LiDAR's CP2102)."
             )
         LOGGER.info("Motors: %s on %s", reply, port)
 
