@@ -1037,6 +1037,20 @@ TOF_FLOOR_MAX_MM = 900          # absolute backstop on how far a ground row may 
 TOF_FLOOR_MIN_ROWS = 2          # fewer ground rows than this = the floor is not visible
 TOF_FLOOR_NEAR_ROWS = 3         # the bottom rows that carry the "path is clear" claim
 
+# ---- relocalising into a map that is still mostly unknown ---------------------------
+# Below this many occupied cells, `score` is dominated by how little has been mapped
+# rather than by how well the sweep fits, and ControlLoop.relocalise falls back to
+# judging the match on sharpness plus agreement with the saved pose. 3x the
+# SLAM_MATCH_MIN_CELLS floor of 150: comfortably inside the regime where a room is
+# still a rumour, and far below anything that would count as a surveyed map.
+SPARSE_MAP_CELLS = 450
+# How far the winning pose may sit from the saved one and still be believed on
+# sharpness alone. She was parked there at the end of the last run; if nobody picked
+# her up, the honest answer is a few centimetres. Deliberately much tighter than the
+# search window, which is what makes this a corroboration and not a rubber stamp.
+RELOC_TRUST_M = 0.30
+RELOC_TRUST_DEG = 15.0
+
 
 def tof_floor_rows(frame) -> tuple[int, list]:
     """(index of the topmost GROUND row, per-row median mm or None).
@@ -2872,6 +2886,22 @@ class ControlLoop:
                       "nav_open": 0, "nav_corridor": 0, "nav_cluttered": 0,
                       "nav_blocked": 0}
         self.loop_ms: deque[float] = deque(maxlen=200)
+        # WHERE THE BUDGET ACTUALLY GOES, accumulated over the whole run.
+        #
+        # This loop has missed its 100 ms deadline on the majority of ticks in every
+        # run tonight, and the cause was guessed at three times -- the policy, the
+        # cameras, the arc search -- with a six-minute hardware run spent per guess and
+        # every guess wrong (inference measured 4.5 ms mean against a 160 ms tick).
+        # A perf_counter pair per stage costs microseconds and answers it directly.
+        #
+        # The number that matters most is the LAST one printed: stage total vs wall
+        # clock. Everything here runs on ONE Python thread, so a large gap between the
+        # two is not this loop being slow -- it is this loop being DESCHEDULED, by the
+        # mapper, the frontier planner or the camera threads holding the GIL.
+        self.stage_s: dict[str, float] = {}
+        self.stage_wall_s = 0.0
+        self._world_stats: dict | None = None
+        self._world_stats_t = 0.0
         self._last_tick_t: float | None = None
         # Populated by every tick, including the fail-safe early returns. Exists from
         # construction so a status render before the first tick is empty, not a crash.
@@ -2955,17 +2985,74 @@ class ControlLoop:
 
         min_score = getattr(friday_config, "SLAM_MIN_SCORE", 0.15)
         min_sharp = getattr(friday_config, "SLAM_POSE_MIN_SHARPNESS", 1.4)
+        moved_m = math.hypot(x - prior[0], y - prior[1])
+        moved_deg = abs(math.degrees(th - prior[2]))
         ok = score >= min_score and sharp >= min_sharp
+        why = ""
+
+        # THE SCORE GATE ALONE IS A RATCHET THAT KEEPS THE MAP EMPTY FOREVER.
+        #
+        # `score` is how much of the sweep lands on cells the map already calls
+        # occupied, so it measures ALIGNMENT TIMES MAP COMPLETENESS. `sharp` is peak
+        # over median across the search window, which is alignment ALONE. On a young
+        # map most of the sweep necessarily lands on cells nobody has written yet, so
+        # the score is held down by how little has been mapped -- and requiring 0.15 of
+        # it means a sparse map can never be relocalised, so it is discarded, so it
+        # stays sparse. Every run starts from nothing and the map never gets to grow.
+        #
+        # MEASURED 2026-09-04 16:55 on the 113.9 m^2 / 207-cell map: score 0.044 --
+        # REJECTED -- with sharpness 11.27 against a floor of 1.4, and the winning pose
+        # 0.02 m and 0 deg from the saved one. The match was as unambiguous as this
+        # matcher ever reports and it landed exactly where the robot was parked. That
+        # is not a failed relocalisation; it is a correct one being judged by the
+        # wrong statistic.
+        #
+        # So on a map too sparse for the score to mean anything, judge it on the two
+        # things that do: an unambiguous peak, and a peak that agrees with where she
+        # was left. Both are required, and the displacement bound is tight -- if she
+        # has been carried anywhere, either the peak moves outside it or the window
+        # does not contain the truth and the peak goes flat.
+        sparse = n_occupied < SPARSE_MAP_CELLS
+        if not ok and sparse and sharp >= min_sharp \
+                and moved_m <= RELOC_TRUST_M and moved_deg <= RELOC_TRUST_DEG:
+            ok = True
+            why = (f" [accepted on sharpness: only {n_occupied} occupied cells, so the "
+                   f"score measures how little is mapped, not how badly it fits]")
+
         LOGGER.info("Relocalisation: score %.3f (min %.2f), sharpness %.2f (min %.2f), "
-                    "moved %.2f m / %.0f deg from the saved pose -- %s",
-                    score, min_score, sharp, min_sharp,
-                    math.hypot(x - prior[0], y - prior[1]),
-                    abs(math.degrees(th - prior[2])), "ACCEPTED" if ok else "REJECTED")
+                    "moved %.2f m / %.0f deg from the saved pose -- %s%s",
+                    score, min_score, sharp, min_sharp, moved_m, moved_deg,
+                    "ACCEPTED" if ok else "REJECTED", why)
         if not ok:
             return False
         self.world.set_pose(x, y, th)
         self.map.set_pose(x, y, th)
         return True
+
+    def _archive_map(self) -> str:
+        """Move the unplaceable map aside, with its pose and visit trace, and say where.
+
+        Renamed rather than copied: the rebuild is about to write to the same path, and
+        a copy that gets overwritten a second later is not a backup.
+        """
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        base = self.world.map_file
+        dest = base.parent / f"map-archive-{stamp}"
+        moved = []
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            for path in (base, base.with_suffix(".pose.json"),
+                         base.with_suffix(".visits.npz")):
+                if path.exists():
+                    path.rename(dest / path.name)
+                    moved.append(path.name)
+        except OSError as exc:
+            # Never let bookkeeping stop the run. Worst case the rebuild overwrites it,
+            # which is exactly what happened before this method existed.
+            LOGGER.warning("Could not archive the old map (%s); it will be overwritten.",
+                           exc)
+            return "archiving FAILED -- the file will be overwritten"
+        return f"{dest} ({', '.join(moved) or 'nothing to move'})"
 
     def _reflex_worker(self) -> None:
         """High-rate ToF watchdog with a direct line to the motors.
@@ -3139,6 +3226,16 @@ class ControlLoop:
         self._last_tick_t = t_start
         gate = "ok"
 
+        # Stage accounting -- see ControlLoop.stage_s. `lap` charges everything since
+        # the previous lap to one name; the names below are the section headings.
+        _acc, _mark = self.stage_s, t_start
+
+        def lap(name: str) -> None:
+            nonlocal _mark
+            now = time.perf_counter()
+            _acc[name] = _acc.get(name, 0.0) + (now - _mark)
+            _mark = now
+
         scan, scan_age = self.slots["lidar"].read()
         depth, depth_age = self.slots["tof"].read()
 
@@ -3192,7 +3289,9 @@ class ControlLoop:
 
         # ---- 1. policy ------------------------------------------------------------
         obs = self._build_observation(scan)
+        lap("sensors+obs")
         action = self.policy.infer(obs)
+        lap("policy")
         v_pol, omega_pol = float(action[0]), float(action[1])
 
         # THE RAW OUTPUT, CAPTURED ONCE AND NEVER WRITTEN TO AGAIN.
@@ -3319,6 +3418,7 @@ class ControlLoop:
                         "; ".join(rec.capability["findings"])
                         or f"reverse {v_raw:+.3f} m/s is not executable")
 
+        lap("adapter")
         # ---- 1c. EXPLORATION PLANNER (heading only) --------------------------------
         #
         # The policy has no goal input -- 72 LiDAR beams, 72 frontier rays, its own
@@ -3345,6 +3445,7 @@ class ControlLoop:
             self.planner.note_progress(self.map.pose)
         rec.planner = planner_ctx
 
+        lap("planner-bias")
         # ---- 1d. LOCAL NAVIGATOR (is the command she just asked for DRIVABLE?) -----
         #
         # Everything downstream of the policy can only say no, and the governor's clamp
@@ -3406,6 +3507,7 @@ class ControlLoop:
                 self.stats["nav_handoffs"] += 1
         rec.navigator = nav_ctx
 
+        lap("navigator")
         # ---- 2. LiDAR governor ----------------------------------------------------
         v, omega, limited = self.governor(v_pol, omega_pol, scan)
         rec.add("governor", v, omega,
@@ -3528,6 +3630,7 @@ class ControlLoop:
                     f"reverse refused: {self.governor.last_rear_min:.2f} m behind, "
                     f"inside the {c.rear_stop:.2f} m rear stop")
 
+        lap("governor+escape+rear")
         # ---- 3. visual gate (advisory) --------------------------------------------
         frames = self._read_cameras()
         if c.cam_enabled:
@@ -3595,6 +3698,7 @@ class ControlLoop:
             v = min(v, c.v_max * c.visual_min_speed_scale)
             rec.add("freespace_near", v, omega, "down camera: floor gone at the bumper")
 
+        lap("cameras")
         # ---- 4. ToF reflex (hard veto) --------------------------------------------
         # Set by the emergency branch when the obstacle is far enough that turning in
         # place cannot reach it. It has to be carried down to the rate limiter, which
@@ -3646,6 +3750,7 @@ class ControlLoop:
                 f"{c.tof_stop_distance:.2f} / slow {c.tof_slow_distance:.2f}"
                 if (emergency or tof_scale < 1.0) else "")
 
+        lap("reflex")
         # ---- 5. slew limit + actuate ----------------------------------------------
         v, omega = self.limiter(v, omega, dt_real, emergency=emergency,
                                 allow_rotation=pivot_allowed)
@@ -3659,6 +3764,7 @@ class ControlLoop:
         rec.duties = self.motors.last_duties
         rec.gate = gate
 
+        lap("actuate")
         # ---- 6. propagate pose with what the WHEELS actually did -------------------
         # Not the commanded twist. The creep cutoff, the stiction floor and the duty
         # cap all make executed != commanded on this drivetrain, and dead reckoning
@@ -3681,6 +3787,11 @@ class ControlLoop:
             self.world.set_pose(*(float(x) for x in self.map.pose))
             self.mapper.submit(scan, self.map.pose, self.map.blind_beams)
 
+        # NOTE: loop_ms deliberately stops here, because the black box row below has
+        # to carry it. The telemetry tail after this point is charged to the stage
+        # accounting at the end of the function, so `budget by stage` can exceed
+        # loop_ms -- that difference IS the tail, and it used to include a world.stats()
+        # over every cell in the map.
         loop_ms = (time.perf_counter() - t_start) * 1000.0
         self.loop_ms.append(loop_ms)
         self.stats["ticks"] += 1
@@ -3690,9 +3801,19 @@ class ControlLoop:
         rec.loop_ms = loop_ms
         rec.explored_m2 = self.map.explored_m2
         if self.mapper is not None:
-            w = self.world.stats()
-            w["dropped"] = self.world.dropped
-            rec.world, rec.world_loaded = w, self.world.loaded_from_disk
+            # TELEMETRY, NOT CONTROL -- and it counts every cell in the grid, so its
+            # cost GROWS WITH THE MAP. Measured 5.8 ms on a 41k-cell grid and ~12 ms by
+            # the time the map reached 88k cells, charged to every single tick, for a
+            # number nothing in the chain reads. Refreshed at 2 Hz instead: the black
+            # box gets the same curve, and the control loop stops paying for the map's
+            # success. (It also sat AFTER loop_ms was computed, so it never even
+            # appeared in the loop time it was inflating.)
+            now = time.monotonic()
+            if self._world_stats is None or now - self._world_stats_t >= 0.5:
+                w = self.world.stats()
+                w["dropped"] = self.world.dropped
+                self._world_stats, self._world_stats_t = w, now
+            rec.world, rec.world_loaded = self._world_stats, self.world.loaded_from_disk
         rec.pose = tuple(float(x) for x in self.map.pose)
         rec.executed_v, rec.executed_omega = self.motors.executed()
         self.last_record = rec
@@ -3726,6 +3847,8 @@ class ControlLoop:
                               round(math.degrees(self.free_view.bearing), 1),
                               round(self.free_view.centre_range, 2),
                               round(self.free_view.confidence, 2)))
+        lap("pose+telemetry")
+        self.stage_wall_s += time.perf_counter() - t_start
         return row
 
     # ------------------------------------------------------------------- run --------
@@ -3753,9 +3876,17 @@ class ControlLoop:
                     # that are not there. Measured after three runs of this: 335
                     # disconnected occupied blobs, largest 17 cells, because one wall
                     # had been written at three different offsets. Discard and rebuild.
-                    LOGGER.warning("Discarding the restored map and starting fresh. "
-                                   "The robot could not find itself in it, so every "
-                                   "target it named would be at the wrong address.")
+                    # SET ASIDE, NOT DELETED. Harsh, 2026-09-04: "DO NOT discard the
+                    # maps." Starting fresh is still right -- an unplaceable map sends
+                    # the frontier planner to addresses that do not exist -- but the
+                    # file is 12 minutes of driving and there is no reason for the
+                    # rebuild to consume it. It moves aside with its pose and visit
+                    # trace so it can be inspected, merged or restored later.
+                    kept = self._archive_map()
+                    LOGGER.warning("Could not place the robot in the restored map, so "
+                                   "this run rebuilds from scratch -- every target "
+                                   "named from it would be at the wrong address. The "
+                                   "old map is NOT deleted: %s", kept)
                     self.world = WorldMap(max_range=self.cfg.lidar_max_range)
             else:
                 LOGGER.info("No world map at %s -- starting a fresh one.",
@@ -3926,8 +4057,30 @@ class ControlLoop:
         lm = np.array(self.loop_ms) if self.loop_ms else np.array([0.0])
         LOGGER.info("=" * 74)
         LOGGER.info("ticks=%d  explored=%.1f m^2", self.stats["ticks"], self.map.explored_m2)
-        LOGGER.info("loop ms: mean %.2f | p95 %.2f | max %.2f (budget %.0f)",
-                    lm.mean(), np.percentile(lm, 95), lm.max(), self.cfg.dt * 1000)
+        # SAY WHICH TICKS. self.loop_ms is a deque(maxlen=200) -- twenty seconds of a
+        # twelve-minute run -- and this line has been read as the run's mean all night.
+        # It reported 215 ms for a run whose whole-run mean (from the black box) was
+        # 160. Same ring-buffer-as-summary mistake as the black box itself.
+        LOGGER.info("loop ms over the LAST %d ticks: mean %.2f | p95 %.2f | max %.2f "
+                    "(budget %.0f) -- the black box has the whole run",
+                    lm.size, lm.mean(), np.percentile(lm, 95), lm.max(),
+                    self.cfg.dt * 1000)
+        if self.stage_s and self.stats["ticks"]:
+            n = self.stats["ticks"]
+            acc = sorted(self.stage_s.items(), key=lambda kv: -kv[1])
+            LOGGER.info("budget by stage, mean ms/tick over all %d ticks: %s", n,
+                        "  ".join(f"{k} {1000.0 * v / n:.1f}" for k, v in acc))
+            in_tick = 1000.0 * self.stage_wall_s / n
+            wall = float(lm.mean())
+            # THE GAP IS THE POINT. Everything timed above runs on this one thread, so
+            # work cannot hide between the stages -- only DESCHEDULING can. A gap means
+            # the mapper, the frontier planner or the camera threads are holding the
+            # GIL, and no amount of optimising this loop will recover it.
+            LOGGER.info("  measured inside tick(): %.1f ms/tick; "
+                        "wall clock per tick (last %d): %.1f ms; "
+                        "unaccounted %.1f ms = time this thread was NOT RUNNING "
+                        "(other threads holding the GIL)",
+                        in_tick, lm.size, wall, max(wall - in_tick, 0.0))
         s = self.stats
         if self.navigator is not None and (s["nav_decisions"] or s["nav_handoffs"]):
             total = max(s["nav_decisions"] + s["nav_handoffs"], 1)
@@ -3938,9 +4091,12 @@ class ControlLoop:
                         s["nav_decisions"], 100.0 * s["nav_decisions"] / total,
                         s["nav_handoffs"], n.handoff_blocked, n.handoff_no_arc,
                         s["nav_open"], s["nav_corridor"], s["nav_cluttered"])
-            LOGGER.info("  near field: %d ticks barriered (inside the reflex's stop "
-                        "distance), %d ticks merely slowed by it",
-                        n.tof_informed, n.tof_slowed)
+            LOGGER.info("  near field: %d ticks with a ToF barrier in the arc search "
+                        "(%d of them already inside the reflex's stop distance -- the "
+                        "other %d are arcs steered around something the reflex could "
+                        "only have braked for), %d ticks speed-capped by it",
+                        n.tof_informed, n.tof_braked,
+                        max(n.tof_informed - n.tof_braked, 0), n.tof_slowed)
             # SWITCHES are the number that matters -- a direction reversal a rival had
             # to earn. Expiries are just COMMIT_MAX_S elapsing and say nothing about
             # flip-flopping; counting them together read as "94 broken vs 28 held" and
