@@ -59,7 +59,25 @@ fi
 # The script used to only WARN about that, which meant a run could go camera-blind --
 # and a camera-blind run looks exactly like a working one in the log. Measured
 # 2026-09-04: with the panel open, both cameras returned zero frames to the robot.
-CPU_UNITS="friday-face.service friday-brain.service friday-dashboard.service"
+# HER SERVICES STAY UP BY DEFAULT NOW. Harsh, 2026-09-05: "all the mcp tools
+# dashboard face and everything will continuously work while exploring".
+#
+# They used to be stopped for the run, and the reason was real: measured with the
+# robot standing still, friday_face.py alone held 84.5% of a core and a run with
+# the face up missed its 100 ms deadline on 597 of 1361 ticks. What changed is
+# that the brain was found burning 137-151% of CPU while idle -- a lock convoy in
+# stt.Subscription.frames(), which yielded while holding the microphone lock -- and
+# fixing that returned a whole core. There is now room to run them.
+#
+# --quiet-services puts the old behaviour back, and it is what to use when the
+# question is "how well can she navigate" rather than "how well does she demo".
+CPU_UNITS=""
+QUIET_SERVICES=0
+for a in "$@"; do
+    [ "$a" = "--quiet-services" ] && QUIET_SERVICES=1
+done
+[ "$QUIET_SERVICES" = "1" ] && \
+    CPU_UNITS="friday-face.service friday-brain.service friday-dashboard.service"
 STOPPED_UNITS=""
 KEEP_SERVICES=0
 for a in "$@"; do
@@ -113,8 +131,23 @@ port_holders() {
     done 2>/dev/null | sort -u
 }
 
-if [ "$MCP_WAS_UP" = "1" ]; then
-    echo "Stopping friday-mcp to release the serial ports..."
+# THE LEASE COMES FIRST. When the run was started through the MCP tool
+# (start_exploration), the server has ALREADY put the serial devices down and is
+# refusing to reopen them -- see mcp_server/hardware.py. It is still running, still
+# answering tools, still driving the dashboard and the face. There is nothing to
+# stop, and stopping it would throw away the whole point.
+LEASE_FILE="$HERE/../state/hardware.lease"
+LEASED=0
+if [ -f "$LEASE_FILE" ]; then
+    now=$(date +%s)
+    exp=$(awk '{print int($1)}' "$LEASE_FILE" 2>/dev/null || echo 0)
+    [ "$exp" -gt "$now" ] 2>/dev/null && LEASED=1
+fi
+if [ "$LEASED" = "1" ]; then
+    echo "friday-mcp has leased the hardware to this run and stays UP."
+    MCP_WAS_UP=0
+elif [ "$MCP_WAS_UP" = "1" ]; then
+    echo "Stopping friday-mcp to release the serial ports (no lease held)..."
     systemctl --user stop friday-mcp.service
     # `systemctl stop` returns when the job is queued, NOT when the process has
     # actually closed its file descriptors -- measured at ~5 s here. A fixed
@@ -181,7 +214,10 @@ if [ "$want_bb" = "1" ]; then
 fi
 
 FWD_ARGS=()
-for a in "$@"; do [ "$a" = "--keep-services" ] || FWD_ARGS+=("$a"); done
+for a in "$@"; do
+    case "$a" in --keep-services|--quiet-services) continue ;; esac
+    FWD_ARGS+=("$a")
+done
 
 # KEEP THE LOG WITH THE RUN, not wherever the caller happened to redirect it. A
 # 20-minute run's log was written to a session scratchpad that was cleared before it

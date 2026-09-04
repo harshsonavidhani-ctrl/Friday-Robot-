@@ -66,6 +66,16 @@ class Intent:
 _RULES: list[tuple[str, str, str | None, dict, str]] = [
     # name        pattern                                    tool          args                                    say
     ("stop",      r"\b(stop|halt|ruk|ruko|रुक|रुको|थम)\b",   "stop",       {},                                     "Stopping."),
+    # "Friday, explore" -> the saved autonomous run. Harsh asked for the wake
+    # word to be the switch for this, and it is in the OFFLINE table on purpose:
+    # the whole point of firing an autonomous run by voice is that it works
+    # without a round trip to a model that may be unreachable. It sits directly
+    # under stop so that "stop exploring" can never be read as "explore".
+    #
+    # `explore` and `exploration` only. NOT "look around", which collides with
+    # the "turn around" row two lines below, and not "discover", which whisper
+    # produces for half a dozen unrelated phrases.
+    ("explore",   r"\b(explore|exploring|exploration)\b",     "start_exploration", {},                              "Going exploring."),
     # English "turn around" only. Romanised "peeche mudo" still resolves to
     # backward -- the go/turn verb matching above the table wins over this row
     # -- and reversing when asked to turn around is a mild wrong answer, not a

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 
 import config
 import sensors
@@ -51,6 +52,90 @@ MOVING = threading.Event()
 # load_calibration() is: a dashboard edit should take effect without a restart.
 
 
+# --- the hardware lease --------------------------------------------------
+#
+# WHY THIS EXISTS. Harsh, 2026-09-04: "all the mcp tools dashboard face and
+# everything will continuously work while exploring".
+#
+# The RL autonomous run (rl/friday_localnav_deploy.py) is a SEPARATE PROCESS
+# that needs the LiDAR, ToF and motor serial ports exclusively -- two objects
+# with the motor port open fight over replies, which is the reason this module
+# exists at all. So rl/run_localnav.sh used to `systemctl stop friday-mcp` for
+# the duration, and with the server gone every tool, the dashboard's controls
+# and the brain's hands went with it.
+#
+# It does not have to. The server can put the DEVICES down without going away:
+# release them, refuse to reopen them while the lease is out, and pick them up
+# again afterwards. Everything that is not a serial port -- the tools, the
+# camera views, the voice, the face, the decision log -- keeps working.
+#
+# A FILE, not an in-process flag, because the two sides are different processes
+# and the run script is bash. It carries an expiry so a crashed run cannot
+# leave the robot permanently unable to open its own motors: the longest it can
+# cost is the lease it asked for.
+LEASE_FILE = config.STATE_DIR / "hardware.lease" if hasattr(config, "STATE_DIR") \
+    else config.ROOT / "state" / "hardware.lease"
+
+
+class HardwareLeased(RuntimeError):
+    """Raised instead of opening a device another process is currently using."""
+
+
+def lease_active() -> float:
+    """Seconds of lease remaining, or 0.0 when the hardware is ours."""
+    try:
+        raw = LEASE_FILE.read_text().strip()
+    except (OSError, ValueError):
+        return 0.0
+    try:
+        expires = float(raw.split()[0])
+    except (IndexError, ValueError):
+        return 0.0
+    left = expires - time.time()
+    if left <= 0.0:
+        # Expired. Remove it so a stale file cannot outlive the run that wrote
+        # it -- a lease that never ends is indistinguishable from broken
+        # hardware, and would be diagnosed as broken hardware.
+        try:
+            LEASE_FILE.unlink()
+        except OSError:
+            pass
+        return 0.0
+    return left
+
+
+def lease_out(seconds: float, holder: str = "autonomy") -> float:
+    """Hand the serial devices to another process for `seconds`.
+
+    Releases them here first, so the caller does not have to race us for the
+    port. Idempotent: leasing while already leased just extends it.
+    """
+    LEASE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LEASE_FILE.write_text(f"{time.time() + float(seconds):.0f} {holder}\n")
+    release_motors()
+    release_ranges()
+    log.warning("hardware leased to %s for %.0fs -- motors and range sensors "
+                "released; every other tool keeps working", holder, seconds)
+    return float(seconds)
+
+
+def lease_return() -> None:
+    """Take the devices back. They reopen lazily on the next use."""
+    try:
+        LEASE_FILE.unlink()
+        log.info("hardware lease returned")
+    except OSError:
+        pass
+
+
+def _check_lease(what: str) -> None:
+    left = lease_active()
+    if left > 0.0:
+        raise HardwareLeased(
+            f"the {what} are in use by an autonomous run for another "
+            f"{left:.0f}s. Everything else still works; say stop, or wait.")
+
+
 # --- motors --------------------------------------------------------------
 
 def motors() -> Motors:
@@ -62,6 +147,7 @@ def motors() -> Motors:
     """
     global _motors
     with _lock:
+        _check_lease("motors")
         if _motors is not None and _motors.serial is not None:
             return _motors
         drive = Motors()
@@ -137,6 +223,7 @@ def ranges() -> sensors.Rangefinders:
     """
     global _ranges
     with _lock:
+        _check_lease("range sensors")
         if _ranges is None:
             _ranges = sensors.Rangefinders().start()
             log.info("range sensors started")

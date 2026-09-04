@@ -44,6 +44,7 @@ import threading
 import wave
 from pathlib import Path
 
+import audio_routing
 import config
 
 log = logging.getLogger("friday.tts")
@@ -323,8 +324,14 @@ def play(path: Path) -> None:
     environment.setdefault("XDG_RUNTIME_DIR", config.AUDIO_RUNTIME_DIR)
 
     if shutil.which("pw-play"):
+        # RESOLVED, NOT HARD-CODED. config.SPEAKER_DEVICE names a card AND a
+        # profile, and this Pi's USB audio card re-enumerates under whichever
+        # profile it feels like. pw-play does not fail fast on a target that is
+        # not there -- it WAITS, so a stale name is twenty seconds of silence
+        # per sentence. See audio_routing for the night this cost.
         result = subprocess.run(
-            ["pw-play", f"--target={config.SPEAKER_DEVICE}",
+            ["pw-play", *audio_routing.target_args(
+                audio_routing.speaker(config.SPEAKER_DEVICE)),
              f"--volume={config.TTS_VOLUME}",
              # A bigger buffer for THIS STREAM only. The sink's own period is
              # ~1.3 ms, which this CPU cannot keep fed -- see config.

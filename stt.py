@@ -33,6 +33,7 @@ import threading
 import time
 import wave
 
+import audio_routing
 import config
 
 log = logging.getLogger("friday.stt")
@@ -113,8 +114,14 @@ class Microphone:
             raise STTError("pw-cat is not installed — cannot reach the mic")
         environment = dict(os.environ)
         environment.setdefault("XDG_RUNTIME_DIR", config.AUDIO_RUNTIME_DIR)
+        # RESOLVED, NOT HARD-CODED -- and on this side the failure is WORSE than
+        # a hang. pw-cat with a target that does not exist silently records
+        # from the DEFAULT source instead, so on 2026-09-04 the wake word spent
+        # the evening listening through the webcam's microphone while every
+        # heartbeat looked perfectly healthy. See audio_routing.
+        target = audio_routing.microphone(self.device)
         self._process = subprocess.Popen(
-            ["pw-cat", "--record", "--raw", f"--target={self.device}",
+            ["pw-cat", "--record", "--raw", *audio_routing.target_args(target),
              "--rate", str(config.MIC_SAMPLE_RATE), "--channels", "1",
              "--format", "s16", "--latency", "20ms", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -358,14 +365,50 @@ class Subscription:
             self._ready.notify()
 
     def frames(self):
-        """Yield frames as they arrive, forever, until the stream closes."""
+        """Yield frames as they arrive, forever, until the stream closes.
+
+        THE YIELD IS OUTSIDE THE LOCK, AND THAT IS THE WHOLE POINT.
+        =========================================================
+
+        It used to be inside it, and a generator that yields while holding a
+        lock hands the lock to its CONSUMER for as long as the consumer takes
+        to come back. Everything the consumer does between two frames was
+        therefore done with the microphone pump locked out of offer():
+
+          * the wake detector's ONNX inference, ~17 ms per chunk, every chunk;
+          * the endpointer's VAD work, per frame;
+          * and worst of all, NOTHING AT ALL -- because when endpoint() returns
+            with a complete utterance it abandons this generator suspended at
+            the yield, still holding the lock, until the garbage collector gets
+            round to closing it. The next thing that happens in a turn is
+            whisper, which on this Pi has measured anywhere from 8 to 312
+            SECONDS for four seconds of audio.
+
+        MEASURED, 2026-09-04: 1850 occurrences in one day of
+
+            no audio for 12s -- the microphone stream is wedged, closing it so
+            the pump restarts it
+
+        with no "microphone stream open" between them, because the stream was
+        never wedged. offer() was simply blocked on this lock, _last_frame went
+        stale, and the watchdog killed a perfectly healthy pw-cat. That is what
+        Harsh sees as "it goes deaf after some seconds". py-spy on the running
+        brain caught it in the act: mic-stream blocked in offer() acquiring
+        this lock while wake-detect sat inside frames(), and main.py burning
+        151% of CPU on the resulting lock convoy while doing nothing at all.
+
+        Pop under the lock, yield after it. The deque is already bounded and
+        already drops its oldest frame for a slow consumer, so nothing here
+        needs the consumer to be inside the critical section.
+        """
         while True:
             with self._ready:
                 while not self._frames and not self._closed:
                     self._ready.wait(0.5)
                 if self._closed and not self._frames:
                     return
-                yield self._frames.popleft()
+                frame = self._frames.popleft()
+            yield frame
 
     def drain(self) -> list[bytes]:
         """Take everything buffered right now, leaving the queue empty."""

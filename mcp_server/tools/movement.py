@@ -13,9 +13,13 @@ carries its error margin, and the brain is expected to say "about" out loud.
 
 from __future__ import annotations
 
+import logging
+
 import config
 from mcp_server import embodiment, hardware, safety
 from mcp_server.registry import tool
+
+log = logging.getLogger("friday.tools.movement")
 
 DIRECTIONS = ("forward", "backward", "left", "right", "stop")
 
@@ -65,8 +69,29 @@ def stop() -> str:
     Takes effect at once even if a move is already running — it interrupts it
     rather than waiting for it to finish. Use it the moment anything seems
     wrong; there is no cost to calling it unnecessarily.
+
+    STOPS AN AUTONOMOUS RUN TOO. That run is a SEPARATE PROCESS holding the
+    motor port under a hardware lease (see mcp_server.hardware), so
+    emergency_stop() here reaches motors this server does not currently own and
+    would do nothing at all. "Stop" has to mean stop whatever is driving her,
+    and there is no version of this where the word has to be qualified.
     """
-    return safety.emergency_stop()
+    said = safety.emergency_stop()
+    try:
+        from mcp_server.tools import autonomy
+        if autonomy._running():
+            # The unit's own teardown halts the motors and puts her services
+            # back; this returns the lease so the wheels are ours again.
+            autonomy.stop_exploration()
+            return said + " I have also stopped exploring."
+    except Exception as exc:                        # noqa: BLE001
+        # NEVER let this path raise. A failure to stop the run must not turn
+        # into a failure to stop the motors, which is the one thing this tool
+        # exists to guarantee.
+        log.error("could not stop the autonomous run: %s: %s",
+                  type(exc).__name__, exc)
+        return said + " I could NOT stop the exploration run — use the kill switch."
+    return said
 
 
 @tool
