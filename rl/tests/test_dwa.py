@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pi_deploy import RobotConfig                                  # noqa: E402
 from dwa import DynamicWindowPlanner, SIM_TIME_S, SIM_STEPS        # noqa: E402
 from navigator import (Navigator, OPEN, CORRIDOR, CLUTTERED,       # noqa: E402
-                       BLOCKED, COMMIT_MARGIN, COMMIT_MAX_S)
+                       BLOCKED, COMMIT_MARGIN, COMMIT_MAX_S, SPEED_OPEN)
 
 cfg = RobotConfig()
 fails = 0
@@ -335,19 +335,31 @@ check("an obstacle ONLY the ToF can see still changes the command",
       f"lidar-only v={blind.v:.2f} w={blind.omega:+.2f} -> with ToF "
       f"v={seeing.v:.2f} w={seeing.omega:+.2f}" if (blind and seeing) else "handed back")
 
-# A PLANNER MUST NOT BE STRICTER THAN THE EMERGENCY LAYER IT FEEDS.
+# THE BARRIER IS RAISED AT EVERY RANGE THE ToF REPORTS, and the speed law runs on top
+# of it. Both, always.
 #
-# REGRESSION, measured 2026-09-04: the first version made ANY ToF return a hard barrier
-# across the full corridor, so a return at 0.45 m deleted every forward arc -- while
-# ToFReflex at that range merely scales speed to 0.5 and drives on. The navigator was
-# overruling the reflex in the conservative direction and handing the tick back instead:
-# handbacks went 5% -> 49% while the reflex itself fired on only 30% of ticks.
+# THIS IS THE ASSERTION THAT WAS BRIEFLY INVERTED AND IT COST THE WORST REGRESSION OF
+# THE PROJECT. The argument for inverting it sounded right -- "a planner must not be
+# stricter than the emergency layer it feeds", since ToFReflex at 0.45 m merely scales
+# speed while the planner was deleting arcs. Measured back to back on hardware:
+#
+#     |                     | barrier at every range | only inside stop |
+#     | ground driven       | 16.1 m^2               | 5.6 m^2          |
+#     | ToF reflex firing   | 30%                    | 64%              |
+#     | navigator handbacks | 49%                    | 75%              |
+#
+# The argument is wrong because THE REFLEX ONLY BRAKES BECAUSE IT CANNOT STEER: it
+# holds one k-th-smallest range with no bearing, so slowing is the only move available
+# to it. The planner holds the whole arc set, and the barrier is the only channel by
+# which the near field reaches that search. Deleting arcs that run INTO something while
+# keeping every arc AROUND it is not a stricter version of capping speed; it is a
+# different operation, and it is the entire reason this layer exists.
 mid = np.full((8, 8), cfg.tof_max_range, dtype=np.float32)
 mid[4:7, 3:6] = 0.45                          # inside slow, well outside stop
 pts_mid, scale_mid = Navigator(cfg, DynamicWindowPlanner(cfg))._tof_constraint(mid)
-check("a return the reflex would only SLOW for raises no barrier",
-      pts_mid.shape[0] == 0, f"{pts_mid.shape[0]} barrier points at 0.45 m")
-check("...it scales speed by the reflex's own law instead",
+check("a return the reflex would only slow for STILL raises a barrier to steer around",
+      pts_mid.shape[0] > 0, f"{pts_mid.shape[0]} barrier points at 0.45 m")
+check("...and scales speed by the reflex's own law as well",
       abs(scale_mid - (0.45 - cfg.tof_stop_distance)
           / (cfg.tof_slow_distance - cfg.tof_stop_distance)) < 1e-6,
       f"scale={scale_mid:.3f}")     # 1e-6, not 1e-9: the frame is float32
@@ -356,15 +368,18 @@ check("...it scales speed by the reflex's own law instead",
 inside = np.full((8, 8), cfg.tof_max_range, dtype=np.float32)
 inside[4:7, 3:6] = cfg.tof_stop_distance - 0.02
 pts_in, scale_in = Navigator(cfg, DynamicWindowPlanner(cfg))._tof_constraint(inside)
-check("inside the reflex's stop distance it DOES raise a barrier",
+check("inside the reflex's stop distance it raises a barrier and refuses speed",
       pts_in.shape[0] > 0 and scale_in == 0.0, f"{pts_in.shape[0]} points")
 
-# And beyond the reflex's interest, the near field says nothing at all.
+# Beyond the reflex's interest the barrier is still there -- that is the band where it
+# does its most valuable work, steering around something while there is still room to
+# steer -- but it costs her NO speed, because the reflex would not have slowed her.
 far_tof = np.full((8, 8), cfg.tof_max_range, dtype=np.float32)
 far_tof[4:7, 3:6] = cfg.tof_slow_distance + 0.10
 pts_far, scale_far = Navigator(cfg, DynamicWindowPlanner(cfg))._tof_constraint(far_tof)
-check("beyond the reflex's slow distance the near field is silent",
-      pts_far.shape[0] == 0 and scale_far == 1.0, f"scale={scale_far:.2f}")
+check("beyond the reflex's slow distance the barrier stands but costs no speed",
+      pts_far.shape[0] > 0 and scale_far == 1.0,
+      f"{pts_far.shape[0]} points, scale={scale_far:.2f}")
 
 # AND IT MUST ACT BEFORE THE REFLEX DOES, or it has changed nothing. The reflex brakes
 # from tof_slow_distance (0.60 m) and stops at tof_stop_distance (0.30 m). Steering away
@@ -377,16 +392,20 @@ def nav_at(range_m: float):
         clear_scan(), v_allow=cfg.v_max, omega_want=0.0, desired_bearing=0.0,
         tof_depth=t)
 
-# This used to assert she turned away at 0.80 m, and that assertion was WRONG once the
-# navigator was aligned to the reflex: at 0.80 m the reflex does not care, and the LiDAR
-# -- the sensor that actually has bearing information -- can see 0.80 m perfectly well,
-# since it is far above the 0.22 m floor. The ToF's unique contribution is the near band
-# the LiDAR structurally cannot report, so being silent out there is correct, not a
-# regression. What must hold is that she is slowed BEFORE the reflex would stop her, and
-# that her options are not deleted while doing it.
+# SHE MUST HAVE TURNED BEFORE THE BRAKES COME ON. The reflex brakes from 0.60 m and
+# stops at 0.30 m; steering away only once the brakes are on is the old behaviour with
+# extra steps. At 0.80 m nothing downstream cares yet, so any turn here is the barrier's
+# doing and nothing else's -- which is precisely the run-4 behaviour ("she turns away at
+# 0.80 m, before the 0.60 m brake and the 0.30 m stop") that measured 16.1 m^2.
 early = nav_at(cfg.tof_slow_distance - 0.05)     # 0.55 m: reflex brakes, does not stop
 full = nav_at(cfg.tof_slow_distance + 0.20)      # 0.80 m: outside the reflex's interest
-check("the near field slows her before the reflex would stop her",
+check("she steers away while the way ahead is still wide open (0.80 m)",
+      full is not None and abs(full.omega) > 1e-6,
+      f"0.80 m -> w={full.omega:+.2f}" if full else "handed back")
+check("...at no cost in speed out there",
+      full is not None and full.v >= cfg.v_max * SPEED_OPEN - 1e-6,
+      f"v={full.v:.2f}" if full else "None")
+check("the near field also slows her before the reflex would stop her",
       early is not None and full is not None and early.v < full.v,
       f"0.80 m -> v={full.v:.2f}; 0.55 m -> v={early.v:.2f}"
       if (early and full) else "None")

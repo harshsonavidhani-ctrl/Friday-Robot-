@@ -141,6 +141,7 @@ class Navigator:
         # disagreeing and the near-field model needs looking at again.
         self.tof_informed = 0
         self.tof_slowed = 0
+        self.tof_braked = 0
 
     # ------------------------------------------------------------- assessment --
     def assess(self, scan_m: np.ndarray,
@@ -259,29 +260,37 @@ class Navigator:
         return pts
 
     def _tof_constraint(self, depth) -> tuple[np.ndarray, float]:
-        """(barrier points, speed scale) from the near field, on the REFLEX'S OWN TERMS.
+        """(barrier points, speed scale) from the near field.
 
-        A PLANNER MUST NOT BE STRICTER THAN THE EMERGENCY LAYER IT FEEDS. The first
-        version of this turned ANY ToF return into a hard barrier across the full
-        corridor -- so a return at 0.45 m deleted essentially every forward arc, while
-        `ToFReflex` at that same range would merely have scaled speed to 0.5 and driven
-        on. The navigator was overruling the reflex in the conservative direction, and
-        handing the tick back instead. MEASURED: handbacks went 5% -> 49% when the ToF
-        feed was added, and the reflex itself only fired on 30% of ticks.
+        A BARRIER AT EVERY RANGE THE ToF REPORTS, plus the reflex's own proportional
+        speed law on top. Both halves, always.
 
-        So the two now share the reflex's exact thresholds, not just its quorum:
+        THIS WAS TRIED THE OTHER WAY AND IT WAS THE WORST REGRESSION OF THE PROJECT.
+        Restricting the barrier to inside `tof_stop_distance` -- on the reasoning that
+        "a planner must not be stricter than the emergency layer it feeds" -- was
+        measured back to back on hardware:
 
-            d <= tof_stop_distance   forward is genuinely unsafe -> BARRIER (and the
-                                     caller hands the tick to escape/recovery, which is
-                                     what the reflex would force anyway)
-            d <  tof_slow_distance   -> no barrier, SPEED SCALED by the same
-                                     proportional law the reflex uses, so she keeps
-                                     steering and simply slows
-            otherwise                -> the near field has nothing to say
+            |                     | barrier at every range | only inside stop |
+            | ground driven       | 16.1 m^2               | 5.6 m^2          |
+            | ToF reflex firing   | 30%                    | 64%              |
+            | navigator handbacks | 49%                    | 75%              |
 
-        The barrier itself stays FOV-free: a full-corridor wall at that range, because
-        no ToF field of view has ever been measured on this robot (see the module note).
-        Conservative there is fine -- it now only applies where the reflex stops her too.
+        THE REASONING WAS WRONG BECAUSE THE REFLEX ONLY BRAKES BECAUSE IT CANNOT
+        STEER. It gets a single k-th-smallest range with no bearing attached, so the
+        only safe thing it can do with "something at 0.45 m" is bleed speed off. The
+        planner has the whole arc set, so the same fact means "go round it" -- and the
+        barrier is the ONLY way that fact reaches the arc search. Delete it and she
+        drives straight at near obstacles, slower and slower, until she is inside
+        0.30 m and hands the tick to recovery. Matching the reflex's thresholds threw
+        away the one advantage the planner has over it.
+
+        Nor is a barrier here "stricter" than the reflex: it deletes the arcs that run
+        INTO the thing while leaving every arc that goes AROUND it, which is a
+        different operation from capping speed and is not comparable on a scale of
+        conservatism. A handback only happens when EVERY arc is gone.
+
+        The barrier stays FOV-free: a full-corridor wall at that range, because no ToF
+        field of view has ever been measured on this robot (see the module note).
         """
         empty = np.zeros((0, 2), dtype=np.float32)
         if depth is None:
@@ -293,16 +302,18 @@ class Navigator:
             return empty, 1.0                 # too few zones agree: speckle, not a thing
         rng = float(np.sort(valid)[k - 1])
 
-        stop = float(self.cfg.tof_stop_distance)
+        # Speed scale: the reflex's own proportional law, so the two never disagree
+        # about how fast is acceptable at this range.
         slow = float(self.cfg.tof_slow_distance)
-        if rng > stop:
-            if rng >= slow:
-                return empty, 1.0
-            return empty, float((rng - stop) / max(slow - stop, 1e-6))
+        stop = float(self.cfg.tof_stop_distance)
+        scale = 1.0
+        if rng < slow:
+            scale = max(float((rng - stop) / max(slow - stop, 1e-6)), 0.0)
 
         half = float(self.cfg.corridor_half)
         ys = np.linspace(-half, half, 5)
-        return np.stack([np.full_like(ys, rng), ys], axis=1).astype(np.float32), 0.0
+        pts = np.stack([np.full_like(ys, rng), ys], axis=1).astype(np.float32)
+        return pts, scale
 
     # -------------------------------------------------------------- commitment --
     def _apply_commitment(self, candidates_omega: float, margin: float,
@@ -395,9 +406,16 @@ class Navigator:
                     0.5 * (a.widest_gap_bearing + desired_bearing))
 
         near, tof_scale = self._tof_constraint(tof_depth)
+        # NOT mutually exclusive any more: a barrier and a speed cut are two separate
+        # consequences of the same reading and both apply from tof_slow_distance in.
+        # `tof_braked` is the subset already inside the reflex's stop distance, which
+        # is where a barrier and an emergency stop agree; the gap between the two
+        # counts is the band where the barrier is doing work the reflex cannot.
         if near.shape[0]:
             self.tof_informed += 1
-        elif tof_scale < 1.0:
+            if tof_scale <= 0.0:
+                self.tof_braked += 1
+        if tof_scale < 1.0:
             self.tof_slowed += 1
         # The ToF's proportional band SLOWS her rather than deleting her options -- the
         # same thing the reflex does with it, one stage later. Floored at the drivetrain
