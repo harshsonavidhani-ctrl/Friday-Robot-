@@ -105,8 +105,27 @@ def _resolve(preferred: str, media_class: str, what: str) -> str | None:
     return None
 
 
+# A "pro-audio" node is NOT a usable speaker, however much it looks like one.
+# The pro profile exposes raw per-channel ports with no mixer and no resampler,
+# and pw-play to one does not fail -- it HANGS, measured at the full 25 s
+# timeout with a correctly formatted 48 kHz stereo file. Treating it as a sink
+# is worse than finding none at all, because finding none sends tts.play()
+# straight to ALSA, which works.
+#
+# This matters at BOOT specifically: which profile wireplumber picks for this
+# card is not stable across reboots, and one of the choices it makes is
+# pro-audio. Excluding it here is what makes her voice behave the same way on
+# every boot instead of depending on that.
+PRO_AUDIO_MARKER = ".pro-"
+
+
 def speaker(preferred: str) -> str | None:
-    return _resolve(preferred, "Audio/Sink", "speaker")
+    node = _resolve(preferred, "Audio/Sink", "speaker")
+    if node and PRO_AUDIO_MARKER in node:
+        log.warning("ignoring %r: a pro-audio node cannot be played to, and "
+                    "pw-play hangs on it rather than failing. Using ALSA.", node)
+        return None
+    return node
 
 
 def microphone(preferred: str) -> str | None:
