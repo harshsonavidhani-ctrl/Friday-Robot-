@@ -36,13 +36,51 @@ if systemctl --user is-active --quiet friday-mcp.service; then
     MCP_WAS_UP=1
 fi
 
-restore_mcp() {
+# THE FACE COSTS A CORE, AND THE CONTROL LOOP PAYS FOR IT. Measured with the robot
+# standing still: friday_face.py at 84.5% of a core, load average 2.40 on 4 cores
+# before a single wheel turns. A 269 s run with the face up MISSED ITS 100 ms
+# DEADLINE ON 597 OF 1361 TICKS -- mean 106.7 ms, p95 266 ms -- so the loop ran at
+# 6.9 Hz, not 10.
+#
+# That is not merely "slower". Every rate-limited quantity in the chain is applied
+# per tick and sized for 100 ms: the slew limiter, dead reckoning, and the frontier
+# planner's heading bias. A 0.55 rad/s bias held for 266 ms instead of 100 is a 2.7x
+# oversteer -- she swings past the heading, the next tick corrects, and that
+# overshoot-correct cycle is the ZIG-ZAG Harsh watched. omega_out flipped sign 15
+# times a minute.
+#
+# These are Friday's own units, stopped the same way friday-mcp already is and
+# restored by the same trap, so a crash or a Ctrl-C cannot leave her faceless.
+# --keep-services opts out when you want the face up for a demo and can accept the
+# steering cost.
+CPU_UNITS="friday-face.service friday-brain.service"
+STOPPED_UNITS=""
+KEEP_SERVICES=0
+for a in "$@"; do
+    [ "$a" = "--keep-services" ] && KEEP_SERVICES=1
+done
+
+restore_units() {
     if [ "$MCP_WAS_UP" = "1" ]; then
         systemctl --user start friday-mcp.service || true
         echo "friday-mcp restored: $(systemctl --user is-active friday-mcp.service)"
     fi
+    for u in $STOPPED_UNITS; do
+        systemctl --user start "$u" || true
+        echo "$u restored: $(systemctl --user is-active "$u")"
+    done
 }
-trap restore_mcp EXIT INT TERM
+trap restore_units EXIT INT TERM
+
+if [ "$KEEP_SERVICES" = "0" ]; then
+    for u in $CPU_UNITS; do
+        if systemctl --user is-active --quiet "$u"; then
+            systemctl --user stop "$u" || true
+            STOPPED_UNITS="$STOPPED_UNITS $u"
+        fi
+    done
+    [ -n "$STOPPED_UNITS" ] && echo "Stopped for the run (restored on exit):$STOPPED_UNITS"
+fi
 
 # The dashboard streams both cameras through ffmpeg whenever someone has its camera
 # panel open, and a V4L2 device is exclusive -- so CameraThread cannot open what
@@ -108,9 +146,41 @@ fi
 # NOT exec: exec REPLACES this shell, which discards the EXIT trap above and
 # leaves friday-mcp stopped after the run. That happened. Run it as a child, keep
 # the exit status, and let the trap put the service back.
+# THE BLACK BOX IS A RING BUFFER THAT DEFAULTS TO 30 SECONDS. Six consecutive 360 s
+# autonomy runs were each recorded down to their last 8%, so the question they were
+# run to answer -- why one explored well and the next did not -- could not be asked
+# of the files at all: 5.5 minutes of every run was overwritten before it was ever
+# written out. The flag exists and works (friday_localnav_deploy.py applies it); it
+# was simply never passed. Size it from --duration here so the recording covers the
+# run by default. ~140 bytes per tick at 10 Hz: a 780 s ring is about a megabyte.
+bb_arg=()
+want_bb=1
+duration=""
+prev=""
+for a in "$@"; do
+    case "$a" in
+        --blackbox-seconds|--blackbox-seconds=*) want_bb=0 ;;
+        --duration=*) duration="${a#--duration=}" ;;
+    esac
+    [ "$prev" = "--duration" ] && duration="$a"
+    prev="$a"
+done
+if [ "$want_bb" = "1" ]; then
+    # No --duration means the run is open-ended; cap the ring rather than let it grow
+    # without bound, but keep it far above the 30 s that lost the six runs above.
+    bb=900
+    [ -n "$duration" ] && bb="$(awk -v d="$duration" 'BEGIN{printf "%d", d + 60}')"
+    bb_arg=(--blackbox-seconds "$bb")
+    echo "Black box sized to ${bb}s (the default is 30, which keeps only the tail of a long run)."
+fi
+
+FWD_ARGS=()
+for a in "$@"; do [ "$a" = "--keep-services" ] || FWD_ARGS+=("$a"); done
+
 rc=0
 "$PY" "$HERE/friday_localnav_deploy.py" \
     --motor-max-duty 0.85 \
     --motor-min-duty 80 \
-    "$@" || rc=$?
+    "${bb_arg[@]}" \
+    "${FWD_ARGS[@]}" || rc=$?
 exit "$rc"

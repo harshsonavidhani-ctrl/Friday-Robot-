@@ -53,6 +53,7 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import re
 import sys
 import time
 from pathlib import Path
@@ -369,8 +370,47 @@ def build_motors(cfg: RobotConfig, args) -> "pi_deploy.MotorDriver":
     return pi_deploy.build_motors(cfg, args)
 
 
+
+def _flags_this_main_ignores(args, parser) -> tuple[list[str], bool]:
+    """(flags set to a non-default that this module never names, args-handed-off).
+
+    Deliberately source-text based: it asks whether this file mentions the flag AT ALL,
+    which is exactly the failure mode being guarded against -- a flag the parser
+    accepts and this entry point never reads. Anything subtler would need the wiring to
+    be declared somewhere, and a declaration that can drift is the thing that drifted.
+
+    Two forms count as a mention, because both are used here: `args.foo`, and the name
+    as a bare string for `getattr(args, "foo", ...)`. Missing the second reported
+    --blackbox-seconds as ignored when line 436 reads it.
+
+    The second return value says whether `args` is ever handed to a callee whole (as
+    `build_announcer(args)` is). When it is, this check CANNOT see inside, so the list
+    is "worth checking" rather than "definitely dead" -- and it says so rather than
+    asserting something it has not established.
+    """
+    try:
+        src = Path(__file__).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return [], False
+    handoff = re.search(r"\w\(\s*args\s*[,)]", src) is not None
+    out = []
+    for action in parser._actions:
+        dest = action.dest
+        if dest in ("help", "duration"):
+            continue
+        value = getattr(args, dest, None)
+        if value == action.default or value is None:
+            continue                       # left alone: silence about it is harmless
+        if re.search(rf"\bargs\.{re.escape(dest)}\b", src):
+            continue
+        if re.search(rf"""['"]{re.escape(dest)}['"]""", src):
+            continue                       # getattr(args, "dest", ...) and friends
+        out.append("--" + dest.replace("_", "-"))
+    return sorted(out), handoff
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_arg_parser().parse_args(argv)
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
@@ -451,6 +491,31 @@ def main(argv: list[str] | None = None) -> int:
     # is a flag that does nothing on the robot.
     loop.navigator_enabled = not args.no_navigator
     cfg.nav_speed_authority = float(getattr(args, "navigator_speed_authority", 0.0))
+    # --map-file and --state-file were the fifth and sixth. --map-file being ignored
+    # meant a diagnostic run pointed at a scratch map OVERWROTE the real one.
+    if getattr(args, "map_file", None):
+        loop.world.map_file = Path(args.map_file)
+    if getattr(args, "state_file", None):
+        loop.state_file = (None if args.state_file.lower() == "none"
+                           else Path(args.state_file))
+
+    # STOP FINDING THESE ONE AT A TIME, ON HARDWARE. Six flags have now been accepted
+    # by the parser and silently ignored by this main(), and each cost a run to notice.
+    # The parser lives in pi_deploy; the wiring lives here; nothing connected them.
+    #
+    # So: read this module's own source for the `args.<name>` it actually mentions, and
+    # warn about any flag the user set away from its default that does not appear. It
+    # cannot catch a flag that is read and then dropped, but it catches the whole
+    # not-wired-at-all class, which is the one that has actually happened -- and it
+    # costs one regex over one file at startup.
+    _unwired, _handoff = _flags_this_main_ignores(args, parser)
+    if _unwired:
+        LOGGER.warning("CHECK THESE FLAGS: %s. You set them away from their defaults, "
+                       "and this entry point never names them%s. Six flags have already "
+                       "been accepted by the parser and silently ignored here, each "
+                       "costing a hardware run to notice.", ", ".join(_unwired),
+                       " (though `args` is also passed to callees whole, which this "
+                       "check cannot see inside)" if _handoff else "")
     voice.say("boot", "Friday is starting autonomous exploration.",
               priority=1, cooldown_s=0.0)
     try:
