@@ -183,10 +183,23 @@ fi
 FWD_ARGS=()
 for a in "$@"; do [ "$a" = "--keep-services" ] || FWD_ARGS+=("$a"); done
 
+# KEEP THE LOG WITH THE RUN, not wherever the caller happened to redirect it. A
+# 20-minute run's log was written to a session scratchpad that was cleared before it
+# could be read, so the summary block -- object counts, cliff hits, reverse lifts, the
+# per-stage budget -- was gone while the black box survived. The black box has the
+# numbers but not the narrative.
+LOGDIR="$HERE/../state/runs"
+mkdir -p "$LOGDIR"
+RUNLOG="$LOGDIR/run-$(date +%Y%m%d-%H%M%S).log"
+echo "Log: $RUNLOG"
+
 rc=0
 "$PY" "$HERE/friday_localnav_deploy.py" \
     --motor-max-duty 0.85 \
     --motor-min-duty 80 \
     "${bb_arg[@]}" \
-    "${FWD_ARGS[@]}" || rc=$?
+    "${FWD_ARGS[@]}" > >(tee "$RUNLOG") 2>&1 || rc=$?
+# Process substitution, NOT `| tee`: a pipeline's $? is tee's, so `|| rc=$?` would
+# report the logger's success and hide a crashed run. This keeps python's own status.
+wait
 exit "$rc"
