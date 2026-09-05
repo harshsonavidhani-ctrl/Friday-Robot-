@@ -647,7 +647,18 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
     # already holds a session and start_exploration takes well under one.
     if intent.local == "explore" and outcome == "worked":
         import subprocess
+        import exploration_mode
         minutes = float(intent.args.get("minutes", 20.0))
+        # THE NARRATOR STANDS DOWN FOR A QUIET RUN. --quiet-services stops
+        # friday-mcp, which is the only way this process can speak or read a
+        # sensor, so attaching would produce a mute narrator whose teardown
+        # calls stop_exploration() into a server that is gone. The run talks
+        # for itself in that mode.
+        if exploration_mode.mode_runs_quiet():
+            turn.note("quiet run — pi_deploy narrates, not exploration_mode")
+            voice.wait_until_quiet()
+            turn.done("DONE (exploring, quiet)")
+            return
         try:
             subprocess.Popen(
                 [str(config.ROOT / "venv/bin/python"),

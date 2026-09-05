@@ -73,6 +73,11 @@ ARGS=(--motor "$MODE_MOTOR"
       --duration "$MODE_DURATION"
       --navigator-speed-authority "$MODE_NAV_AUTHORITY")
 [ "${MODE_VOICE:-0}" = "1" ] && ARGS+=(--voice)
+# The other half of the 21:18 run: face, brain and dashboard down for the
+# duration. run_localnav.sh has always had the flag; it was never passed from
+# here, which is why every mode run since has driven with a 130-200 ms loop
+# against a 100 ms deadline. See confident_explore.env for the measurements.
+[ "${MODE_QUIET_SERVICES:-0}" = "1" ] && ARGS+=(--quiet-services)
 
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes

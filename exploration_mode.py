@@ -197,6 +197,31 @@ class Feature:
 
 
 # --- reading the map the run is building ------------------------------------
+def mode_runs_quiet() -> bool:
+    """Does the saved mode stop friday-mcp for the run?
+
+    IF IT DOES, THIS NARRATOR MUST STAND DOWN. Every word it says and every
+    sensor it reads goes through the MCP server, and --quiet-services stops
+    that server for the whole run -- so attaching would give a narrator with
+    no voice, no tools, and a teardown that calls stop_exploration() into a
+    socket that is not there. The run already talks by itself: MODE_VOICE=1 is
+    pi_deploy's own voice and does not touch MCP, which is where "Recovery
+    successful. Continuing exploration." comes from.
+
+    Read from the mode file rather than assumed, so turning quiet off in
+    confident_explore.env brings the narrator back with no code change.
+    """
+    mode = config.ROOT / "rl" / "modes" / "confident_explore.env"
+    try:
+        for line in mode.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("MODE_QUIET_SERVICES"):
+                return line.split("=", 1)[1].strip().strip('"\'') == "1"
+    except OSError:
+        pass
+    return False
+
+
 def read_pose() -> dict | None:
     """Where the run thinks it is. Read-only; the run owns this file."""
     for path in (config.ROOT / "state" / "rl_map.pose.json",):
