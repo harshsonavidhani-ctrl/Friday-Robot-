@@ -392,6 +392,25 @@ def _local_intent(heard: str) -> Intent | None:
 
     if _HELP_RE.search(heard):
         return Intent(name="help", local="help", say=help_text())
+
+    # "EXPLORE FOR FIVE MINUTES". The duration is pulled out of the sentence
+    # by exploration_mode, which owns that parsing -- a second copy here would
+    # be a second thing to keep in step with it. Marked `local` because the
+    # session runs as its own process rather than as a tool call: it lasts
+    # minutes, and a turn that blocks for minutes is a robot that has stopped
+    # listening, including for "stop".
+    #
+    # start_exploration is still what actually drives; exploration_mode calls
+    # it. Nothing about the run itself changed.
+    try:
+        import exploration_mode
+        minutes = exploration_mode.parse_request(heard)
+    except Exception:                           # noqa: BLE001
+        minutes = None
+    if minutes is not None:
+        return Intent(name="explore", local="explore",
+                      args={"minutes": minutes},
+                      say=f"Exploring for {minutes:g} minutes.")
     return None
 
 

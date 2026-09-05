@@ -529,6 +529,30 @@ def _stop_reason(text: str) -> str:
 
 def _run_local(intent, face: Face, turn: "stages.Turn") -> None:
     """A command that needs no tool: stop listening, or say what you can do."""
+    if intent.local == "explore":
+        # ITS OWN PROCESS, NOT THIS ONE. The session lasts minutes and this
+        # thread is the voice loop: run it inline and Friday stops listening
+        # for the whole run, including for "stop", which is the one word that
+        # has to work while she is driving. Popen and let go -- exploration_mode
+        # writes its own telemetry and talks through the same MCP server.
+        import subprocess
+        minutes = float(intent.args.get("minutes", 20.0))
+        try:
+            subprocess.Popen(
+                [str(config.ROOT / "venv/bin/python"),
+                 str(config.ROOT / "exploration_mode.py"),
+                 "--minutes", f"{minutes:g}"],
+                cwd=str(config.ROOT),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+            turn.note(f"exploration_mode started for {minutes:g} min")
+            turn.done("DONE (exploring)")
+        except Exception as exc:                # noqa: BLE001
+            log.error("could not start exploration_mode: %s", exc)
+            face.alarm("dizzy")
+            turn.done(f"FAILED ({exc})")
+        return
+
     if intent.local == "sleep":
         minutes = float(intent.args.get("minutes",
                                         config.SLEEP_DEFAULT_MINUTES))
