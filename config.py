@@ -120,6 +120,31 @@ WAKE_WORD_MODEL = ROOT / "assets/models/wake/friday.onnx"
 # Re-measure with `scripts/test_wake.py --live` before moving it again.
 WAKE_THRESHOLD = 0.5
 
+# HOW MANY CONSECUTIVE CHUNKS MUST CLEAR THE THRESHOLD BEFORE IT FIRES.
+# The validation layer, and the only part of the false-fire fix that works
+# without retraining. It exists because the score cannot separate a real wake
+# from a conversation -- both reach 1.00 -- but the SHAPE can.
+#
+# MEASURED 2026-09-06 on 40 real recordings and the 37 false fires the
+# harvester caught in one hour of Harsh talking to a friend, longest run of
+# consecutive chunks at or above 0.5:
+#
+#   real  : 0,0,0,0,0,1,1,1,1,2,2,3,3,3,3,4,4,4,4,4,5,5,5,5,5,6,6,6,6,7,7,7,8,8,9,9,9,10,11,11
+#   fires : 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,3,3,3,4,5,5,6,6,6,7,8,8,15
+#
+# TWENTY-TWO OF THE THIRTY-SEVEN FALSE FIRES ARE A SINGLE FRAME. A real "hey
+# Friday" holds the score for a median of five. So:
+#
+#   patience 1 (off):  35/40 caught,  37/37 false fires
+#   patience 2:        31/40 caught,  15/37 false fires   <-- 59% fewer
+#   patience 3:        29/40 caught,  13/37 false fires
+#
+# 2, not 3: 3 buys 2 more rejections for 2 more misses, and a missed wake is
+# worse than a spurious one. This is a MITIGATION, not the fix -- 15 an hour is
+# still 15 -- and the fix is retraining on the harvested negatives. Set to 1 to
+# turn it off and get the old behaviour back.
+WAKE_PATIENCE = 2
+
 # How long after a wake before another one can fire. Stops one "hey Friday"
 # from registering two or three times as the score stays high across frames.
 WAKE_COOLDOWN_S = 2.0

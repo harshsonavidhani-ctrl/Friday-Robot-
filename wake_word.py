@@ -143,6 +143,9 @@ class OpenWakeWord(WakeSource):
         # me any more".
         self._cooldown_until = 0.0
         self._peak_since_report = 0.0
+        # CONSECUTIVE CHUNKS CURRENTLY OVER THE THRESHOLD. See WAKE_PATIENCE:
+        # a false fire is usually one frame, a real wake holds for about five.
+        self._above = 0
         self.last_rms = 0.0
         self._peak_rms_since_report = 0.0
         # THE AUDIO THAT CAUSED THE LAST FIRE. A score in the log says a fire
@@ -197,6 +200,10 @@ class OpenWakeWord(WakeSource):
         # belongs to is over that job is done, and carrying it into the next
         # turn can only ever suppress a real wake. Resuming IS the next turn.
         self._cooldown_until = 0.0
+        # And the consecutive-frame run, for the same reason: it belongs to
+        # the utterance that just ended. Carried into the next turn it would
+        # let one leftover frame plus one new one fire a wake nobody said.
+        self._above = 0
         # SETTLE BEFORE SCORING AGAIN. clear() drops what has ARRIVED, but the
         # tail of Friday's own reply is still in flight through pipewire and
         # still in the air, and it lands a few frames later. Measured: turn 6
@@ -218,6 +225,7 @@ class OpenWakeWord(WakeSource):
         if self._sleep_until:
             log.info("wake detector awake again")
         self._sleep_until = 0.0
+        self._above = 0
         if self._sub is not None:
             self._sub.clear()
         self._reset_model()
@@ -284,14 +292,19 @@ class OpenWakeWord(WakeSource):
                 last_beat = now_f
                 scored = 0
 
+            # A GAP IN THE AUDIO BREAKS THE RUN. Frames either side of a
+            # pause are not consecutive in any sense a wake word cares about.
             if self._paused.is_set():
                 buffer.clear()
+                self._above = 0
                 continue
             if now_f < self._sleep_until:
                 buffer.clear()
+                self._above = 0
                 continue
             if now_f < self._settle_until:
                 buffer.clear()
+                self._above = 0
                 continue
 
             buffer.extend(frame)
@@ -336,13 +349,27 @@ class OpenWakeWord(WakeSource):
                     note = ""
                     if score >= self.threshold:
                         note = "  <== over threshold"
+                        if not confirmed:
+                            note += (f", frame {self._above} of "
+                                     f"{config.WAKE_PATIENCE} — not confirmed")
                         if cooling:
                             note += (f", SUPPRESSED with "
                                      f"{self._cooldown_until - now:.1f}s "
                                      f"of cooldown left")
                     log.info("wake score %.3f%s", score, note)
 
-                if score >= self.threshold and not cooling:
+                # THE SHAPE, NOT JUST THE HEIGHT. The score alone cannot
+                # tell a conversation from a wake word -- both reach 1.00 --
+                # but a conversation reaches it for ONE frame and a wake word
+                # holds it. Counted here rather than through openWakeWord's
+                # own `patience` argument, because that zeroes the returned
+                # score and would blind the logging above, which is the only
+                # view into why it fired.
+                self._above = self._above + 1 if score >= self.threshold else 0
+                confirmed = self._above >= max(1, config.WAKE_PATIENCE)
+
+                if confirmed and not cooling:
+                    self._above = 0
                     self._cooldown_until = now + config.WAKE_COOLDOWN_S
                     self._reset_model()
                     audio = b"".join(self._recent)

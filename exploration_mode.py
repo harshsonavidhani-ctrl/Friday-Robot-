@@ -947,10 +947,6 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 # --- the run's own live telemetry -------------------------------------------
 # WHY THIS EXISTS, AFTER THE MAP READER ABOVE. state/rl_map.npz and
 # rl_map.pose.json are written when a run FINISHES, not while it goes -- both
@@ -1158,3 +1154,7 @@ def features_from_ticks(ticks: list[dict], cell: float,
 
     found.sort(key=lambda f: -f.confidence)
     return found
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
