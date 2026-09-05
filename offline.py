@@ -408,8 +408,12 @@ def _local_intent(heard: str) -> Intent | None:
     except Exception:                           # noqa: BLE001
         minutes = None
     if minutes is not None:
+        # THE TOOL CALL IS THE INTENT, and the narrator is a follow-up. This
+        # used to be local-only, which pushed start_exploration into a spawned
+        # process and put 30 s between "Friday explore" and the wheels moving.
+        # main.py calls this on the session it already has, then attaches.
         return Intent(name="explore", local="explore",
-                      args={"minutes": minutes},
+                      tool="start_exploration", args={"minutes": minutes},
                       say=f"Exploring for {minutes:g} minutes.")
     return None
 

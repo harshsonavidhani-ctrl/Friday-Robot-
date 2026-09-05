@@ -589,9 +589,17 @@ class ExplorationMode:
     """
 
     def __init__(self, minutes: float, standalone: bool = False,
-                 speak: bool = True) -> None:
+                 speak: bool = True, attach: bool = False) -> None:
         self.minutes = max(MIN_MINUTES, min(minutes, MAX_MINUTES))
         self.standalone = standalone
+        # ATTACH TO A RUN ALREADY GOING, rather than starting one.
+        # Starting it from here cost 30 SECONDS before the wheels moved --
+        # 10.4 s of python start-up and imports, 19.2 s to open a fresh MCP
+        # session -- while the voice loop already HAS a session open and can
+        # call start_exploration in under a second. So the spine starts the
+        # run and this process catches up and narrates it. The clock is still
+        # enforced here, because rl/modes/explore.sh is hardcoded to 1200 s.
+        self.attach = attach
         self.speak = speak
         self.telemetry = Telemetry(uuid.uuid4().hex[:8], self.minutes)
         self._seen: set[tuple] = set()
@@ -764,7 +772,17 @@ class ExplorationMode:
 
         async with brain.mcp_session() as session:
             started_run = False
-            if not self.standalone:
+            if self.attach:
+                # The run is already going. Tail its log from the end so the
+                # first seconds of it are not replayed as news.
+                started_run = True
+                for _ in range(20):
+                    if self._runlog.open():
+                        self.telemetry.note(
+                            "info", f"attached to {self._runlog.path.name}")
+                        break
+                    await asyncio.sleep(0.5)
+            elif not self.standalone:
                 reply = await self._call(session, "start_exploration",
                                          {"minutes": self.minutes})
                 started_run = '"started": true' in reply.lower()
@@ -880,9 +898,9 @@ class ExplorationMode:
 
 # --- entry points -----------------------------------------------------------
 async def explore_for(minutes: float, standalone: bool = False,
-                      speak: bool = True) -> dict:
+                      speak: bool = True, attach: bool = False) -> dict:
     """Run one timed, narrated exploration. The one function to call."""
-    return await ExplorationMode(minutes, standalone, speak).run()
+    return await ExplorationMode(minutes, standalone, speak, attach).run()
 
 
 async def handle_command(text: str, standalone: bool = False) -> dict | None:
@@ -905,6 +923,10 @@ def main() -> int:
                     help='a spoken command, e.g. "explore for 5 minutes"')
     ap.add_argument("--standalone", action="store_true",
                     help="do not start a run; read the LiDAR directly")
+    ap.add_argument("--attach", action="store_true",
+                    help="a run is ALREADY going — narrate it rather than "
+                         "starting another. This is how main.py uses it, so "
+                         "the wheels move in under a second instead of 30")
     ap.add_argument("--quiet", action="store_true", help="log, do not speak")
     ap.add_argument("--dry-run", action="store_true",
                     help="parse and report, touch no hardware")
@@ -941,7 +963,8 @@ def main() -> int:
         return 0
 
     payload = asyncio.run(explore_for(minutes, args.standalone,
-                                      speak=not args.quiet))
+                                      speak=not args.quiet,
+                                      attach=args.attach))
     print(f"\n{payload['feature_count']} features -> {LIVE_FILE}")
     print(json.dumps(payload["counts"], indent=2))
     return 0

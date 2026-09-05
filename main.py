@@ -529,30 +529,6 @@ def _stop_reason(text: str) -> str:
 
 def _run_local(intent, face: Face, turn: "stages.Turn") -> None:
     """A command that needs no tool: stop listening, or say what you can do."""
-    if intent.local == "explore":
-        # ITS OWN PROCESS, NOT THIS ONE. The session lasts minutes and this
-        # thread is the voice loop: run it inline and Friday stops listening
-        # for the whole run, including for "stop", which is the one word that
-        # has to work while she is driving. Popen and let go -- exploration_mode
-        # writes its own telemetry and talks through the same MCP server.
-        import subprocess
-        minutes = float(intent.args.get("minutes", 20.0))
-        try:
-            subprocess.Popen(
-                [str(config.ROOT / "venv/bin/python"),
-                 str(config.ROOT / "exploration_mode.py"),
-                 "--minutes", f"{minutes:g}"],
-                cwd=str(config.ROOT),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True)
-            turn.note(f"exploration_mode started for {minutes:g} min")
-            turn.done("DONE (exploring)")
-        except Exception as exc:                # noqa: BLE001
-            log.error("could not start exploration_mode: %s", exc)
-            face.alarm("dizzy")
-            turn.done(f"FAILED ({exc})")
-        return
-
     if intent.local == "sleep":
         minutes = float(intent.args.get("minutes",
                                         config.SLEEP_DEFAULT_MINUTES))
@@ -592,7 +568,9 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
     # SOMETHING ONLY THE SPINE CAN DO. offline.py names it; this performs it.
     # Said BEFORE it takes effect -- a detector put to sleep before the
     # sentence finishes playing is one that never confirms it heard the order.
-    if intent.local:
+    # Only for intents with NO tool calls; the ones that have both run their
+    # tools first and their local part after (see the end of this function).
+    if intent.local and not intent.plan():
         voice.wait_until_quiet()
         _run_local(intent, face, turn)
         return
@@ -661,6 +639,28 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
             voice.say(spoken)
         else:
             voice.say("I got nothing back for that one.")
+
+    # THE NARRATOR ATTACHES AFTER THE RUN IS ALREADY GOING, and that ordering
+    # is the whole fix. Starting the run from inside the spawned process cost
+    # 30 SECONDS before the wheels moved -- 10.4 s of python start-up and
+    # imports, 19.2 s to open a second MCP session -- when this function
+    # already holds a session and start_exploration takes well under one.
+    if intent.local == "explore" and outcome == "worked":
+        import subprocess
+        minutes = float(intent.args.get("minutes", 20.0))
+        try:
+            subprocess.Popen(
+                [str(config.ROOT / "venv/bin/python"),
+                 str(config.ROOT / "exploration_mode.py"),
+                 "--minutes", f"{minutes:g}", "--attach"],
+                cwd=str(config.ROOT),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+            turn.note(f"narrator attached for {minutes:g} min")
+        except Exception as exc:                # noqa: BLE001
+            # The run is already driving. A narrator that failed to start is a
+            # quiet run, not a failed one.
+            log.error("could not attach exploration_mode: %s", exc)
 
     try:
         memory.log_event(f"offline: {intent.name}", task=intent.name,
