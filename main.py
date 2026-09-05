@@ -42,6 +42,13 @@ import stages
 
 log = logging.getLogger("friday")
 
+# THE WAKE SOURCE, so an intent can reach it. "Friday, go to sleep" has to
+# pause the detector, and the detector is owned by run(). Passing it down
+# through handle() and _run_offline() would thread an argument through four
+# signatures for one command; this is the spine's own state and it lives here.
+# None whenever there is no detector at all (--say, --once with typed input).
+WAKE = None
+
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -318,6 +325,8 @@ async def run(once: bool = False, typed: str | None = None) -> int:
         # a second reader on this USB card is not an option.
         stream = stt.AudioStream().start()
         source = wake_word.make(stream=stream)
+        global WAKE
+        WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
         face.rest()
 
@@ -457,13 +466,32 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
             return intent.say
         turn.note(f"offline, and {spoken[:40]!r} is not a local command")
         face.feel("sad")
-        voice.say("I can't reach my brain right now. I can still drive, "
-                  "stop, turn and tell you the time.")
+        voice.say("I can't reach my brain right now. Say what can you do "
+                  "and I'll tell you what still works.")
         voice.wait_until_quiet()
         turn.done("ABANDONED (offline, no local match)")
         return ""
 
+    # THE REFLEXES RUN EVEN WHEN THERE IS A BRAIN, and that is the point of
+    # strict mode. "Turn left" through a model is a pivot that arrives after a
+    # round trip -- measured on this Pi at anywhere from 3 to 20 s -- by which
+    # time Harsh has said it again and the robot turns twice. An order whose
+    # meaning does not depend on the sentence around it should not wait for a
+    # sentence to be understood. Questions still go to the brain: strict mode
+    # hands back anything outside offline._REFLEX_INTENTS.
+    intent = offline.understand(spoken, strict=True)
+    if intent is not None:
+        turn.note(f"reflex — {intent.name!r} locally, no round trip")
+        await _run_offline(intent, session, voice, face, turn)
+        return intent.say
+
     return await one_turn(brain_obj, session, voice, face, spoken, turn)
+
+
+# Tools that stop things. Their success text says "stopped", which is the same
+# word the safety interrupt uses when it refuses a move, so they are named
+# rather than pattern-matched.
+_HALTING_TOOLS = {"stop", "stop_exploration"}
 
 
 def _stop_reason(text: str) -> str:
@@ -499,6 +527,27 @@ def _stop_reason(text: str) -> str:
     return f"Something's {where}, {how_far} off. I've stopped."
 
 
+def _run_local(intent, face: Face, turn: "stages.Turn") -> None:
+    """A command that needs no tool: stop listening, or say what you can do."""
+    if intent.local == "sleep":
+        minutes = float(intent.args.get("minutes",
+                                        config.SLEEP_DEFAULT_MINUTES))
+        if WAKE is None:
+            turn.note("no wake detector to put to sleep")
+            turn.done("DONE (nothing to sleep)")
+            return
+        granted = WAKE.sleep(minutes * 60.0)
+        # THE FACE IS THE ONLY SIGN SHE IS ASLEEP RATHER THAN BROKEN. A
+        # detector that has stopped answering and a detector that was told to
+        # stop answering look identical from the sofa, and this project has
+        # already lost an evening to that exact ambiguity in the log.
+        face.set("sleeping")
+        turn.note(f"detector asleep for {granted / 60:.0f} min")
+        turn.done("DONE (asleep)")
+        return
+    turn.done("DONE")
+
+
 async def _run_offline(intent, session, voice: Voice, face: Face,
                        turn: "stages.Turn | None" = None) -> None:
     """Carry out a locally-understood command, still through the MCP server.
@@ -508,11 +557,21 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
     the one way to bypass it.
     """
     import memory
+    import offline
 
     turn = turn or stages.Turn("offline")
     if intent.say:
         voice.say(intent.say)
     outcome = "worked"
+    answer = ""
+
+    # SOMETHING ONLY THE SPINE CAN DO. offline.py names it; this performs it.
+    # Said BEFORE it takes effect -- a detector put to sleep before the
+    # sentence finishes playing is one that never confirms it heard the order.
+    if intent.local:
+        voice.wait_until_quiet()
+        _run_local(intent, face, turn)
+        return
     for tool, args in intent.plan():
         try:
             # The same ceiling the brain's tool calls get. The offline path is
@@ -531,6 +590,8 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
             kinds = ", ".join(type(part).__name__
                               for part in (result.content or [])) or "nothing"
             turn.note(f"{tool} -> {text[:120] or kinds}")
+            if text.strip():
+                answer = text          # the LAST step's answer is the answer
             # CASE-INSENSITIVE, and that is not a nicety. The server says
             # "REFUSED — ..." in capitals (embodiment.py) while this tested
             # for lowercase "refused", so a REFUSAL never aborted the
@@ -539,7 +600,15 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
             # FORWARD anyway, because the next step ran regardless. Wrong
             # direction, under the safety interrupt's nose.
             low = text.lower()
-            if "stopped" in low or "refused" in low:
+            # "STOPPED" IS SUCCESS FOR A TOOL WHOSE JOB IS STOPPING.
+            # stop_exploration() answers "Stopped exploring." and stop()
+            # answers with the safety layer's own word, so this test read both
+            # of them as the safety interrupt refusing -- abandoning the rest
+            # of the sequence and announcing an obstacle that was never there
+            # ("Something's in the way, so I stopped"). The check is for a
+            # move that was REFUSED, so it only applies to tools that move.
+            if tool not in _HALTING_TOOLS and (
+                    "stopped" in low or "refused" in low):
                 outcome = "partial"
                 # THE SAFETY INTERRUPT SPOKE. Abandon the rest of the sequence
                 # rather than driving the next leg of a plan the robot has
@@ -558,6 +627,17 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
             face.alarm("dizzy")
             outcome = "failed"
             break
+    # SAY THE ANSWER. A question whose answer only reaches the log is a
+    # question Friday did not answer -- "what's the battery" ran get_battery,
+    # noted 400 characters of JSON and then said nothing at all, which from
+    # the sofa is indistinguishable from not having understood.
+    if intent.speak_result and outcome != "failed":
+        spoken = offline.speakable(intent.name, answer)
+        if spoken:
+            voice.say(spoken)
+        else:
+            voice.say("I got nothing back for that one.")
+
     try:
         memory.log_event(f"offline: {intent.name}", task=intent.name,
                          outcome=outcome)

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -54,6 +55,7 @@ log = logging.getLogger("train.wake")
 RATE = 16000
 CLIP_S = 2.0                       # measured: yields exactly 16 embedding frames
 CLIP_SAMPLES = int(RATE * CLIP_S)
+CHUNK_SAMPLES = 1280               # what openWakeWord scores, 80 ms at 16 kHz
 
 WAKE_PHRASES = ["hey friday", "hey Friday", "Hey, Friday.", "hey friday,"]
 
@@ -126,7 +128,17 @@ def augment(clip: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         ir *= np.exp(-np.linspace(0, float(rng.uniform(3, 9)), tail))
         out = np.convolve(out, ir)[:CLIP_SAMPLES]
     if rng.random() < 0.85:                               # hiss / fan
-        out += rng.normal(0, float(rng.uniform(30, 400)), CLIP_SAMPLES)
+        # NOISE RELATIVE TO THE CLIP, NOT AN ABSOLUTE LEVEL. This used to add
+        # sigma 30-400 regardless of how loud the clip was, which is not one
+        # augmentation but two different ones: a loud take was barely touched
+        # while a quiet take was buried under noise louder than the speech.
+        # That is exactly the shape of the 8 misses in the first retrain --
+        # every one peaked below -14.5 dBFS, every catch above it, clean
+        # separation. A model trained that way learns "loud" as part of the
+        # wake word, and Harsh across the room is not loud.
+        speech = float(np.sqrt((out.astype(np.float64) ** 2).mean())) or 1.0
+        snr_db = float(rng.uniform(5, 30))
+        out += rng.normal(0, speech / (10 ** (snr_db / 20)), CLIP_SAMPLES)
     peak = np.abs(out).max()
     if peak > 32000:
         out *= 32000 / peak
@@ -252,7 +264,97 @@ def real_wake_clips(out_dir: Path, rng: np.random.Generator,
     return clips
 
 
-def score_samples(samples_dir: Path, model_path: Path | None = None) -> int:
+def _read_wav(path: Path) -> np.ndarray:
+    import wave
+    try:
+        with wave.open(str(path), "rb") as f:
+            raw = f.readframes(f.getnframes())
+    except Exception:                                     # noqa: BLE001
+        return np.zeros(0, dtype=np.int16)
+    return np.frombuffer(raw, dtype=np.int16)
+
+
+def hard_negative_clips(directory: Path, rng: np.random.Generator,
+                        per_clip: int) -> list[np.ndarray]:
+    """Real speech that is NOT the wake word — the negatives that were missing.
+
+    THIS IS THE FIX FOR THE 97-FIRES-IN-ONE-EVENING BUG. The model shipped on
+    2026-08-27 had never heard a real conversation: its negatives were Piper
+    TTS phrases and 45 s of an EMPTY room, while 60% of its positives were
+    1280 augmentations of 40 clips of one voice. So it learned "a real human
+    voice in this room", and a real human voice in this room is what a
+    conversation is made of. Measured 2026-09-05: 97 fires in an evening,
+    median 0.88, MAX 1.00 -- the false ones score as high as the true ones, so
+    no threshold anywhere separates them and only the training set can.
+
+    Takes both shapes of recording, because both are worth having:
+      * LONG files (a ten-minute conversation) are sliced into windows;
+      * SHORT files (the 3 s clips state/wake_fires harvests from live fires)
+        are placed and augmented like a positive would be. These are the
+        highest-value negatives that exist -- they are, by definition, the
+        audio that already beat the model.
+    """
+    clips: list[np.ndarray] = []
+    if not directory.exists():
+        return clips
+    for path in sorted(directory.glob("*.wav")):
+        audio = _read_wav(path)
+        if len(audio) < CLIP_SAMPLES // 2:
+            continue
+        if len(audio) >= CLIP_SAMPLES * 3:
+            # A long recording: take windows across the whole thing, enough to
+            # cover it densely rather than a fixed count of random grabs.
+            windows = max(1, int(len(audio) / CLIP_SAMPLES) * 2)
+            for _ in range(windows):
+                start = int(rng.integers(0, len(audio) - CLIP_SAMPLES))
+                window = audio[start:start + CLIP_SAMPLES].astype(np.float32)
+                clips.append(augment(window, rng))
+        else:
+            for _ in range(per_clip):
+                clips.append(augment(place(audio.astype(np.float32), rng), rng))
+    return clips
+
+
+def false_fire_rate(recording: Path, model_path: Path | None = None,
+                    threshold: float | None = None) -> tuple[int, float]:
+    """How often the model fires on a recording with no wake word in it.
+
+    THE NUMBER THAT WAS NEVER MEASURED. Catch rate on Harsh's 40 takes says
+    how often Friday hears him; it says nothing about how often she hears
+    someone else and answers anyway, and that is the failure he actually
+    reported. Returns (fires, minutes) so it can be quoted per hour.
+    """
+    from openwakeword.model import Model
+
+    audio = _read_wav(recording)
+    if len(audio) < CHUNK_SAMPLES:
+        return 0, 0.0
+    model_path = model_path or Path(config.WAKE_WORD_MODEL)
+    model = Model(wakeword_model_paths=[str(model_path)],
+                  vad_threshold=config.WAKE_VAD_THRESHOLD)
+    threshold = config.WAKE_THRESHOLD if threshold is None else threshold
+
+    fires = 0
+    # The same cooldown the live detector uses, or one long phrase scoring
+    # high across neighbouring frames counts as a dozen separate fires and the
+    # number stops meaning anything.
+    cooldown_chunks = int(config.WAKE_COOLDOWN_S * RATE / CHUNK_SAMPLES)
+    cooling = 0
+    for i in range(0, len(audio) - CHUNK_SAMPLES + 1, CHUNK_SAMPLES):
+        out = model.predict(audio[i:i + CHUNK_SAMPLES])
+        score = max(out.values()) if out else 0.0
+        if cooling > 0:
+            cooling -= 1
+            continue
+        if score >= threshold:
+            fires += 1
+            cooling = cooldown_chunks
+            model.reset()
+    return fires, len(audio) / RATE / 60.0
+
+
+def score_samples(samples_dir: Path, model_path: Path | None = None,
+                  negatives_dir: Path | None = None) -> int:
     """Run the CURRENT model over the real recordings and report the scores.
 
     This is the question "is the threshold too high, or is the model wrong?"
@@ -294,8 +396,41 @@ def score_samples(samples_dir: Path, model_path: Path | None = None) -> int:
     print(f"\n{caught:.0%} would fire at {config.WAKE_THRESHOLD}")
     print(f"scores: min {scores.min():.3f}  median {np.median(scores):.3f}  "
           f"max {scores.max():.3f}")
-    for t in (0.1, 0.2, 0.3, 0.4, 0.5):
-        print(f"  at {t}: catches {float((scores >= t).mean()):5.0%}")
+
+    # BOTH HALVES, ALWAYS. Catch rate alone is what shipped the model that
+    # fires 97 times an evening: it was 80% and looked like a success, because
+    # nothing in this script had ever asked the other question. A wake word is
+    # a ratio, not a recall number, so the negatives are scored in the same
+    # breath and the thresholds are judged on both columns.
+    negatives_dir = negatives_dir or (samples_dir.parent / "negatives")
+    negative_recordings = sorted(negatives_dir.glob("*.wav")) \
+        if negatives_dir.exists() else []
+    fires_at: dict[float, tuple[int, float]] = {}
+    if negative_recordings:
+        print(f"\nfalse fires on {len(negative_recordings)} negative "
+              f"recording(s) in {negatives_dir.name}/:")
+        for t in (0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9):
+            total_fires, total_minutes = 0, 0.0
+            for path in negative_recordings:
+                fires, minutes = false_fire_rate(path, model_path, t)
+                total_fires += fires
+                total_minutes += minutes
+            fires_at[t] = (total_fires, total_minutes)
+    else:
+        print(f"\n! no negative recordings in {negatives_dir}/ — the false"
+              f"-fire rate is UNMEASURED, which is how the 97-fires-an-evening"
+              f"\n  model passed this check at 80% catch rate. Record some:"
+              f"\n    scripts/train_wake.py --record-negatives 600")
+
+    print()
+    for t in (0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9):
+        line = f"  at {t}: catches {float((scores >= t).mean()):5.0%}"
+        if t in fires_at:
+            fires, minutes = fires_at[t]
+            per_hour = fires / minutes * 60 if minutes else 0.0
+            line += f"   false fires {fires:3d} in {minutes:.0f} min " \
+                    f"= {per_hour:5.1f}/hour"
+        print(line)
     if np.median(scores) < 0.1:
         print("\nThe model does not recognise this voice at all. Retrain with "
               "these samples -- no threshold fixes this.")
@@ -331,9 +466,115 @@ def record_ambient(seconds: float, path: Path) -> int:
     return 0 if size > RATE else 1
 
 
+def review_fires(fire_dir: Path, negatives_dir: Path,
+                 samples_dir: Path) -> int:
+    """Play back every live fire and ask what it actually was.
+
+    THE LABEL HAS TO COME FROM A PERSON. The detector cannot know whether it
+    was right -- if it could, it would not have fired -- so anything automatic
+    here just records the model's own opinion back into its training set and
+    makes the next model wronger in the same direction.
+
+    Three answers, and the third matters as much as the first two: `n` files it
+    as a hard negative, `y` files it as a real wake it caught, and `s` skips
+    the ones that are neither (Friday's own voice, a slammed door, a clip too
+    clipped to judge). Guessing on those poisons the set.
+    """
+    import shutil
+    import subprocess
+
+    clips = sorted(fire_dir.glob("fire-*.wav"))
+    if not clips:
+        print(f"no harvested fires in {fire_dir}.\n"
+              f"Leave Friday running through a normal conversation first — "
+              f"every fire lands there.")
+        return 1
+
+    negatives_dir.mkdir(parents=True, exist_ok=True)
+    samples_dir.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env.setdefault("XDG_RUNTIME_DIR", config.AUDIO_RUNTIME_DIR)
+
+    print(f"{len(clips)} fires to review, newest last.")
+    print("  n = false fire (a hard negative)      <- the common one")
+    print("  y = a real 'hey Friday' she caught")
+    print("  s = skip     r = replay     q = stop\n")
+
+    kept = {"n": 0, "y": 0, "s": 0}
+    for index, clip in enumerate(clips, 1):
+        score = clip.stem.rsplit("-", 1)[-1]
+        while True:
+            subprocess.run(["pw-play", f"--target={config.SPEAKER_DEVICE}",
+                            str(clip)], env=env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            answer = input(f"  [{index}/{len(clips)}] {clip.name} "
+                           f"(scored {score})  n/y/s/r/q> ").strip().lower()
+            if answer == "r":
+                continue
+            break
+        if answer == "q":
+            break
+        if answer == "y":
+            shutil.move(str(clip), samples_dir / f"wake_live_{clip.stem}.wav")
+            kept["y"] += 1
+        elif answer == "s":
+            kept["s"] += 1
+        else:                                   # anything else is a negative
+            shutil.move(str(clip), negatives_dir / clip.name)
+            kept["n"] += 1
+
+    print(f"\n{kept['n']} hard negatives, {kept['y']} real wakes, "
+          f"{kept['s']} skipped")
+    if kept["n"] or kept["y"]:
+        print("Retrain with them:\n  scripts/train_wake.py")
+    return 0
+
+
+def record_negatives(seconds: float, directory: Path) -> int:
+    """Record normal conversation, to be trained against as negatives.
+
+    Separate from --record-ambient because they are not the same thing and
+    conflating them is what made the first two models. Ambient is the EMPTY
+    room: fan, fridge, traffic. This is people TALKING, which is the sound the
+    model actually confuses with its wake word, and it needs to be a different
+    file so it can be weighted differently and measured separately.
+    """
+    import subprocess
+
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"conversation-{time.strftime('%Y%m%d-%H%M%S')}.wav"
+    env = dict(os.environ)
+    env.setdefault("XDG_RUNTIME_DIR", config.AUDIO_RUNTIME_DIR)
+    print(f"Recording {seconds:.0f}s of CONVERSATION to {path.name}.")
+    print("Talk normally — to someone else, on the phone, to yourself.")
+    print("Say anything EXCEPT the wake word. Saying 'Friday' on its own is")
+    print("good: that is exactly the confusion worth training against.")
+    proc = subprocess.Popen(
+        ["pw-cat", "--record", f"--target={config.MIC_DEVICE}",
+         "--rate", str(RATE), "--channels", "1", "--format", "s16", str(path)],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for left in range(int(seconds), 0, -10):
+            time.sleep(min(10, left))
+            print(f"  {left}s left", flush=True)
+    except KeyboardInterrupt:
+        print("  stopped early — what was recorded is kept")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    size = path.stat().st_size if path.exists() else 0
+    print(f"  wrote {size/1024:.0f} kB ({size/2/RATE/60:.1f} min)")
+    return 0 if size > RATE else 1
+
+
 def build_dataset(rng: np.random.Generator, ambient: Path,
                   per_clip: int,
-                  samples_dir: Path | None = None) -> tuple[np.ndarray, np.ndarray]:
+                  samples_dir: Path | None = None,
+                  negatives_dir: Path | None = None,
+                  real_weight: int = 2) -> tuple[np.ndarray, np.ndarray]:
     from piper import PiperVoice
 
     positives: list[np.ndarray] = []
@@ -366,7 +607,15 @@ def build_dataset(rng: np.random.Generator, ambient: Path,
     # times than a synthetic one, because there are far fewer of them and they
     # are the only samples that describe the voice this robot actually has to
     # answer. Without them the model catches Piper and misses the person.
-    real = real_wake_clips(samples_dir, rng, per_clip * 4) if samples_dir else []
+    # REAL_WEIGHT WAS 4 AND THAT IS HALF OF WHY SHE FIRES ON A CONVERSATION.
+    # per_clip*4 turned 40 recordings into 1280 clips -- 60% of every positive
+    # the model ever saw, all of them one person in one room on one evening.
+    # A classifier fed that learns the VOICE, not the phrase, and then answers
+    # to the voice saying anything at all. Dropped to 2, and the catch rate
+    # this gives up is bought back by the SNR-relative augment above and by
+    # the real negatives below, both of which are new.
+    real = real_wake_clips(samples_dir, rng, per_clip * real_weight) \
+        if samples_dir else []
     if real:
         takes = len(list(samples_dir.glob('wake_*.wav')))
         print(f"  + {len(real)} clips from {takes} REAL recordings of Harsh")
@@ -382,6 +631,21 @@ def build_dataset(rng: np.random.Generator, ambient: Path,
         print("  ! no ambient recording — run --record-ambient 90 for a "
               "much better model")
     negatives.extend(room)
+
+    # REAL SPEECH THAT IS NOT THE WAKE WORD. The single most important
+    # negatives in the set and the ones the first two models never had. Every
+    # clip harvested from a live false fire lands here, which means the model
+    # is trained specifically against the audio that already defeated it.
+    hard = hard_negative_clips(negatives_dir, rng, per_clip * 3) \
+        if negatives_dir else []
+    if hard:
+        files = len(list(negatives_dir.glob('*.wav')))
+        print(f"  + {len(hard)} HARD negatives from {files} real recording(s)")
+        negatives.extend(hard)
+    else:
+        print("  ! NO real-speech negatives. This is the model that fires 97"
+              "\n    times an evening; it will be again. Record 10 minutes of"
+              "\n    normal conversation:  --record-negatives 600")
 
     for _ in range(300):                                  # pure noise / quiet
         negatives.append((rng.normal(0, rng.uniform(5, 900), CLIP_SAMPLES)
@@ -468,6 +732,22 @@ def main() -> int:
                     help="where the real recordings live")
     ap.add_argument("--ambient", type=Path,
                     default=config.ROOT / "assets/models/wake/ambient.wav")
+    ap.add_argument("--record-negatives", type=float, metavar="SECONDS",
+                    help="record normal CONVERSATION as hard negatives, then "
+                         "exit. This is the fix for firing on human speech.")
+    ap.add_argument("--review-fires", action="store_true",
+                    help="play back every wake the live detector fired and "
+                         "label it — the harvested false fires become "
+                         "training negatives")
+    ap.add_argument("--negatives", type=Path,
+                    default=config.ROOT / "assets/models/wake/negatives",
+                    help="real speech that is NOT the wake word")
+    ap.add_argument("--fires", type=Path, default=config.WAKE_FIRE_DIR,
+                    help="where the live detector harvests its fires")
+    ap.add_argument("--real-weight", type=int, default=2,
+                    help="augmentations per real recording, as a multiple of "
+                         "--per-clip. Was 4, which made 40 takes 60%% of all "
+                         "positives and taught the model a voice, not a phrase")
     ap.add_argument("--out", type=Path,
                     default=config.ROOT / "assets/models/wake/friday.onnx")
     ap.add_argument("--per-clip", type=int, default=8,
@@ -478,15 +758,21 @@ def main() -> int:
                         format="%(levelname)-7s %(name)s | %(message)s")
 
     if args.score:
-        return score_samples(args.samples, args.model)
+        return score_samples(args.samples, args.model, args.negatives)
     if args.record_wakes:
         return record_wakes(args.record_wakes, args.samples)
     if args.record_ambient:
         return record_ambient(args.record_ambient, args.ambient)
+    if args.record_negatives:
+        return record_negatives(args.record_negatives, args.negatives)
+    if args.review_fires:
+        return review_fires(args.fires, args.negatives, args.samples)
 
     rng = np.random.default_rng(args.seed)
     clips, labels = build_dataset(rng, args.ambient, args.per_clip,
-                                  samples_dir=args.samples)
+                                  samples_dir=args.samples,
+                                  negatives_dir=args.negatives,
+                                  real_weight=args.real_weight)
     features = embed(clips)
 
     from sklearn.model_selection import train_test_split

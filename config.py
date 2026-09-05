@@ -177,6 +177,46 @@ WAKE_BEEP_MS = 90
 # stand-in -- it costs nothing and there is always a way to talk to Friday.
 WAKE_SOURCE = "both"
 
+# --- Hard-negative harvesting --------------------------------------------
+# WHY THIS EXISTS. On 2026-09-05 Friday fired 97 times in one evening while
+# Harsh talked to a friend, median score 0.88 and MAX 1.00 -- the false fires
+# are indistinguishable from real ones BY SCORE, so no threshold can separate
+# them and tuning WAKE_THRESHOLD is wasted effort. The cause is in the
+# training set, not the code: the only negatives the model ever saw were Piper
+# TTS phrases and 45 s of an EMPTY room, while 60% of the positives were 1280
+# augmentations of 40 clips of ONE voice. It learned "a human voice in this
+# room", which is exactly what a conversation is.
+#
+# The fix needs the clips that actually fool it, and guessing at them produces
+# a model tuned against a guess. So every fire writes the audio that caused it
+# to WAKE_FIRE_DIR, and a conversation in front of Friday becomes a labelled
+# pile of the hardest negatives there are. Review them with
+#   scripts/train_wake.py --review-fires
+# and retrain. This is the loop, not a debug flag: leave it on.
+WAKE_SAVE_FIRES = True
+WAKE_FIRE_DIR = ROOT / "state" / "wake_fires"
+# How much audio to keep from BEFORE the fire. openWakeWord fires at the END
+# of a phrase, so the whole utterance is behind the trigger, never ahead of it.
+# 2.0 s is the window the model itself scores over; 3.0 gives a human enough
+# context to tell "hey Friday" from "see you Friday" when reviewing.
+WAKE_FIRE_SECONDS = 3.0
+# Stop the pile eating the SD card. 500 x 3 s x 16 kHz mono = ~48 MB.
+WAKE_FIRE_KEEP = 500
+
+# --- Do not disturb ------------------------------------------------------
+# A wake word that fires wrongly is a robot that interrupts a conversation,
+# and until the model is retrained Harsh needs a way to say "not now" that
+# does not mean killing the service. "Friday, go to sleep for ten minutes"
+# pauses the DETECTOR only -- the loop, the face and the MCP server stay up,
+# and she comes back on her own.
+#
+# There is no voice way out of it, deliberately: a detector that still listens
+# for "wake up" is a detector that can still false-fire on "wake". Use the
+# dashboard, or wait. The default is short for the same reason -- an
+# open-ended sleep is how a robot ends up silently off for a day.
+SLEEP_DEFAULT_MINUTES = 10.0
+SLEEP_MAX_MINUTES = 480.0
+
 # --- Microphone stream ---------------------------------------------------
 # ONE pw-cat process feeds every consumer (see stt.AudioStream). Two readers on
 # one USB card is the single-access trap the ToF, LiDAR and cameras have each

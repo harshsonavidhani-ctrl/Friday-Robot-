@@ -52,6 +52,18 @@ class Intent:
     args: dict = field(default_factory=dict)
     say: str = ""
     steps: list = field(default_factory=list)
+    # SOMETHING ONLY THE SPINE CAN DO, named rather than done. "Go to sleep"
+    # has to reach into the wake detector, and a parser that imports
+    # wake_word to pause it is a parser that cannot be tested without a
+    # microphone. So the intent NAMES the action and main.py performs it,
+    # which keeps this file what it says it is: text in, intent out.
+    local: str = ""
+    # WHETHER THE TOOL'S ANSWER IS THE ANSWER. "Go forward" is finished when
+    # the wheels turn and `say` covers it; "how far is the wall" is not
+    # finished until Friday says 53 centimetres. Without this the informational
+    # commands ran the tool, logged the result and told Harsh nothing -- a
+    # question answered into the log file.
+    speak_result: bool = False
 
     def plan(self) -> list:
         """Every tool call this intent makes, in order."""
@@ -204,28 +216,481 @@ def _direction_intent(heard: str) -> Intent | None:
     return Intent(name=f"go_{found}", say=say, steps=steps)
 
 
-def understand(text: str) -> Intent | None:
-    """The command in this text, or None if it is not one of the few we know."""
+# --- the rest of the robot --------------------------------------------------
+# EVERY MCP TOOL WORTH SAYING OUT LOUD, not just the four that move the wheels.
+# The 37 tools on the server were reachable only through the brain, and the
+# brain needs an API key and a network -- so in the state Friday actually runs
+# in, "what do you see" and "set a timer for ten minutes" were not commands at
+# all. They are now, and they work with the network unplugged.
+#
+# These are INFORMATIONAL or one-shot and none of them drives the robot, so
+# they are matched more loosely than the movement rules above. A wrong match
+# here costs a sentence; a wrong match on a direction costs a wall.
+_ASK_RULES: list[tuple[str, str, str | None, dict, str]] = [
+    # -- perception --
+    ("see",        r"\b(what (do|can) you see|what's in front|whats in front|"
+                   r"describe (the room|what you see)|look around|have a look|"
+                   r"kya dikh)\b",                        "say_what_you_see", {},          ""),
+    ("photo",      r"\b(take a (photo|picture|snap)|photo (lo|khich)|tasveer)\b",
+                                                          "capture_image",    {},          "Taking a picture."),
+    ("distance",   r"\b(how far|how close|what's the distance|clearance|"
+                   r"kitni door|kitna door)\b",           "get_distance",     {},          ""),
+    ("scan",       r"\b(scan (the room|around|environment)|what's around you|"
+                   r"whats around you)\b",                "scan_environment", {},          "Having a look around."),
+
+    # -- how she is --
+    ("battery",    r"\b(battery|charge left|how much (power|charge)|"
+                   r"kitni battery)\b",                   "get_battery",      {},          ""),
+    ("status",     r"\b(status|report|diagnostics|self test|self-test)\b",
+                                                          "get_status",       {},          ""),
+
+    # -- the map --
+    ("map_here",   r"\b(map (this |the )?(room|here|place)|make a map|"
+                   r"build a map)\b",                     "map_here",         {},          "Mapping the room."),
+    ("map_what",   r"\b(describe the map|what does the map|how big is the "
+                   r"(map|room)|map summary|show me the map)\b",
+                                                          "describe_map",     {},          ""),
+    ("lidar",      r"\b(lidar|laser scan|do a sweep)\b",  "lidar_sweep",      {},          ""),
+
+    # -- autonomy --
+    ("explore_status", r"\b(exploration status|are you (still )?exploring|"
+                       r"how('s| is) the (run|exploration))\b",
+                                                          "exploration_status", {},        ""),
+
+    # -- the screen --
+    ("alarms",     r"\b(what alarms|list (the )?alarms|any alarms|"
+                   r"alarms (set|hain))\b",               "list_alarms",      {},          ""),
+    # "all", because the tool wants an id from list_alarms and a keyword
+    # parser has no way to know which one he means. Said out loud so he hears
+    # what actually happened rather than assuming one alarm went.
+    ("cancel",     r"\b(cancel (the |my )?(alarm|timer)|delete (the )?alarm|"
+                   r"alarm (cancel|hatao))\b",            "cancel_alarm",     {"which": "all"},
+                                                                                            "Cancelling your alarms and timers."),
+    ("clock",      r"\b(show (me )?the clock|clock (dikhao|lagao)|"
+                   r"put the clock (up|on))\b",           "show_clock",       {},          "Clock's up."),
+    ("dismiss",    r"\b(clear the screen|dismiss (the|that)|close the (screen|app)|"
+                   r"screen (band|saaf))\b",              "dismiss_screen",   {},          "Cleared."),
+    ("screen",     r"\b(what('s| is) on (the )?screen|screen (pe|par) kya)\b",
+                                                          "get_screen",       {},          ""),
+]
+
+_ASK_COMPILED = [(name, re.compile(pattern, re.IGNORECASE | re.UNICODE),
+                  tool, args, say)
+                 for name, pattern, tool, args, say in _ASK_RULES]
+
+
+# --- things that carry a value ----------------------------------------------
+# Each of these needs a number, a time or a phrase out of the sentence, so it
+# cannot be a row in a table.
+
+# The face's own vocabulary, from mcp_server/tools/expression.py. Only the
+# FEELINGS -- listening/thinking/speaking belong to the pipeline and setting
+# them by hand fights it.
+_FEELINGS = ("happy", "love", "proud", "excited", "curious", "surprised",
+             "sad", "wink", "angry", "neutral")
+_FACE_RE = re.compile(
+    r"\b(?:be|look|act|show me|show)\s+(?:a\s+)?(" + "|".join(_FEELINGS) +
+    r")\b|\b(smile|wink)\b", re.IGNORECASE)
+
+_SPEED_NAMED = [
+    (r"\b(full speed|top speed|as fast as you can|full power)\b", 100),
+    (r"\b(half speed|medium speed)\b", 50),
+    (r"\b(slow(ly)? down|go slow(ly)?|slower|crawl|dheere)\b", 35),
+    (r"\b(speed up|go faster|faster|tez)\b", 85),
+]
+_SPEED_NAMED_RE = [(re.compile(p, re.IGNORECASE | re.UNICODE), v)
+                   for p, v in _SPEED_NAMED]
+_SPEED_PERCENT_RE = re.compile(
+    r"\b(?:speed|power)\s*(?:to|at|of)?\s*(\d{1,3})\s*(?:%|percent)?\b|"
+    r"\b(\d{1,3})\s*(?:%|percent)\s*(?:speed|power)?\b", re.IGNORECASE)
+
+_ALARM_RE = re.compile(
+    r"\b(?:set (?:an?|the) alarm|wake me(?: up)?|alarm)\b\s*"
+    r"(?:for|at|to)?\s*(.+)", re.IGNORECASE)
+_TIMER_RE = re.compile(
+    r"\b(?:set (?:a|the) timer|start a timer|timer|remind me in|"
+    r"countdown)\b\s*(?:for|of)?\s*(.+)", re.IGNORECASE)
+_REMEMBER_RE = re.compile(r"\bremember (?:that |this[:,]? )?(.+)",
+                          re.IGNORECASE)
+_RECALL_RE = re.compile(
+    r"\b(?:what do you (?:know|remember) about|do you remember|recall)\s+"
+    r"(.+)", re.IGNORECASE)
+
+# "Not now." A wake word that fires on a conversation makes this necessary,
+# but it stays useful after the model is fixed -- sometimes the answer to a
+# robot is simply not yet.
+_SLEEP_RE = re.compile(
+    r"\b(go to sleep|stop listening|don'?t listen|be quiet|leave me alone|"
+    r"do not disturb|shut up|so ?jao|chup (raho|ho jao)|sun'?na band)\b",
+    re.IGNORECASE | re.UNICODE)
+_HELP_RE = re.compile(
+    r"\b(what can you do|what commands|list (your )?commands|help me out|"
+    r"^help$|kya kar sakti)\b", re.IGNORECASE | re.UNICODE)
+
+# "Stop exploring" is not "stop". Both halt the wheels, but only one of them
+# ends the autonomous run, and the run restarts the wheels a second later --
+# so a bare stop() against a live exploration looks like the robot ignoring
+# him. Checked before the stop rule, and it does BOTH.
+_STOP_EXPLORE_RE = re.compile(
+    r"\b(stop|end|cancel|abort|band)\b[^.]*\b(explor\w*|run|roaming|"
+    r"wandering)\b|\bstop the run\b", re.IGNORECASE | re.UNICODE)
+
+
+# A leading "Friday," is not part of the command. openWakeWord fires at the
+# END of the phrase, so the wake word itself is usually behind the capture --
+# but on a borderline score it fires early and whisper puts it on the front.
+_ADDRESS_RE = re.compile(
+    r"^\s*(?:ok(?:ay)?\s+|hey\s+|hi\s+)?friday[\s,.!]*|^\s*please\s+",
+    re.IGNORECASE)
+
+
+def _is_imperative(heard: str) -> bool:
+    """Does this sentence START with an order?
+
+    THE POSITION OF THE VERB IS THE SIGNAL, not its presence. "I think we
+    should go right now" contains a motion verb and a direction and is not a
+    command; "go forward two meters" is the same two ingredients in the order
+    that makes them one. Anything that merely CONTAINS the words is a sentence
+    about going right, and belongs to the brain.
+    """
+    stripped = _ADDRESS_RE.sub("", heard).lstrip()
+    first = stripped.split()[:1]
+    if not first:
+        return False
+    word = first[0].strip(".,!?")
+    return bool(_GO_RE.fullmatch(word) or _TURN_RE.fullmatch(word))
+
+
+def _clean_tail(text: str) -> str:
+    """The part of the sentence after a command word, tidied for a tool.
+
+    Whisper's punctuation and a trailing "please" are not part of a time or a
+    fact, and app_control.parse_when raises on the ones it cannot read.
+    """
+    tail = re.sub(r"\b(please|thanks|thank you|for me|na|yaar)\b", " ", text,
+                  flags=re.IGNORECASE)
+    return tail.strip(" .,!?;:-\u0964").strip()
+
+
+def _local_intent(heard: str) -> Intent | None:
+    """The two things the spine does itself: stop listening, and say what it
+    knows how to do. Checked before every tool rule, because both phrasings
+    contain words that a tool rule would otherwise claim."""
+    if _SLEEP_RE.search(heard):
+        minutes, unit = _amount(heard)
+        if unit == "s" and minutes:
+            minutes = float(minutes)
+        else:
+            minutes = config.SLEEP_DEFAULT_MINUTES
+        if re.search(r"\b(hour|ghanta|ghante)\b", heard):
+            minutes *= 60.0
+        minutes = max(1.0, min(minutes, config.SLEEP_MAX_MINUTES))
+        return Intent(name="sleep", local="sleep",
+                      args={"minutes": minutes},
+                      say=f"Okay, I'll stop listening for "
+                          f"{minutes:.0f} minutes.")
+
+    if _HELP_RE.search(heard):
+        return Intent(name="help", local="help", say=help_text())
+    return None
+
+
+def _valued_intent(heard: str) -> Intent | None:
+    """A command that carries a number, a time or a phrase."""
+    # -- the face --
+    match = _FACE_RE.search(heard)
+    if match:
+        feeling = match.group(1) or match.group(2) or "happy"
+        feeling = "happy" if feeling == "smile" else feeling
+        return Intent(name="face", tool="set_face",
+                      args={"emotion": feeling}, say="")
+
+    # -- how fast --
+    match = _SPEED_PERCENT_RE.search(heard)
+    if match:
+        percent = int(match.group(1) or match.group(2))
+        if 1 <= percent <= 100:
+            return Intent(name="speed", tool="set_speed",
+                          args={"percent": percent},
+                          say=f"Speed {percent} percent.")
+    for pattern, percent in _SPEED_NAMED_RE:
+        if pattern.search(heard):
+            return Intent(name="speed", tool="set_speed",
+                          args={"percent": percent},
+                          say=f"Speed {percent} percent.")
+
+    # -- timers before alarms --
+    # "remind me in ten minutes" is a TIMER; "remind me at seven" is an alarm.
+    # The timer pattern is checked first because "alarm" appears in neither and
+    # "in" is the word that decides, which only the timer rule looks for.
+    match = _TIMER_RE.search(heard)
+    if match and not re.search(r"\balarm\b", heard):
+        duration = _clean_tail(match.group(1))
+        if duration:
+            return Intent(name="timer", tool="set_timer",
+                          args={"duration": duration}, say="")
+
+    match = _ALARM_RE.search(heard)
+    if match:
+        when = _clean_tail(match.group(1))
+        if when:
+            return Intent(name="alarm", tool="set_alarm",
+                          args={"time": when}, say="")
+
+    # -- memory --
+    match = _REMEMBER_RE.search(heard)
+    if match:
+        fact = _clean_tail(match.group(1))
+        if fact:
+            return Intent(name="remember", tool="remember",
+                          args={"fact": fact}, say="I'll remember that.")
+
+    match = _RECALL_RE.search(heard)
+    if match:
+        query = _clean_tail(match.group(1))
+        if query:
+            return Intent(name="recall", tool="recall",
+                          args={"query": query}, say="")
+    return None
+
+
+def _cm(mm) -> str:
+    """Millimetres as a person would say them."""
+    try:
+        mm = float(mm)
+    except (TypeError, ValueError):
+        return "I can't tell"
+    if mm >= 1000:
+        return f"about {mm / 1000:.1f} metres"
+    return f"about {mm / 10:.0f} centimetres"
+
+
+def speakable(name: str, result: str) -> str:
+    """One sayable sentence from a tool's return value.
+
+    MOST TOOLS ALREADY ANSWER IN PROSE -- get_distance says "53 cm ahead (532
+    mm, from the ToF + LiDAR)" and only needs its parenthesis trimmed. Two do
+    not: get_battery and get_status return JSON, because the brain reads them
+    and the brain is not a speaker. Read out raw, that is a robot saying
+    "under_voltage_since_boot false" to a person, so those two get shaped by
+    hand and everything else falls through.
+    """
+    import json
+
+    text = (result or "").strip()
+    if not text:
+        return ""
+    if not text.startswith("{"):
+        # Sensor jargon in brackets is for the log, not for the room.
+        return re.sub(r"\s*\([^)]*\)", "", text).strip() or text
+
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return text[:200]
+    if not isinstance(data, dict):
+        return text[:200]
+
+    if name == "battery":
+        percent = data.get("percent") or ""
+        power = data.get("power") or {}
+        # The flag names are Broadcom's, not English. "soft temp limit now"
+        # read out loud is a robot reciting a register.
+        said = {"under_voltage": "on low voltage",
+                "frequency_capped": "clocked down",
+                "throttled": "throttling",
+                "soft_temp_limit": "warm enough to be holding back"}
+        warnings = [said.get(k[:-4], k[:-4].replace("_", " "))
+                    for k, v in power.items() if k.endswith("_now") and v]
+        if "unknown" in str(percent).lower():
+            line = "I don't have a battery gauge, so I can't give you a number."
+        else:
+            line = f"Battery's at {percent}."
+        if warnings:
+            line += f" I am {' and '.join(warnings)} right now."
+        return line
+
+    if name == "status":
+        bits = []
+        if data.get("cpu_percent") is not None:
+            bits.append(f"CPU {float(data['cpu_percent']):.0f} percent")
+        if data.get("cpu_temperature_c") is not None:
+            bits.append(f"{float(data['cpu_temperature_c']):.0f} degrees")
+        if data.get("memory_percent") is not None:
+            bits.append(f"memory {float(data['memory_percent']):.0f} percent")
+        if data.get("disk_percent") is not None:
+            bits.append(f"disk {float(data['disk_percent']):.0f} percent")
+        line = ", ".join(bits) if bits else "I could not read my own status."
+        note = data.get("cpu_temperature_note") or ""
+        if "hot" in note.lower():
+            line += ". I'm running hot"
+        return line + "."
+
+    if name == "map_what":
+        # describe_map already writes its own one-line summary for exactly
+        # this, and it is better than anything assembled from the other keys.
+        return data.get("summary") or ""
+
+    if name == "scan":
+        safe = data.get("safe_directions") or {}
+        blocked = [way for way, ok in safe.items() if ok is False]
+        forward = (data.get("clearance_mm") or {}).get("forward")
+        lead = f"{_cm(forward)} ahead." if forward is not None else ""
+        if blocked:
+            return f"{lead} I can't go {' or '.join(blocked)}.".strip()
+        return f"{lead} Everything around me looks clear.".strip()
+
+    if name == "lidar":
+        nearest = data.get("nearest_mm")
+        if nearest is None:
+            return ""
+        return (f"Nearest thing is {_cm(nearest)} away, furthest "
+                f"{_cm(data.get('furthest_mm'))}.")
+
+    if name == "explore_status":
+        if data.get("exploring"):
+            return "Yes, I'm exploring right now."
+        state = ((data.get("last_run") or {}).get("state") or "").lower()
+        return (f"No, I'm not exploring. The last run {state}." if state
+                else "No, I'm not exploring.")
+
+    # Anything else that came back as JSON: read the short scalar fields and
+    # leave the rest, rather than reciting a structure out loud.
+    parts = [f"{k.replace('_', ' ')} {v}" for k, v in list(data.items())[:4]
+             if isinstance(v, (str, int, float, bool)) and len(str(v)) < 60]
+    return ", ".join(parts) + "." if parts else ""
+
+
+def help_text() -> str:
+    """What Friday can be told with no brain and no network.
+
+    A voice interface has no menu, so the list has to be sayable. Grouped and
+    short on purpose: read out, a list of thirty commands is not help.
+    """
+    return (
+        "I can drive — forward, back, left, right, turn around, and stop. "
+        "I can explore on my own, map the room, and tell you what I see or "
+        "how far away things are. I can set alarms and timers, show the "
+        "clock, tell you the time and my battery. Say go to sleep and I'll "
+        "stop listening for a while."
+    )
+
+
+# A direction with no verb around it, in a long sentence, is usually not a
+# command -- "I left my keys at home" is six words with "left" in the middle.
+# This only matters once the local handler runs BEFORE the brain (strict
+# mode): with no brain there is nothing to defer to and a miss is silence, so
+# the cap is not applied.
+# Five, measured against real commands rather than picked: "go forward two
+# meters" is four words, "turn around" is two, and the longest thing here that
+# is genuinely an order is "set a timer for ten minutes" -- which carries a
+# value and never reaches this cap. At seven, "I left my keys on the table"
+# fit under it exactly and turned the robot ninety degrees.
+# The commands whose whole point is the answer. Kept as a set rather than a
+# sixth column on every rule, because only a handful of rows differ.
+#
+# `see` is NOT here: say_what_you_see speaks through Friday's own speaker
+# already (speak=True), and repeating its return value says everything twice.
+_SPEAK_RESULT = frozenset({
+    "distance", "battery", "status", "map_what", "screen", "alarms",
+    "explore_status", "scan", "lidar", "recall", "alarm", "timer", "cancel",
+})
+
+_STRICT_MAX_WORDS = 5
+
+# WHAT MAY SKIP THE BRAIN. Named explicitly, because "everything this file can
+# parse" is the wrong set: "how far is the wall" and "how far is the MOON" are
+# the same five words to a regex, and only one of them is a range finder.
+#
+# A command earns its place here by being an ORDER rather than a question --
+# something whose answer does not change with the subject, and which is worse
+# for going through a model: slower (a pivot after a 20 s round trip is not a
+# pivot he asked for), or costlier, or both. Everything else is left to the
+# brain, which is better at it and is already paid for.
+_REFLEX_INTENTS = frozenset({
+    "stop", "stop_exploring", "explore", "sleep", "help", "time",
+    "left", "right", "around", "forward", "backward",
+    "go_left", "go_right", "go_forward", "go_backward",
+    "speed", "face",
+    "alarm", "timer", "cancel", "alarms", "clock", "dismiss", "screen",
+    "battery", "status",
+})
+
+
+def understand(text: str, strict: bool = False) -> Intent | None:
+    """The command in this text, or None if it is not one we know.
+
+    `strict` is for the path where a brain IS available and this runs first as
+    a reflex. It refuses the loose matches rather than acting on them, because
+    the cost of being wrong is different on the two paths: with no brain, a
+    refusal is Friday saying she cannot help; with a brain, a refusal just
+    means the sentence goes to something that understands it properly.
+    """
+    intent = _match(text, strict)
+    if intent is not None:
+        intent.speak_result = intent.name in _SPEAK_RESULT
+    if intent is None or not strict:
+        return intent
+    # A question the brain should answer, matched by a rule meant for an
+    # order. Hand it back rather than acting on it.
+    return intent if intent.name in _REFLEX_INTENTS else None
+
+
+def _match(text: str, strict: bool) -> Intent | None:
     if not text or not text.strip():
         return None
     heard = text.strip().lower()
+    words = len(heard.split())
 
-    # Stop always wins, and is checked before anything that could move.
+    # "STOP LISTENING" IS NOT "STOP". Above the stop rule, and the only thing
+    # that is, because the stop rule matches the word `stop` on its own and
+    # would take this one -- halting the wheels, staying wide awake, and doing
+    # the exact opposite of what was asked.
+    local = _local_intent(heard)
+    if local is not None:
+        return local
+
+    # STOP THE RUN, NOT JUST THE WHEELS. A bare stop() against a live
+    # exploration halts the motors only until the run issues its next command,
+    # which from across the room is Friday ignoring him.
+    if _STOP_EXPLORE_RE.search(heard):
+        return Intent(name="stop_exploring", say="Stopping the run.",
+                      steps=[("stop_exploration", {}), ("stop", {})])
+
+    # Stop wins over everything that could move.
     if _COMPILED[0][1].search(heard):
         return Intent(name="stop", tool="stop", args={}, say="Stopping.")
 
-    for name, pattern, tool, args, say in _COMPILED:
-        if name in ("stop", "time") and pattern.search(heard):
-            if name == "time":
-                return Intent(name="time", say=_time_phrase())
+    # THE SPECIFIC PHRASES BEFORE THE SINGLE WORDS, and this order is load
+    # bearing. "How much charge is LEFT" contains a direction, and with the
+    # movement rules first that question made the robot pivot ninety degrees
+    # -- a question answered by turning. Every rule in this table is a whole
+    # phrase, so none of them can swallow a bare "left" or "go forward".
+    for name, pattern, tool, args, say in _ASK_COMPILED:
+        if pattern.search(heard):
             return Intent(name=name, tool=tool, args=dict(args), say=say)
+
+    # Time, which is answered here rather than by a tool.
+    if _COMPILED[-1][1].search(heard):
+        return Intent(name="time", say=_time_phrase())
+
+    valued = _valued_intent(heard)
+    if valued is not None:
+        return valued
 
     moving = _direction_intent(heard)
     if moving is not None:
+        # THE VERB IS WHAT MAKES IT AN ORDER. A bare "left" is a command; the
+        # same word inside a sentence usually is not.
+        if strict and words > _STRICT_MAX_WORDS \
+                and not _is_imperative(heard):
+            return None
         return moving
 
     for name, pattern, tool, args, say in _COMPILED:
         if pattern.search(heard):
+            if strict and words > _STRICT_MAX_WORDS:
+                return None
             return Intent(name=name, tool=tool, args=dict(args), say=say)
     return None
 

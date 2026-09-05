@@ -36,6 +36,7 @@ THREE THINGS STOP IT FIRING WHEN IT SHOULD NOT:
 
 from __future__ import annotations
 
+import collections
 import logging
 import os
 import subprocess
@@ -72,6 +73,17 @@ class WakeSource:
 
     def resume(self) -> None:
         """Start reacting again."""
+
+    def sleep(self, seconds: float) -> float:
+        """Ignore the wake word for a while. Returns the seconds granted."""
+        return 0.0
+
+    def wake_up(self) -> None:
+        """Cancel a sleep early."""
+
+    def sleeping_for(self) -> float:
+        """Seconds of sleep left, 0 when awake."""
+        return 0.0
 
     def close(self) -> None:
         pass
@@ -113,6 +125,12 @@ class OpenWakeWord(WakeSource):
         self._ready = threading.Condition()
         self._paused = threading.Event()
         self._settle_until = 0.0
+        # DO NOT DISTURB, and deliberately NOT the same flag as _paused.
+        # _paused is owned by the turn -- main.py sets it while Friday talks
+        # and clears it when she stops -- so a sleep stored there would be
+        # wiped by the next resume(), which is the turn that put her to sleep
+        # in the first place. Separate gate, and resume() leaves it alone.
+        self._sleep_until = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._beep: Path | None = None
@@ -127,6 +145,16 @@ class OpenWakeWord(WakeSource):
         self._peak_since_report = 0.0
         self.last_rms = 0.0
         self._peak_rms_since_report = 0.0
+        # THE AUDIO THAT CAUSED THE LAST FIRE. A score in the log says a fire
+        # happened; it cannot say what was actually said, and that is the only
+        # thing that separates "he said hey Friday" from "he said see you
+        # Friday" -- the two failures that need opposite fixes. Kept as a ring
+        # of scored chunks so a fire can write out the phrase behind it, since
+        # openWakeWord fires at the END and the audio is all in the past.
+        self._recent: "collections.deque[bytes]" = collections.deque(
+            maxlen=max(1, int(config.WAKE_FIRE_SECONDS * config.MIC_SAMPLE_RATE
+                              / CHUNK_SAMPLES)))
+        self.fires_saved = 0
 
     # -- the model --
     def model(self):
@@ -180,6 +208,23 @@ class OpenWakeWord(WakeSource):
         self._settle_until = time.monotonic() + config.WAKE_RESUME_SETTLE_S
         self._paused.clear()
 
+    def sleep(self, seconds: float) -> float:
+        seconds = max(0.0, min(seconds, config.SLEEP_MAX_MINUTES * 60.0))
+        self._sleep_until = time.monotonic() + seconds
+        log.info("wake detector asleep for %.0fs", seconds)
+        return seconds
+
+    def wake_up(self) -> None:
+        if self._sleep_until:
+            log.info("wake detector awake again")
+        self._sleep_until = 0.0
+        if self._sub is not None:
+            self._sub.clear()
+        self._reset_model()
+
+    def sleeping_for(self) -> float:
+        return max(0.0, self._sleep_until - time.monotonic())
+
     def _reset_model(self) -> None:
         reset = getattr(self._model, "reset", None)
         if callable(reset):
@@ -230,14 +275,19 @@ class OpenWakeWord(WakeSource):
             # they need opposite fixes. So every WAKE_HEARTBEAT_S of not
             # firing, say which one it is, out loud, with the numbers.
             if now_f - last_beat > config.WAKE_HEARTBEAT_S:
-                log.info("wake alive: paused=%s  scored=%d chunks  "
-                         "last_score=%.3f  last_rms=%.0f  dropped=%d",
-                         self._paused.is_set(), scored, self.last_score,
-                         self.last_rms, getattr(self._sub, "dropped", -1))
+                asleep = max(0.0, self._sleep_until - now_f)
+                log.info("wake alive: paused=%s  asleep=%.0fs  scored=%d "
+                         "chunks  last_score=%.3f  last_rms=%.0f  dropped=%d",
+                         self._paused.is_set(), asleep, scored,
+                         self.last_score, self.last_rms,
+                         getattr(self._sub, "dropped", -1))
                 last_beat = now_f
                 scored = 0
 
             if self._paused.is_set():
+                buffer.clear()
+                continue
+            if now_f < self._sleep_until:
                 buffer.clear()
                 continue
             if now_f < self._settle_until:
@@ -251,6 +301,7 @@ class OpenWakeWord(WakeSource):
 
                 now = time.monotonic()
                 scored += 1
+                self._recent.append(chunk)
                 try:
                     samples = np.frombuffer(chunk, dtype=np.int16)
                     scores = self.model().predict(samples)
@@ -294,11 +345,54 @@ class OpenWakeWord(WakeSource):
                 if score >= self.threshold and not cooling:
                     self._cooldown_until = now + config.WAKE_COOLDOWN_S
                     self._reset_model()
+                    audio = b"".join(self._recent)
                     buffer.clear()
                     log.info("wake word detected (%.2f)", score)
                     with self._ready:
                         self._fired.append(f"{score:.2f}")
                         self._ready.notify()
+                    # AFTER the notify, never before it. The turn starts on
+                    # that notify and a disk write in front of it is latency
+                    # Harsh hears as Friday being slow to answer.
+                    self._save_fire(audio, score)
+
+    # -- hard negatives --
+    def _save_fire(self, audio: bytes, score: float) -> None:
+        """Write the audio behind a fire, so it can be judged and trained on.
+
+        EVERY fire, not just the wrong ones. Which ones were wrong is a
+        question about what Harsh actually said, and the detector has no way
+        to know -- labelling that here would only record the model's own
+        opinion back to itself. `--review-fires` asks a person.
+
+        Never allowed to fail a wake: the pile is for later, the turn is now.
+        """
+        if not config.WAKE_SAVE_FIRES or not audio:
+            return
+        try:
+            directory = Path(config.WAKE_FIRE_DIR)
+            directory.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            path = directory / f"fire-{stamp}-{score:.2f}.wav"
+            with wave.open(str(path), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(config.MIC_SAMPLE_RATE)
+                out.writeframes(audio)
+            self.fires_saved += 1
+            self._trim_fires(directory)
+        except Exception as exc:                # noqa: BLE001
+            log.debug("could not save the wake fire: %s", exc)
+
+    @staticmethod
+    def _trim_fires(directory: Path) -> None:
+        """Keep the newest WAKE_FIRE_KEEP clips. This runs on an SD card."""
+        clips = sorted(directory.glob("fire-*.wav"))
+        for stale in clips[:-config.WAKE_FIRE_KEEP]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
 
     # -- the beep --
     def _beep_file(self) -> Path | None:
@@ -443,6 +537,18 @@ class AnyOf(WakeSource):
     def resume(self) -> None:
         for source in self.sources:
             source.resume()
+
+    def sleep(self, seconds: float) -> float:
+        return max((source.sleep(seconds) for source in self.sources),
+                   default=0.0)
+
+    def wake_up(self) -> None:
+        for source in self.sources:
+            source.wake_up()
+
+    def sleeping_for(self) -> float:
+        return max((source.sleeping_for() for source in self.sources),
+                   default=0.0)
 
     def beep(self) -> None:
         for source in self.sources:

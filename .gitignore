@@ -15,8 +15,15 @@ secrets.py
 logs/*.log
 logs/*.jsonl
 
-# Models are large; fetch them with scripts/, don't commit
-assets/models/
+# Models are large; fetch them with scripts/, don't commit.
+# THE TRAILING SLASH IS WHY THE NEGATIONS BELOW WERE DEAD. `assets/models/`
+# excludes the DIRECTORY, and git then never walks into it, so not one of the
+# `!assets/models/wake/...` lines further down could ever match -- the two
+# things in this repo that cannot be regenerated (friday.onnx and Harsh's 40
+# recordings) are tracked only because they were force-added once, and
+# `git status` reported every new one as clean. Excluding the CONTENTS instead
+# lets git descend, so a negation can do its job.
+assets/models/*
 *.onnx
 *.gguf
 
@@ -28,6 +35,7 @@ assets/models/
 # The room recording it trained against is NOT committed -- it is 45s of audio
 # from Harsh's home and has no business in a repo.
 !assets/models/wake/
+assets/models/wake/*
 !assets/models/wake/friday.onnx
 # Harsh's own recordings of the wake word. ~40 short clips, ~2 MB. Committed
 # because they are the ONE thing here that cannot be regenerated: Piper voices
@@ -40,6 +48,20 @@ assets/models/
 # has no business in a repo.
 assets/models/wake/ambient.wav
 assets/models/wake/*.bak
+# HARD NEGATIVES, split by what can be regenerated. The long conversation
+# recordings are minutes of Harsh and his friends talking in his home -- large,
+# private, and re-recordable in ten minutes -- so they stay out. The short
+# clips harvested from LIVE FALSE FIRES do not: each one is a moment the model
+# was actually wrong, in this room, on this microphone, and no amount of
+# re-recording reproduces the specific audio that beat it. Those are the
+# samples/*.wav argument again, pointing the other way.
+!assets/models/wake/negatives/
+assets/models/wake/negatives/*
+!assets/models/wake/negatives/README.md
+!assets/models/wake/negatives/fire-*.wav
+# The unreviewed pile. Every wake fire lands here, right or wrong, and it is
+# capped at WAKE_FIRE_KEEP and emptied by --review-fires. Transient by design.
+state/wake_fires/
 
 # OS
 .DS_Store
