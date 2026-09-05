@@ -315,6 +315,60 @@ def hard_negative_clips(directory: Path, rng: np.random.Generator,
     return clips
 
 
+def reset_streams(model) -> None:
+    """Clear openWakeWord's STREAMING state between clips.
+
+    `Model.reset()` resets the prediction buffer and NOTHING ELSE -- read it:
+    it is three lines and it touches `prediction_buffer` only. The audio
+    history lives one layer down in the AudioFeatures preprocessor, in
+    `raw_data_buffer`, `melspectrogram_buffer` and a ~10 second
+    `feature_buffer`, and none of them are cleared. So scoring forty clips
+    through one Model scores each one against the tail of the last.
+
+    MEASURED, and it is not subtle. The same eight recordings, same model:
+
+        shared Model + reset()      2 of 8 fire
+        a fresh Model per clip      5 of 8 fire
+
+    wake_001 scores 0.000 reused and 0.996 clean. That is the difference
+    between "retrain, this model has never heard this voice" and "it is fine",
+    and score_samples() has been reporting the first one.
+
+    Resetting the buffers is what reset() looks like it does. `feature_buffer`
+    is rebuilt the way the constructor builds it -- from silence -- because an
+    empty one is the wrong shape for the first predict() to stack onto.
+    """
+    import collections
+
+    model.reset()
+    pre = getattr(model, "preprocessor", None)
+    if pre is None:
+        return
+    pre.raw_data_buffer = collections.deque(maxlen=RATE * 10)
+    pre.melspectrogram_buffer = np.ones((76, 32))
+    pre.accumulated_samples = 0
+    pre.feature_buffer = pre._get_embeddings(
+        np.zeros(RATE * 10).astype(np.int16))
+
+    # AND THE VAD, which is the half that actually forced the zeros. Silero is
+    # an LSTM -- it carries _h and _c across calls -- and openWakeWord gates on
+    #     vad_frames = list(self.vad.prediction_buffer)[-7:-4]
+    # which is four to seven frames BEHIND the current one. Score a second clip
+    # without clearing that and the gate is reading the END OF THE PREVIOUS
+    # CLIP; if that was silence, `vad_max_score` loses to vad_threshold and
+    # EVERY model prediction is overwritten with 0.0 no matter what was said.
+    #
+    # That is why the misses were always exactly 0.000 and never 0.3 -- a
+    # near miss and a gated frame do not look alike, and this project has
+    # already read one as the other ("the catch rate is FLAT from 0.2 to 0.5,
+    # there is no threshold left to tune"). A bimodal 0-or-1 distribution is
+    # not a confident model, it is a gate firing.
+    vad = getattr(model, "vad", None)
+    if vad is not None:
+        vad.prediction_buffer = collections.deque(maxlen=125)
+        vad.reset_states()
+
+
 def false_fire_rate(recording: Path, model_path: Path | None = None,
                     threshold: float | None = None) -> tuple[int, float]:
     """How often the model fires on a recording with no wake word in it.
@@ -334,6 +388,7 @@ def false_fire_rate(recording: Path, model_path: Path | None = None,
                   vad_threshold=config.WAKE_VAD_THRESHOLD)
     threshold = config.WAKE_THRESHOLD if threshold is None else threshold
 
+    reset_streams(model)
     fires = 0
     # The same cooldown the live detector uses, or one long phrase scoring
     # high across neighbouring frames counts as a dozen separate fires and the
@@ -382,7 +437,9 @@ def score_samples(samples_dir: Path, model_path: Path | None = None,
     for path in paths:
         with wave.open(str(path), "rb") as f:
             audio = np.frombuffer(f.readframes(f.getnframes()), dtype=np.int16)
-        model.reset()
+        # NOT model.reset() -- see reset_streams(). With the plain reset this
+        # loop reported 2 of 8 where a clean model reports 5 of 8.
+        reset_streams(model)
         peak = 0.0
         for i in range(0, len(audio) - CHUNK + 1, CHUNK):
             out = model.predict(audio[i:i + CHUNK])
