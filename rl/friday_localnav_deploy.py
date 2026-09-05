@@ -490,6 +490,10 @@ def main(argv: list[str] | None = None) -> int:
     # `run_localnav.sh` drives THIS main(), so a flag that only pi_deploy.main() reads
     # is a flag that does nothing on the robot.
     loop.navigator_enabled = not args.no_navigator
+    # THE SEVENTH FLAG IN THIS LIST, added here at the same time it was added to
+    # pi_deploy's parser rather than discovered missing on hardware later --
+    # which is what the paragraph above is warning about.
+    loop.reverse_escape = not getattr(args, "no_reverse_escape", False)
     cfg.nav_speed_authority = float(getattr(args, "navigator_speed_authority", 0.0))
     # --map-file and --state-file were the fifth and sixth. --map-file being ignored
     # meant a diagnostic run pointed at a scratch map OVERWROTE the real one.

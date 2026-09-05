@@ -78,6 +78,9 @@ ARGS=(--motor "$MODE_MOTOR"
 # here, which is why every mode run since has driven with a 130-200 ms loop
 # against a 100 ms deadline. See confident_explore.env for the measurements.
 [ "${MODE_QUIET_SERVICES:-0}" = "1" ] && ARGS+=(--quiet-services)
+# Reverse escape is ON in the loop; this is how it gets turned OFF from the mode
+# file without touching code. Same shape as every other MODE_ flag here.
+[ "${MODE_REVERSE_ESCAPE:-1}" = "0" ] && ARGS+=(--no-reverse-escape)
 
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes

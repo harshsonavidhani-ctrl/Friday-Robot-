@@ -19,6 +19,8 @@ what the hardware is doing:
     test_wiring     the RIGHT motor leads are reversed; the default must correct it
     test_creep_pulse  a robot with no creep executing a creep command (invariant 5)
     test_escape     boxed in: forward blocked, no reverse -> turn toward open space
+    test_reverse_escape  forward blocked WITH reverse available -> back out, and
+                    the rear gate still vetoes it
     test_telemetry  the raw policy output survives every stage that follows it
     test_world      persistent occupancy + visit memory, and the observation it must
                     NOT disturb
@@ -44,7 +46,8 @@ HERE = Path(__file__).resolve().parent
 SUITES = ["test_ld19.py", "test_reconnect.py", "test_motors.py",
           "test_ports.py", "test_creep.py", "test_pivot.py", "test_tof_floor.py",
           "test_frontier.py", "test_odometry.py", "test_wiring.py",
-          "test_creep_pulse.py", "test_escape.py", "test_telemetry.py",
+          "test_creep_pulse.py", "test_escape.py", "test_reverse_escape.py",
+          "test_telemetry.py",
           "test_world.py", "test_explorer.py", "test_recovery.py",
           "test_cameras.py", "test_freespace.py", "test_narrator.py",
           "test_dwa.py"]

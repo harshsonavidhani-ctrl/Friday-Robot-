@@ -3004,6 +3004,31 @@ class ControlLoop:
         self.escape_after_ticks = 5
         self._stuck_ticks = 0
         self._warned_no_reverse = False
+        # REVERSE ESCAPE. Harsh, 2026-09-06: "when tof like robots front gets
+        # obstacles it detects but dosent like move it sticks and confuses and
+        # also in strict corners pls like it reacts quickly and avoid it while
+        # there is space by reversing".
+        #
+        # MEASURED in the 20:58 run, 783 REFLEX_STOP ticks of 1462 logged:
+        #     frozen  (v=0, w=0)      25%
+        #     pivoting(v=0, w!=0)     50%   <- the "confused" spinning
+        #     REVERSING               24%
+        # with rear_blocked firing only 11 times all run -- the space behind her
+        # was there and almost never used. The longest single stuck stretch was
+        # ~665 ticks, about a minute in one spot.
+        #
+        # Every existing escape PIVOTS, and that is deliberate: a pivot cannot
+        # approach anything, so it needs no proof about the rear. Reversing does
+        # need that proof -- and stage 2d already provides it, re-applying the
+        # rear gate to whatever any stage authored. So this stage only has to
+        # ASK; 2d vetoes it if the rear is inside rear_stop and 2e lifts it over
+        # the stiction floor. Nothing here can grant authority to reverse.
+        self.reverse_escape = True
+        self._front_blocked_ticks = 0
+        self._reverse_escape_ticks = 0
+        # 2 s of backing out, then hand over to the pivot escape and recovery.
+        # Unbounded reversing is how a robot backs across a room it cannot see.
+        self.reverse_escape_max_ticks = 20
         # Ring buffer. 30 s at 10 Hz is 316 rows, and a longer run silently loses its
         # BEGINNING -- which is where a run that starts badly puts its evidence.
         # Sized from --blackbox-seconds so a long exploration can keep all of it.
@@ -3016,6 +3041,7 @@ class ControlLoop:
         self.stats = {"ticks": 0, "reflex_stops": 0, "visual_stops": 0,
                       "governor_limits": 0, "stale_stops": 0, "overruns": 0,
                       "no_reverse_turns": 0, "escape_turns": 0, "planner_biases": 0,
+                      "reverse_escapes": 0,
                       "reverse_floor_lifts": 0,
                       "recovery_ticks": 0,
                       # Local navigator. `nav_handoffs` is the honest one: ticks where
@@ -3746,6 +3772,48 @@ class ControlLoop:
             rec.add("escape", v, omega,
                     f"forward blocked {self._stuck_ticks} ticks at "
                     f"{rec.lidar_min:.2f} m and no reverse available")
+
+        # ---- 2b-bis. REVERSE ESCAPE -----------------------------------------------
+        #
+        # The other half of 2b. That stage pivots when reverse is IMPOSSIBLE; this one
+        # backs out when it is possible, because on this drivetrain backing out is the
+        # better answer and she was not taking it: 50% of her REFLEX_STOP ticks were
+        # spent pivoting in place and 25% frozen, against 24% reversing, while the rear
+        # gate refused a reverse only 11 times in the whole run. The space behind her
+        # was there and unused.
+        #
+        # A SEPARATE COUNTER FROM _stuck_ticks, deliberately. That one feeds `boxed_in`,
+        # which recovery.update() consumes and whose semantics recovery.py documents
+        # carefully ("NOT `not boxed_in`. That flag is a stuck COUNTER"). Widening it to
+        # count blocked-with-reverse-available would silently change when recovery
+        # fires, which is a different fix in a different stage.
+        #
+        # THIS ASKS; IT DOES NOT AUTHORISE. Stage 2d re-applies the rear gate to
+        # whatever any stage authored, so a reverse into a blocked rear is raised back
+        # to 0.0 there and she pivots as before. 2e lifts it over the stiction floor.
+        # Bounded to reverse_escape_max_ticks so she backs out of a corner rather than
+        # backing across a room she is not looking at.
+        if (self.reverse_escape and not cannot_reverse and not boxed_in
+                and self.governor.last_fwd_min <= c.hard_stop and v <= 1e-6):
+            self._front_blocked_ticks += 1
+        else:
+            self._front_blocked_ticks = 0
+            self._reverse_escape_ticks = 0
+
+        if (self._front_blocked_ticks >= self.escape_after_ticks
+                and self._reverse_escape_ticks < self.reverse_escape_max_ticks):
+            # Straight back, not a reversing turn: turning while reversing swings the
+            # FRONT through the obstacle that stopped her, and the front is the thing
+            # the reflex is shouting about. Recovery does the turning afterwards.
+            v = c.v_min
+            omega = 0.0
+            self._reverse_escape_ticks += 1
+            self.stats["reverse_escapes"] += 1
+            gate = "reverse_escape"
+            rec.add("reverse_escape", v, omega,
+                    f"forward blocked {self._front_blocked_ticks} ticks at "
+                    f"{rec.lidar_min:.2f} m, {self.governor.last_rear_min:.2f} m clear "
+                    f"behind — backing out")
 
         # ---- 2c. RECOVERY CONTROLLER ----------------------------------------------
         #
@@ -5483,6 +5551,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "as decisive as the network -- which measures a mean of "
                         "0.21 m/s. 0.6 is a reasonable first try. The governor, ToF "
                         "reflex and rate limiter all still run below it.")
+    p.add_argument("--no-reverse-escape", action="store_true",
+                   help="Disable stage 2b-bis: backing out when the front has been "
+                        "blocked for escape_after_ticks and the rear gate allows it. "
+                        "Without it she pivots instead, which is what she did for 50% "
+                        "of her REFLEX_STOP ticks on 2026-09-06 while the rear was "
+                        "clear. The rear gate (2d) still vetoes any reverse it does "
+                        "not like, with or without this flag.")
     p.add_argument("--no-navigator", action="store_true",
                    help="Disable the local navigator (arc selection + situational "
                         "commitment) and let the policy's command go straight to the "
