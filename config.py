@@ -936,6 +936,33 @@ NARRATION_ROOM_M2 = 4.0
 
 PIVOT_MIN_SCAN_SHIFT_MM = 40
 
+# --- Language-guided navigation ("go to the door") -----------------------
+# slam/navigate.py. Deliberately tighter than the exploration budgets: a
+# mission wanders and is allowed to, but "go to the door" has a known
+# destination, so a run that has driven twice the straight-line distance is
+# lost rather than thorough, and stopping is the honest answer.
+
+# How close counts as arrived. A place is remembered with a radius (default
+# 0.75 m in slam/places.py) and that radius wins when it is set; this is the
+# fallback. 0.45 m is a little over the body radius (0.22 m), so "at the door"
+# means within reach of it, not on top of it.
+GOTO_ARRIVE_M = 0.45
+
+GOTO_BUDGET_M = 12.0          # metres driven before giving up
+GOTO_BUDGET_S = 240.0         # wall clock
+# One leg is at most MISSION_MAX_LEG_M (0.25 m), so 120 legs is 30 m of
+# driving at the cap -- the distance budget is the real bound and this is the
+# backstop for a robot turning on the spot without covering ground.
+GOTO_MAX_LEGS = 120
+
+# The least map she may try to place herself in before "go to X" refuses.
+# Matching a sweep against a nearly-empty map does not fail loudly -- it
+# returns a confident pose off a handful of cells, which is the worst possible
+# outcome because everything downstream then drives to a wrong address. The
+# saved state/map.npz was 2.2 KB on 2026-09-08, so this refuses today and is
+# meant to: map the room first.
+GOTO_MIN_MAP_M2 = 6.0
+
 # ⚠ SET TO 1 = THE OLD SINGLE SLAM, WHICH IS WHERE THIS SITS UNTIL THE
 # STICTION THRESHOLD IS MEASURED. Ramping is worth having -- Harsh feels the
 # slam as a jerk -- but two attempts at it have now produced turns that were
