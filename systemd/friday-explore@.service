@@ -1,0 +1,45 @@
+[Unit]
+# Friday's saved exploration mode, FOR A CHOSEN NUMBER OF MINUTES.
+#
+#     systemctl --user start friday-explore@10.service    # ten minutes
+#     systemctl --user stop  friday-explore@10.service    # stop her early
+#
+# The instance name is MINUTES. This is the unit the dashboard's Explore button
+# starts, and it is a sibling of friday-explore.service -- not a replacement.
+# That unit still runs the untouched 20-minute default and is left exactly as
+# it was.
+#
+# WHY A UNIT AND NOT A SHELL-OUT FROM THE DASHBOARD: rl/run_localnav.sh stops
+# friday-mcp for the duration, and with MODE_QUIET_SERVICES=1 it stops
+# friday-face, friday-brain AND friday-dashboard too. A dashboard that ran the
+# script as a child would therefore kill itself mid-request and orphan the run.
+# `systemctl --user start` returns immediately and the run outlives the caller.
+Description=Friday's confident autonomous exploration for %i minutes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/harsh/friday/rl
+# THE MAP IS COPIED OUT BEFORE AND AFTER EVERY RUN. Harsh, 2026-09-08: "never
+# ever delet its map and yes it will be there unefected". map_vault.py only ever
+# COPIES, and its ratchet refuses to let a rebuilt-from-scratch map replace a
+# good one -- so this is safe to run unconditionally and cannot itself lose a
+# map. `-` prefix: a failed backup must never stop the run, and must never mark
+# a completed run as failed.
+ExecStartPre=-/home/harsh/friday/venv/bin/python /home/harsh/friday/scripts/map_vault.py backup --reason "before friday-explore@%i"
+ExecStart=/home/harsh/friday/scripts/explore_for.sh %i
+ExecStopPost=-/home/harsh/friday/venv/bin/python /home/harsh/friday/scripts/map_vault.py backup --reason "after friday-explore@%i"
+# The mode's own flags come from rl/modes/confident_explore.env. Nothing is set
+# here on purpose -- two places to change is how a "frozen" configuration
+# quietly stops being the one that was measured.
+TimeoutStopSec=90
+KillSignal=SIGINT
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# 134 is SIGABRT from the known `FATAL: exception not rethrown` at teardown. It
+# happens after the map, the black box and the summary are all written, so the
+# run's output is complete and calling it a failure would be wrong.
+SuccessExitStatus=134
+# A run drives for as long as it was asked to; the default 90 s start timeout
+# would kill a 10-minute one. 0 = no limit, and --duration is the real bound.
+TimeoutStartSec=0

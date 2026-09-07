@@ -177,6 +177,39 @@
       </div>
     </section>
 
+    <section class="panel" id="panel-explore">
+      <div class="panelhead">
+        <h2>Explore</h2>
+        <span class="badge" id="explorenow">idle</span>
+      </div>
+      <div class="screen">
+        <!-- Starts rl/modes/confident_explore -- the saved 2026-09-04 21:18
+             run -- for a chosen number of minutes. The MODE is not configured
+             from here and must not be: its flags live in
+             rl/modes/confident_explore.env, which is the single source of
+             truth for how she drives. This picks a length and presses go. -->
+
+        <div class="screenrow">
+          <label>For</label>
+          <div class="segmented" id="exploreseg"></div>
+        </div>
+
+        <div class="screenrow">
+          <label for="exploremins">Custom</label>
+          <div class="calfield">
+            <input type="number" id="exploremins" min="1" max="120" step="1"
+                   placeholder="min">
+            <button id="explorego">Explore</button>
+          </div>
+        </div>
+
+        <button class="explorestop" id="explorestop" hidden>Stop exploring</button>
+
+        <p class="drivenote" id="explorenote"></p>
+        <p class="drivenote" id="exploremap"></p>
+      </div>
+    </section>
+
     <section class="panel">
       <details class="calib">
         <summary>

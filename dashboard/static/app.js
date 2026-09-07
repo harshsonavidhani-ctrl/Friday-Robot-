@@ -270,6 +270,107 @@ function buildScreen() {
   $('dismissring').onclick = () => screenPost({ action: 'dismiss' });
 }
 
+/* --- explore mode ----------------------------------------------------
+   Starts rl/modes/confident_explore for a chosen number of minutes. The mode's
+   own settings are NOT editable from here on purpose -- they live in
+   rl/modes/confident_explore.env, which is the single record of the run this
+   was frozen from.
+
+   THE DASHBOARD GOES DOWN DURING A RUN, AND THAT IS THE MODE WORKING, NOT A
+   CRASH. confident_explore sets MODE_QUIET_SERVICES=1, so run_localnav.sh
+   stops the face, the brain and this dashboard for the duration -- measured,
+   that is the difference between a 77 ms control loop and a 203 ms one. The
+   EXIT trap starts all three again when she parks, so this page reconnects on
+   its own. Saying so in the panel is the whole reason this note exists: the
+   first person to press the button will otherwise think they broke it. */
+const EXPLORE_STEPS = [5, 10, 20];
+let exploreState = {};
+
+function buildExplore() {
+  if (!$('exploreseg')) return;
+
+  const seg = $('exploreseg');
+  seg.innerHTML = '';
+  for (const mins of EXPLORE_STEPS) {
+    const b = document.createElement('button');
+    b.className = 'seg';
+    b.textContent = mins + 'm';
+    b.onclick = () => explorePost({ action: 'start', minutes: mins });
+    seg.appendChild(b);
+  }
+
+  $('explorego').onclick = () => {
+    const mins = Number($('exploremins').value);
+    if (!mins || mins < 1) { toast('How many minutes?', true); return; }
+    explorePost({ action: 'start', minutes: mins });
+  };
+
+  $('explorestop').onclick = () => explorePost({ action: 'stop' });
+}
+
+async function explorePost(body) {
+  try {
+    const r = await fetch('/api/explore', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { toast(await r.text(), true); return; }
+    const j = await r.json();
+    toast(j.result);
+    $('exploremins').value = '';
+    paintExplore(j);
+  } catch (e) { toast(String(e), true); }
+}
+
+async function refreshExplore() {
+  try { paintExplore(await (await fetch('/api/explore')).json()); }
+  catch { /* the dashboard is stopped during a run; the panel keeps its text */ }
+}
+
+function paintExplore(state) {
+  if (!state || !$('explorenow')) return;
+  exploreState = state;
+  const running = !!state.running;
+
+  const badge = $('explorenow');
+  badge.textContent = running
+    ? (state.minutes ? `out · ${state.minutes}m` : 'out')
+    : 'idle';
+  badge.classList.toggle('urgent', running);
+
+  $('explorestop').hidden = !running;
+  // No second way to start a run while one is going: the ports are exclusive
+  // and the second run would abort on them anyway.
+  for (const b of $('exploreseg').children) b.disabled = running;
+  $('explorego').disabled = running;
+  $('exploremins').disabled = running;
+
+  const last = state.last || {};
+  if (running) {
+    $('explorenote').textContent =
+      'She is out. The face, the brain and this dashboard stop while she ' +
+      'drives — that is the mode, and they all come back when she parks.';
+  } else if (last.state) {
+    const when = last.ended ? new Date(last.ended).toLocaleTimeString(
+      'en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' }) : '';
+    // 134 is the known teardown SIGABRT, which happens after everything is
+    // written. The mode script already classifies it; don't paint it as red.
+    const ok = last.state === 'completed'
+            || last.state === 'completed_with_teardown_abort';
+    $('explorenote').textContent =
+      `Last run ${when}: ${last.state.replace(/_/g, ' ')}` +
+      (ok ? '.' : ` (exit ${last.exit_code}).`);
+  } else {
+    $('explorenote').textContent =
+      'Runs the saved confident_explore mode. Pick a length, or type one.';
+  }
+
+  const map = state.map || {};
+  $('exploremap').textContent = map.explored_m2
+    ? `Map vaulted: ${map.explored_m2} m² — kept permanently, never deleted.`
+    : '';
+}
+
 /* The app row is rebuilt from the robot's own list, so it has to survive that
    list changing under it. */
 function paintApps() {
@@ -594,6 +695,7 @@ async function heartbeat() {
   applyCams(s.cameras || {});     // picks up hot-plugs and other viewers
   paintRobot(s.robot_online);
   paintScreen(s.screen);          // rides the same beat; no extra request
+  refreshExplore();               // cheap, and the panel must not go stale
 }
 
 /* friday-mcp is a separate service from this one, so the dashboard opens and
@@ -637,6 +739,9 @@ function showPane(id) {
   }
   setActive(state.mood);
   paintScreen(state.screen);
+
+  buildExplore();
+  await refreshExplore();
 
   connect();
   setInterval(heartbeat, 4000);

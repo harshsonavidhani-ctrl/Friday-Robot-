@@ -703,3 +703,20 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
 .badge.urgent{color:var(--c-call);border-color:rgba(255,171,77,.5)}
 @keyframes ringpulse{0%,100%{opacity:1}50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){ .ringdot{animation:none} }
+
+/* --- explore mode ---------------------------------------------------
+   Stopping a driving robot is the one control on this panel that has to be
+   findable without reading: full width, and the same warm alert colour the
+   ringing-alarm row uses, because it is the same kind of "act now" button. */
+.explorestop{
+  display:block;width:100%;margin-top:4px;padding:9px 14px;
+  border-radius:999px;background:var(--c-call);border:0;color:#1a1204;
+  font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  cursor:pointer;touch-action:manipulation;
+}
+.explorestop:hover{filter:brightness(1.12)}
+.explorestop[hidden]{display:none}
+/* A disabled control during a run reads as "not now", not as broken. */
+#panel-explore .seg:disabled,
+#panel-explore button:disabled,
+#panel-explore input:disabled{opacity:.4;cursor:not-allowed}

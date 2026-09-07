@@ -18,6 +18,9 @@ Serves:
     GET  /ca.crt               the local CA, to install on a phone once
     POST /api/camera/{which}   {"on": false} -> switch a camera off
     POST /api/motor            {"direction": "forward", "seconds": 0.5}
+    GET  /api/explore          is she out exploring, and what the vault holds
+    POST /api/explore          {"action": "start", "minutes": 10} | {"action":
+                                          "stop"}
     GET  /api/screen           what is on the 7" panel, and what is scheduled
     POST /api/screen           {"action": "alarm"|"timer"|"launch"|"dismiss"|
                                           "cancel", ...}
@@ -401,6 +404,144 @@ async def cam_stream(request: web.Request) -> web.StreamResponse:
     return response
 
 
+# --- exploration mode ------------------------------------------------
+#
+# THE MODE ITSELF IS NOT TOUCHED FROM HERE. Harsh, 2026-09-08: "no changes in
+# exploration mode pls it will be untoched only it will be wired up". Every flag
+# still comes from rl/modes/confident_explore.env; this only chooses how many
+# minutes and presses start.
+
+EXPLORE_DEFAULT_UNIT = "friday-explore.service"        # the frozen 20-minute run
+EXPLORE_MINUTES_MAX = 120
+EXPLORE_STATUS_FILE = config.ROOT / "state" / "explore_mode.json"
+EXPLORE_VAULT_META = config.ROOT / "state" / "map-permanent" / "vault.json"
+
+
+def _systemctl(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["systemctl", "--user", *args],
+                          capture_output=True, text=True, timeout=10)
+
+
+def _explore_active() -> tuple[str | None, int | None]:
+    """The exploration unit running right now, and how many minutes it is for.
+
+    BOTH the plain unit and any @minutes instance are looked for, because a run
+    can be started from here, from the CLI or by the brain -- and stopping the
+    wrong one would leave a robot driving with nothing watching it.
+
+    `activating` matters as much as `active`: these are Type=oneshot units, so
+    systemd reports a run IN PROGRESS as "activating (start)". Checking only for
+    "active" would report every live run as stopped.
+    """
+    try:
+        out = _systemctl("list-units", "--no-legend", "--no-pager",
+                         "--state=active", "--state=activating",
+                         "friday-explore*")
+    except Exception:                                   # noqa: BLE001
+        return None, None
+    for line in out.stdout.splitlines():
+        unit = line.replace("\u25cf", " ").replace("*", " ").split()
+        if not unit or not unit[0].startswith("friday-explore"):
+            continue
+        name = unit[0]
+        found = re.search(r"@(\d+)\.service$", name)
+        return name, (int(found.group(1)) if found else None)
+    return None, None
+
+
+def _explore_state() -> dict:
+    """What the dashboard needs to paint the panel: is she out, for how long,
+    and -- because this is the thing Harsh asked to be sure of -- how much map
+    is safely in the vault."""
+    unit, minutes = _explore_active()
+    mode: dict = {}
+    try:
+        mode = json.loads(EXPLORE_STATUS_FILE.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    vault: dict = {}
+    try:
+        vault = json.loads(EXPLORE_VAULT_META.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    return {
+        "running": unit is not None,
+        "unit": unit,
+        "minutes": minutes,
+        "max_minutes": EXPLORE_MINUTES_MAX,
+        # The mode file is written on every exit path including a kill, so the
+        # last run's verdict is always readable even after a crash.
+        "last": {
+            "state": mode.get("state"),
+            "started": mode.get("started"),
+            "ended": mode.get("ended"),
+            "exit_code": mode.get("exit_code"),
+            "log": mode.get("log"),
+        },
+        "map": {
+            "explored_m2": vault.get("explored_m2"),
+            "saved_at": vault.get("saved_at"),
+        },
+    }
+
+
+async def api_explore_get(request: web.Request) -> web.Response:
+    return web.json_response(_explore_state())
+
+
+async def api_explore_post(request: web.Request) -> web.Response:
+    """Start or stop a run. Two actions, both of them one systemctl call."""
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+
+    action = str(payload.get("action", "")).strip().lower()
+    unit, _ = _explore_active()
+
+    if action == "stop":
+        if unit is None:
+            return web.json_response({"ok": True, "result": "she is not out",
+                                      **_explore_state()})
+        # --no-block: the EXIT trap in run_localnav.sh has up to 90 s to put
+        # friday-mcp, the face, the brain and the dashboard back, and a request
+        # that waited for it would time out long before.
+        done = _systemctl("stop", "--no-block", unit)
+        if done.returncode != 0:
+            raise web.HTTPBadRequest(text=done.stderr.strip()[:300] or "stop failed")
+        return web.json_response({"ok": True, "result": "stopping — she parks "
+                                  "and her services come back",
+                                  **_explore_state()})
+
+    if action != "start":
+        raise web.HTTPBadRequest(text="action must be start or stop")
+
+    if unit is not None:
+        raise web.HTTPBadRequest(text=f"already exploring ({unit})")
+
+    try:
+        minutes = int(payload.get("minutes", 0))
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="minutes must be a whole number")
+    if not 1 <= minutes <= EXPLORE_MINUTES_MAX:
+        raise web.HTTPBadRequest(
+            text=f"minutes must be between 1 and {EXPLORE_MINUTES_MAX}")
+
+    # --no-block IS NOT OPTIONAL. These are Type=oneshot units, so a plain
+    # `systemctl start` does not return until the whole run has finished -- the
+    # request would hang for the entire exploration and this handler would block
+    # the event loop with it. With --no-block systemd takes the job and answers
+    # straight away.
+    done = _systemctl("start", "--no-block", f"friday-explore@{minutes}.service")
+    if done.returncode != 0:
+        raise web.HTTPBadRequest(text=done.stderr.strip()[:300] or "start failed")
+    return web.json_response({
+        "ok": True,
+        "result": f"exploring for {minutes} min",
+        **_explore_state(),
+    })
+
+
 def _face_is_running() -> bool:
     """Whether friday_face.py is actually up -- the header dot reflects the
     face process, not just this server."""
@@ -439,6 +580,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/motor/speed", api_motor_speed)
     app.router.add_get("/api/screen", api_screen_get)
     app.router.add_post("/api/screen", api_screen_post)
+    app.router.add_get("/api/explore", api_explore_get)
+    app.router.add_post("/api/explore", api_explore_post)
 
     async def index(_request: web.Request) -> web.StreamResponse:
         return web.FileResponse(STATIC / "index.html")
