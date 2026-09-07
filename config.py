@@ -24,7 +24,11 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 # --- Brain ---------------------------------------------------------------
 MODEL_MAIN = "claude-sonnet-5"              # reasoning, new situations
-MODEL_FAST = "claude-haiku-4-5-20251001"    # reflexes, simple classification
+MODEL_FAST = "claude-haiku-4-5"            # reflexes, simple classification
+# ⚠ NO DATE SUFFIX. This was "claude-haiku-4-5-20251001", which the API
+# rejects -- the model IDs are complete as written and a date-suffixed
+# variant is a 404, not an older pin. Nothing caught it because the brain
+# has never had an API key to call with.
 SYSTEM_PROMPT_FILE = ROOT / "personality.md"
 MAX_REPLY_SENTENCES = 3
 ENABLE_WEB_SEARCH = True
@@ -962,6 +966,31 @@ GOTO_MAX_LEGS = 120
 # saved state/map.npz was 2.2 KB on 2026-09-08, so this refuses today and is
 # meant to: map the room first.
 GOTO_MIN_MAP_M2 = 6.0
+
+# --- Curiosity (step 9 §7) -----------------------------------------------
+# curiosity.py. She glances at something that does not match anything she has
+# seen in the last few frames. It only ever SUGGESTS a turn -- the caller drives
+# through the guarded movement tools, so the safety interrupt is untouched.
+CURIOSITY_GRID = (12, 16)      # rows, columns the frame is reduced to
+CURIOSITY_MEMORY = 6           # frames kept as "recently seen"
+# Mean absolute difference between standardised grids. Both frames are unit
+# spread, so ~0.6 is "a different scene" and ~0.2 is "the same scene, moved".
+CURIOSITY_THRESHOLD = 0.55
+# Long enough that a look does not immediately justify another look: after
+# turning, the view IS new, and without this curiosity is an infinite loop.
+CURIOSITY_COOLDOWN_S = 20.0
+# How far to turn when the change is at the very edge of the frame. A BEHAVIOUR
+# KNOB, NOT A FIELD OF VIEW -- this camera's FOV has never been measured and
+# deriving one would be the ToF mistake again. Small on purpose: a glance.
+CURIOSITY_LOOK_MAX_DEG = 25.0
+
+# The least spread a reduced frame must have before it is worth comparing, in
+# the units of the incoming frame (grey levels, so 0-255 for a camera). Below
+# this it is treated as blank. NOT a tiny epsilon: standardising near-flat
+# sensor noise divides by its own tiny spread and turns it into a convincing
+# pattern -- measured at 0.80 against a 0.55 threshold, i.e. a dead camera
+# would have looked like the most interesting thing in the room.
+CURIOSITY_MIN_CONTRAST = 1.0
 
 # ⚠ SET TO 1 = THE OLD SINGLE SLAM, WHICH IS WHERE THIS SITS UNTIL THE
 # STICTION THRESHOLD IS MEASURED. Ramping is worth having -- Harsh feels the

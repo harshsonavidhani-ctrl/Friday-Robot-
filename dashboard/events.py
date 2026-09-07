@@ -99,10 +99,24 @@ def sse_format(event: dict) -> bytes:
 
 # Published per-million-token prices, so the footer shows a real number
 # rather than a placeholder. Update if Anthropic's pricing changes.
+# Anthropic first-party rates, USD per million tokens. Checked 2026-09-08
+# against the current model table; the previous values here were guesses that
+# were wrong in both directions -- sonnet-5 was listed at 3/15 (it is 2/10) and
+# opus-5 at 15/75 (it is 5/25), so every figure the dashboard has ever shown was
+# overstated, opus by 3x.
+#
+# ⚠ THE KEY IS THE EXACT MODEL ID AND DATE SUFFIXES ARE NOT VALID. The old
+# "claude-haiku-4-5-20251001" is rejected by the API, and because
+# turn_cost_usd returns 0.0 for an unknown key it would ALSO have silently
+# logged every Haiku call as costing nothing -- a cost log that reads $0.00 is
+# indistinguishable from one that is working. Unknown models are now loud.
+import logging as _logging
+_LOG = _logging.getLogger("friday.cost")
+
 PRICING_USD_PER_MTOK = {
-    "claude-sonnet-5":            {"input": 3.00, "output": 15.00},
-    "claude-opus-5":              {"input": 15.00, "output": 75.00},
-    "claude-haiku-4-5-20251001":  {"input": 1.00, "output": 5.00},
+    "claude-opus-5":     {"input": 5.00, "output": 25.00},
+    "claude-sonnet-5":   {"input": 2.00, "output": 10.00},
+    "claude-haiku-4-5":  {"input": 1.00, "output": 5.00},
 }
 
 
@@ -117,6 +131,11 @@ def turn_cost_usd(model: str, input_tokens: int, output_tokens: int,
     """
     price = PRICING_USD_PER_MTOK.get(model)
     if price is None:
+        # NOT silently zero. A model missing from the table is a typo or a new
+        # model, and both must be visible: returning 0.0 made a broken cost log
+        # look like a cheap day.
+        _LOG.warning("no price for %r -- its cost is being logged as 0.00. "
+                     "Add it to PRICING_USD_PER_MTOK.", model)
         return 0.0
     per_tok_in = price["input"] / 1_000_000
     per_tok_out = price["output"] / 1_000_000
