@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -523,6 +524,67 @@ def record_ambient(seconds: float, path: Path) -> int:
     return 0 if size > RATE else 1
 
 
+
+def _fires_nobody_answered(log_path: Path | None = None) -> set[str]:
+    """Fire filenames that the turn log says were followed by silence.
+
+    A false fire and a real one are indistinguishable by SCORE -- measured over
+    415 wakes, the false ones score HIGHER (median 0.98) than the real ones
+    (0.83). But they differ in what happens next: a person who says "hey
+    Friday" then says something. This pairs each fire clip with the turn it
+    started, by timestamp, and reports the ones where nothing was said.
+
+    Returns an empty set on any problem. A missing or unreadable log must
+    degrade the review to what it was, never break it.
+    """
+    log_path = log_path or (config.ROOT / "logs" / "friday.log")
+    try:
+        text = log_path.read_text(errors="replace")
+    except OSError:
+        return set()
+
+    # "[turn 7] WAKE ..." opens a turn; the first outcome after it closes one.
+    quiet: set[str] = set()
+    pending: dict[str, str] = {}          # turn number -> "YYYYmmdd-HHMMSS"
+    spoke: set[str] = set()
+    stamps: dict[str, str] = {}
+    for line in text.splitlines():
+        found = re.search(r"\[turn (\d+)\] ([A-Z][A-Z -]*)", line)
+        if not found:
+            continue
+        turn, event = found.group(1), found.group(2).strip()
+        when = line[:19]
+        if event == "WAKE":
+            try:
+                stamp = (when[:4] + when[5:7] + when[8:10] + "-"
+                         + when[11:13] + when[14:16] + when[17:19])
+            except IndexError:
+                continue
+            pending[turn] = stamp
+            stamps[turn] = stamp
+            spoke.discard(turn)
+        elif turn in pending:
+            if event == "TRANSCRIBED" and 'TRANSCRIBED ""' not in line:
+                spoke.add(turn)
+            elif event in ("NOTHING SAID", "ABANDONED", "DONE", "FAILED"):
+                if turn not in spoke:
+                    quiet.add(pending[turn])
+                pending.pop(turn, None)
+
+    # The clip is named for the moment of the fire; the WAKE line is logged in
+    # the same second, but allow a second either side rather than lose a match
+    # to a rounding boundary.
+    wanted: set[str] = set()
+    for stamp in quiet:
+        wanted.add(stamp)
+    out = set()
+    for clip in (config.WAKE_FIRE_DIR).glob("fire-*.wav"):
+        stamp = "-".join(clip.stem.split("-")[1:3])
+        if stamp in wanted:
+            out.add(clip.name)
+    return out
+
+
 def review_fires(fire_dir: Path, negatives_dir: Path,
                  samples_dir: Path) -> int:
     """Play back every live fire and ask what it actually was.
@@ -541,6 +603,7 @@ def review_fires(fire_dir: Path, negatives_dir: Path,
     import subprocess
 
     clips = sorted(fire_dir.glob("fire-*.wav"))
+    silence = _fires_nobody_answered()
     if not clips:
         print(f"no harvested fires in {fire_dir}.\n"
               f"Leave Friday running through a normal conversation first — "
@@ -560,12 +623,20 @@ def review_fires(fire_dir: Path, negatives_dir: Path,
     kept = {"n": 0, "y": 0, "s": 0}
     for index, clip in enumerate(clips, 1):
         score = clip.stem.rsplit("-", 1)[-1]
+        # A HINT, NEVER AN ANSWER. This comes from the turn log -- whether a
+        # human said anything in the eight seconds after the fire -- which is
+        # evidence the detector did not produce and cannot be fooled by its own
+        # confidence. It is still only a hint: a real wake followed by a change
+        # of mind looks identical. The prompt is unchanged and nothing is
+        # pre-selected, because the moment this picks the answer it is the
+        # automatic labelling the docstring above rules out.
+        hint = "  [nobody spoke after this one]" if clip.name in silence else ""
         while True:
             subprocess.run(["pw-play", f"--target={config.SPEAKER_DEVICE}",
                             str(clip)], env=env,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             answer = input(f"  [{index}/{len(clips)}] {clip.name} "
-                           f"(scored {score})  n/y/s/r/q> ").strip().lower()
+                           f"(scored {score}){hint}  n/y/s/r/q> ").strip().lower()
             if answer == "r":
                 continue
             break

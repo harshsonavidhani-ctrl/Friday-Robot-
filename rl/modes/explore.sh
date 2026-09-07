@@ -73,11 +73,17 @@ ARGS=(--motor "$MODE_MOTOR"
       --duration "$MODE_DURATION"
       --navigator-speed-authority "$MODE_NAV_AUTHORITY")
 [ "${MODE_VOICE:-0}" = "1" ] && ARGS+=(--voice)
-# The other half of the 21:18 run: face, brain and dashboard down for the
-# duration. run_localnav.sh has always had the flag; it was never passed from
-# here, which is why every mode run since has driven with a 130-200 ms loop
-# against a 100 ms deadline. See confident_explore.env for the measurements.
-[ "${MODE_QUIET_SERVICES:-0}" = "1" ] && ARGS+=(--quiet-services)
+# Which services go quiet for the run. This was face + brain + dashboard (the
+# 21:18 run); it is the face alone since 2026-09-08, so the dashboard's stop
+# button stays reachable while she drives. See confident_explore.env, which is
+# the single source of truth for the list and carries the measurements.
+# MODE_QUIET_UNITS names the units to stop; MODE_QUIET_SERVICES is the older
+# all-three switch. The named list wins, because it is the more specific one.
+if [ -n "${MODE_QUIET_UNITS:-}" ]; then
+    ARGS+=(--quiet-units "$MODE_QUIET_UNITS")
+elif [ "${MODE_QUIET_SERVICES:-0}" = "1" ]; then
+    ARGS+=(--quiet-services)
+fi
 # Reverse escape is ON in the loop; this is how it gets turned OFF from the mode
 # file without touching code. Same shape as every other MODE_ flag here.
 [ "${MODE_REVERSE_ESCAPE:-1}" = "0" ] && ARGS+=(--no-reverse-escape)

@@ -71,12 +71,29 @@ fi
 #
 # --quiet-services puts the old behaviour back, and it is what to use when the
 # question is "how well can she navigate" rather than "how well does she demo".
+#
+# --quiet-units "a.service b.service" NAMES THE LIST INSTEAD OF ASSUMING IT.
+# Harsh, 2026-09-08: "just like dont stop just the face and keep the dashboard
+# alive during the run as well as add the stop button in dashboard". The stop
+# button lives IN the dashboard, so a run that stops the dashboard is a run
+# nobody can stop from the phone -- the control and the thing it controls
+# cannot be the same process. The face is still stopped, because the face is
+# the one that actually costs a core (84.5%, measured); friday-brain was the
+# other expensive one until the lock convoy in stt.Subscription.frames() was
+# fixed, and friday-dashboard was never about CPU at all -- it is ~2% idle.
 CPU_UNITS=""
 QUIET_SERVICES=0
+prev_q=""
 for a in "$@"; do
     [ "$a" = "--quiet-services" ] && QUIET_SERVICES=1
+    case "$prev_q" in --quiet-units) CPU_UNITS="$a" ;; esac
+    case "$a" in --quiet-units=*) CPU_UNITS="${a#--quiet-units=}" ;; esac
+    prev_q="$a"
 done
-[ "$QUIET_SERVICES" = "1" ] && \
+# --quiet-services keeps its old meaning (face + brain + dashboard) so an
+# existing paste still does what it always did; --quiet-units wins when both
+# are given, because it is the more specific request.
+[ "$QUIET_SERVICES" = "1" ] && [ -z "$CPU_UNITS" ] && \
     CPU_UNITS="friday-face.service friday-brain.service friday-dashboard.service"
 STOPPED_UNITS=""
 KEEP_SERVICES=0
@@ -214,8 +231,15 @@ if [ "$want_bb" = "1" ]; then
 fi
 
 FWD_ARGS=()
+skip_next=0
 for a in "$@"; do
-    case "$a" in --keep-services|--quiet-services) continue ;; esac
+    # --quiet-units takes a VALUE, so dropping the flag alone would leave the
+    # unit list behind to reach argparse as a stray positional and abort the run.
+    if [ "$skip_next" = "1" ]; then skip_next=0; continue; fi
+    case "$a" in
+        --keep-services|--quiet-services|--quiet-units=*) continue ;;
+        --quiet-units) skip_next=1; continue ;;
+    esac
     FWD_ARGS+=("$a")
 done
 
