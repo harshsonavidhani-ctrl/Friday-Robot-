@@ -187,7 +187,12 @@
              run -- for a chosen number of minutes. The MODE is not configured
              from here and must not be: its flags live in
              rl/modes/confident_explore.env, which is the single source of
-             truth for how she drives. This picks a length and presses go. -->
+             truth for how she drives. This picks a length and presses go.
+
+             The badge reads starting -> driving, not just "out": there is a
+             ~45 s startup before the wheels do anything, and a run can reach
+             its control loop and still sit reflex-stopped against a wall. The
+             note below says which, because from here they look the same. -->
 
         <div class="screenrow">
           <label>For</label>

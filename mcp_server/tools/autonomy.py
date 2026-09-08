@@ -48,7 +48,15 @@ from mcp_server.registry import tool
 
 log = logging.getLogger("friday.tools.autonomy")
 
-UNIT = "friday-explore.service"
+# A run is started as friday-explore@<minutes>.service and found by prefix --
+# see _active_unit(). The plain `friday-explore.service` still exists for a run
+# started by hand and is matched by that same prefix, so nothing here names one
+# unit and misses the other.
+#
+# scripts/explore_for.sh refuses anything above this, and the unit name IS the
+# minutes, so clamp here rather than handing systemd an instance that can only
+# fail after the run has already been announced.
+EXPLORE_MINUTES_MAX = 120
 # The mode's own default is 1200 s. The lease is deliberately longer: it has to
 # outlast the run plus the teardown that restores services, and an over-long
 # lease costs nothing (returning it is explicit, and expiry is the backstop for
@@ -67,6 +75,34 @@ def _systemctl(*args: str) -> tuple[int, str]:
 # or rl/modes/explore.sh from a terminal -- is not owned by the unit, so
 # `systemctl is-active` says nothing about it. "Stop" has to reach that one too.
 RUN_PROCESS = "friday_localnav_deploy.py"
+
+
+def _active_unit() -> str | None:
+    """Whichever exploration unit is out right now, or None.
+
+    A run reaches systemd by more than one name: `friday-explore.service` (the
+    frozen 20-minute default, started by hand) and
+    `friday-explore@<minutes>.service` (this tool and the dashboard's button).
+    Matching only the first meant "stop" could not reach a run started from the
+    phone, and `_running()` reported a driving robot as idle -- which is how a
+    second run gets started on top of the first, fighting it for the ports.
+
+    `activating` counts as much as `active`: these are Type=oneshot units, so
+    systemd reports a run IN PROGRESS as "activating (start)", and a check for
+    "active" alone calls every live run stopped.
+    """
+    try:
+        done = subprocess.run(
+            ("systemctl", "--user", "list-units", "--no-legend", "--no-pager",
+             "--state=active", "--state=activating", "friday-explore*"),
+            capture_output=True, text=True, timeout=20)
+    except Exception:                               # noqa: BLE001
+        return None
+    for line in done.stdout.splitlines():
+        fields = line.replace("●", " ").replace("*", " ").split()
+        if fields and fields[0].startswith("friday-explore"):
+            return fields[0]
+    return None
 
 
 def _run_pids() -> list[int]:
@@ -107,8 +143,7 @@ def _run_pids() -> list[int]:
 
 
 def _running() -> bool:
-    code, _ = _systemctl("is-active", "--quiet", UNIT)
-    return code == 0 or bool(_run_pids())
+    return _active_unit() is not None or bool(_run_pids())
 
 
 @tool
@@ -132,22 +167,37 @@ def start_exploration(minutes: float | None = None) -> str:
         return json.dumps({"started": False,
                            "why": "I am already exploring. Say stop to end it."})
 
-    run_s = DEFAULT_RUN_S if minutes is None else max(30.0, float(minutes) * 60.0)
+    # MINUTES HAS TO REACH THE RUN, NOT JUST THE LEASE. This used to start
+    # `friday-explore.service`, whose duration is MODE_DURATION=1200 in the
+    # mode file -- so "explore for five minutes" leased the hardware for five
+    # and then drove for twenty. The instance name IS the minutes, and
+    # scripts/explore_for.sh turns it into --duration, which argparse takes
+    # last and therefore wins over the mode's own value.
+    mins = 20 if minutes is None else int(round(max(1.0, float(minutes))))
+    mins = max(1, min(mins, EXPLORE_MINUTES_MAX))
+    run_s = mins * 60.0
+    unit = f"friday-explore@{mins}.service"
 
     # LEASE FIRST, START SECOND. The other order races: the run would try to
-    # open the LiDAR while this process still had it, and lose.
+    # open the LiDAR while this process still had it, and lose. Leasing here --
+    # inside the server that HOLDS the ports -- is the whole mechanism: it
+    # closes them, so rl/run_localnav.sh finds nothing holding /dev/ttyUSB*
+    # and leaves this server up instead of stopping it.
     hardware.lease_out(run_s + LEASE_MARGIN_S, holder="friday-explore")
-    code, out = _systemctl("start", UNIT)
+    # --no-block: a Type=oneshot unit's `start` does not return until the whole
+    # run has finished, so a plain start would block this tool call for the
+    # entire drive and then fail on the subprocess timeout.
+    code, out = _systemctl("start", "--no-block", unit)
     if code != 0:
         hardware.lease_return()
-        log.error("could not start %s: %s", UNIT, out)
+        log.error("could not start %s: %s", unit, out)
         return json.dumps({"started": False, "why": out or "systemctl refused"})
 
-    log.warning("autonomous exploration started for %.0fs", run_s)
+    log.warning("autonomous exploration started for %.0fs (%s)", run_s, unit)
     return json.dumps({
         "started": True,
-        "minutes": round(run_s / 60.0, 1),
-        "unit": UNIT,
+        "minutes": mins,
+        "unit": unit,
         "status_file": str(config.ROOT / "state" / "explore_mode.json"),
         "note": "my motors and range sensors belong to the run until it ends; "
                 "every other tool still works",
@@ -167,8 +217,14 @@ def stop_exploration() -> str:
         return "I was not exploring. Wheels are mine again anyway."
 
     # The unit first, if that is how it was started -- its teardown stops the
-    # motors and puts her services back.
-    _systemctl("stop", UNIT)
+    # motors and puts her services back. Whichever unit is actually out: a run
+    # started from the phone is friday-explore@<minutes>.service, and stopping
+    # the plain name would report success while she kept driving.
+    # --no-block: the EXIT trap has up to 90 s to restore her services, and a
+    # tool call that waited for it would time out long before.
+    out_unit = _active_unit()
+    if out_unit:
+        _systemctl("stop", "--no-block", out_unit)
 
     # ...and then any run started by hand, which the unit knows nothing about.
     # SIGINT, not SIGKILL: run_localnav.sh traps it to restore friday-mcp,

@@ -30,6 +30,14 @@ WorkingDirectory=/home/harsh/friday/rl
 ExecStartPre=-/home/harsh/friday/venv/bin/python /home/harsh/friday/scripts/map_vault.py backup --reason "before friday-explore@%i"
 ExecStart=/home/harsh/friday/scripts/explore_for.sh %i
 ExecStopPost=-/home/harsh/friday/venv/bin/python /home/harsh/friday/scripts/map_vault.py backup --reason "after friday-explore@%i"
+# GIVE THE HARDWARE BACK. friday-mcp stays UP for the run now and holds no
+# serial port while the lease is out (mcp_server/hardware.py). ExecStopPost is
+# the one step that runs on EVERY exit path -- finished, crashed, stopped from
+# the phone, killed -- so it is where the lease is returned. Without it a run
+# that ended without anyone calling stop_exploration() would leave her unable
+# to open her own motors until the lease expired. `-` prefix: this must never
+# turn a finished run into a failed unit.
+ExecStopPost=-/home/harsh/friday/venv/bin/python /home/harsh/friday/scripts/return_lease.py
 # The mode's own flags come from rl/modes/confident_explore.env. Nothing is set
 # here on purpose -- two places to change is how a "frozen" configuration
 # quietly stops being the one that was measured.

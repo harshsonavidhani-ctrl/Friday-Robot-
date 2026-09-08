@@ -276,13 +276,18 @@ function buildScreen() {
    rl/modes/confident_explore.env, which is the single record of the run this
    was frozen from.
 
-   THE DASHBOARD GOES DOWN DURING A RUN, AND THAT IS THE MODE WORKING, NOT A
-   CRASH. confident_explore sets MODE_QUIET_SERVICES=1, so run_localnav.sh
-   stops the face, the brain and this dashboard for the duration -- measured,
-   that is the difference between a 77 ms control loop and a 203 ms one. The
-   EXIT trap starts all three again when she parks, so this page reconnects on
-   its own. Saying so in the panel is the whole reason this note exists: the
-   first person to press the button will otherwise think they broke it. */
+   ONLY THE FACE GOES DOWN DURING A RUN, since 2026-09-08 -- this dashboard
+   stays up, because the stop button is in it. The cameras are the price: the
+   Pi hands both /dev/video nodes to the robot for the duration, so the camera
+   panel goes dark while she is out and comes back when she parks. That is the
+   mode working, not a crash.
+
+   THE BADGE MUST NOT SAY "OUT" FOR A ROBOT THAT IS NOT MOVING. Starting a run
+   and exploring are ~45 s and several failure modes apart: every failure so
+   far happened before the control loop, and a run can reach the loop and still
+   sit reflex-stopped against a wall for its whole length. Both look identical
+   from a panel that only knows whether systemd took the job, which is what
+   "it says friday is turning on exploration but doesn't explore" was. */
 const EXPLORE_STEPS = [5, 10, 20];
 let exploreState = {};
 
@@ -332,10 +337,12 @@ function paintExplore(state) {
   exploreState = state;
   const running = !!state.running;
 
+  const prog = state.progress || {};
   const badge = $('explorenow');
-  badge.textContent = running
-    ? (state.minutes ? `out · ${state.minutes}m` : 'out')
-    : 'idle';
+  const forMins = state.minutes ? ` · ${state.minutes}m` : '';
+  badge.textContent = !running ? 'idle'
+    : prog.phase === 'driving' ? `driving${forMins}`
+    : `starting${forMins}`;
   badge.classList.toggle('urgent', running);
 
   $('explorestop').hidden = !running;
@@ -346,10 +353,28 @@ function paintExplore(state) {
   $('exploremins').disabled = running;
 
   const last = state.last || {};
-  if (running) {
+  let wrong = false;                // red note: she is out and going nowhere,
+                                    // or the last run did not finish
+  if (running && prog.phase === 'driving') {
+    // "moving" is her ACTUAL commanded output, not what the policy asked for.
+    // A robot that reflex-stops every tick is asking to drive and going
+    // nowhere, and that is the case worth naming out loud.
+    const ticks = prog.ticks ? `${prog.ticks} ticks` : 'driving';
+    const held = prog.held_pct;
+    // Stuck is not only "commanded nothing". A robot pivoting on the spot
+    // against a wall is commanding plenty and exploring none of it, which is
+    // what 550 reflex-stopped ticks looked like on 2026-09-08.
+    const stuck = prog.moving === false || held >= 80;
+    wrong = stuck;
+    $('explorenote').textContent = stuck
+      ? `Out but going nowhere — ${ticks}, ` +
+        (held != null ? `stopped on ${held}% of the last few. ` : '') +
+        'Something is right in front of her. Move her clear and she picks up again.'
+      : `Out and driving — ${ticks}. The face is down until she parks.`;
+  } else if (running) {
     $('explorenote').textContent =
-      'She is out. The face, the brain and this dashboard stop while she ' +
-      'drives — that is the mode, and they all come back when she parks.';
+      'Starting — policy, voice, the map and relocalisation take about 45 s ' +
+      'before the wheels do anything. The face is down until she parks.';
   } else if (last.state) {
     const when = last.ended ? new Date(last.ended).toLocaleTimeString(
       'en-GB', { hour12: false, hour: '2-digit', minute: '2-digit' }) : '';
@@ -357,13 +382,20 @@ function paintExplore(state) {
     // written. The mode script already classifies it; don't paint it as red.
     const ok = last.state === 'completed'
             || last.state === 'completed_with_teardown_abort';
+    // A RUN THAT DIED IN ITS FIRST MINUTE MUST NOT LOOK LIKE ONE THAT FINISHED.
+    // The badge drops back to "idle" either way, so without this the three
+    // 55-second deaths of 2026-09-08 18:38-18:41 were indistinguishable from a
+    // completed 20-minute run unless you went and read explore_mode.json.
+    wrong = !ok;
     $('explorenote').textContent =
       `Last run ${when}: ${last.state.replace(/_/g, ' ')}` +
-      (ok ? '.' : ` (exit ${last.exit_code}).`);
+      (ok ? '.' : ` (exit ${last.exit_code}) — she stopped early, ` +
+                  'nothing was explored. Press again.');
   } else {
     $('explorenote').textContent =
       'Runs the saved confident_explore mode. Pick a length, or type one.';
   }
+  $('explorenote').classList.toggle('bad', wrong);
 
   const map = state.map || {};
   $('exploremap').textContent = map.explored_m2

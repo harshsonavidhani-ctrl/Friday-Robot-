@@ -38,6 +38,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 import socket
@@ -46,6 +47,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 from aiohttp import web
@@ -59,6 +61,8 @@ import config                                          # noqa: E402
 import face_control                                    # noqa: E402
 from dashboard.cameras import BOUNDARY, CameraSet      # noqa: E402
 from dashboard.events import EVENT_TYPES, EventBus, sse_format  # noqa: E402
+
+log = logging.getLogger("friday.dashboard")
 
 STATIC = Path(__file__).resolve().parent / "static"
 STARTED = time.time()
@@ -381,6 +385,15 @@ async def cam_stream(request: web.Request) -> web.StreamResponse:
     if not camera.available:
         raise web.HTTPServiceUnavailable(
             text=f"{which} camera not present at {camera.device}")
+    # THE ROBOT OWNS THE CAMERAS WHILE SHE IS OUT. Releasing them when the run
+    # starts is not enough on its own: the UI remounts a dropped stream on its
+    # 4 s heartbeat, so ffmpeg would take the device straight back and the run
+    # would be camera-blind anyway, a few seconds later and harder to see.
+    # in a thread: this is a systemctl call, and the event loop is also serving
+    # her live log.
+    if (await asyncio.to_thread(_explore_active))[0] is not None:
+        raise web.HTTPConflict(
+            text=f"{which} camera belongs to the exploration run until she parks")
 
     response = web.StreamResponse(headers={
         "Content-Type": f"multipart/x-mixed-replace; boundary={BOUNDARY}",
@@ -449,6 +462,97 @@ def _explore_active() -> tuple[str | None, int | None]:
     return None, None
 
 
+def _explore_progress(mode: dict) -> dict:
+    """How the run is actually going, read from its own log.
+
+    "STARTED" AND "DRIVING" ARE NOT THE SAME THING, and the panel used to show
+    only the first. A run takes ~45 s to reach its control loop -- policy load,
+    Piper, the map, relocalisation -- and every failure so far has happened
+    inside that window, so the badge said "out" for a robot that had not moved
+    and was never going to. Worse, a run CAN reach the loop and still not
+    explore: measured 19:12 on 2026-09-08, 550 ticks with the reflex firing on
+    every one of them and the navigator handing back 548 for "no drivable arc",
+    which from the sofa looks exactly like a run that never started.
+
+    FOR THE RUN THAT IS OUT RIGHT NOW -- `_explore_state()` only calls this
+    when a unit is active, and the log is resolved as "the newest one written
+    since this run started", which is only unambiguous while it is live.
+
+    Only the tail is read (the log is megabytes by the end) and every failure
+    is silent: this is decoration on a panel, and it must never be able to
+    break the panel it decorates.
+    """
+    out: dict = {"phase": "starting", "ticks": None, "moving": None,
+                 "gate": None, "held_pct": None}
+    # THE LOG NAMED IN explore_mode.json IS THE PREVIOUS RUN'S FOR THE WHOLE
+    # RUN. explore.sh writes the status file ONCE at the start and resolves
+    # "log" as the newest file in state/runs at that instant -- but
+    # run_localnav.sh does not create this run's log for another ~13 s, so the
+    # name recorded is the last run's, and it is never corrected until the run
+    # ends. Measured 2026-09-08 20:06: a live run pointed at a 19:33 log.
+    #
+    # So the name is a fallback, not the answer: find the newest run log that
+    # was written at or after this run started. Rejecting the stale one is not
+    # enough on its own -- that only trades a wrong answer for a stuck one,
+    # which is what the panel did on its first live run.
+    started = mode.get("started")
+    begin = None
+    if started:
+        try:
+            begin = datetime.fromisoformat(started).timestamp()
+        except (TypeError, ValueError):
+            begin = None
+
+    candidates: list[Path] = []
+    try:
+        runs = sorted((config.ROOT / "state" / "runs").glob("run-*.log"),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+        # 5 s of slack: `started` is the shell's clock and the log's mtime is
+        # the kernel's, and a boundary miss here shows a live run as stuck.
+        candidates = [p for p in runs
+                      if begin is None or p.stat().st_mtime >= begin - 5.0]
+    except OSError:
+        candidates = []
+    if not candidates and mode.get("log"):
+        candidates = [Path(mode["log"])]
+    if not candidates:
+        return out
+
+    try:
+        path = candidates[0]
+        stat = path.stat()
+        if begin is not None and stat.st_mtime < begin - 5.0:
+            return out                              # still the previous run's
+        size = stat.st_size
+        with path.open("rb") as handle:
+            if size > 8192:
+                handle.seek(-8192, os.SEEK_END)
+            tail = handle.read().decode("utf-8", errors="replace")
+    except (OSError, ValueError):
+        return out
+    # The per-tick line, e.g.
+    #   t=  550 | lidar 0.23 | tof 0.15 | ... -> out(+0.00,-0.80) | REFLEX_STOP
+    ticks = re.findall(
+        r"t=\s*(\d+).*?out\(([-+][\d.]+),\s*([-+][\d.]+)\)\s*\|\s*(\S+)", tail)
+    if ticks:
+        # JUDGE A WINDOW, NOT ONE TICK. She pivots on a single tick while going
+        # nowhere at all -- the 19:12 run commanded a turn on its last tick
+        # after 550 consecutive reflex stops -- so a one-tick read calls a
+        # wedged robot "moving". The last 20 logged ticks are ~100 s of real
+        # behaviour and settle it.
+        window = ticks[-20:]
+        out["phase"] = "driving"
+        out["ticks"] = int(window[-1][0])
+        out["gate"] = window[-1][3]
+        out["moving"] = any(float(t[1]) != 0.0 or float(t[2]) != 0.0
+                            for t in window)
+        held = sum(1 for t in window if t[3] != "-" and "STOP" in t[3].upper())
+        out["held_pct"] = round(100 * held / len(window))
+    elif "Control loop starting" in tail:
+        out["phase"] = "driving"
+    return out
+
+
 def _explore_state() -> dict:
     """What the dashboard needs to paint the panel: is she out, for how long,
     and -- because this is the thing Harsh asked to be sure of -- how much map
@@ -469,6 +573,8 @@ def _explore_state() -> dict:
         "unit": unit,
         "minutes": minutes,
         "max_minutes": EXPLORE_MINUTES_MAX,
+        # Only meaningful while she is out; painted from the run's own log.
+        "progress": _explore_progress(mode) if unit else {},
         # The mode file is written on every exit path including a kill, so the
         # last run's verdict is always readable even after a crash.
         "last": {
@@ -503,9 +609,21 @@ async def api_explore_post(request: web.Request) -> web.Response:
         if unit is None:
             return web.json_response({"ok": True, "result": "she is not out",
                                       **_explore_state()})
+        # THROUGH THE MCP SERVER WHEN IT IS THERE, because it holds the lease.
+        # stop_exploration() stops the unit AND gives the serial devices back,
+        # so her wheels are answerable again the moment she parks rather than
+        # when the lease expires several minutes later. The unit's own
+        # ExecStopPost returns the lease too -- this is the fast path, that is
+        # the backstop, and both are just an unlink.
+        try:
+            said = await robot.call("stop_exploration")
+            return web.json_response({"ok": True, "result": said,
+                                      **_explore_state()})
+        except robot.RobotUnavailable:
+            pass                    # she is out and the server is down: stop it here
         # --no-block: the EXIT trap in run_localnav.sh has up to 90 s to put
-        # friday-mcp, the face, the brain and the dashboard back, and a request
-        # that waited for it would time out long before.
+        # her services back, and a request that waited for it would time out
+        # long before.
         done = _systemctl("stop", "--no-block", unit)
         if done.returncode != 0:
             raise web.HTTPBadRequest(text=done.stderr.strip()[:300] or "stop failed")
@@ -527,17 +645,76 @@ async def api_explore_post(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(
             text=f"minutes must be between 1 and {EXPLORE_MINUTES_MAX}")
 
-    # --no-block IS NOT OPTIONAL. These are Type=oneshot units, so a plain
-    # `systemctl start` does not return until the whole run has finished -- the
-    # request would hang for the entire exploration and this handler would block
-    # the event loop with it. With --no-block systemd takes the job and answers
-    # straight away.
-    done = _systemctl("start", "--no-block", f"friday-explore@{minutes}.service")
-    if done.returncode != 0:
-        raise web.HTTPBadRequest(text=done.stderr.strip()[:300] or "start failed")
+    # START THROUGH THE MCP SERVER, SO IT CAN LEASE THE HARDWARE TO THE RUN.
+    # Harsh, 2026-09-08: "yes wire up the lease so mcp stays up during run".
+    #
+    # THE LEASE ONLY WORKS FROM INSIDE friday-mcp. hardware.lease_out() writes
+    # the lease file AND closes this server's own motor and range-sensor
+    # handles; writing that file from here would leave friday-mcp holding
+    # /dev/ttyUSB* regardless, and rl/run_localnav.sh would abort the run on
+    # "serial ports are still held". So the tool call is the mechanism, not a
+    # convenience -- see mcp_server/tools/autonomy.start_exploration.
+    #
+    # With the lease out, run_localnav.sh takes its LEASED branch and leaves
+    # friday-mcp UP: the brain keeps its hands, the dashboard keeps the manual
+    # controls, and the face keeps its voice, while the run owns the ports.
+    leased = False
+    try:
+        answer = json.loads(await robot.call("start_exploration",
+                                             {"minutes": minutes}))
+        if not answer.get("started"):
+            # A refusal is an ANSWER, not a failure to start -- "I am already
+            # exploring" must not fall through and start a second run on top
+            # of the first, fighting it for the ports.
+            raise web.HTTPBadRequest(
+                text=str(answer.get("why", "the robot refused"))[:300])
+        leased = True
+    except robot.RobotUnavailable as exc:
+        # FALL BACK RATHER THAN REFUSE. friday-mcp being down is exactly when
+        # the button still has to work, and an unleased run is the OLD
+        # behaviour, not a broken one: run_localnav.sh simply stops friday-mcp
+        # for the duration as it always did. What is lost is the brain's hands
+        # during the run, which is worth saying but not worth refusing over.
+        log.warning("friday-mcp is not answering, starting the run unleased "
+                    "(the brain will have no hands while she drives): %s", exc)
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        # The tool answered something this cannot read. Do not guess whether
+        # the run started -- _explore_active() below is the authority.
+        log.error("start_exploration returned unreadable JSON: %s", exc)
+
+    if not leased and _explore_active()[0] is None:
+        # --no-block IS NOT OPTIONAL. These are Type=oneshot units, so a plain
+        # `systemctl start` does not return until the whole run has finished --
+        # the request would hang for the entire exploration and this handler
+        # would block the event loop with it.
+        done = _systemctl("start", "--no-block",
+                          f"friday-explore@{minutes}.service")
+        if done.returncode != 0:
+            raise web.HTTPBadRequest(
+                text=done.stderr.strip()[:300] or "start failed")
+
+    # HAND THE CAMERAS BACK BEFORE SHE NEEDS THEM. This dashboard used to be
+    # STOPPED for the duration, so its ffmpeg children released /dev/video*
+    # on the way down and the robot got them by default. Keeping it up (so the
+    # stop button stays reachable) removed that, and a V4L2 device does not
+    # survive two streaming readers: with the camera panel open, the run comes
+    # up camera-blind -- measured 2026-09-04, ZERO frames to the robot, and
+    # confirmed again in the 18:41 run, whose log says "camera up not present
+    # at startup" while run_localnav.sh names this process as the holder.
+    #
+    # A camera-blind run looks EXACTLY like a working one in the log, which is
+    # why this cannot be left to a warning nobody reads. The streams come back
+    # on the UI's own heartbeat once she parks.
+    with contextlib.suppress(Exception):            # noqa: BLE001
+        await request.app["cams"].stop_all()
+
     return web.json_response({
         "ok": True,
-        "result": f"exploring for {minutes} min",
+        "result": f"exploring for {minutes} min" +
+                  ("" if leased else " — friday-mcp is down, so this run has "
+                                     "her ports the old way and the brain has "
+                                     "no hands until she parks"),
+        "leased": leased,
         **_explore_state(),
     })
 
