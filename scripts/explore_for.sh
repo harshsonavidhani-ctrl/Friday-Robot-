@@ -58,4 +58,18 @@ fi
 # answer it. Keeping friday-mcp up needs the hardware LEASE in
 # mcp_server/hardware.py (run_localnav.sh's LEASED path), which is how
 # autonomy.start_exploration() does it. That is the next piece, not this one.
-exec "$HERE/../rl/modes/explore.sh" --duration "$(( MINUTES * 60 ))" --keep-services
+# AND SHE MAY DRIVE AT WHAT SHE SEES. --brain-target lets the brain name one
+# object from the run's own detector and nudge her toward it; the frontier
+# planner still steers whenever nothing is in view, which is most of the time.
+#
+# ⚠ INERT WITHOUT AN API KEY, WHICH IS THIS PI'S NORMAL STATE. There is no .env
+# here -- CLAUDE.md keeps ANTHROPIC_API_KEY unset while Friday is being built so
+# Claude Code bills the subscription rather than the API -- so brain_router
+# returns "skipped", no order is ever written, and the run is exactly what it
+# would have been. The flag is passed now so that exporting a key is the only
+# thing needed to turn this on, rather than a code change nobody remembers.
+#
+# Every call is Haiku through brain_router, under DAILY_SPEND_CAP_USD, logged to
+# logs/spend.jsonl. An empty room costs nothing: no sighting, no call.
+exec "$HERE/../rl/modes/explore.sh" --duration "$(( MINUTES * 60 ))" \
+     --keep-services --brain-target
