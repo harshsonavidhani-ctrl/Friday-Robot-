@@ -984,6 +984,39 @@ CURIOSITY_COOLDOWN_S = 20.0
 # deriving one would be the ToF mistake again. Small on purpose: a glance.
 CURIOSITY_LOOK_MAX_DEG = 25.0
 
+# --- brain-guided targeting during an autonomous run ---------------------
+#
+# The brain reads what the run's on-board detector can see and names one thing
+# to approach; the run nudges toward it. See rl/brain_target.py.
+#
+# ⚠ THE SAME RULE AS CURIOSITY'S ABOVE, AND FOR THE SAME REASON. A detection's
+# horizontal position is used as a FRACTION OF THE FRAME multiplied by the
+# swing below -- never as geometry. rl/friday_vision.py does carry a
+# CAM_HFOV_DEG, but it is a SPEC figure for the C270 that nobody has measured on
+# this camera, and its own comment says "used ONLY ... for narration. Nothing
+# steers on it." Steering on it would be wrong in a way nothing downstream could
+# detect. Because the nudge is re-aimed on every detection (~1 Hz) the loop
+# closes: an error in this number changes how SHARPLY she turns, never which
+# way. If someone measures the real FOV, that is the moment to make it geometric.
+TARGET_SWING_DEG = 25.0
+# How long a target the brain named stays live without being renewed. Its own
+# clock, deliberately -- the frontier planner would abandon it at 45 s
+# (explorer.TARGET_MAX_AGE_S) and the supervisor at 25 s, neither of which knows
+# the brain meant it.
+TARGET_TTL_S = 90.0
+# A sighting older than this stops steering. The detector runs at ~1 Hz, so this
+# is a few missed frames -- long enough to survive one that dropped, short
+# enough that she is never driving at where something used to be.
+TARGET_SIGHTING_STALE_S = 3.0
+# How often the run looks for a new command. One stat() per this many ticks, in
+# a directory the loop already writes to.
+TARGET_COMMAND_POLL_TICKS = 10
+# How often the brain is allowed to pick a target, and the least it will settle
+# for. The cap in brain_router (DAILY_SPEND_CAP_USD) is the hard limit; this is
+# the thing that keeps an ordinary run nowhere near it.
+TARGET_DECIDE_EVERY_S = 20.0
+TARGET_MIN_SCORE = 0.55
+
 # The least spread a reduced frame must have before it is worth comparing, in
 # the units of the incoming frame (grey levels, so 0-255 for a camera). Below
 # this it is treated as blank. NOT a tiny epsilon: standardising near-flat
