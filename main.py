@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import functools
+import json
 import logging
 import sys
 import threading
@@ -328,6 +329,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
         global WAKE
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
+        _explore_hush(source)
         face.rest()
 
         try:
@@ -525,6 +527,89 @@ def _stop_reason(text: str) -> str:
         how_far = f"about {mm / 1000:.1f} metres"
     where = "ahead" if "ahead" in text else "in the way"
     return f"Something's {where}, {how_far} off. I've stopped."
+
+
+# --- the wake word goes quiet while she is out driving -------------------
+#
+# Harsh, 2026-09-08: "while exploring mode you can stop the wake word file
+# while exploring".
+#
+# WHAT IT COSTS TO LEAVE IT ON, measured during the runs of the same evening:
+# pi_deploy speaks "Friday is starting autonomous exploration" through the
+# speaker, the detector scores Friday's OWN voice and fires -- 0.99 at
+# 18:41:40, right as she announced herself -- and every one of those false
+# wakes runs faster-whisper at ~x5 realtime on a Pi that is already missing
+# its 100 ms control deadline. Turn 37 took 96 s and transcribed "". The
+# detector itself is cheap; the TURN behind it is not, and during a run every
+# one of them is a false alarm.
+#
+# ⚠ AND IT COSTS THE VOICE STOP. "Friday, stop" cannot reach her while the
+# detector is asleep -- the stop button in the dashboard and the run's own
+# --duration are the remaining ways to end a run early. That is the trade
+# being made here, deliberately.
+EXPLORE_HUSH_POLL_S = 4.0
+# Re-armed in SLICES rather than set once for the run's length, and that is
+# the whole safety of it: if a run is SIGKILLed, explore_mode.json is left
+# saying "running" forever, and a single long sleep would leave Friday deaf
+# until someone noticed. A slice lapses on its own, so the worst a stale file
+# can cost is one slice.
+EXPLORE_HUSH_SLICE_S = 20.0
+
+
+def _exploring() -> bool:
+    """Is an autonomous run out right now? Cheap enough to ask every 4 s.
+
+    TWO SIGNALS, because neither covers every run on its own. The hardware
+    lease is held only by a run started through the MCP tool (the dashboard's
+    button, and "Friday, explore"); explore_mode.json is written by
+    rl/modes/explore.sh for EVERY run including one started by hand, on every
+    exit path including a kill. Either one being true means she is out.
+    """
+    try:
+        from mcp_server import hardware
+        if hardware.lease_active() > 0.0:
+            return True
+    except Exception:                       # noqa: BLE001 - never break the loop
+        pass
+    try:
+        status = json.loads(
+            (config.ROOT / "state" / "explore_mode.json").read_text())
+        return status.get("state") == "running"
+    except Exception:                       # noqa: BLE001
+        return False
+
+
+def _explore_hush(source) -> None:
+    """Keep the wake detector asleep for as long as she is out driving."""
+    if not hasattr(source, "sleep"):
+        return
+
+    def watch() -> None:
+        hushed = False
+        while True:
+            try:
+                out = _exploring()
+                if out:
+                    # Only re-arm as the current slice runs down, so this does
+                    # not write "asleep for 20s" to the log every 4 seconds.
+                    if source.sleeping_for() < EXPLORE_HUSH_SLICE_S / 2:
+                        source.sleep(EXPLORE_HUSH_SLICE_S)
+                    if not hushed:
+                        log.info("exploring — wake word off until she parks")
+                        hushed = True
+                elif hushed:
+                    # Do not call wake_up() on a detector this never hushed:
+                    # "Friday, go to sleep" uses the same gate, and clearing it
+                    # here would cancel a sleep Harsh actually asked for.
+                    source.wake_up()
+                    log.info("she has parked — wake word back on")
+                    hushed = False
+            except Exception as exc:        # noqa: BLE001
+                log.error("explore hush check failed: %s", exc)
+            time.sleep(EXPLORE_HUSH_POLL_S)
+
+    threading.Thread(target=watch, name="friday-explore-hush",
+                     daemon=True).start()
 
 
 def _run_local(intent, face: Face, turn: "stages.Turn") -> None:
