@@ -330,6 +330,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
         _explore_hush(source)
+        _explore_targeter(voice)
         face.rest()
 
         try:
@@ -609,6 +610,113 @@ def _explore_hush(source) -> None:
             time.sleep(EXPLORE_HUSH_POLL_S)
 
     threading.Thread(target=watch, name="friday-explore-hush",
+                     daemon=True).start()
+
+
+# --- she picks something to drive at, while she is out -------------------
+#
+# Harsh, 2026-09-08: "during run the face plus brain will be working because
+# brain will help in targetting an object and move towards it", and the target
+# is chosen "autonomously, during the run" -- no human in the loop, which it
+# could not be anyway now that the wake word is off while she drives.
+#
+# THE BRAIN CANNOT LOOK THROUGH THE CAMERA MID-RUN. The run holds both /dev/video
+# nodes and a V4L2 device does not survive two readers, so `look()` loses to
+# friday_localnav_deploy.py for the physical device and `observe`,
+# `scan_environment` and `say_what_you_see` all raise HardwareLeased. What the
+# brain gets instead is the run's OWN detector, published as text in
+# state/rl_autonomy.json -- label, score and a frame fraction. No image, and no
+# distance, because the detector has none to give.
+#
+# COST. Every call goes through brain_router, which owns the routing (DRIVE ->
+# Haiku), the DAILY_SPEND_CAP_USD ceiling and the cost log. There is deliberately
+# no second API path here. An empty room costs nothing at all: without a sighting
+# no call is made, and with no ANTHROPIC_API_KEY -- which is the state of this Pi
+# while it is being built -- decide() returns `skipped` and the run behaves
+# exactly as it does today.
+TARGET_PROMPT = (
+    "You are steering a small exploring robot. These are the only things its "
+    "camera can name right now. `where` is the object's horizontal position as "
+    "a fraction of the frame: +1 is hard left, -1 is hard right, 0 is straight "
+    "ahead. `area` is the fraction of frame it fills -- bigger is nearer, very "
+    "roughly. There is no distance measurement.\n\n"
+    "Reply with ONE label from the list, exactly as written, if it is worth "
+    "driving over to look at. Reply with NONE if nothing is. Prefer something "
+    "she has not just been to, and prefer the interesting over the ordinary. "
+    "One word, nothing else."
+)
+
+
+def _target_prompt(seen: list) -> str:
+    lines = [f"- {row.get('label')} (score {float(row.get('score', 0)):.2f}, "
+             f"where {float(row.get('where', 0)):+.2f}, "
+             f"area {float(row.get('area', 0)):.3f})" for row in seen]
+    return TARGET_PROMPT + "\n\nIn view:\n" + "\n".join(lines)
+
+
+def _explore_targeter(voice: Voice) -> None:
+    """While she is out: watch what she sees, name one thing, drive at it."""
+    import rl_control
+    from brain_router import DRIVE, BrainRouter
+
+    router = BrainRouter()
+
+    def watch() -> None:
+        last_call = 0.0
+        current = None
+        while True:
+            try:
+                if not _exploring():
+                    if current is not None:
+                        # Do not leave a standing order behind for the next run
+                        # to pick up: it would steer her at something chosen for
+                        # a room she may no longer be in.
+                        rl_control.clear()
+                        current = None
+                    time.sleep(config.TARGET_DECIDE_EVERY_S)
+                    continue
+
+                seen = rl_control.seen()
+                now = time.monotonic()
+                if not seen or now - last_call < config.TARGET_DECIDE_EVERY_S:
+                    time.sleep(2.0)
+                    continue
+                last_call = now
+
+                if not router.available():
+                    # No key: say so once per run rather than every 20 s, and
+                    # stop asking. This is the normal state while building.
+                    if current != "__nokey__":
+                        log.info("targeting is idle — no ANTHROPIC_API_KEY, so "
+                                 "she explores on her frontier planner")
+                        current = "__nokey__"
+                    time.sleep(config.TARGET_DECIDE_EVERY_S)
+                    continue
+
+                decision = asyncio.run(
+                    router.decide(DRIVE, _target_prompt(seen), max_tokens=12))
+                if not decision.answered:
+                    log.info("no target this time: %s", decision.skipped)
+                    continue
+
+                answer = (decision.text or "").strip().strip(".").lower()
+                labels = {str(r.get("label", "")).lower() for r in seen}
+                if answer in ("none", "") or answer not in labels:
+                    # An answer that is not one of the labels offered is not a
+                    # target. Driving at a hallucinated one is how she ends up
+                    # aiming at something that was never in the room.
+                    continue
+                if answer != current:
+                    rl_control.target(answer)
+                    current = answer
+                    log.info("driving at %r (%s, $%.4f)",
+                             answer, decision.model, decision.usd)
+                    voice.say(f"I can see a {answer}. Going for a look.")
+            except Exception as exc:            # noqa: BLE001
+                log.error("targeting check failed: %s", exc)
+                time.sleep(config.TARGET_DECIDE_EVERY_S)
+
+    threading.Thread(target=watch, name="friday-explore-target",
                      daemon=True).start()
 
 
