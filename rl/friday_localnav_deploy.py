@@ -67,6 +67,12 @@ from pi_deploy import ControlLoop, RobotConfig
 from friday_exploration import ExplorationConfig, ExplorationSupervisor, Phase
 from friday_voice import build_announcer
 
+# Brain-guided targeting. Inert unless --brain-target is passed: every use of it
+# below is behind `self._brain is not None`, so a run without the flag is the
+# measured configuration, unchanged. All the logic lives in brain_target.py and
+# is tested without a robot (scripts/test_brain_target.py).
+import brain_target
+
 POLICY_SOURCE = "LEROBOT_EXPERIMENTAL"
 
 LOGGER = logging.getLogger("friday.localnav")
@@ -251,6 +257,9 @@ class LeRobotExperimentalControlLoop(ControlLoop):
         self._obs_ln = np.zeros(LocalNavSpec.OBS_DIM, np.float32)
         self._last_row: dict | None = None
         self.stats.setdefault("no_target_ticks", 0)
+        # None unless --brain-target. See tick() and autonomy_state() below.
+        self._brain: "brain_target.BrainTarget | None" = None
+        self._brain_ticks = 0
 
     # ---- OBSERVE RESULT -> CONTINUE ----------------------------------------------
     def tick(self) -> dict:
@@ -264,7 +273,71 @@ class LeRobotExperimentalControlLoop(ControlLoop):
         """
         row = super().tick()
         self._last_row = row
+        self._brain_tick()
         return row
+
+    # ---- BRAIN-GUIDED TARGETING (off unless --brain-target) -----------------
+    def _brain_tick(self) -> None:
+        """Carry the brain's standing order into the planner. Never raises.
+
+        AFTER super().tick(), deliberately: this only sets up what the NEXT tick
+        will read, so a fault here can delay a target but can never sit between
+        the policy and the safety chain.
+
+        The planner is WRAPPED rather than replaced, once, on the first tick that
+        finds one -- pi_deploy.run() creates it after the loop is built, so there
+        is no earlier moment to do it. The real planner keeps running its own
+        thread underneath and keeps choosing frontiers, so the instant the
+        brain's target goes quiet she carries on exploring with no gap.
+        """
+        if self._brain is None:
+            return
+        try:
+            if (self.planner is not None
+                    and not isinstance(self.planner,
+                                       brain_target.TargetedPlanner)):
+                self.planner = brain_target.TargetedPlanner(self.planner,
+                                                            self._brain)
+                LOGGER.info("brain targeting armed: state/rl_command.json")
+            self._brain_ticks += 1
+            if self._brain_ticks % brain_target.POLL_TICKS == 0:
+                if self._brain.poll():
+                    LOGGER.info("brain target: %r", self._brain.label)
+            if self.detector is not None:
+                self._brain.update(self.detector.snapshot())
+        except Exception as exc:                    # noqa: BLE001
+            # A targeting fault must never take the robot down. She loses the
+            # nudge and keeps exploring on the frontier planner, which is the
+            # behaviour of every run before this feature existed.
+            LOGGER.error("brain targeting failed: %s", exc)
+            self._brain = None
+
+    def autonomy_state(self):
+        """The published state, plus what the detector can currently see.
+
+        THE DETECTOR'S OUTPUT REACHED NOTHING BEFORE THIS -- it was built, run at
+        ~1 Hz for the whole run, and read only by a line in the shutdown summary.
+        Publishing it is what lets the brain choose a target at all, since it
+        cannot open a camera while the run holds both /dev/video nodes.
+
+        An override rather than an edit, so pi_deploy.py stays untouched.
+
+        ⚠ BEHIND THE FLAG TOO, and that is deliberate rather than tidy. The
+        promise --brain-target makes is that a run WITHOUT it is the
+        configuration that was measured, and "except that the state file grows a
+        key" is not that promise. One switch, one meaning, nothing to reason
+        about later over which half of the feature is conditional.
+        """
+        st = super().autonomy_state()
+        if st is None or self._brain is None:
+            return st
+        try:
+            if self.detector is not None:
+                st["seen"] = brain_target.seen_from(self.detector.snapshot())
+            st["brain_target"] = self._brain.state()
+        except Exception:                           # noqa: BLE001
+            pass                # telemetry must never take the robot down
+        return st
 
     def _build_observation(self, scan: np.ndarray) -> np.ndarray:
         c = self.cfg
@@ -343,6 +416,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--voice-min-gap", type=float, default=1.2,
                     help="[s] minimum gap between two spoken phrases")
     ap.add_argument("--voice-rate", type=int, default=165, help="words per minute")
+
+    # OFF BY DEFAULT, and that is the whole safety of this feature: without it
+    # `loop._brain` stays None and every line added for targeting is skipped, so
+    # the run is byte-for-byte the configuration measured on 2026-09-04.
+    ap.add_argument("--brain-target", action="store_true",
+                    help="let the brain name something to drive at while she "
+                         "runs (it writes state/rl_command.json; she publishes "
+                         "what she sees into state/rl_autonomy.json). The "
+                         "frontier planner still steers whenever no target is "
+                         "in view.")
     return ap
 
 
@@ -475,6 +558,14 @@ def main(argv: list[str] | None = None) -> int:
 
     loop = LeRobotExperimentalControlLoop(cfg, policy, motors, slots, sim=sim,
                                           supervisor=supervisor, voice=voice)
+
+    # WIRED FROM THE CLI, because a flag that is parsed and never read is the
+    # recurring bug of this file -- see the --i-am-watching / --self-mask note
+    # below, and the CHECK THESE FLAGS warning it prints.
+    if args.brain_target:
+        loop._brain = brain_target.BrainTarget()
+        LOGGER.info("brain targeting ENABLED (%s)",
+                    brain_target.COMMAND_FILE)
 
     # Same omission as the self-mask above: pi_deploy.main() wires this from the CLI
     # and this parallel main() did not, so --no-reverse-fallback was accepted and

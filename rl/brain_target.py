@@ -58,9 +58,11 @@ try:                                        # the run has config on sys.path
     _TTL_S = config.TARGET_TTL_S
     _STALE_S = config.TARGET_SIGHTING_STALE_S
     _MIN_SCORE = config.TARGET_MIN_SCORE
+    POLL_TICKS = config.TARGET_COMMAND_POLL_TICKS
 except Exception:                           # noqa: BLE001 - importable standalone
     _ROOT = Path(__file__).resolve().parent.parent
     _SWING_DEG, _TTL_S, _STALE_S, _MIN_SCORE = 25.0, 90.0, 3.0, 0.55
+    POLL_TICKS = 10
 
 COMMAND_FILE = _ROOT / "state" / "rl_command.json"
 

@@ -5554,7 +5554,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-reverse-escape", action="store_true",
                    help="Disable stage 2b-bis: backing out when the front has been "
                         "blocked for escape_after_ticks and the rear gate allows it. "
-                        "Without it she pivots instead, which is what she did for 50% "
+                        # argparse interpolates help strings, so a literal
+                        # percent must be doubled -- "50%% " reads as "50% ".
+                        # Unescaped, `--help` died with "%o format: an integer
+                        # is required, not dict" and took every flag's
+                        # documentation down with it.
+                        "Without it she pivots instead, which is what she did for 50%% "
                         "of her REFLEX_STOP ticks on 2026-09-06 while the rear was "
                         "clear. The rear gate (2d) still vetoes any reverse it does "
                         "not like, with or without this flag.")
