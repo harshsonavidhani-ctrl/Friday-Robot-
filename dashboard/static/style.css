@@ -395,6 +395,27 @@ details.fold summary:hover{color:var(--dim)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .toast.bad{border-color:#5c2630;color:#ffd2d6}
 
+/* ---------- installing it as an app ---------- */
+
+.installbar{
+  position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+  display:flex;align-items:center;gap:12px;
+  width:max-content;max-width:min(92vw,560px);
+  padding:10px 10px 10px 16px;border-radius:var(--r-sm);
+  background:#151a26;border:1px solid #5c2630;color:#ffd2d6;
+  font-size:11px;line-height:1.5;box-shadow:0 8px 30px rgba(0,0,0,.55);
+  z-index:19;
+}
+.installbar .go{
+  flex:none;padding:7px 11px;border-radius:var(--r-sm);
+  background:var(--accent);color:#04121f;text-decoration:none;font-weight:600;
+}
+.installbar .x{
+  flex:none;background:none;border:0;color:var(--dim);
+  font:inherit;font-size:16px;line-height:1;padding:4px 6px;cursor:pointer;
+}
+#btn-install[hidden]{display:none}
+
 /* ---------- phone: one pane at a time, with a tab bar ---------- */
 
 .tabbar{display:none}
@@ -429,6 +450,7 @@ details.fold summary:hover{color:var(--dim)}
   .tab.active{background:var(--panel2);border-color:var(--line2);
     color:var(--accent)}
   .toast{bottom:calc(70px + env(safe-area-inset-bottom))}
+  .installbar{bottom:calc(70px + env(safe-area-inset-bottom))}
 }
 
 @media (max-width:420px){

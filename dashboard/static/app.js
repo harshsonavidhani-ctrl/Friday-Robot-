@@ -797,7 +797,99 @@ function showPane(id) {
     toast('Log cleared');
   };
 
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
-  }
+  installable();
 })();
+
+/* --- installing it as an app -----------------------------------------
+   A phone offers "Install app" only when it TRUSTS the page. When it does
+   not, it offers a home-screen shortcut instead -- which opens in a browser
+   tab -- and the only place the reason is written is the service worker's
+   registration error, which this used to swallow with catch(() => {}). So
+   the reason is shown on the page now, with the one tap that fixes it, and
+   reported to the Pi (logs/dashboard_clients.log), where "why won't it
+   install" can be answered without the phone in hand. */
+function installable() {
+  const standalone = matchMedia('(display-mode: standalone)').matches ||
+                     navigator.standalone === true;
+
+  const report = (state) => fetch('/api/client', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({
+      href: location.href, secure: window.isSecureContext, standalone,
+    }, state)),
+  }).then((r) => r.json()).catch(() => null);
+
+  const help = (text, link, label) => {
+    if ($('installbar')) return;
+    const bar = document.createElement('div');
+    bar.id = 'installbar';
+    bar.className = 'installbar';
+    bar.setAttribute('role', 'status');
+    const say = document.createElement('span');
+    say.textContent = text;
+    bar.appendChild(say);
+    if (link) {
+      const go = document.createElement('a');
+      go.className = 'go';
+      go.href = link;
+      go.textContent = label;
+      bar.appendChild(go);
+    }
+    const close = document.createElement('button');
+    close.className = 'x';
+    close.title = 'Dismiss';
+    close.textContent = '×';
+    close.onclick = () => bar.remove();
+    bar.appendChild(close);
+    document.body.appendChild(bar);
+  };
+
+  // Our own Install button, shown only once the browser says it can install.
+  const btn = document.createElement('button');
+  btn.className = 'ghost';
+  btn.id = 'btn-install';
+  btn.title = 'Install Friday as an app';
+  btn.textContent = 'Install';
+  btn.hidden = true;
+  const clear = $('btn-clear');
+  clear.parentNode.insertBefore(btn, clear);
+
+  let offer = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    offer = e;
+    btn.hidden = false;
+    report({ sw: 'ok', prompt: true });
+  });
+  btn.onclick = async () => {
+    if (!offer) return;
+    offer.prompt();
+    try { await offer.userChoice; } catch (e) {}
+    offer = null;
+    btn.hidden = true;
+  };
+  window.addEventListener('appinstalled', () => {
+    btn.hidden = true;
+    toast('Installed. Open Friday from your home screen.');
+    report({ installed: true });
+  });
+
+  if (!('serviceWorker' in navigator)) {
+    // Plain HTTP, or a browser with no service workers at all.
+    report({ sw: 'unavailable' }).then((a) => {
+      if (!standalone) help('This page is not secure, so it can only be a ' +
+        'shortcut. Open the secure address to install the app.',
+        a && a.secure_url, 'Open secure page');
+    });
+    return;
+  }
+  navigator.serviceWorker.register('/sw.js')
+    .then(() => report({ sw: 'ok' }))
+    .catch((err) => {
+      report({ sw: 'failed', error: String((err && err.message) || err) })
+        .then((a) => help('Your phone does not trust Friday\'s certificate, ' +
+          'so it can only add a shortcut. Install the certificate, then ' +
+          'reload this page.', a && a.ca_url, 'Get certificate'));
+    });
+}

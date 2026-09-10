@@ -16,6 +16,9 @@ Serves:
     POST /api/calibration      save motor calibration
     GET  /cam/up  /cam/down    multipart MJPEG
     GET  /ca.crt               the local CA, to install on a phone once
+    POST /api/client           a browser saying whether it can install the app
+                               (plain-HTTP page loads from other devices are
+                               redirected to HTTPS -- only that can install)
     POST /api/camera/{which}   {"on": false} -> switch a camera off
     POST /api/motor            {"direction": "forward", "seconds": 0.5}
     GET  /api/explore          is she out exploring, and what the vault holds
@@ -742,6 +745,7 @@ def build_app() -> web.Application:
     app = web.Application(client_max_size=1024 * 1024)
     app["bus"] = EventBus()
     app["cams"] = CameraSet()
+    app["tls"] = {"on": False}      # run() flips it once the HTTPS port is up
 
     app.router.add_get("/api/stream", api_stream)
     app.router.add_post("/api/events", api_events)
@@ -760,7 +764,15 @@ def build_app() -> web.Application:
     app.router.add_get("/api/explore", api_explore_get)
     app.router.add_post("/api/explore", api_explore_post)
 
-    async def index(_request: web.Request) -> web.StreamResponse:
+    async def index(request: web.Request) -> web.StreamResponse:
+        # A PHONE ON THE PLAIN-HTTP PORT CAN ONLY EVER MAKE A SHORTCUT, because
+        # installing the app needs a secure page. So another device asking for
+        # the page over HTTP is sent to the HTTPS one, on whatever name or
+        # address it used. Loopback is left alone: that is the Pi itself.
+        if (request.app["tls"]["on"] and not request.secure
+                and request.remote not in ("127.0.0.1", "::1")):
+            raise web.HTTPFound(
+                f"https://{request.url.host}:{config.DASHBOARD_PORT}/")
         return web.FileResponse(STATIC / "index.html")
 
     app.router.add_get("/", index)
@@ -793,6 +805,45 @@ def build_app() -> web.Application:
         })
 
     app.router.add_get("/ca.crt", ca_cert)
+
+    async def api_client(request: web.Request) -> web.Response:
+        """A browser reporting whether it can install the app, and why not.
+
+        "It only makes a shortcut" has one cause on a server that is serving
+        the app correctly: the phone does not trust the page, so the browser
+        refuses the service worker -- and that refusal is the only place the
+        reason is ever written down. The page reports it here, one line per
+        load, so the answer lands in logs/dashboard_clients.log instead of on
+        a phone across the room. The reply carries the two addresses the page
+        needs, built from config rather than ports written into app.js.
+        """
+        try:
+            said = await request.json()
+        except Exception:                               # noqa: BLE001
+            said = {}
+        if not isinstance(said, dict):
+            said = {}
+        row = {"at": time.strftime("%Y-%m-%d %H:%M:%S"),
+               "from": request.remote,
+               "agent": request.headers.get("User-Agent", "")[:160]}
+        row.update({key: said[key] for key in
+                    ("href", "secure", "standalone", "sw", "error", "prompt",
+                     "installed") if key in said})
+        path = config.LOG_DIR / "dashboard_clients.log"
+        with contextlib.suppress(OSError):
+            # One line per page load; nobody reads line five thousand.
+            if path.exists() and path.stat().st_size > 256 * 1024:
+                path.write_text(
+                    "".join(path.read_text().splitlines(True)[-500:]))
+            with path.open("a") as out:
+                out.write(json.dumps(row) + "\n")
+        host = request.url.host
+        return web.json_response({
+            "secure_url": f"https://{host}:{config.DASHBOARD_PORT}/",
+            "ca_url": f"http://{host}:{config.DASHBOARD_HTTP_PORT}/ca.crt",
+        })
+
+    app.router.add_post("/api/client", api_client)
 
     async def on_cleanup(app: web.Application) -> None:
         await app["cams"].stop_all()
@@ -897,6 +948,7 @@ async def run(http_only: bool = False, demo: bool = False) -> None:
             secure = web.TCPSite(runner, config.DASHBOARD_HOST,
                                  config.DASHBOARD_PORT, ssl_context=ctx)
             await secure.start()
+            app["tls"]["on"] = True
             sites.append(
                 f"https://{config.DASHBOARD_HOST}:{config.DASHBOARD_PORT}")
 
