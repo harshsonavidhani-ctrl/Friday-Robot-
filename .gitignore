@@ -59,6 +59,15 @@ assets/models/wake/*.bak
 assets/models/wake/negatives/*
 !assets/models/wake/negatives/README.md
 !assets/models/wake/negatives/fire-*.wav
+# Fires pulled OUT of the negatives because a real "hey Friday" may be in them
+# -- a command or a request to her followed the fire. Kept rather than deleted,
+# for Harsh to judge by ear; nothing trains on this folder as a negative.
+!assets/models/wake/unsure/
+!assets/models/wake/unsure/fire-*.wav
+# How every fire clip was labelled and on what evidence, and which files the
+# hold-out model leaves out. Small text: the audit trail of the training set.
+!assets/models/wake/labels.tsv
+!assets/models/wake/holdout.txt
 # The unreviewed pile. Every wake fire lands here, right or wrong, and it is
 # capped at WAKE_FIRE_KEEP and emptied by --review-fires. Transient by design.
 state/wake_fires/

@@ -1,0 +1,20 @@
+# Kept OUT of the hold-out model that `train_wake.py --holdout` trains beside
+# the real one, so `--evaluate` can score it on audio it never heard in any
+# form -- not augmented, not reversed, not reshuffled. Matched against file
+# names; one pattern per line.
+
+# Every fifth real recording, which includes two of the quiet takes (002, 007),
+# the hardest ones to catch.
+wake_002.wav
+wake_007.wav
+wake_012.wav
+wake_017.wav
+wake_022.wav
+wake_027.wav
+wake_032.wav
+wake_037.wav
+
+# The two most recent evenings of fires -- the 2026-09-10 one is the
+# conversation Harsh reported.
+fire-20260909-*
+fire-20260910-*

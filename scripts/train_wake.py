@@ -234,7 +234,8 @@ def record_wakes(count: int, out_dir: Path) -> int:
 
 
 def real_wake_clips(out_dir: Path, rng: np.random.Generator,
-                    per_clip: int) -> list[np.ndarray]:
+                    per_clip: int,
+                    sources: list[str] | None = None) -> list[np.ndarray]:
     """Load Harsh's own recordings and augment them hard.
 
     Weighted far above the synthetic ones by sheer repetition: these are the
@@ -262,6 +263,8 @@ def real_wake_clips(out_dir: Path, rng: np.random.Generator,
             audio = audio[-CLIP_SAMPLES:]
         for _ in range(per_clip):
             clips.append(augment(place(audio, rng), rng))
+            if sources is not None:
+                sources.append(path.name)
     return clips
 
 
@@ -276,7 +279,8 @@ def _read_wav(path: Path) -> np.ndarray:
 
 
 def hard_negative_clips(directory: Path, rng: np.random.Generator,
-                        per_clip: int) -> list[np.ndarray]:
+                        per_clip: int,
+                        sources: list[str] | None = None) -> list[np.ndarray]:
     """Real speech that is NOT the wake word — the negatives that were missing.
 
     THIS IS THE FIX FOR THE 97-FIRES-IN-ONE-EVENING BUG. The model shipped on
@@ -310,10 +314,104 @@ def hard_negative_clips(directory: Path, rng: np.random.Generator,
                 start = int(rng.integers(0, len(audio) - CLIP_SAMPLES))
                 window = audio[start:start + CLIP_SAMPLES].astype(np.float32)
                 clips.append(augment(window, rng))
+                if sources is not None:
+                    sources.append(path.name)
         else:
+            # THE END OF THE CLIP, NOT THE START. A harvested fire is the 3 s
+            # BEFORE the model fired, and when it fired it was scoring the
+            # LAST 2 s. place() keeps clip[:2 s], so every hard negative went
+            # in as mostly run-up, and the second of audio that actually fooled
+            # the model was thrown away -- the same backwards trim
+            # real_wake_clips() already fixed for the positives.
             for _ in range(per_clip):
-                clips.append(augment(place(audio.astype(np.float32), rng), rng))
+                clips.append(augment(end_window(audio, rng), rng))
+                if sources is not None:
+                    sources.append(path.name)
     return clips
+
+
+def end_window(audio: np.ndarray, rng: np.random.Generator,
+               slack_s: float = 0.5) -> np.ndarray:
+    """The 2.0 s window ending at (or up to slack_s before) the end of a clip.
+
+    The slack is WAKE_PATIENCE's doing: a confirmed fire is several chunks in
+    a row over the threshold, so the windows ending a few chunks earlier
+    fooled the model too and are worth training against as well.
+    """
+    audio = audio.astype(np.float32)
+    if len(audio) <= CLIP_SAMPLES:
+        out = np.zeros(CLIP_SAMPLES, dtype=np.float32)
+        out[CLIP_SAMPLES - len(audio):] = audio        # flush right, like a fire
+        return out
+    slack = min(len(audio) - CLIP_SAMPLES, int(slack_s * RATE))
+    end = len(audio) - int(rng.integers(0, slack + 1))
+    return audio[end - CLIP_SAMPLES:end].copy()
+
+
+def scrambled_clips(paths: list[Path], rng: np.random.Generator,
+                    per_clip: int,
+                    sources: list[str] | None = None) -> list[np.ndarray]:
+    """Real voices with the phrase taken out: negatives that need no label.
+
+    THE MODEL LEARNED THE VOICE, NOT THE PHRASE -- 60% of its positives were
+    one person in one room, and it answers that person saying anything. The
+    direct counter is that same person, room and microphone with the WORDS
+    destroyed: reversed, or cut into syllable-sized pieces and reordered. The
+    level, timbre and room are untouched; only the order is gone, and the
+    order is the only thing that makes it "hey Friday". To score these low the
+    model has to look at the order.
+
+    Safe on ANY clip, including the harvested fires nobody has labelled -- a
+    reversed "hey Friday" is not "hey Friday" -- so they all get used here.
+    """
+    clips: list[np.ndarray] = []
+    for path in paths:
+        audio = _read_wav(path).astype(np.float32)
+        if len(audio) < RATE // 2:
+            continue
+        for index in range(per_clip):
+            mixed = audio[::-1].copy() if index % 2 == 0 \
+                else shuffle_pieces(audio, rng)
+            if len(mixed) > CLIP_SAMPLES:
+                start = int(rng.integers(0, len(mixed) - CLIP_SAMPLES + 1))
+                mixed = mixed[start:start + CLIP_SAMPLES]
+            clips.append(augment(place(mixed, rng), rng))
+            if sources is not None:
+                sources.append(path.name)
+    return clips
+
+
+def shuffle_pieces(audio: np.ndarray, rng: np.random.Generator,
+                   piece_s: tuple[float, float] = (0.10, 0.25)) -> np.ndarray:
+    """Cut into 100-250 ms pieces and reassemble in a new order.
+
+    No two pieces that were neighbours stay neighbours in the same order, so
+    nothing longer than one piece survives intact -- and a quarter of a second
+    is shorter than "Friday". Each piece is faded over 5 ms, or the cuts click
+    and the model learns "clicks mean no" instead.
+    """
+    pieces, pos = [], 0
+    while pos < len(audio):
+        step = int(rng.uniform(*piece_s) * RATE)
+        pieces.append(audio[pos:pos + step].copy())
+        pos += step
+    count = len(pieces)
+    order = None
+    for _ in range(50):
+        candidate = rng.permutation(count)
+        if count >= 3 and all(candidate[k + 1] != candidate[k] + 1
+                              for k in range(count - 1)):
+            order = candidate
+            break
+    if order is None:
+        return audio[::-1].copy()
+    fade = int(0.005 * RATE)
+    ramp = np.linspace(0, 1, fade, dtype=np.float32)
+    for piece in pieces:
+        if len(piece) > 2 * fade:
+            piece[:fade] *= ramp
+            piece[-fade:] *= ramp[::-1]
+    return np.concatenate([pieces[k] for k in order])
 
 
 def reset_streams(model) -> None:
@@ -564,11 +662,18 @@ def _fires_nobody_answered(log_path: Path | None = None) -> set[str]:
             stamps[turn] = stamp
             spoke.discard(turn)
         elif turn in pending:
-            if event == "TRANSCRIBED" and 'TRANSCRIBED ""' not in line:
+            # AN EMPTY TRANSCRIPT IS NOT SILENCE. It means a capture closed on
+            # SOMETHING -- and in this log half of the empties were the
+            # transcription lock giving up, the audio never transcribed at
+            # all. Only NOTHING SAID means nobody spoke: the VAD waited the
+            # whole LISTEN_START_TIMEOUT_S and heard no one.
+            if event in ("TRANSCRIBED", "RE-LISTENING"):
                 spoke.add(turn)
-            elif event in ("NOTHING SAID", "ABANDONED", "DONE", "FAILED"):
+            elif event == "NOTHING SAID":
                 if turn not in spoke:
                     quiet.add(pending[turn])
+                pending.pop(turn, None)
+            elif event in ("ABANDONED", "DONE", "FAILED"):
                 pending.pop(turn, None)
 
     # The clip is named for the moment of the fire; the WAKE line is logged in
@@ -702,11 +807,21 @@ def build_dataset(rng: np.random.Generator, ambient: Path,
                   per_clip: int,
                   samples_dir: Path | None = None,
                   negatives_dir: Path | None = None,
-                  real_weight: int = 2) -> tuple[np.ndarray, np.ndarray]:
+                  real_weight: int = 2,
+                  fires_dir: Path | None = None,
+                  ) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """The clips, their labels, and the FILE each clip was made from.
+
+    The source file is what lets --holdout leave a real recording out
+    entirely -- every augmented copy of it and every reversed or reshuffled
+    one -- so the model can be measured on audio it never heard in any form.
+    """
     from piper import PiperVoice
 
     positives: list[np.ndarray] = []
     negatives: list[np.ndarray] = []
+    pos_src: list[str] = []
+    neg_src: list[str] = []
     voices = piper_voices()
     print(f"{len(voices)} Piper voices, {len(WAKE_PHRASES)} wake phrasings, "
           f"{len(NEGATIVE_PHRASES)} negative phrases")
@@ -730,6 +845,8 @@ def build_dataset(rng: np.random.Generator, ambient: Path,
             for _ in range(max(1, per_clip // 3)):
                 negatives.append(augment(place(clip, rng), rng))
         del voice
+    pos_src += ["piper"] * len(positives)
+    neg_src += ["piper"] * len(negatives)
 
     # HARSH'S OWN VOICE, WEIGHTED HEAVILY. Each real take is augmented far more
     # times than a synthetic one, because there are far fewer of them and they
@@ -742,8 +859,8 @@ def build_dataset(rng: np.random.Generator, ambient: Path,
     # to the voice saying anything at all. Dropped to 2, and the catch rate
     # this gives up is bought back by the SNR-relative augment above and by
     # the real negatives below, both of which are new.
-    real = real_wake_clips(samples_dir, rng, per_clip * real_weight) \
-        if samples_dir else []
+    real = real_wake_clips(samples_dir, rng, per_clip * real_weight,
+                           sources=pos_src) if samples_dir else []
     if real:
         takes = len(list(samples_dir.glob('wake_*.wav')))
         print(f"  + {len(real)} clips from {takes} REAL recordings of Harsh")
@@ -759,13 +876,14 @@ def build_dataset(rng: np.random.Generator, ambient: Path,
         print("  ! no ambient recording — run --record-ambient 90 for a "
               "much better model")
     negatives.extend(room)
+    neg_src += ["ambient"] * len(room)
 
     # REAL SPEECH THAT IS NOT THE WAKE WORD. The single most important
     # negatives in the set and the ones the first two models never had. Every
     # clip harvested from a live false fire lands here, which means the model
     # is trained specifically against the audio that already defeated it.
-    hard = hard_negative_clips(negatives_dir, rng, per_clip * 3) \
-        if negatives_dir else []
+    hard = hard_negative_clips(negatives_dir, rng, per_clip * 3,
+                               sources=neg_src) if negatives_dir else []
     if hard:
         files = len(list(negatives_dir.glob('*.wav')))
         print(f"  + {len(hard)} HARD negatives from {files} real recording(s)")
@@ -775,14 +893,33 @@ def build_dataset(rng: np.random.Generator, ambient: Path,
               "\n    times an evening; it will be again. Record 10 minutes of"
               "\n    normal conversation:  --record-negatives 600")
 
+    # THE VOICE WITHOUT THE PHRASE -- see scrambled_clips(). It needs no
+    # labels, so it takes every real recording AND every harvested fire,
+    # including the ones nobody has judged yet.
+    scramble_from: dict[str, Path] = {}
+    for directory, pattern in ((samples_dir, "wake_*.wav"),
+                               (negatives_dir, "fire-*.wav"),
+                               (fires_dir, "fire-*.wav")):
+        if directory is not None and directory.exists():
+            for path in sorted(directory.glob(pattern)):
+                scramble_from.setdefault(path.name, path)
+    scrambled = scrambled_clips(list(scramble_from.values()), rng,
+                                max(2, per_clip // 2), sources=neg_src)
+    if scrambled:
+        print(f"  + {len(scrambled)} reversed/reshuffled clips from "
+              f"{len(scramble_from)} real recordings")
+        negatives.extend(scrambled)
+
     for _ in range(300):                                  # pure noise / quiet
         negatives.append((rng.normal(0, rng.uniform(5, 900), CLIP_SAMPLES)
                           ).clip(-32000, 32000).astype(np.int16))
+    neg_src += ["noise"] * 300
 
+    assert len(pos_src) == len(positives) and len(neg_src) == len(negatives)
     x = np.stack(positives + negatives).astype(np.int16)
     y = np.concatenate([np.ones(len(positives)), np.zeros(len(negatives))])
     print(f"\n{len(positives)} positive, {len(negatives)} negative clips")
-    return x, y
+    return x, y, pos_src + neg_src
 
 
 def embed(clips: np.ndarray) -> np.ndarray:
@@ -842,6 +979,127 @@ def export_onnx(model, path: Path) -> None:
     save(model_proto, str(path))
 
 
+def fit(flat: np.ndarray, labels: np.ndarray, seed: int):
+    """Train the classifier, and report it on a random fifth it did not see.
+
+    That fifth shares SOURCE FILES with the other four -- a different
+    augmentation of the same take -- so this report is optimistic. The honest
+    number is --evaluate on a --holdout model.
+    """
+    from sklearn.metrics import roc_auc_score
+    from sklearn.model_selection import train_test_split
+    from sklearn.neural_network import MLPClassifier
+
+    x_train, x_test, y_train, y_test = train_test_split(
+        flat, labels, test_size=0.2, random_state=seed, stratify=labels)
+
+    print("training…", flush=True)
+    net = MLPClassifier(hidden_layer_sizes=(96, 32), activation="relu",
+                        alpha=1e-3, max_iter=400, random_state=seed,
+                        early_stopping=True, n_iter_no_change=15)
+    net.fit(x_train, y_train)
+
+    probability = net.predict_proba(x_test)[:, 1]
+    auc = roc_auc_score(y_test, probability)
+    positive = probability[y_test == 1]
+    negative = probability[y_test == 0]
+    print(f"\nheld-out AUC        {auc:.4f}")
+    print(f"wake clips  median  {np.median(positive):.3f}  "
+          f"5th pct {np.percentile(positive, 5):.3f}")
+    print(f"other clips median  {np.median(negative):.3f}  "
+          f"99th pct {np.percentile(negative, 99):.3f}")
+    for threshold in (0.3, 0.5, 0.7):
+        recall = float((positive >= threshold).mean())
+        false = float((negative >= threshold).mean())
+        print(f"  threshold {threshold}:  catches {recall:6.1%}  "
+              f"false-fires {false:6.2%}")
+    return net
+
+
+def read_patterns(path: Path) -> list[str]:
+    """File-name patterns, one per line; `#` starts a comment."""
+    lines = (line.split("#", 1)[0].strip()
+             for line in path.read_text().splitlines())
+    return [line for line in lines if line]
+
+
+def held_out(name: str, patterns: list[str]) -> bool:
+    import fnmatch
+    return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
+
+
+def holdout_path(out: Path) -> Path:
+    return out.with_name(out.stem + ".holdout.onnx")
+
+
+def live_fires(model, audio: np.ndarray, lead: np.ndarray,
+               tail: np.ndarray) -> tuple[bool, float, int]:
+    """Would this clip have woken Friday? -> (fired, peak score, longest run)
+
+    Scored the way wake_word.py scores the microphone: a clean streaming
+    state, a second of the real room in front so the VAD gate starts where it
+    does live, then WAKE_THRESHOLD and WAKE_PATIENCE exactly as configured. A
+    peak over the threshold is not a wake; WAKE_PATIENCE chunks in a row is.
+    """
+    reset_streams(model)
+    stream = np.concatenate([lead, audio, tail]).astype(np.int16)
+    run = longest = 0
+    peak = 0.0
+    for i in range(0, len(stream) - CHUNK_SAMPLES + 1, CHUNK_SAMPLES):
+        out = model.predict(stream[i:i + CHUNK_SAMPLES])
+        score = float(max(out.values())) if out else 0.0
+        peak = max(peak, score)
+        run = run + 1 if score >= config.WAKE_THRESHOLD else 0
+        longest = max(longest, run)
+    return longest >= max(1, config.WAKE_PATIENCE), peak, longest
+
+
+def evaluate(models: list[Path], samples_dir: Path, negatives_dir: Path,
+             fires_dir: Path, ambient: Path, holdout: Path | None) -> int:
+    """Both columns for each model, on the clips a hold-out model never saw.
+
+    Catches: Harsh's own recordings. False fires: harvested fires filed as
+    negatives -- every one of them woke the live model once. Unlabelled fires
+    are counted apart, because some are real wakes, and a model that stops
+    firing on THOSE has got worse, not better.
+    """
+    from openwakeword.model import Model
+
+    patterns = read_patterns(holdout) if holdout else None
+
+    def pick(paths: list[Path]) -> list[Path]:
+        return [p for p in paths
+                if patterns is None or held_out(p.name, patterns)]
+
+    positives = pick(sorted(samples_dir.glob("wake_*.wav")))
+    negatives = pick(sorted(negatives_dir.glob("fire-*.wav")))
+    filed = {p.name for p in negatives_dir.glob("fire-*.wav")}
+    unlabelled = [p for p in pick(sorted(fires_dir.glob("fire-*.wav")))
+                  if p.name not in filed]
+    room = _read_wav(ambient)
+    if len(room) < 3 * RATE:
+        room = np.zeros(3 * RATE, dtype=np.int16)
+    lead, tail = room[RATE:2 * RATE], room[2 * RATE:2 * RATE + RATE // 3]
+
+    print(f"{len(positives)} real wakes, {len(negatives)} labelled false "
+          f"fires, {len(unlabelled)} unlabelled fires"
+          f"{' -- all held out' if patterns else ''}.  threshold "
+          f"{config.WAKE_THRESHOLD}, patience {config.WAKE_PATIENCE}\n")
+    for model_path in models:
+        model = Model(wakeword_model_paths=[str(model_path)],
+                      vad_threshold=config.WAKE_VAD_THRESHOLD)
+
+        def fired(paths: list[Path]) -> int:
+            return sum(live_fires(model, _read_wav(p), lead, tail)[0]
+                       for p in paths)
+
+        print(f"  {model_path.name:30s} catches {fired(positives):3d}/"
+              f"{len(positives):<3d} false fires {fired(negatives):3d}/"
+              f"{len(negatives):<3d} unlabelled fires "
+              f"{fired(unlabelled):3d}/{len(unlabelled)}", flush=True)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--record-ambient", type=float, metavar="SECONDS",
@@ -881,12 +1139,24 @@ def main() -> int:
     ap.add_argument("--per-clip", type=int, default=8,
                     help="augmented variants per synthesised clip")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--holdout", type=Path, metavar="FILE",
+                    help="clip-name patterns, one per line: ALSO train a "
+                         "second model without those files, for --evaluate")
+    ap.add_argument("--evaluate", action="store_true",
+                    help="replay real wakes and labelled false fires through "
+                         "models the way the live detector hears them")
+    ap.add_argument("--compare", type=Path, nargs="+", metavar="MODEL",
+                    help="the models --evaluate scores (default: the live one)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING,
                         format="%(levelname)-7s %(name)s | %(message)s")
 
     if args.score:
         return score_samples(args.samples, args.model, args.negatives)
+    if args.evaluate:
+        return evaluate(args.compare or [Path(config.WAKE_WORD_MODEL)],
+                        args.samples, args.negatives, args.fires,
+                        args.ambient, args.holdout)
     if args.record_wakes:
         return record_wakes(args.record_wakes, args.samples)
     if args.record_ambient:
@@ -897,41 +1167,28 @@ def main() -> int:
         return review_fires(args.fires, args.negatives, args.samples)
 
     rng = np.random.default_rng(args.seed)
-    clips, labels = build_dataset(rng, args.ambient, args.per_clip,
-                                  samples_dir=args.samples,
-                                  negatives_dir=args.negatives,
-                                  real_weight=args.real_weight)
+    clips, labels, sources = build_dataset(rng, args.ambient, args.per_clip,
+                                           samples_dir=args.samples,
+                                           negatives_dir=args.negatives,
+                                           real_weight=args.real_weight,
+                                           fires_dir=args.fires)
     features = embed(clips)
-
-    from sklearn.model_selection import train_test_split
-    from sklearn.neural_network import MLPClassifier
-    from sklearn.metrics import roc_auc_score
-
     flat = features.reshape(len(features), -1)
-    x_train, x_test, y_train, y_test = train_test_split(
-        flat, labels, test_size=0.2, random_state=args.seed, stratify=labels)
 
-    print("training…", flush=True)
-    net = MLPClassifier(hidden_layer_sizes=(96, 32), activation="relu",
-                        alpha=1e-3, max_iter=400, random_state=args.seed,
-                        early_stopping=True, n_iter_no_change=15)
-    net.fit(x_train, y_train)
+    # THE MODEL THAT CAN BE MEASURED, from the SAME embeddings. Embedding is
+    # the slow part, so both models share one pass: the hold-out model drops
+    # every clip made from a held-out file, and --evaluate scores it on them.
+    if args.holdout:
+        patterns = read_patterns(args.holdout)
+        held = np.array([held_out(name, patterns) for name in sources])
+        print(f"\n--- hold-out model: {int(held.sum())} clips from held-out "
+              f"files left out")
+        export_onnx(fit(flat[~held], labels[~held], args.seed),
+                    holdout_path(args.out))
+        print(f"wrote {holdout_path(args.out)} -- measure it with --evaluate")
+        print("\n--- the real model: everything")
 
-    probability = net.predict_proba(x_test)[:, 1]
-    auc = roc_auc_score(y_test, probability)
-    positive = probability[y_test == 1]
-    negative = probability[y_test == 0]
-    print(f"\nheld-out AUC        {auc:.4f}")
-    print(f"wake clips  median  {np.median(positive):.3f}  "
-          f"5th pct {np.percentile(positive, 5):.3f}")
-    print(f"other clips median  {np.median(negative):.3f}  "
-          f"99th pct {np.percentile(negative, 99):.3f}")
-    for threshold in (0.3, 0.5, 0.7):
-        recall = float((positive >= threshold).mean())
-        false = float((negative >= threshold).mean())
-        print(f"  threshold {threshold}:  catches {recall:6.1%}  "
-              f"false-fires {false:6.2%}")
-
+    net = fit(flat, labels, args.seed)
     export_onnx(net, args.out)
     print(f"\nwrote {args.out}")
 
