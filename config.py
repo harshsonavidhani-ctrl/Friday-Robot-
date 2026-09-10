@@ -381,7 +381,23 @@ WAKE_DEADTIME_MS = 350
 # back to sleep, which from across the room is indistinguishable from being
 # ignored. So she listens once more instead, briefly, before giving up.
 # One retry only: two would be a robot that will not stop listening.
-EMPTY_TRANSCRIPT_RETRY = True
+#
+# OFF SINCE 2026-09-10, BY MEASUREMENT. Every RE-LISTENING in logs/friday.log
+# -- 145 of them, 2026-08-27 to 09-10 -- scored by what the retry produced:
+#   nothing at all                     130
+#   words, none of them a command       14   "Thank you for watching.",
+#                                            "Oh my god.", Korean, Dutch
+#   a command                            1   "emergency stop.", mid-run, 73 s
+#                                            after the wake -- most likely the
+#                                            run's own narrator, which says it
+# The tail it was built for is handled at the source now (WAKE_DEADTIME_MS),
+# and 69 of the 145 "empty" first takes were never transcribed at all: that
+# was the transcription lock giving up after STT_QUEUE_TIMEOUT_S, not Whisper
+# hearing nothing. What was left was the complaint itself -- a false wake in
+# the middle of a conversation, and then Friday listening to it AGAIN.
+# Harsh, 2026-09-10: "it listens again again human conversations".
+# True brings it back.
+EMPTY_TRANSCRIPT_RETRY = False
 RETRY_LISTEN_TIMEOUT_S = 4.0   # shorter than the first wait -- if he was going
                                # to speak, he is speaking by now
 # 20 s was a ceiling on the AUDIO that became a 3-minute ceiling on the
