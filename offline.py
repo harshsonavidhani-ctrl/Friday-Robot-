@@ -106,6 +106,9 @@ _COMPILED = [(name, re.compile(pattern, re.IGNORECASE | re.UNICODE),
               tool, args, say)
              for name, pattern, tool, args, say in _RULES]
 
+# The rows above that turn the wheels. See _STRICT_MAX_WORDS.
+_MOVING_RULES = frozenset({"around", "backward", "forward", "left", "right"})
+
 
 # --- directions, and how far ------------------------------------------------
 # Separate from _RULES because a direction is not a fixed command: it carries
@@ -344,8 +347,22 @@ _ADDRESS_RE = re.compile(
     re.IGNORECASE)
 
 
+# HINDI PUTS THE VERB LAST. "thoda sa aage chalo" is as much an order as "go
+# forward a bit" -- the verb is only at the other end of the sentence. Hindi
+# verbs only: an English sentence that ENDS in "go" ("that's where the left
+# one should go") usually is not an order.
+_HINDI_ORDER_RE = re.compile(r"(chal|chalo|jao|mudo|चल|चलो|जाओ|मुड़|मुडो)",
+                             re.IGNORECASE | re.UNICODE)
+
+# "Can you please turn left now" is an order said politely, and the verb sits
+# behind the politeness. Stripped from the FRONT only, and only these words:
+# "can you believe it's on the left" still starts with "believe" without them.
+_POLITE_RE = re.compile(
+    r"^\s*(?:(?:can|could|will|would)\s+you\s+)?(?:please\s+)?", re.IGNORECASE)
+
+
 def _is_imperative(heard: str) -> bool:
-    """Does this sentence START with an order?
+    """Does this sentence START with an order -- or, in Hindi, end with one?
 
     THE POSITION OF THE VERB IS THE SIGNAL, not its presence. "I think we
     should go right now" contains a motion verb and a direction and is not a
@@ -353,12 +370,13 @@ def _is_imperative(heard: str) -> bool:
     that makes them one. Anything that merely CONTAINS the words is a sentence
     about going right, and belongs to the brain.
     """
-    stripped = _ADDRESS_RE.sub("", heard).lstrip()
-    first = stripped.split()[:1]
-    if not first:
+    words = _POLITE_RE.sub("", _ADDRESS_RE.sub("", heard)).split()
+    if not words:
         return False
-    word = first[0].strip(".,!?")
-    return bool(_GO_RE.fullmatch(word) or _TURN_RE.fullmatch(word))
+    first = words[0].strip(".,!?")
+    last = words[-1].strip(".,!?।")
+    return bool(_GO_RE.fullmatch(first) or _TURN_RE.fullmatch(first)
+                or _HINDI_ORDER_RE.fullmatch(last))
 
 
 def _clean_tail(text: str) -> str:
@@ -601,9 +619,14 @@ def help_text() -> str:
 
 # A direction with no verb around it, in a long sentence, is usually not a
 # command -- "I left my keys at home" is six words with "left" in the middle.
-# This only matters once the local handler runs BEFORE the brain (strict
-# mode): with no brain there is nothing to defer to and a miss is silence, so
-# the cap is not applied.
+# FOR MOVEMENT IT APPLIES WITH OR WITHOUT A BRAIN (2026-09-10). It used to be
+# strict mode only, on the grounds that with no brain a miss is silence. But a
+# wake word that fires on a conversation hands this parser the conversation,
+# and the log shows what that cost: "I'm making a mistake right now" pivoted
+# her right, and her own narrator's "a wall right up against me ... on the
+# left" pivoted her left. A missed order costs a repeat; a pivot nobody asked
+# for costs a wall. Harsh, asked: "yes ignore direction words in long
+# sentence". Everything that does not move her still caps in strict mode only.
 # Five, measured against real commands rather than picked: "go forward two
 # meters" is four words, "turn around" is two, and the longest thing here that
 # is genuinely an order is "set a timer for ten minutes" -- which carries a
@@ -663,7 +686,9 @@ def _match(text: str, strict: bool) -> Intent | None:
     if not text or not text.strip():
         return None
     heard = text.strip().lower()
-    words = len(heard.split())
+    # Counted without a leading "hey Friday," -- the name is not part of the
+    # order, and counting it pushed "hey Friday, can you turn left" over.
+    words = len(_ADDRESS_RE.sub("", heard).split())
 
     # "STOP LISTENING" IS NOT "STOP". Above the stop rule, and the only thing
     # that is, because the stop rule matches the word `stop` on its own and
@@ -704,15 +729,17 @@ def _match(text: str, strict: bool) -> Intent | None:
     moving = _direction_intent(heard)
     if moving is not None:
         # THE VERB IS WHAT MAKES IT AN ORDER. A bare "left" is a command; the
-        # same word inside a sentence usually is not.
-        if strict and words > _STRICT_MAX_WORDS \
-                and not _is_imperative(heard):
+        # same word inside a sentence usually is not -- brain or no brain,
+        # see _STRICT_MAX_WORDS.
+        if words > _STRICT_MAX_WORDS and not _is_imperative(heard):
             return None
         return moving
 
     for name, pattern, tool, args, say in _COMPILED:
         if pattern.search(heard):
-            if strict and words > _STRICT_MAX_WORDS:
+            if words > _STRICT_MAX_WORDS and (
+                    strict or (name in _MOVING_RULES
+                               and not _is_imperative(heard))):
                 return None
             return Intent(name=name, tool=tool, args=dict(args), say=say)
     return None
