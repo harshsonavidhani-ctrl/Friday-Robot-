@@ -88,6 +88,11 @@ fi
 # file without touching code. Same shape as every other MODE_ flag here.
 [ "${MODE_REVERSE_ESCAPE:-1}" = "0" ] && ARGS+=(--no-reverse-escape)
 
+# Brain-guided targeting, same shape as every other MODE_ flag: the env file is
+# the only place it is written down. Default 0 keeps a run without the mode file
+# identical to the frozen configuration.
+[ "${MODE_BRAIN_TARGET:-0}" = "1" ] && ARGS+=(--brain-target)
+
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes
 # `explore.sh --duration 600` work without a second mode file.
