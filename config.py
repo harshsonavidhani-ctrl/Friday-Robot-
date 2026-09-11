@@ -149,6 +149,31 @@ WAKE_THRESHOLD = 0.5
 # turn it off and get the old behaviour back.
 WAKE_PATIENCE = 2
 
+# THE VERIFIER -- A SECOND OPINION ON EVERY FIRE, BEFORE SHE BEEPS.
+# Neither knob above can fix the false fires, because openWakeWord scores a
+# conversation as high as "hey Friday" (415 turns: false fires median 0.98,
+# real ones 0.83). Its classifier never heard a real conversation in training.
+# So a second classifier, trained by scripts/train_verifier.py on the very
+# clips that fooled the first, looks at the SAME 16x96 features at the moment
+# it fires and says yes or no. It can only reject -- a wake openWakeWord misses
+# stays missed -- and it is one dot product, so it adds no latency.
+#
+# Speech recognisers were tried first as the second opinion and measured
+# useless on Harsh's voice (2026-09-12, his 40 takes): sherpa-onnx keyword
+# spotting caught 15/40 at its loosest, Vosk Indian-English 25/40 at 3.6 s.
+#
+# If the file is missing or broken she wakes exactly as before and says so in
+# the log. False turns it off.
+WAKE_VERIFY = True
+WAKE_VERIFIER_MODEL = ROOT / "assets/models/wake/friday_verifier.npz"
+WAKE_VERIFY_THRESHOLD = 0.3
+# Fires the verifier turned down, kept apart from the unreviewed pile so
+# --review-fires is not buried in them: the conversations that fooled
+# openWakeWord, which are the next verifier's training set. One clip per
+# rejected utterance, not one per 80 ms chunk of it.
+WAKE_REJECT_DIR = ROOT / "state" / "wake_fires" / "rejected"
+WAKE_REJECT_SAVE_GAP_S = 2.0
+
 # How long after a wake before another one can fire. Stops one "hey Friday"
 # from registering two or three times as the score stays high across frames.
 WAKE_COOLDOWN_S = 2.0
@@ -296,7 +321,11 @@ MIC_RESTART_BACKOFF_MAX_S = 10.0
 STT_MODEL = "tiny"
 STT_COMPUTE_TYPE = "int8"
 # Explicit: ctranslate2's default did not use all four cores (x16.5 vs x13.3).
-STT_CPU_THREADS = 4
+# 3, NOT 4: one core must stay free for the face and the system. With 4,
+# whisper running on false wakes took this Pi to load 13 and 84 degC on
+# 2026-09-12 and every stage timed out. A slightly slower transcript beats
+# a Pi that stalls.
+STT_CPU_THREADS = 3
 STT_BEAM_SIZE = 1            # 1 is greedy: fastest, and on a Pi that matters
                              # far more than the small accuracy gain from 5
 STT_LANGUAGE = None          # None = auto-detect. Harsh mixes Hindi and
@@ -404,8 +433,12 @@ RETRY_LISTEN_TIMEOUT_S = 4.0   # shorter than the first wait -- if he was going
 # TRANSCRIPTION at x9 realtime -- so the stage timeout could never be met and
 # every long sentence was abandoned. A spoken command is rarely over 10 s, and
 # bounding it here bounds everything downstream.
-MAX_UTTERANCE_S = 10.0       # hard ceiling on one utterance
-LISTEN_START_TIMEOUT_S = 8.0 # give up if nobody speaks after waking
+# 6, not 10: this ceiling IS the worst-case whisper bill, and whisper is the
+# hottest thing on the Pi. A spoken command is rarely over 4 s.
+MAX_UTTERANCE_S = 6.0        # hard ceiling on one utterance
+# 4, not 8: a wake nobody follows should cost 4 s of listening and NO
+# transcription -- the Silence path never reaches whisper.
+LISTEN_START_TIMEOUT_S = 4.0 # give up if nobody speaks after waking
 
 # --- Pipeline stage deadlines ---------------------------------------------
 # WHY THESE EXIST. The failure that prompted them looked like "Friday hears me

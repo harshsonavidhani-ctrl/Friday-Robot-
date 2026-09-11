@@ -446,8 +446,14 @@ def reset_streams(model) -> None:
     pre.raw_data_buffer = collections.deque(maxlen=RATE * 10)
     pre.melspectrogram_buffer = np.ones((76, 32))
     pre.accumulated_samples = 0
-    pre.feature_buffer = pre._get_embeddings(
-        np.zeros(RATE * 10).astype(np.int16))
+    # The same array every time, so embedded ONCE per preprocessor. Doing it
+    # per clip was the slow half of scoring hundreds of them: py-spy caught
+    # two of three scoring workers inside this call at once.
+    silence = getattr(pre, "_silence_features", None)
+    if silence is None:
+        silence = pre._get_embeddings(np.zeros(RATE * 10).astype(np.int16))
+        pre._silence_features = silence
+    pre.feature_buffer = silence.copy()
 
     # AND THE VAD, which is the half that actually forced the zeros. Silero is
     # an LSTM -- it carries _h and _c across calls -- and openWakeWord gates on

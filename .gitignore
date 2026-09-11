@@ -37,6 +37,9 @@ assets/models/*
 !assets/models/wake/
 assets/models/wake/*
 !assets/models/wake/friday.onnx
+# ...and its verifier (scripts/train_verifier.py), for the same reason: trained
+# on this Pi from the live false fires, a few kB, and nowhere else.
+!assets/models/wake/friday_verifier.npz
 # Harsh's own recordings of the wake word. ~40 short clips, ~2 MB. Committed
 # because they are the ONE thing here that cannot be regenerated: Piper voices
 # and whisper are a download away, the trained model is 25 minutes of CPU, and
@@ -68,9 +71,19 @@ assets/models/wake/negatives/*
 # hold-out model leaves out. Small text: the audit trail of the training set.
 !assets/models/wake/labels.tsv
 !assets/models/wake/holdout.txt
+# What an independent recogniser (Vosk) heard in each fire -- the evidence
+# scripts/train_verifier.py uses to call a fire a real live wake.
+!assets/models/wake/vosk_heard.tsv
 # The unreviewed pile. Every wake fire lands here, right or wrong, and it is
 # capped at WAKE_FIRE_KEEP and emptied by --review-fires. Transient by design.
 state/wake_fires/
+# scripts/train_verifier.py's working files: the feature cache and the
+# positives it generates with conversation in front. Rebuilt on demand.
+state/verifier_features.npz
+state/verifier_aug/
+# Vosk (library + Indian-English model, ~40 MB), used only to label fires for
+# the verifier -- never at runtime. A download, so not committed.
+state/vosk/
 
 # OS
 .DS_Store

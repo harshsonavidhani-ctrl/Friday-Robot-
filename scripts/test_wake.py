@@ -63,6 +63,66 @@ def phrase_for_model() -> str:
     return "hey Friday"
 
 
+def play(path: Path) -> None:
+    """A recording out of Friday's own speaker, through the air, into her mic."""
+    import os
+    import subprocess
+    env = dict(os.environ)
+    env.setdefault("XDG_RUNTIME_DIR", config.AUDIO_RUNTIME_DIR)
+    subprocess.run(["pw-play", f"--target={config.SPEAKER_DEVICE}", str(path)],
+                   env=env, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, timeout=30)
+
+
+def run_clips(clips: list[Path], expect_wake: bool, settle: float,
+              window: float) -> int:
+    """Play each clip through the speaker and count the wakes it causes.
+
+    THE WHOLE PATH, VERIFIER INCLUDED. --expect none is the test the old
+    detector never had: play conversations and near-misses ("see you Friday",
+    "hey Fred") and count how many wake her. Other people's "hey Friday"
+    (--expect wake) stands in for voices that are not Harsh's.
+    """
+    detector = wake_word.OpenWakeWord()
+    detector.model()
+    stream = stt.AudioStream().start()
+    detector.stream = stream
+    detector.start()
+    print(f"\nmodel     {Path(config.WAKE_WORD_MODEL).name}  threshold "
+          f"{detector.threshold}  patience {config.WAKE_PATIENCE}")
+    print(f"verifier  {'on' if detector._verifier else 'OFF'}  "
+          f"{getattr(detector._verifier, 'threshold', '')}")
+    print(f"{len(clips)} clips, each should "
+          f"{'WAKE her' if expect_wake else 'NOT wake her'}\n")
+    time.sleep(settle)
+    woke = 0
+    for n, clip in enumerate(clips, 1):
+        with detector._ready:
+            detector._fired.clear()
+        detector._peak_since_report = 0.0
+        rejected = detector.rejected
+        play(clip)
+        deadline = time.monotonic() + window
+        hit = False
+        while time.monotonic() < deadline and not hit:
+            with detector._ready:
+                hit = bool(detector._fired)
+                detector._fired.clear()
+            time.sleep(0.05)
+        woke += hit
+        right = hit == expect_wake
+        print(f"  [{n}/{len(clips)}] {'WOKE  ' if hit else 'silent'} "
+              f"{'ok ' if right else 'BAD'}  peak {detector._peak_since_report:.2f}"
+              f"  verifier said no {detector.rejected - rejected}x  {clip.name}")
+        detector.resume()
+        time.sleep(0.4)
+    stream.close()
+    detector.close()
+    print(f"\n{woke}/{len(clips)} woke her "
+          f"({'want all' if expect_wake else 'want none'})")
+    return 0 if (woke == len(clips) if expect_wake else woke == 0) else 1
+
+
 def run(tries: int, live: bool, settle: float, window: float,
         threshold: float | None = None) -> int:
     detector = wake_word.OpenWakeWord(threshold=threshold)
@@ -155,9 +215,16 @@ def main() -> int:
                     help="seconds to wait for a detection after each try")
     ap.add_argument("--threshold", type=float, default=None,
                     help="override config.WAKE_THRESHOLD for this run")
+    ap.add_argument("--clips", type=Path, nargs="+", default=None,
+                    help="play these wav files through the speaker instead")
+    ap.add_argument("--expect", choices=["wake", "none"], default="wake",
+                    help="with --clips: should each one wake her?")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)-7s %(name)s | %(message)s")
+    if args.clips:
+        return run_clips(args.clips, args.expect == "wake", args.settle,
+                         args.window)
     return run(args.tries, args.live, args.settle, args.window,
                args.threshold)
 

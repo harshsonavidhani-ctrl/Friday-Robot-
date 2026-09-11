@@ -25,13 +25,17 @@ every single frame is scored and nothing is ever missed. Detection runs on its
 own thread against a subscription to the shared microphone stream, so it keeps
 scoring while main.py is busy thinking or speaking.
 
-THREE THINGS STOP IT FIRING WHEN IT SHOULD NOT:
+FOUR THINGS STOP IT FIRING WHEN IT SHOULD NOT:
   * a cooldown, so one "hey Friday" cannot register two or three times as the
     score stays high across neighbouring frames;
   * a pause while Friday is speaking, so she cannot wake herself on her own
     voice coming back through the mic;
   * openWakeWord's own Silero VAD gate, so fans, music and doors never even
-    reach the classifier.
+    reach the classifier;
+  * THE VERIFIER (wake_verify.py), which is the one that stops conversations.
+    openWakeWord scores people talking as high as "hey Friday", so every fire
+    is checked by a second classifier trained on the fires that fooled it,
+    before the beep, the face or the capture.
 """
 
 from __future__ import annotations
@@ -158,6 +162,11 @@ class OpenWakeWord(WakeSource):
             maxlen=max(1, int(config.WAKE_FIRE_SECONDS * config.MIC_SAMPLE_RATE
                               / CHUNK_SAMPLES)))
         self.fires_saved = 0
+        # THE SECOND OPINION (wake_verify.py), loaded with the model. None
+        # means every confirmed fire wakes her, which is the old behaviour.
+        self._verifier = None
+        self.rejected = 0
+        self._reject_saved_at = 0.0
 
     # -- the model --
     def model(self):
@@ -176,6 +185,10 @@ class OpenWakeWord(WakeSource):
         log.info("openWakeWord ready in %.1fs (%s, threshold %.2f)",
                  time.monotonic() - started, self.model_path.name,
                  self.threshold)
+        if config.WAKE_VERIFY:
+            import wake_verify
+            self._verifier = wake_verify.Verifier()
+            self._verifier.load()
         return self._model
 
     def preload(self) -> None:
@@ -285,10 +298,11 @@ class OpenWakeWord(WakeSource):
             if now_f - last_beat > config.WAKE_HEARTBEAT_S:
                 asleep = max(0.0, self._sleep_until - now_f)
                 log.info("wake alive: paused=%s  asleep=%.0fs  scored=%d "
-                         "chunks  last_score=%.3f  last_rms=%.0f  dropped=%d",
+                         "chunks  last_score=%.3f  last_rms=%.0f  dropped=%d"
+                         "  rejected=%d",
                          self._paused.is_set(), asleep, scored,
                          self.last_score, self.last_rms,
-                         getattr(self._sub, "dropped", -1))
+                         getattr(self._sub, "dropped", -1), self.rejected)
                 last_beat = now_f
                 scored = 0
 
@@ -370,11 +384,29 @@ class OpenWakeWord(WakeSource):
 
                 if confirmed and not cooling:
                     self._above = 0
+                    # THE SECOND OPINION, BEFORE ANYTHING ELSE HAPPENS. The
+                    # score cannot tell a conversation from "hey Friday"; the
+                    # verifier reads the same features openWakeWord just
+                    # scored and was trained on the fires that fooled it. A
+                    # rejection sets NO cooldown -- the run counter is already
+                    # reset, so if the score stays up the verifier is asked
+                    # again WAKE_PATIENCE chunks later with more of the phrase
+                    # in view. A cooldown here would drop a real "hey Friday"
+                    # said just after somebody else's sentence.
+                    accepted, verdict = self._verify()
+                    if not accepted:
+                        self.rejected += 1
+                        log.info("wake score %.2f REJECTED by the verifier "
+                                 "(%.2f < %.2f) — not \"hey Friday\"",
+                                 score, verdict, self._verifier.threshold)
+                        self._save_rejected(b"".join(self._recent), score, now)
+                        continue
                     self._cooldown_until = now + config.WAKE_COOLDOWN_S
                     self._reset_model()
                     audio = b"".join(self._recent)
                     buffer.clear()
-                    log.info("wake word detected (%.2f)", score)
+                    log.info("wake word detected (%.2f, verifier %s)", score,
+                             "off" if verdict is None else f"{verdict:.2f}")
                     with self._ready:
                         self._fired.append(f"{score:.2f}")
                         self._ready.notify()
@@ -383,8 +415,31 @@ class OpenWakeWord(WakeSource):
                     # Harsh hears as Friday being slow to answer.
                     self._save_fire(audio, score)
 
+    # -- the second opinion --
+    def _verify(self) -> "tuple[bool, float | None]":
+        """(accept?, verifier probability -- None when there is no verifier)."""
+        if self._verifier is None:
+            return True, None
+        try:
+            model = self.model()
+            frames = max(model.model_inputs.values())
+            features = model.preprocessor.get_features(frames)
+        except Exception as exc:                # noqa: BLE001
+            log.error("could not read the wake features (%s) — accepting "
+                      "this fire unchecked", exc)
+            return True, None
+        return self._verifier.accepts(features)
+
+    def _save_rejected(self, audio: bytes, score: float, now: float) -> None:
+        """One clip per rejected utterance: the next verifier's training set."""
+        if now - self._reject_saved_at < config.WAKE_REJECT_SAVE_GAP_S:
+            return
+        self._reject_saved_at = now
+        self._save_fire(audio, score, Path(config.WAKE_REJECT_DIR))
+
     # -- hard negatives --
-    def _save_fire(self, audio: bytes, score: float) -> None:
+    def _save_fire(self, audio: bytes, score: float,
+                   directory: Path | None = None) -> None:
         """Write the audio behind a fire, so it can be judged and trained on.
 
         EVERY fire, not just the wrong ones. Which ones were wrong is a
@@ -397,7 +452,7 @@ class OpenWakeWord(WakeSource):
         if not config.WAKE_SAVE_FIRES or not audio:
             return
         try:
-            directory = Path(config.WAKE_FIRE_DIR)
+            directory = Path(directory or config.WAKE_FIRE_DIR)
             directory.mkdir(parents=True, exist_ok=True)
             stamp = time.strftime("%Y%m%d-%H%M%S")
             path = directory / f"fire-{stamp}-{score:.2f}.wav"
