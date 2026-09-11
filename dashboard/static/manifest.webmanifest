@@ -1,17 +1,31 @@
 {
+  "id": "/",
   "name": "Friday · Live Logs",
   "short_name": "Friday",
-  "description": "Live log stream, cameras and face control for Friday.",
+  "description": "Live log stream, cameras, drive controls and face control for Friday.",
+  "lang": "en",
+  "dir": "ltr",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "any",
-  "background_color": "#0a0c10",
-  "theme_color": "#0a0c10",
+  "background_color": "#08090c",
+  "theme_color": "#08090c",
+  "categories": ["utilities", "productivity"],
+  "prefer_related_applications": false,
   "icons": [
-    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "/static/icon-maskable-512.png", "sizes": "512x512",
-      "type": "image/png", "purpose": "maskable" }
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/static/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Robot controls", "short_name": "Robot", "url": "/?pane=pane-robot",
+      "description": "Cameras, driving, face and explore",
+      "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Live logs", "short_name": "Logs", "url": "/?pane=pane-logs",
+      "description": "What Friday is thinking and doing, live",
+      "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
   ]
 }

@@ -6,13 +6,16 @@
  * app shell opens instantly and so an installed PWA still shows its own UI
  * (with a disconnected status dot) when the Pi is off.
  */
-const CACHE = "friday-shell-v2";   // bump to force a clean activate after a UI change
+const CACHE = "friday-shell-v3";   // bump to force a clean activate after a UI change
 const SHELL = [
   "/",
   "/static/style.css",
   "/static/app.js",
   "/static/icon-192.png",
   "/static/icon-512.png",
+  "/static/icon-maskable-192.png",
+  "/static/icon-maskable-512.png",
+  "/static/apple-touch-icon-180.png",
   "/static/manifest.webmanifest",
 ];
 

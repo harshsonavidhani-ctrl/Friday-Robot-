@@ -487,6 +487,7 @@ details.fold summary:hover{color:var(--dim)}
   display:flex;align-items:center;justify-content:center;
   transition:background .12s,border-color .12s,transform .06s;
   -webkit-tap-highlight-color:transparent;
+  overscroll-behavior:none;
   touch-action:manipulation;          /* no 300ms double-tap delay */
 }
 .dbtn:hover{border-color:var(--accent-dim)}

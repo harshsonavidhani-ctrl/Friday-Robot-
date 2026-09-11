@@ -778,7 +778,11 @@ function showPane(id) {
   connect();
   setInterval(heartbeat, 4000);
 
-  showPane(store.get('friday.pane', 'pane-logs'));
+  // A manifest shortcut lands on /?pane=... -- honour it, then fall back to
+  // whichever pane was last open. Anything else is ignored rather than trusted.
+  const asked = new URLSearchParams(location.search).get('pane');
+  const panes = ['pane-logs', 'pane-robot'];
+  showPane(panes.includes(asked) ? asked : store.get('friday.pane', 'pane-logs'));
   for (const t of document.querySelectorAll('.tab'))
     t.onclick = () => showPane(t.dataset.pane);
 
