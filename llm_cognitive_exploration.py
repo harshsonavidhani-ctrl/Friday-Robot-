@@ -59,6 +59,7 @@ import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("friday.cognitive")
@@ -85,7 +86,18 @@ DAILY_USD_CAP = 2.00
 MEMORY_DECISIONS = 5           # "last 5 decisions", as specified
 MEMORY_LANDMARKS = 12
 
-SECTORS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+# Runtime state published by the exploration run -- READ ONLY, and output
+# rather than source, which is what keeps this file zero-touch.
+HERE = Path(__file__).resolve().parent
+AUTONOMY_STATE = HERE / "state" / "rl_autonomy.json"
+POSE_STATE = HERE / "state" / "rl_map.pose.json"
+DECISION_LOG = HERE / "logs" / "cognitive_decisions.jsonl"
+STALE_AFTER_S = 5.0    # the run republishes about twice a second
+# THE RUN PUBLISHES NO LIVE POSE. rl_map.pose.json is written when the map is
+# saved, so after a run that aborts in teardown it can be days old -- measured
+# at 3.2 days on 2026-09-12. Old coordinates presented as current are worse
+# than none: they silently freeze the displacement check in SpatialMemory.
+POSE_STALE_AFTER_S = 60.0
 
 # The strict output contract. additionalProperties=False plus required on every
 # field means the response either matches this exactly or the API errors --
@@ -150,9 +162,15 @@ same landmark, or has not moved while believing it is exploring, say so in \
 deadlock_analysis and pick a decisive escape — a large turn, or a backtrack — \
 rather than another small correction in the same direction.
 
-HOW TO READ THE INPUT. Sector distances are metres, clockwise from the robot's \
-current heading: N is straight ahead, E is 90 degrees right, W is 90 degrees \
-left, S is directly behind. Odometry is metres and degrees in the map frame. \
+HOW TO READ THE INPUT. Sector distances are metres from the robot's current \
+heading: N straight ahead, E 90 degrees right, W 90 degrees left, S directly \
+behind. YOU MAY BE GIVEN FEWER THAN EIGHT SECTORS -- this robot measures four, \
+and the diagonals are absent rather than zero. Never assume an unlisted sector \
+is clear. `run_reported_state` is the exploration run's own account of itself: \
+which frontier it chose, what it abandoned, why it is recovering, and what its \
+drivetrain can actually execute. Trust it over your own reading of the \
+geometry, and use `what_the_drivetrain_can_execute` to keep your heading inside \
+what the wheels can do. Odometry is metres and degrees in the map frame. \
 Anything under about 0.35 m is effectively a wall.
 
 BATTERY. When the battery is low the mission changes: stop seeking frontiers \
@@ -218,54 +236,157 @@ class LidarMetrics:
     """One 8-sector range slice plus where the robot thinks it is."""
 
     sectors_m: dict[str, float]
-    odom_x_m: float
-    odom_y_m: float
-    heading_deg: float
+    odom_x_m: float | None
+    odom_y_m: float | None
+    heading_deg: float | None
     linear_velocity_mps: float
+    source: str = "mock"
+    pose_age_s: float | None = None
+    tof_nearest_m: float | None = None
 
     def tightest(self) -> tuple[str, float]:
         name = min(self.sectors_m, key=self.sectors_m.get)
         return name, self.sectors_m[name]
 
-    def distance_from_origin_m(self) -> float:
+    def known_pose(self) -> bool:
+        return self.odom_x_m is not None and self.heading_deg is not None
+
+    def distance_from_origin_m(self) -> float | None:
+        if not self.known_pose():
+            return None
         return math.hypot(self.odom_x_m, self.odom_y_m)
 
 
-def read_lidar_metrics() -> LidarMetrics:
-    """SEAM 2 — 8 sector minima from the LiDAR, plus odometry.
+def _read_json(path: Path) -> tuple[dict | None, float]:
+    """Load a runtime JSON file and say how old it is. Never raises."""
+    try:
+        age = time.time() - path.stat().st_mtime
+        return json.loads(path.read_text()), age
+    except (OSError, json.JSONDecodeError) as exc:
+        log.debug("cannot read %s (%s)", path.name, type(exc).__name__)
+        return None, float("inf")
 
-    Real implementation: take the 360-degree scan, collapse it into these eight
-    45-degree sectors using the MINIMUM range in each (a mean hides the table
-    leg that stops the robot), and mask the sectors the chassis occludes.
+
+def read_autonomy() -> tuple[dict | None, float]:
+    """The exploration run's own published state, and its age in seconds.
+
+    ZERO-TOUCH BY DESIGN. This is the runtime state file the run writes for the
+    dashboard and the voice layer to read -- output, not source. Nothing here
+    imports the exploration stack, opens a serial port, or touches the map.
+    That matters for more than tidiness: the LiDAR allows exactly ONE reader
+    and friday-mcp already holds it, so reading the device directly would break
+    whatever run is in progress.
     """
-    base = {"N": 2.4, "NE": 1.8, "E": 0.9, "SE": 1.2, "S": 3.1, "SW": 2.2,
-            "W": 1.1, "NW": 1.6}
-    jitter = {k: round(max(0.12, v + random.uniform(-0.25, 0.25)), 2)
-              for k, v in base.items()}
+    return _read_json(AUTONOMY_STATE)
+
+
+def read_lidar_metrics(autonomy: dict | None = None,
+                       age_s: float = float("inf")) -> LidarMetrics:
+    """SEAM 2 (WIRED) -- sector ranges and odometry from the live run.
+
+    The run publishes FOUR sectors, not eight: front, left, right, rear. The
+    diagonals are not measured and are NOT invented here -- a fabricated NE
+    reading is a wall the planner will happily drive into. Whatever is real
+    goes in; the model is told which sectors it has.
+
+    Falls back to the mock only when there is no state file at all, and says so
+    in `source` either way.
+    """
+    if autonomy is None or age_s > STALE_AFTER_S:
+        base = {"N": 2.4, "NE": 1.8, "E": 0.9, "SE": 1.2, "S": 3.1, "SW": 2.2,
+                "W": 1.1, "NW": 1.6}
+        jitter = {k: round(max(0.12, v + random.uniform(-0.25, 0.25)), 2)
+                  for k, v in base.items()}
+        return LidarMetrics(
+            sectors_m=jitter, odom_x_m=round(random.uniform(-4.0, 4.0), 2),
+            odom_y_m=round(random.uniform(-4.0, 4.0), 2),
+            heading_deg=round(random.uniform(0.0, 359.9), 1),
+            linear_velocity_mps=round(random.choice([0.0, 0.0, 0.12, 0.18]), 2),
+            source=("mock (no run state)" if autonomy is None
+                    else f"mock (run state {age_s:.0f}s stale)"))
+
+    lidar = (autonomy.get("SENSOR_STATE") or {}).get("lidar") or {}
+    sectors = {name: round(float(lidar[key]), 2)
+               for name, key in (("N", "front"), ("E", "right"),
+                                 ("W", "left"), ("S", "rear"))
+               if isinstance(lidar.get(key), (int, float))}
+    action = autonomy.get("FINAL_EXECUTED_ACTION") or {}
+    pose, pose_age = _read_json(POSE_STATE)
+    fresh = pose is not None and pose_age <= POSE_STALE_AFTER_S
+    pose = pose or {}
     return LidarMetrics(
-        sectors_m=jitter,
-        odom_x_m=round(random.uniform(-4.0, 4.0), 2),
-        odom_y_m=round(random.uniform(-4.0, 4.0), 2),
-        heading_deg=round(random.uniform(0.0, 359.9), 1),
-        linear_velocity_mps=round(random.choice([0.0, 0.0, 0.12, 0.18]), 2),
+        sectors_m=sectors or {"N": 0.0},
+        odom_x_m=round(float(pose.get("x", 0.0)), 2) if fresh else None,
+        odom_y_m=round(float(pose.get("y", 0.0)), 2) if fresh else None,
+        heading_deg=(round(math.degrees(float(pose.get("theta", 0.0))) % 360.0, 1)
+                     if fresh else None),
+        linear_velocity_mps=round(float(action.get("v", 0.0)), 3),
+        source=f"live run tick {autonomy.get('TICK')} ({age_s:.1f}s old)",
+        pose_age_s=round(pose_age, 1),
+        tof_nearest_m=((autonomy.get("SENSOR_STATE") or {}).get("tof") or {}).get("nearest"),
     )
 
 
-def get_robot_state() -> str:
-    """SEAM 3 — the local controller's own state machine label.
+def get_robot_state(autonomy: dict | None = None,
+                    age_s: float = float("inf")) -> str:
+    """SEAM 3 (WIRED) -- the run's own verdict, not a guess from the geometry.
 
-    EXPLORING | STUCK_VELOCITY_0 | OBSTACLE_PROXIMITY | RECOVERING | IDLE.
-    This is the single most valuable input here: the local controller knows it
-    is stuck long before the geometry looks stuck from outside.
+    Derived in priority order, because these overlap: a reflex stop while
+    recovering is still a reflex stop. The recovery triggers are the valuable
+    part -- `oscillation` and `no_progress` are the run telling you it is
+    deadlocked, which is exactly what the planner is here to break.
     """
-    return random.choice(
-        ["EXPLORING", "EXPLORING", "EXPLORING", "STUCK_VELOCITY_0",
-         "OBSTACLE_PROXIMITY"])
+    if autonomy is None:
+        return "IDLE"
+    if age_s > STALE_AFTER_S:
+        return "IDLE"                       # a finished run is not a stuck one
+    recovery = (autonomy.get("RECOVERY_STATUS") or {}).get("active") or {}
+    trigger = recovery.get("trigger")
+    reason = autonomy.get("REASON_CODE") or ""
+    velocity = float((autonomy.get("FINAL_EXECUTED_ACTION") or {}).get("v", 0.0))
+    if trigger in ("no_progress", "oscillation", "retreading", "boxed_in"):
+        return "STUCK_VELOCITY_0" if abs(velocity) < 0.01 else "RECOVERING"
+    if reason == "REFLEX_STOP" or (autonomy.get("SAFETY_STATUS") or {}).get("overridden"):
+        return "OBSTACLE_PROXIMITY"
+    if abs(velocity) < 0.01:
+        return "STUCK_VELOCITY_0"
+    return "EXPLORING"
 
 
-def read_battery() -> float:
-    """SEAM 4 — battery percentage, 0-100."""
-    return round(random.uniform(18.0, 95.0), 1)
+def read_battery(manual_pct: float | None = None) -> tuple[float | None, str]:
+    """SEAM 4 (WIRED, AND THE ANSWER IS "UNKNOWN") -- (percent, how we know).
+
+    THERE IS NO FUEL GAUGE ON THIS ROBOT. config.py says so in as many words:
+    "No battery fuel gauge is wired on this robot. get_status() reports battery
+    as unknown rather than inventing a percentage." So this returns None, and
+    every battery rule downstream is skipped rather than run on a number nobody
+    measured. Inventing one would be worse than having none: it would strand
+    the robot confidently.
+
+    Two real signals do exist:
+      * --battery-pct, for a human reading the powerbank's own display;
+      * the Pi's undervoltage/throttle flags, which are about supply health,
+        not charge -- and given this Pi reset four times on 2026-09-12 with
+        rsts 0x1000 (power), they are worth reporting.
+    """
+    if manual_pct is not None:
+        return manual_pct, "--battery-pct (human-entered)"
+    flags = ""
+    try:
+        import subprocess
+        out = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True,
+                             text=True, timeout=3)
+        raw = out.stdout.strip().split("=")[-1]
+        bits = int(raw, 16) if raw.startswith("0x") else 0
+        if bits & 0x1:
+            flags = "UNDERVOLTAGE NOW"
+        elif bits & 0x10000:
+            flags = "undervoltage happened since boot"
+        else:
+            flags = f"supply ok ({raw})"
+    except Exception as exc:                # noqa: BLE001
+        flags = f"throttle flags unavailable ({type(exc).__name__})"
+    return None, f"no fuel gauge wired; {flags}"
 
 
 # --- semantic spatial memory -------------------------------------------------
@@ -317,10 +438,14 @@ class SpatialMemory:
             return False
         recent = list(self.decisions)[-3:]
         modes = {d["action_mode"] for d in recent}
-        moved = math.hypot(recent[-1]["odom"][0] - recent[0]["odom"][0],
-                           recent[-1]["odom"][1] - recent[0]["odom"][1])
-        if len(modes) == 1 and moved < 0.25:
-            return True
+        # Only usable when the pose is real. With no pose the displacement is
+        # always zero, which would report every repeated mode as a deadlock.
+        odoms = [d["odom"] for d in recent]
+        if all(o[0] is not None for o in odoms):
+            moved = math.hypot(odoms[-1][0] - odoms[0][0],
+                               odoms[-1][1] - odoms[0][1])
+            if len(modes) == 1 and moved < 0.25:
+                return True
         offsets = [d["heading_offset"] or 0.0 for d in recent]
         return abs(sum(offsets)) < 10.0 and all(abs(o) > 30.0 for o in offsets)
 
@@ -388,9 +513,10 @@ def fallback_decision(reason: str) -> dict[str, Any]:
 
 
 async def query_sonnet5_planner(client, vision: VisionFrames, lidar: LidarMetrics,
-                                state: str, battery_pct: float,
-                                memory: SpatialMemory,
-                                spend: SpendGuard) -> dict[str, Any]:
+                                state: str, battery_pct: float | None,
+                                memory: SpatialMemory, spend: SpendGuard,
+                                context: dict[str, Any] | None = None,
+                                battery_note: str = "") -> dict[str, Any]:
     """One multimodal decision from Claude Sonnet 5, or a safe fallback.
 
     The two camera frames go in as image blocks and everything measurable goes
@@ -404,18 +530,27 @@ async def query_sonnet5_planner(client, vision: VisionFrames, lidar: LidarMetric
     telemetry = {
         "robot_state_from_local_controller": state,
         "battery_percent": battery_pct,
+        "battery_provenance": battery_note,
+        "lidar_source": lidar.source,
+        "tof_nearest_m": lidar.tof_nearest_m,
+        "run_reported_state": context or {},
         "battery_policy": {
             "return_to_base_below_pct": BATTERY_RETURN_PCT,
             "critical_below_pct": BATTERY_CRITICAL_PCT,
         },
         "lidar_sectors_m": lidar.sectors_m,
         "tightest_sector": dict(zip(("sector", "metres"), lidar.tightest())),
-        "odometry": {
+        "odometry": ({
             "x_m": lidar.odom_x_m, "y_m": lidar.odom_y_m,
             "heading_deg": lidar.heading_deg,
             "linear_velocity_mps": lidar.linear_velocity_mps,
             "distance_from_origin_m": round(lidar.distance_from_origin_m(), 2),
-        },
+        } if lidar.known_pose() else {
+            "position": "UNKNOWN -- this run publishes no live pose and the "
+                        f"saved one is {lidar.pose_age_s}s old. Do not reason "
+                        "about where you are; reason from the sectors.",
+            "linear_velocity_mps": lidar.linear_velocity_mps,
+        }),
         "short_term_spatial_memory": memory.as_prompt_block(),
     }
 
@@ -510,13 +645,16 @@ def _clamp_heading(value: Any) -> float:
     return round(degrees, 1)
 
 
-def battery_override(battery_pct: float, lidar: LidarMetrics) -> dict[str, Any] | None:
+def battery_override(battery_pct: float | None,
+                     lidar: LidarMetrics) -> dict[str, Any] | None:
     """Power is a local hard rule, not something to ask a language model about.
 
     Below the critical line the robot stops; below the return line it goes home.
     Both are decided here, before any API call, because a flat battery halfway
     through a request is exactly when the network is least useful.
     """
+    if battery_pct is None:
+        return None            # no gauge on this robot; nothing to rule on
     if battery_pct <= BATTERY_CRITICAL_PCT:
         return {
             "scene_understanding": f"Battery critical at {battery_pct:.0f}%. "
@@ -527,6 +665,16 @@ def battery_override(battery_pct: float, lidar: LidarMetrics) -> dict[str, Any] 
             "battery_override": True,
         }
     if battery_pct <= BATTERY_RETURN_PCT:
+        if not lidar.known_pose():
+            return {
+                "scene_understanding": (
+                    f"Battery {battery_pct:.0f}% is below the return threshold, but "
+                    f"there is no current pose, so the bearing home is unknown."),
+                "deadlock_analysis": False,
+                "action_mode": "HOLD_POSITION",
+                "target_heading_offset": 0.0,
+                "battery_override": True,
+            }
         # Turn toward the odometry origin: bearing to (0,0) minus current heading.
         bearing = math.degrees(math.atan2(-lidar.odom_y_m, -lidar.odom_x_m))
         return {
@@ -541,54 +689,119 @@ def battery_override(battery_pct: float, lidar: LidarMetrics) -> dict[str, Any] 
     return None
 
 
+def exploration_context(autonomy: dict | None) -> dict[str, Any]:
+    """What the run itself already knows, forwarded to the planner.
+
+    THIS IS THE POINT OF THE WHOLE BRIDGE. Local geometry alone cannot explain
+    the measured failure: a 10-minute run added 0.5 m2 to a 321 m2 map with a
+    revisit ratio of 0.64, while the planner reported 474 frontiers and the
+    navigator handed back most ticks. The run already knows which targets it
+    abandoned and why it is recovering; a planner that cannot see that is
+    guessing at the one question worth asking.
+    """
+    if not autonomy:
+        return {}
+    target = autonomy.get("EXPLORATION_TARGET") or {}
+    recovery = autonomy.get("RECOVERY_STATUS") or {}
+    map_state = autonomy.get("MAP_STATE") or {}
+    capability = autonomy.get("CAPABILITY_CHECK") or {}
+    return {
+        "mode": autonomy.get("CURRENT_MODE"),
+        "tick": autonomy.get("TICK"),
+        "why_last_action": autonomy.get("REASON"),
+        "reason_code": autonomy.get("REASON_CODE"),
+        "next_objective": autonomy.get("NEXT_OBJECTIVE"),
+        "frontier_planner": {k: target.get(k) for k in
+                             ("has_target", "target_distance", "target_age_s",
+                              "frontiers", "exhausted", "chosen", "arrived",
+                              "abandoned", "blacklisted")},
+        "recovery": {"state": recovery.get("state"),
+                     "active": recovery.get("active"),
+                     "triggers": recovery.get("triggers")},
+        "coverage": {k: map_state.get(k) for k in
+                     ("explored_m2", "visited_m2", "revisited_m2",
+                      "revisit_ratio")},
+        "what_the_drivetrain_can_execute": capability.get("action_space"),
+        "safety": autonomy.get("SAFETY_STATUS"),
+        "run_totals": {k: (autonomy.get("RUN_TOTALS") or {}).get(k) for k in
+                       ("ticks", "reflex_stops", "escape_turns", "nav_handoffs",
+                        "recovery_ticks", "reverse_escapes")},
+    }
+
+
 # --- the loop ----------------------------------------------------------------
 
-def emit_payload(payload: dict[str, Any]) -> None:
+def emit_payload(payload: dict[str, Any], log_path: Path | None = None) -> None:
     """SEAM 5 — hand the decision to the local controller.
 
     stdout by design: a pipe is the smallest possible coupling, and it keeps
     this file free of any import from the robot's own stack. Swap for a socket,
     an MCP call or a file drop; keep it one function.
     """
-    print(json.dumps(payload, separators=(",", ":")), flush=True)
+    line = json.dumps(payload, separators=(",", ":"))
+    print(line, flush=True)
+    if log_path is not None:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a") as handle:
+                handle.write(line + "\n")
+        except OSError as exc:
+            log.warning("could not write %s (%s)", log_path, exc)
 
 
 async def tick(client, memory: SpatialMemory, spend: SpendGuard,
-               dry_run: bool, state: str | None = None) -> dict[str, Any]:
-    """One full cycle: sense, decide, remember, emit.
+               dry_run: bool, state: str | None = None,
+               autonomy: dict | None = None, age_s: float = float("inf"),
+               manual_battery: float | None = None,
+               log_path: Path | None = None) -> dict[str, Any]:
+    """One full cycle: sense, decide, remember, log.
 
-    `state` is passed in by the caller so the robot's state machine is read
-    EXACTLY ONCE per tick. Reading it again in here was a real bug: --on-stuck
-    gated on one sample and the payload then reported a second, independent
-    one, so decisions could be logged against a state nobody had checked.
+    The run state is read ONCE by the caller and passed in. Reading it again in
+    here was a real bug: --on-stuck gated on one sample and the payload then
+    reported a second, independent one.
     """
     started = time.monotonic()
     vision = capture_front_vision()
-    lidar = read_lidar_metrics()
-    state = get_robot_state() if state is None else state
-    battery = read_battery()
+    lidar = read_lidar_metrics(autonomy, age_s)
+    state = get_robot_state(autonomy, age_s) if state is None else state
+    battery_pct, battery_note = read_battery(manual_battery)
+    context = exploration_context(autonomy)
 
-    decision = battery_override(battery, lidar)
+    decision = battery_override(battery_pct, lidar)
     if decision is None:
         if dry_run:
             decision = fallback_decision("--dry-run, no API call made")
         else:
             decision = await query_sonnet5_planner(
-                client, vision, lidar, state, battery, memory, spend)
+                client, vision, lidar, state, battery_pct, memory, spend,
+                context, battery_note)
 
     memory.remember(decision, lidar)
     payload = {
         "schema": "friday.cognitive.v1",
         "at": round(time.time(), 2),
         "tier": 2,
-        "advisory": True,            # Tier 1 may override; see the docstring
+        "advisory": True,
+        # NOTHING STEERS ON THIS. No consumer is wired: this process observes a
+        # run and writes down what it would have advised. Wiring it to motion is
+        # a separate, deliberate step -- and the brain-target seam is still the
+        # only cognitive->motion link on this robot, itself never proven.
+        "steering": "not_wired (log only)",
         "robot_state": state,
-        "battery_percent": battery,
+        "battery_percent": battery_pct,
+        "sources": {
+            "lidar_odometry": lidar.source,
+            "pose_age_s": lidar.pose_age_s,
+            "robot_state": ("live run" if autonomy and age_s <= STALE_AFTER_S
+                            else f"no live run (state {age_s:.0f}s old)"),
+            "battery": battery_note,
+        },
+        "run_tick": (autonomy or {}).get("TICK"),
         "decision": decision,
         "planner_latency_s": round(time.monotonic() - started, 2),
         "spend_usd_today": round(spend.spent_usd, 4),
     }
-    emit_payload(payload)
+    emit_payload(payload, log_path)
     return payload
 
 
@@ -603,6 +816,12 @@ async def main() -> int:
     ap.add_argument("--once", action="store_true", help="one decision, then exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="exercise the whole pipeline without calling the API")
+    ap.add_argument("--battery-pct", type=float, default=None,
+                    help="battery percentage by hand -- there is NO fuel gauge "
+                         "on this robot, so battery rules stay off without it")
+    ap.add_argument("--log", type=Path, default=DECISION_LOG,
+                    help="append every decision here as JSONL (default %(default)s)")
+    ap.add_argument("--no-log", action="store_true")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -625,12 +844,16 @@ async def main() -> int:
     try:
         while True:
             # ONE read per tick, used by both the gate and the decision.
-            state_now = get_robot_state()
-            if args.on_stuck and state_now == "EXPLORING":
+            autonomy, age_s = read_autonomy()
+            state_now = get_robot_state(autonomy, age_s)
+            if args.on_stuck and state_now in ("EXPLORING", "IDLE"):
                 await asyncio.sleep(args.interval)
                 continue
             try:
-                payload = await tick(client, memory, spend, args.dry_run, state_now)
+                payload = await tick(client, memory, spend, args.dry_run,
+                                     state_now, autonomy, age_s,
+                                     args.battery_pct,
+                                     None if args.no_log else args.log)
             except Exception as exc:                    # noqa: BLE001
                 # One bad tick must never end the loop: a planner that dies is a
                 # robot that silently stops thinking while still driving.
