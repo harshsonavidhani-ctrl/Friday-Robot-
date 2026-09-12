@@ -93,6 +93,20 @@ AUTONOMY_STATE = HERE / "state" / "rl_autonomy.json"
 POSE_STATE = HERE / "state" / "rl_map.pose.json"
 DECISION_LOG = HERE / "logs" / "cognitive_decisions.jsonl"
 STALE_AFTER_S = 5.0    # the run republishes about twice a second
+
+# VISION COMES FROM THE DASHBOARD, NEVER FROM /dev/video*. The cameras are
+# single-reader on this robot and an exploration run takes them -- opening the
+# device here would fight whatever is driving. The dashboard already arbitrates
+# who holds them, so one frame is pulled from its MJPEG stream and the
+# connection is closed again. Measured 2026-09-12: 4.9 s for the first frame
+# (camera spin-up), then 0.1-0.2 s while it stays warm.
+DASHBOARD_URL = "http://127.0.0.1:8080"
+CAMERA_TIMEOUT_S = 9.0
+# Downscaled before sending: a 640x480 frame is ~1.5k tokens and vision
+# dominates the bill. 512 px wide keeps the semantics (door, stairs, clutter)
+# that this planner actually uses.
+VISION_MAX_WIDTH = 512
+VISION_JPEG_QUALITY = 70
 # THE RUN PUBLISHES NO LIVE POSE. rl_map.pose.json is written when the map is
 # saved, so after a run that aborts in teardown it can be days old -- measured
 # at 3.2 days on 2026-09-12. Old coordinates presented as current are worse
@@ -193,42 +207,96 @@ so write what you actually saw and measured, not a restatement of these rules.""
 class VisionFrames:
     """Base64 JPEG frames from the two USB cameras."""
 
-    up_b64: str            # forward camera, above the screen
-    down_b64: str          # floor camera, above the bumper
+    up_b64: str | None = None      # forward camera, above the screen
+    down_b64: str | None = None     # floor camera, above the bumper
     media_type: str = "image/jpeg"
     captured_at: float = field(default_factory=time.time)
+    status: dict[str, str] = field(default_factory=dict)
+
+    def frames(self) -> list[tuple[str, str]]:
+        """(label, base64) for whichever cameras actually produced a frame."""
+        out = []
+        if self.up_b64:
+            out.append(("FORWARD camera (above the screen)", self.up_b64))
+        if self.down_b64:
+            out.append(("FLOOR camera (above the bumper)", self.down_b64))
+        return out
 
 
-def _mock_jpeg(label: str) -> str:
-    """A valid 1x1 JPEG, so the payload shape is real even while the data is not.
+def _one_frame(which: str, timeout_s: float) -> tuple[bytes | None, str]:
+    """One JPEG from the dashboard's MJPEG stream, then hang up.
 
-    Deliberately not random bytes: the wire format, the base64 encoding and the
-    content-block shape are exactly what the real frames will use, so swapping
-    in a camera later changes one function and nothing downstream.
+    Reads until the first complete SOI..EOI and closes, so the camera is held
+    for as little time as possible. Any failure is returned as a REASON, not
+    raised: a camera that is busy driving the robot is the normal case, not an
+    error, and the planner must still think without it.
     """
-    jpeg_1x1 = bytes.fromhex(
-        "ffd8ffe000104a46494600010100000100010000ffdb004300ff"
-        "ffffffffffffffffffffffffffffffffffffffffffffffffffff"
-        "ffffffffffffffffffffffffffffffffffffffffffffffffffff"
-        "ffffffffffffffffffffffffffffffffffffffffffffffc20011"
-        "08000100010101110000ffc40014000100000000000000000000"
-        "000000000009ffda0008010100000000013fffd9")
-    log.debug("mock frame for %s (%d bytes)", label, len(jpeg_1x1))
-    return base64.standard_b64encode(jpeg_1x1).decode("ascii")
+    import urllib.request
+
+    started = time.monotonic()
+    url = f"{DASHBOARD_URL}/cam/{which}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout_s) as response:
+            buffer = b""
+            while len(buffer) < 600_000 and time.monotonic() - started < timeout_s:
+                chunk = response.read(8192)
+                if not chunk:
+                    break
+                buffer += chunk
+                start = buffer.find(b"\xff\xd8")
+                end = buffer.find(b"\xff\xd9", start + 2) if start >= 0 else -1
+                if start >= 0 and end > 0:
+                    return buffer[start:end + 2], f"ok ({time.monotonic() - started:.1f}s)"
+            return None, "no complete frame before the timeout"
+    except Exception as exc:                # noqa: BLE001
+        return None, f"{type(exc).__name__}: {str(exc)[:60]}"
 
 
-def capture_front_vision() -> VisionFrames:
-    """SEAM 1 — grab one frame from each USB camera, base64 encoded.
+def _shrink(jpeg: bytes) -> bytes:
+    """Downscale to VISION_MAX_WIDTH. Vision dominates the token bill."""
+    try:
+        import io
+        from PIL import Image
 
-    Real implementation: read the two /dev/video nodes, take ONE frame each,
-    encode as JPEG at around 640x480, and base64 it. Two things matter when you
-    wire this up:
-      * resolution is the bill. Each 640x480 frame is roughly 1.5k tokens; going
-        to 1280x960 quadruples that for detail this planner does not use.
-      * a stale frame is worse than no frame. Stamp captured_at and refuse to
-        plan on anything older than a tick.
+        image = Image.open(io.BytesIO(jpeg))
+        if image.width <= VISION_MAX_WIDTH:
+            return jpeg
+        height = round(image.height * VISION_MAX_WIDTH / image.width)
+        image = image.convert("RGB").resize((VISION_MAX_WIDTH, height),
+                                            Image.LANCZOS)
+        out = io.BytesIO()
+        image.save(out, "JPEG", quality=VISION_JPEG_QUALITY)
+        return out.getvalue()
+    except Exception as exc:                # noqa: BLE001
+        log.debug("could not shrink the frame (%s) — sending it as it is", exc)
+        return jpeg
+
+
+def capture_front_vision(enabled: bool = True,
+                         timeout_s: float = CAMERA_TIMEOUT_S) -> VisionFrames:
+    """SEAM 1 (WIRED) -- one frame from each USB camera, base64 encoded.
+
+    Through the dashboard, NEVER /dev/video*: see DASHBOARD_URL. A camera that
+    is unavailable -- busy, unplugged, or missing its by-id symlink, which is
+    how the floor camera fails on this robot -- simply contributes no frame and
+    a reason. Zero frames is a supported outcome; the planner then reasons from
+    the LiDAR sectors and the run's own state, and is told vision was missing.
     """
-    return VisionFrames(up_b64=_mock_jpeg("up"), down_b64=_mock_jpeg("down"))
+    frames = VisionFrames()
+    if not enabled:
+        frames.status = {"up": "disabled (--no-vision)",
+                         "down": "disabled (--no-vision)"}
+        return frames
+    for which in ("up", "down"):
+        jpeg, why = _one_frame(which, timeout_s)
+        if jpeg:
+            small = _shrink(jpeg)
+            encoded = base64.standard_b64encode(small).decode("ascii")
+            setattr(frames, f"{which}_b64", encoded)
+            why = f"{why}, {len(jpeg) // 1024} kB -> {len(small) // 1024} kB"
+        frames.status[which] = why
+    frames.captured_at = time.time()
+    return frames
 
 
 @dataclass
@@ -532,6 +600,7 @@ async def query_sonnet5_planner(client, vision: VisionFrames, lidar: LidarMetric
         "battery_percent": battery_pct,
         "battery_provenance": battery_note,
         "lidar_source": lidar.source,
+        "camera_status": vision.status,
         "tof_nearest_m": lidar.tof_nearest_m,
         "run_reported_state": context or {},
         "battery_policy": {
@@ -554,16 +623,24 @@ async def query_sonnet5_planner(client, vision: VisionFrames, lidar: LidarMetric
         "short_term_spatial_memory": memory.as_prompt_block(),
     }
 
-    content = [
-        {"type": "image", "source": {"type": "base64",
-                                     "media_type": vision.media_type,
-                                     "data": vision.up_b64}},
-        {"type": "text", "text": "Above: FORWARD camera. Below: FLOOR camera."},
-        {"type": "image", "source": {"type": "base64",
-                                     "media_type": vision.media_type,
-                                     "data": vision.down_b64}},
-        {"type": "text", "text": "Telemetry:\n" + json.dumps(telemetry, indent=2)},
-    ]
+    # However many cameras actually produced a frame -- often one, sometimes
+    # none. Each is labelled, because "the floor camera sees carpet" and "the
+    # forward camera sees carpet" mean completely different things.
+    content: list[dict[str, Any]] = []
+    for label, encoded in vision.frames():
+        content.append({"type": "text", "text": f"{label}:"})
+        content.append({"type": "image",
+                        "source": {"type": "base64",
+                                   "media_type": vision.media_type,
+                                   "data": encoded}})
+    if not content:
+        content.append({"type": "text", "text":
+                        "NO CAMERA FRAMES this tick — "
+                        + json.dumps(vision.status)
+                        + ". Decide from the sectors and the run state alone, "
+                          "and say in scene_understanding that you were blind."})
+    content.append({"type": "text",
+                    "text": "Telemetry:\n" + json.dumps(telemetry, indent=2)})
 
     try:
         response = await asyncio.wait_for(
@@ -753,7 +830,8 @@ async def tick(client, memory: SpatialMemory, spend: SpendGuard,
                dry_run: bool, state: str | None = None,
                autonomy: dict | None = None, age_s: float = float("inf"),
                manual_battery: float | None = None,
-               log_path: Path | None = None) -> dict[str, Any]:
+               log_path: Path | None = None,
+               vision_enabled: bool = True) -> dict[str, Any]:
     """One full cycle: sense, decide, remember, log.
 
     The run state is read ONCE by the caller and passed in. Reading it again in
@@ -761,7 +839,7 @@ async def tick(client, memory: SpatialMemory, spend: SpendGuard,
     reported a second, independent one.
     """
     started = time.monotonic()
-    vision = capture_front_vision()
+    vision = capture_front_vision(vision_enabled)
     lidar = read_lidar_metrics(autonomy, age_s)
     state = get_robot_state(autonomy, age_s) if state is None else state
     battery_pct, battery_note = read_battery(manual_battery)
@@ -795,6 +873,7 @@ async def tick(client, memory: SpatialMemory, spend: SpendGuard,
             "robot_state": ("live run" if autonomy and age_s <= STALE_AFTER_S
                             else f"no live run (state {age_s:.0f}s old)"),
             "battery": battery_note,
+            "cameras": vision.status,
         },
         "run_tick": (autonomy or {}).get("TICK"),
         "decision": decision,
@@ -822,6 +901,9 @@ async def main() -> int:
     ap.add_argument("--log", type=Path, default=DECISION_LOG,
                     help="append every decision here as JSONL (default %(default)s)")
     ap.add_argument("--no-log", action="store_true")
+    ap.add_argument("--no-vision", action="store_true",
+                    help="skip the cameras (they are the token bill, and an "
+                         "exploration run owns them while it drives)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -853,7 +935,8 @@ async def main() -> int:
                 payload = await tick(client, memory, spend, args.dry_run,
                                      state_now, autonomy, age_s,
                                      args.battery_pct,
-                                     None if args.no_log else args.log)
+                                     None if args.no_log else args.log,
+                                     not args.no_vision)
             except Exception as exc:                    # noqa: BLE001
                 # One bad tick must never end the loop: a planner that dies is a
                 # robot that silently stops thinking while still driving.
