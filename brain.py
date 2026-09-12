@@ -122,7 +122,15 @@ def _to_anthropic_tools(mcp_tools: list[Any]) -> list[dict[str, Any]]:
     """
     tools = []
     for tool in sorted(mcp_tools, key=lambda t: t.name):
-        schema = tool.inputSchema or {"type": "object", "properties": {}}
+        # BOTH SPELLINGS, because the MCP SDK renamed this field. 1.x hands
+        # back `inputSchema`, 2.x `input_schema`, and with 2.x installed every
+        # brain turn died on AttributeError before a single request was sent --
+        # "the brain failed: 'Tool' object has no attribute 'inputSchema'".
+        # An empty tool list would have been worse than this crash: she would
+        # have answered fluently while unable to do anything.
+        schema = (getattr(tool, "input_schema", None)
+                  or getattr(tool, "inputSchema", None)
+                  or {"type": "object", "properties": {}})
         tools.append({
             "name": tool.name,
             "description": tool.description or tool.name,
