@@ -55,7 +55,7 @@ STATE_DIR = COMMAND_FILE.parent
 
 # The views apps/ registers. Kept here as well so a tool can validate a name
 # without importing pygame -- apps/ imports pygame, this module must not.
-APP_NAMES: tuple[str, ...] = ("clock", "timer", "alarm", "weather")
+APP_NAMES: tuple[str, ...] = ("clock", "timer", "alarm", "weather", "rain")
 
 
 class ScheduleError(ValueError):
