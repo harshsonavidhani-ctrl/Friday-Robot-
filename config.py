@@ -1400,7 +1400,18 @@ APP_CLOCK_24H = False
 APP_LABEL_MAX_CHARS = 28
 
 # How long a weather card stays up before handing the screen back.
-APP_WEATHER_HOLD_S = 30.0
+# 0 = the card stays until something takes the screen back. Harsh, 2026-09-12:
+# he wants the raining cloud and the readings up, not gone in half a minute.
+# app_control.py --dismiss puts it away; a safety face or a ringing alarm draws
+# over it; any other expression yields to it.
+APP_WEATHER_HOLD_S = 0.0
+
+# THE ARTWORK, NOT THE READING. Harsh asked for the cloud-with-rain animation
+# whatever the sky is doing, so this forces the icon and NOTHING else: the
+# place, the temperature, the condition word, the high and low, the wind and
+# the humidity all still come from weather_source.py and stay true. Set to None
+# and the icon follows the real condition again (sun, mist, storm, snow).
+APP_WEATHER_FORCE_ICON = "rain"
 
 # --- weather without a key -------------------------------------------------
 # apps/weather.py draws the card and holds no key ON PURPOSE: the brain has web

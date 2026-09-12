@@ -27,10 +27,14 @@ class Weather(App):
     NAME = "weather"
 
     def setup(self, weather: dict | None = None,
-              hold: float | None = None, **_) -> None:
+              hold: float | None = None, icon: str | None = None,
+              **_) -> None:
         self.data = dict(weather or {})
         self.hold = float(config.APP_WEATHER_HOLD_S if hold is None else hold)
-        self.icon = _icon_for(str(self.data.get("condition") or ""))
+        # `icon` picks the ARTWORK only -- see APP_WEATHER_FORCE_ICON. Every
+        # word and number on the card still comes from self.data, so the panel
+        # can show Harsh's rain cloud while still reporting the real sky.
+        self.icon = _icon_for(str(icon or self.data.get("condition") or ""))
 
     def tick(self, dt: float) -> None:
         if self.hold and self.elapsed >= self.hold:

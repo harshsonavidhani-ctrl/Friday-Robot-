@@ -300,6 +300,7 @@ def set_weather(data: dict | None = None, hold: float | None = None) -> str:
                ("place", "condition", "temp_c", "feels_c", "high_c", "low_c",
                 "wind_kph", "humidity", "summary")}
     return launch("weather", weather=payload,
+                  icon=getattr(config, "APP_WEATHER_FORCE_ICON", None),
                   hold=hold if hold is not None else config.APP_WEATHER_HOLD_S)
 
 
