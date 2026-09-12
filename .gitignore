@@ -97,6 +97,8 @@ state/app_command.json
 state/app_status.json
 state/schedule.json
 state/ring.wav
+# The last weather reading, cached so wttr.in is not asked twice a minute.
+state/weather.json
 state/ring.json
 state/.appcmd.*
 state/.appstat.*

@@ -277,10 +277,25 @@ def due(now: float | None = None,
 # weather
 # =====================================================================
 
-def set_weather(data: dict, hold: float | None = None) -> str:
-    """Show a weather card. Friday has no weather API key and no sensor for
-    the sky -- the brain looks it up (it has web search) and hands the numbers
-    here, which is also why this takes a dict rather than a place name."""
+def set_weather(data: dict | None = None, hold: float | None = None) -> str:
+    """Show a weather card.
+
+    data is the brain's reading -- it has web search, looks the sky up and
+    hands the numbers over, which is why this takes a dict rather than a place
+    name. Passing None asks weather_source.py to fetch it instead (wttr.in, no
+    key), so the card works with no brain, no key and no credits.
+
+    A failed fetch RAISES rather than launching an empty card: a weather card
+    with no weather in it is what "app_control.py weather" used to show, and it
+    reads as broken rather than as offline.
+    """
+    if data is None:
+        import weather_source
+        data, why = weather_source.current()
+        if data is None:
+            raise ScheduleError(f"no weather to show: {why}")
+        # No logger in this module by design -- it is a thin control surface,
+        # and weather_source already logs the fetch with its timing.
     payload = {k: data.get(k) for k in
                ("place", "condition", "temp_c", "feels_c", "high_c", "low_c",
                 "wind_kph", "humidity", "summary")}
@@ -479,6 +494,11 @@ def main(argv: list[str]) -> int:
             timer = add_timer(rest[0], " ".join(rest[1:]))
             launch("timer")
             print(f"timer for {say_duration(timer['seconds'])}")
+        elif head == "weather":
+            # Fetch by default. `weather --blank` is the old behaviour: the
+            # card with nothing in it, which is only useful for checking the
+            # drawing.
+            print(launch("weather") if rest[:1] == ["--blank"] else set_weather())
         elif head == "alarm":
             alarm = add_alarm(rest[0], " ".join(rest[1:]))
             print(f"alarm for {say_time(alarm['at'])}")

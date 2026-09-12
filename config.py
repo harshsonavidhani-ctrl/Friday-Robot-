@@ -1402,6 +1402,27 @@ APP_LABEL_MAX_CHARS = 28
 # How long a weather card stays up before handing the screen back.
 APP_WEATHER_HOLD_S = 30.0
 
+# --- weather without a key -------------------------------------------------
+# apps/weather.py draws the card and holds no key ON PURPOSE: the brain has web
+# search and hands the numbers over (mcp_server/tools/screen.show_weather).
+# That path stays and is still the better one -- it can answer "will it rain
+# before I walk home", this can only report the sky. Harsh asked on 2026-09-12
+# for the card to work without the brain too, so weather_source.py fills the
+# same dict from wttr.in, which needs no key and no account.
+#
+# WITH NO PLACE SET THE SERVICE LOCATES BY IP, which means the request tells it
+# the Pi's public address. That is what keyless geolocation costs. Name a city
+# here and nothing is inferred from the address.
+APP_WEATHER_FETCH = True
+APP_WEATHER_PLACE = None     # e.g. "Chhindwara"; None = let it locate by IP
+APP_WEATHER_URL = "https://wttr.in/{place}?format=j1"
+APP_WEATHER_USER_AGENT = "friday-robot (weather card)"
+APP_WEATHER_TIMEOUT_S = 12.0
+# The sky does not change between two "show me the weather"s, and wttr.in is
+# free and rate-limits. Ten minutes, and a cache older than this is refetched
+# rather than served stale.
+APP_WEATHER_CACHE_S = 600.0
+
 # --- Memory --------------------------------------------------------------
 # SQLite for the facts, the event log and the summaries; a TF-IDF index over
 # the facts for recall. See memory.py for why not embeddings -- briefly, this
