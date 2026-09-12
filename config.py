@@ -1400,17 +1400,6 @@ APP_CLOCK_24H = False
 APP_LABEL_MAX_CHARS = 28
 
 # How long a weather card stays up before handing the screen back.
-# --- rain, as ambience -----------------------------------------------------
-# apps/rain.py. Harsh liked the weather card's rain and asked for it
-# permanently, so 0 means it stays until something takes the screen back --
-# any expression, an alarm, or --dismiss. It carries NO numbers on purpose:
-# the weather card reports the sky and must stay true to it; this is decoration.
-APP_RAIN_HOLD_S = 0.0
-# Drawn as plain lines on a face process that already spends most of a core.
-# 90 is comfortably full at 1920x1080; raise it and watch FACE_FPS before
-# deciding it is free.
-APP_RAIN_DROPS = 90
-
 APP_WEATHER_HOLD_S = 30.0
 
 # --- weather without a key -------------------------------------------------
