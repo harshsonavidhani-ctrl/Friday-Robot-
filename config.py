@@ -1379,7 +1379,19 @@ APP_RING_CEILING = 0.93      # hard cap on that normalisation, whatever
 # Screensaver: with nothing else on screen and the face asleep this long, the
 # clock comes up on its own. Any new expression or command takes it straight
 # back down. 0 disables.
-APP_CLOCK_SCREENSAVER_AFTER_S = 90.0
+#
+# OFF SINCE 2026-09-12. Harsh: "after sleeping mode the clock comes ... remove
+# the clock after it reaches sleeping face, I will activate from dashboard when
+# needed and will be in sleeping mode only". So she now STAYS on the sleeping
+# face instead of turning into a wall clock. The was-90 s argument above --
+# that closed eyes for an hour look switched off -- is his call to make, and he
+# made it.
+#
+# THIS DOES NOT AFFECT LAUNCHING THE CLOCK YOURSELF. The dashboard's Screen
+# panel, app_control.py and the voice command all call apps.launch() directly;
+# only the automatic one is gated here. A clock launched by hand also STAYS up,
+# because _end_screensaver() only dismisses one the screensaver itself started.
+APP_CLOCK_SCREENSAVER_AFTER_S = 0
 
 # 12- or 24-hour clock, everywhere a time is shown or spoken back.
 APP_CLOCK_24H = False
