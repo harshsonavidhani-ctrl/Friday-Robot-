@@ -334,6 +334,13 @@ _HELP_RE = re.compile(
 # ends the autonomous run, and the run restarts the wheels a second later --
 # so a bare stop() against a live exploration looks like the robot ignoring
 # him. Checked before the stop rule, and it does BOTH.
+# ASKING IS NOT COMMANDING. Beside _STOP_EXPLORE_RE because it is the same
+# hazard from the other side: these are QUESTIONS about the run, and every one
+# of them contains the word the command matcher below fires on.
+_EXPLORE_STATUS_RE = re.compile(
+    r"\b(exploration status|are you (still )?exploring|"
+    r"how('s| is) the (run|exploration))\b", re.IGNORECASE)
+
 _STOP_EXPLORE_RE = re.compile(
     r"\b(stop|end|cancel|abort|band)\b[^.]*\b(explor\w*|run|roaming|"
     r"wandering)\b|\bstop the run\b", re.IGNORECASE | re.UNICODE)
@@ -420,6 +427,14 @@ def _local_intent(heard: str) -> Intent | None:
     #
     # start_exploration is still what actually drives; exploration_mode calls
     # it. Nothing about the run itself changed.
+    # A QUESTION ABOUT THE RUN IS NOT A REQUEST TO START ONE. parse_request()
+    # below matches any sentence containing "explore", and _local_intent runs
+    # before every rule table, so "are you still exploring?" started a
+    # twenty-minute autonomous run and the explore_status rule in _ASK_RULES
+    # was unreachable. Falling through hands it to that rule.
+    if _EXPLORE_STATUS_RE.search(heard):
+        return None
+
     try:
         import exploration_mode
         minutes = exploration_mode.parse_request(heard)
