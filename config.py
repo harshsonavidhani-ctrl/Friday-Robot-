@@ -54,6 +54,145 @@ BRAIN_HISTORY_MESSAGES = 20
 
 WEB_SEARCH_MAX_USES = 3
 
+# --- Making the brain answer faster -------------------------------------
+# Measured on this Pi 2026-09-12, same question ("capital of Japan"), warm
+# connection, time to the FIRST token -- which is what Harsh actually waits for,
+# because Piper starts on sentence one:
+#
+#     sonnet-5  effort=low  + 41 tools     2.61 s   (this was every turn)
+#     sonnet-5  effort=low  no tools       2.09 s
+#     haiku-4-5              + 41 tools    1.31 s
+#     haiku-4-5              no tools      0.75 s
+#
+# THE TOOL LIST COSTS HALF A SECOND ON ITS OWN, and most of what Harsh says to
+# her needs no tool at all -- personality.md already tells her so ("A question
+# is just a question. If he asks the capital of Japan, say Tokyo.").
+#
+# So a question that plainly does not touch the robot goes to Haiku with no
+# tools: 0.75 s instead of 2.61 s, three and a half times faster to the first
+# spoken word. Anything that might need her body, her sensors or her memory
+# goes to Sonnet with the tools exactly as before.
+#
+# TWO INDEPENDENT GUARDS, because a router that silently answers the wrong way
+# is worse than a slow one:
+#   1. BRAIN_FAST_NEVER below -- a local word check. Anything matching it never
+#      takes the fast path at all, so "what do you see" is never answered by a
+#      model with no eyes.
+#   2. The UNSURE sentinel. The fast model is told to reply with exactly UNSURE
+#      when the answer needs anything it hasn't got, and that escalates to the
+#      full Sonnet turn. The pattern is brain_router's and is already tested.
+# The cost of a wrong guess is therefore 0.75 s, then the normal turn.
+BRAIN_FAST_PATH = True
+BRAIN_FAST_MODEL = MODEL_FAST
+BRAIN_FAST_MAX_TOKENS = 300
+# A fast answer is a SPOKEN answer, so it is capped hard. Anything needing more
+# room than this needed the real brain.
+BRAIN_FAST_UNSURE = "UNSURE"
+# Words that mean the answer depends on the robot, the room, this house, or an
+# action -- anything the fast model cannot honestly know. A false match costs
+# about 1.9 s of latency; a miss costs a wrong answer spoken out loud with
+# confidence, so when in doubt a word belongs in here.
+#
+# ⚠ MATCHED ON WHOLE WORDS, NOT SUBSTRINGS, and that is not a detail. As a
+# substring list "time" caught "what's 17 TIMES 23?", which then took 14.4 s on
+# the big model to answer 391 -- the exact kind of question the fast path
+# exists for. Multi-word entries match as phrases.
+#
+# NOT IN THIS LIST, DELIBERATELY: time, weather, mood, and whether she is
+# exploring. situation.py now hands all four to every request, fast path
+# included, so the small model can answer them from what it was given rather
+# than needing a tool. "timer", "alarm", "reminder" and "schedule" ARE here --
+# those SET something, which is an action and needs the real brain.
+BRAIN_FAST_NEVER = (
+    "see", "look", "camera", "photo", "picture", "watching", "front of you",
+    "move", "drive", "go", "come", "forward", "back", "backward", "turn",
+    "spin", "wheel", "wheels", "motor", "motors", "stop", "park",
+    "map", "room", "wall", "obstacle", "distance", "how far", "clear",
+    "lidar", "sensor", "sensors", "battery", "charge", "power",
+    "temperature", "hot", "cold",
+    "remember", "forget", "memory", "memories", "recall", "you said",
+    "earlier", "last time", "yesterday", "we talked",
+    "alarm", "timer", "reminder", "remind", "schedule", "news",
+    "here", "there", "behind", "around you", "where are you",
+    "what are you doing", "yourself", "your name",
+)
+
+# Warm the API connection while she is still booting. A COLD DNS LOOKUP COSTS
+# 5.04 s ON THIS PI (measured; warm is 0.02-0.15 s), and without this the first
+# question of the evening pays all of it -- which is exactly the question
+# somebody is watching her answer. models.list() is a GET, bills no tokens, and
+# warms DNS, TLS and the connection pool in one go.
+BRAIN_WARM_ON_START = True
+
+# HOW LONG A PHOTOGRAPH IS STILL THE PRESENT TENSE.
+# ⚠ THIS IS THE "SHE DESCRIBES OLD OBJECTS" BUG, and it is worth reading before
+# changing. Measured from the live log 2026-09-13:
+#
+#   00:27:23  "can you recognize this object in front of you?"  -> observe()
+#             -> "That's you, Harsh, leaning right over me, glasses and all,
+#                 with that blue chair headrest in between us"
+#   00:28:48  "can you see this color in front of you?"         -> NO TOOL CALL
+#             -> "mostly that dark navy-blue of the chair headrest, with your
+#                 dark hair above it"
+#   00:29:24  "colour in front of you."                         -> NO TOOL CALL
+#             -> "Blue - the chair headrest right in my face is a dark navy blue"
+#
+# She looked ONCE and then answered from that one frame for two minutes. And
+# she was not wrong to: the image was still sitting in the conversation with
+# nothing to say it was old, so the most recent picture she had WAS that one.
+# No prompt wording fixes this reliably, because the evidence in front of the
+# model genuinely does show a chair.
+#
+# So the image is REMOVED from the history once it is older than this, and
+# replaced by a line saying when it was taken and that it is no longer current.
+# Then answering "what do you see" from memory is not a judgement call she can
+# get wrong -- the old picture is not there to answer from.
+#
+# 25 s: long enough that a follow-up in the same breath ("what colour is it?")
+# still uses the frame she just took, short enough that nothing across two
+# questions is ever described from a stale one. It also cuts cost and latency,
+# because a stale image is re-uploaded on every subsequent turn until trimmed.
+BRAIN_IMAGE_TTL_S = 25.0
+
+# LOOK FIRST, THEN ANSWER — IN ONE ROUND INSTEAD OF TWO.
+# Making her look every time (above) fixed the stale answers and cost real
+# seconds: measured 8.9-9.4 s for "what can you see", because the turn is now
+# a model round to decide to look, then the camera, then a second round to
+# describe the picture. Two round trips for a question whose answer was always
+# going to need the camera.
+#
+# So when the question is plainly about what is in front of her, the picture is
+# fetched BEFORE the first request and attached to the question. One round.
+# It also means freshness no longer depends on the model choosing to look --
+# for these questions the current frame is simply there.
+#
+# The word list is deliberately NARROW, the opposite of BRAIN_FAST_NEVER: a
+# miss here costs nothing (she calls observe herself, exactly as she does now),
+# while a false match spends about 2 s on a camera nobody asked about. So only
+# phrasings that are unambiguously "describe what is in front of you".
+# ⚠ OFF — BUILT AND NOT VALIDATED, so it is not what runs tonight. Three live
+# turns with it on came back 22.7 / 12.6 / 11.4 s against 19.9 / 9.4 / 8.9 s
+# with her calling observe herself, but the comparison is confounded (two of
+# the three slow turns also spent a round trip on set_face) and the Pi was at
+# 95% CPU labelling clips at the time, so neither set of numbers is worth
+# trusting. It may well be a win once measured on an idle Pi: turn it on, ask
+# "what can you see" a few times, and compare against this line.
+#
+# THE CORRECTNESS FIX IS NOT THIS ONE — it is BRAIN_IMAGE_TTL_S above plus the
+# "look before you say what is there" rule in personality.md, both verified
+# working. This is only ever a latency optimisation on top.
+BRAIN_EYES_FIRST = False
+BRAIN_EYES_CAMERA = "up"     # the room, not the floor: 2.0 s against 3.3 s for
+                             # "both", which returns the same single image
+BRAIN_EYES_WORDS = (
+    "what do you see", "what can you see", "what you see", "can you see",
+    "do you see", "what is in front", "what's in front", "in front of you",
+    "look at", "have a look", "what is this", "what's this", "what is that",
+    "what's that", "what colour", "what color", "describe what",
+    "recognise this", "recognize this", "what object", "who is this",
+    "who's this", "am i holding", "holding", "point at", "pointing at",
+)
+
 # Cost safety — the brain must refuse to spend past this in a single day.
 DAILY_SPEND_CAP_USD = 2.00
 
@@ -147,7 +286,27 @@ WAKE_THRESHOLD = 0.5
 # worse than a spurious one. This is a MITIGATION, not the fix -- 15 an hour is
 # still 15 -- and the fix is retraining on the harvested negatives. Set to 1 to
 # turn it off and get the old behaviour back.
-WAKE_PATIENCE = 2
+#
+# ⚠ DO NOT PUT IT BACK TO 1 NOW THAT THE VERIFIER EXISTS. That is the obvious
+# move -- the numbers above say patience costs 4 catches (35/40 -> 31/40) and
+# the verifier does precision far better, so the mitigation looks redundant.
+# MEASURED 2026-09-12 with the verifier IN THE LOOP, his 40 takes and 70 known
+# false fires:
+#
+#   patience 2 + verifier    REAL 32/40    FALSE 17/70   <-- shipped
+#   patience 1 + verifier    REAL 32/40    FALSE 24/70
+#
+# THE CATCH RATE IS IDENTICAL AND THE FALSE FIRES GO UP BY 41%. The 35/40 was
+# measured with NO verifier; the extra fires patience 1 lets through are ones
+# the verifier now rejects anyway, so there is no catch rate left to buy back
+# and the only thing changing the knob does is cost. Re-measure with
+# scripts/test_wake.py before moving it, and measure WITH the verifier.
+#
+# ⚠ BACK TO 1 ON 2026-09-13 06:35 -- THE VERIFIER IS OFF, so the reasoning above
+# no longer holds, and Harsh from a normal distance was being dropped by it:
+# live 06:29 his attempts held 0.57 / 0.91 / 0.68 for ONE chunk and never
+# fired. Without the verifier, 1 is the 35/40 row above.
+WAKE_PATIENCE = 1
 
 # THE VERIFIER -- A SECOND OPINION ON EVERY FIRE, BEFORE SHE BEEPS.
 # Neither knob above can fix the false fires, because openWakeWord scores a
@@ -164,9 +323,66 @@ WAKE_PATIENCE = 2
 #
 # If the file is missing or broken she wakes exactly as before and says so in
 # the log. False turns it off.
-WAKE_VERIFY = True
+#
+# ⚠ OFF SINCE 2026-09-13 06:25. Live, it was turning HARSH away: 57 of his
+# attempts in 13 minutes (06:10-06:23) were rejected at 0.01-0.15 while
+# openWakeWord scored them 0.9-1.0 -- no threshold reaches that. Over 344 live
+# wakes a higher cutoff dropped real and silent turns at the same rate (0.5
+# kept 51/120 vs 70/224), so it was not separating them either. It needs a
+# retrain on LABELLED live clips before it comes back.
+WAKE_VERIFY = False
 WAKE_VERIFIER_MODEL = ROOT / "assets/models/wake/friday_verifier.npz"
 WAKE_VERIFY_THRESHOLD = 0.3
+
+# HEARING HIM FROM ACROSS THE ROOM. The misses in his 40 recordings are not
+# scattered -- they are exactly the quiet takes, with clean separation:
+# caught RMS -24.2 dBFS / peak -7.0, missed RMS -32.2 / peak -18.5. Every miss
+# peaks below -14.5 and the quietest catch is -9.5. The cause is in the
+# TRAINING (augment() adds an absolute noise level, so a quiet take is buried
+# and a loud one barely touched), and the proper fix is an SNR-relative
+# retrain. This is the runtime half of it, and it needs no retrain: lift a
+# quiet chunk toward the level the model was trained to hear before scoring it.
+#
+# THE HARDWARE HAS NOTHING LEFT TO GIVE -- `amixer -c Device sget Mic` is
+# already 28/28, +30.00 dB, maxed. So the gain has to happen here.
+#
+# THE THREE BOUNDS ARE THE WHOLE DESIGN, because a naive normaliser would
+# amplify the room's fan straight into the classifier:
+#   - nothing below WAKE_GAIN_FLOOR_DBFS is touched at all (that is room tone,
+#     and a "wake word" found in amplified room tone is a false fire),
+#   - the gain never exceeds WAKE_GAIN_MAX_DB, so a whisper cannot be inflated
+#     into a shout, and
+#   - it is driven by a running peak over ~1 s, not per chunk, so the ENVELOPE
+#     of the phrase survives -- openWakeWord reads the shape over time, and a
+#     per-chunk normaliser would flatten exactly the thing it keys on.
+# Scoring only. The audio SAVED and the audio HANDED TO THE CAPTURE stay raw,
+# and last_rms still reports the true level, or the mic-is-dead diagnostic
+# would start lying.
+#
+# ⚠ OFF, BECAUSE IT DOES NOT DO THE THING IT WAS BUILT FOR. Measured
+# 2026-09-12 on his 40 takes and 70 known false fires, verifier in the loop:
+#
+#   patience 2, no gain    REAL 32/40    FALSE 17/70   <-- shipped
+#   patience 2 + gain      REAL 31/40    FALSE 10/70
+#
+# It was built to recover the QUIET takes. It recovered none and lost one. The
+# likely reason is in the mechanism and not in the tuning: the gain starts at
+# 1.0 and ramps toward its target over several chunks, so across a phrase as
+# short as "hey Friday" (about twelve chunks) it is still climbing while the
+# phrase is being spoken. That TILTS the envelope -- the exact thing the model
+# reads -- and a real-time detector cannot look ahead to avoid it.
+#
+# The 41% cut in false fires is real and is NOT understood, which is why this
+# is off rather than on: an unexplained mechanism is not something to put in
+# front of judges, and Harsh's priority is not missing his name. Worth
+# investigating properly later -- if the effect holds, the right form of it is
+# probably SNR-relative augmentation in the TRAINING (see the note in
+# friday-voice-pipeline), not a runtime normaliser. One line to try it.
+WAKE_AUTO_GAIN = False
+WAKE_GAIN_TARGET_DBFS = -10.0   # the peak level his CAUGHT takes sit at
+WAKE_GAIN_MAX_DB = 12.0         # 4x. -18.5 dBFS (a typical miss) lands at -6.5
+WAKE_GAIN_FLOOR_DBFS = -42.0    # below this it is the room, not him
+WAKE_GAIN_WINDOW_S = 1.0        # the running peak the gain is derived from
 # Fires the verifier turned down, kept apart from the unreviewed pile so
 # --review-fires is not buried in them: the conversations that fooled
 # openWakeWord, which are the next verifier's training set. One clip per
@@ -325,11 +541,121 @@ STT_COMPUTE_TYPE = "int8"
 # whisper running on false wakes took this Pi to load 13 and 84 degC on
 # 2026-09-12 and every stage timed out. A slightly slower transcript beats
 # a Pi that stalls.
+# ⚠ THE REPETITION LOOP IS WHAT MAKES HER SLOW, NOT THE MODEL SIZE. Measured
+# 2026-09-12 on false wakes: 81.8 s for 4.3 s of audio (x19), 141.7 s for 5.7 s
+# (x25), and 265.2 s for 5.6 s (x47) -- whisper generating the same clause over
+# and over until it runs out of room. transcribe() holds a PROCESS-WIDE lock, so
+# a real question asked during one of those waits behind it and hits
+# STT_QUEUE_TIMEOUT_S. Every one of those runs was a hallucination nobody asked
+# for ("Danke schön.", Urdu, Italian gibberish).
+#
+# condition_on_previous_text=False is the fix: the decoder stops feeding its own
+# output back in as context, which is what lets a loop bootstrap itself. Kept
+# here rather than in stt.py so there is one place to change it.
+STT_CONDITION_ON_PREVIOUS = False
+# Belt and braces from faster-whisper's own degenerate-output detectors. They
+# only engage when the temperature FALLBACK is on, so temperature is left at the
+# library default (a tuple) on purpose -- pinning it to 0.0 silently disables
+# both of these.
+STT_NO_SPEECH_THRESHOLD = 0.6
+STT_COMPRESSION_RATIO_THRESHOLD = 2.4
+
 STT_CPU_THREADS = 3
 STT_BEAM_SIZE = 1            # 1 is greedy: fastest, and on a Pi that matters
                              # far more than the small accuracy gain from 5
-STT_LANGUAGE = None          # None = auto-detect. Harsh mixes Hindi and
-                             # English, so pinning "en" would mangle "aage jao"
+
+# THE THREE CEILINGS ON A RUNAWAY DECODE, added 2026-09-12.
+# condition_on_previous_text=False above was meant to end the repetition loop
+# and did not. Measured tonight on real false-fire clips: 165.0 s for 3.5 s of
+# audio (x47), 126.2 s for 5.5 s (x22), 115.6 s for 4.2 s (x27). Whisper still
+# loops INSIDE one segment -- "Noem, noem, noem", "ndweilay. ndweilay." -- and a
+# loop that never repeats a whole SEGMENT never trips the compression-ratio
+# detector either. Every one of those was room noise from a false wake, and each
+# one held the process-wide transcribe lock while a real question queued behind
+# it and timed out. So this is not one better detector; it is three independent
+# ceilings, none of which real speech can reach.
+#
+# 1. DON'T DECODE WHAT ISN'T SPEECH. faster-whisper bundles Silero VAD
+#    (assets/silero_vad_v6.onnx, 1.2 MB, already on disk -- no download), which
+#    judges level and voicing rather than webrtcvad's spectral shape alone. It
+#    was off here with the note "webrtcvad already endpointed this": true, and
+#    the point is that webrtcvad's endpoint is the thing that is WRONG. It opens
+#    captures on the room's fan (45.6% of empty-room frames read as speech to
+#    it). Silero gets a second, better say before a single token is generated,
+#    and finding nothing costs a fraction of a second instead of two minutes.
+STT_VAD_FILTER = True
+STT_VAD_MIN_SILENCE_MS = 300   # shorter than VAD_SILENCE_MS on purpose: this
+                               # splits an already-endpointed clip, it does not
+                               # decide when Harsh stopped talking
+STT_VAD_SPEECH_PAD_MS = 120    # keep the edges. A clipped first phoneme is a
+                               # wrong transcript, which is worse than a slow one
+
+# 2. THE LOOP CANNOT FORM. A 3-gram already emitted may not be emitted again,
+#    which is the exact shape of every hallucination in the log. Real speech
+#    repeats words; it rarely repeats whole trigrams and never four times in
+#    one breath.
+STT_NO_REPEAT_NGRAM = 3
+
+# 3. AND IF IT SOMEHOW DOES, IT ENDS. MAX_UTTERANCE_S is 6 s, and six seconds of
+#    speech is about 15 words -- 25 tokens. 64 is more than double that and
+#    still cuts tonight's worst case (a 448-token "noem") by seven times. No
+#    real command has ever come close to it.
+STT_MAX_NEW_TOKENS = 64
+
+# The temperature FALLBACK is what arms no_speech_threshold and
+# compression_ratio_threshold, so it cannot simply be switched off -- but the
+# library default is SIX attempts (0.0 … 1.0), and a clip that fails at 0.0
+# because it is noise fails at all six, for six times the cost. Two keeps both
+# detectors armed and bounds the retry.
+STT_TEMPERATURES = (0.0, 0.2)
+
+# Timestamps are tokens too, and nothing downstream reads them -- main.py takes
+# the text and drops the segments.
+STT_WITHOUT_TIMESTAMPS = True
+# WHISPER HALLUCINATES CONFIDENTLY ON NEAR-SILENCE, AND AUTO-DETECT IS HOW IT
+# SHOWS. Measured 2026-09-12, turns 27-34: a false wake captures room noise and
+# faster-whisper returns fluent text in a language nobody in the room speaks --
+# "Danke schön." (de), "und eine Klimapose." (de), "We hebben hier een beetje
+# uit." (nl) -- or the same English sentence twice. Those completed as SUCCESSFUL
+# turns, so Friday answered noise out loud. That is worse than the old empty
+# transcript, which at least ABANDONED.
+#
+# The fix is not to pin STT_LANGUAGE: Harsh mixes Hindi and English mid-sentence
+# and pinning either one breaks the other. It is to refuse a transcript in a
+# language she does not speak. A real command is en or hi; noise is whatever
+# whisper felt like.
+#
+# ⚠ THE RISK IS A REAL COMMAND MISDETECTED AS FOREIGN AND DROPPED, and "stop" is
+# the one that matters. Set STT_REJECT_FOREIGN = False to turn all of this off in
+# one place if that is ever seen -- the log line says `rejected: language de` so
+# it is visible rather than mysterious.
+STT_REJECT_FOREIGN = True
+STT_ALLOWED_LANGUAGES = ("en", "hi")
+# A hallucination loop is the same short phrase emitted two or more times. Real
+# speech repeats sometimes, so this needs to be near-identical, not merely
+# similar, and it only ever applies when there is more than one sentence.
+STT_REJECT_REPEATS = True
+STT_REPEAT_SIMILARITY = 0.90
+
+# ⚠ PINNED TO ENGLISH 2026-09-13 FOR SPEED. Harsh asked for answers in 3-5 s,
+# and auto-detect runs the encoder a second time on every command: measured on
+# his own clips with the brain running, x2.9 realtime auto vs x1.3 pinned -- a
+# 2 s command goes from ~6 s of transcription to ~2.6 s. The cost is Hindi:
+# "aage jao" may come back mangled or translated. None restores auto-detect.
+STT_LANGUAGE = "en"
+
+# A SPOKEN ORDER GOES STALE. Harsh, 2026-09-13: "it should not execute any
+# previously given command after 5 seconds". Transcription alone has taken
+# 7-17 s on this Pi, so "turn left" could move her long after he had moved on.
+# The clock starts when he STOPS talking (the capture's end) and is checked at
+# the moment a tool below is called -- by a reflex or by the brain. Past the
+# limit the tool is refused and never reaches the motors. stop() is never in
+# this list: a late stop is still a stop.
+# 5 -> 11 s the same morning, Harsh: "increase the time limit for output to 10
+# to 11 seconds". The age is fixed when she starts ACTING (main._FreshOrders).
+COMMAND_MAX_AGE_S = 11.0
+COMMAND_FRESH_TOOLS = ("move", "move_distance", "turn_degrees", "go_to",
+                       "start_exploration", "explore_room")
 
 # Endpointing. VAD_SILENCE_MS is how long a pause has to last before Friday
 # decides Harsh has finished. Too short and it interrupts him mid-sentence;
@@ -357,14 +683,23 @@ VAD_START_FRAMES = 3         # consecutive 30 ms voiced frames before Friday
 # Measured in this room: floor -33 dBFS, loudest noise frame -23.7, Harsh's own
 # wake recordings peak at -7. 10 dB clears the noise and leaves him ~13 dB.
 # Set to 0 to disable the gate and go back to webrtcvad on its own.
-VAD_SPEECH_MARGIN_DB = 10.0
+#
+# ⚠ RETUNED 2026-09-13 06:40: 10 dB FULL-BAND -> 6 dB IN 300-4000 Hz. The room
+# had become a steady low hum (155 Hz and below) with its floor at -20 dBFS,
+# 13 dB above the -33 it was tuned on. Harsh from a normal distance measured
+# only 3-5 dB over that full-band, so no capture ever started: every wake ended
+# "nothing said within 4s" and she answered nothing. In the speech band the same
+# eight takes sit 7-12 dB over the floor (p95), the room 1.7 dB (max 7.0, one
+# frame -- VAD_START_FRAMES needs three in a row). None = full band, as before.
+VAD_LEVEL_BAND_HZ = (300, 4000)
+VAD_SPEECH_MARGIN_DB = 6.0
 # How many CONSECUTIVE below-full-margin frames may still count as speech
 # after a strong one. 30 ms each, so 25 is 0.75 s -- long enough to carry the
 # quiet tail of a word, short enough that room noise cannot hold a capture
 # open on its own. Unbounded, it did exactly that.
 VAD_SUSTAIN_FRAMES = 25
 
-VAD_SUSTAIN_DROP_DB = 7.0    # once speech HAS started, this many dB is
+VAD_SUSTAIN_DROP_DB = 4.0    # once speech HAS started, this many dB is
                              # forgiven. Starting needs the full margin so the
                              # fan can never open a capture; sustaining needs
                              # less so the quiet tail of a word is not cut.
@@ -1666,6 +2001,20 @@ def missing_hardware_settings() -> list[str]:
 # still exists for deliberate lookups, but Harsh should not have to ask Friday
 # to consult its own memory any more than a person would.
 MEMORY_IN_CONTEXT = True
+
+# Attach what she can already see about herself -- the time, her mood, whether
+# a run is driving, the last clearance around her, the weather -- to each
+# question the same way, and for the same reason. It saves a whole round trip
+# on everything she is most often asked about herself: "are you exploring?"
+# used to cost a tool call plus a second request to answer "no", about seven
+# seconds, and the answer was in a file on disk the whole time.
+#
+# ⚠ EVERY FIELD IN situation.py CARRIES A MAXIMUM AGE, and that is the part
+# that matters. state/rl_autonomy.json is written only while a run drives; left
+# ungated it would have her describe this afternoon's wall as if it were in
+# front of her now. Stale state spoken in the present tense is worse than no
+# state at all, so nothing past its age is emitted.
+SITUATION_IN_CONTEXT = True
 
 
 # =====================================================================

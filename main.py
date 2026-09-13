@@ -280,6 +280,12 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
         turn.done(f"FAILED ({type(exc).__name__}: {exc})")
         return ""
 
+    # WHICH BRAIN ANSWERED, in the turn log. The fast path is invisible
+    # otherwise, and "did that go to Haiku or Sonnet" is the first question
+    # anyone asks of a turn that felt quick or felt slow.
+    turn.note(f"answered by {getattr(brain_obj, 'last_model', '?')}"
+              f"{' (fast path)' if getattr(brain_obj, 'last_fast', False) else ''}"
+              f", ${getattr(brain_obj, 'last_cost_usd', 0.0):.4f}")
     turn.stage("SPEAKING", stages.quote(reply, 120))
     voice.wait_until_quiet()
     if reply.strip():
@@ -310,6 +316,21 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     except brain_module.BrainError as exc:
         log.warning("no brain (%s) — running on the offline handler only. "
                     "Set ANTHROPIC_API_KEY and restart to enable it.", exc)
+
+    # WARM THE CONNECTION WHILE SHE IS STILL BOOTING, not when Harsh is stood
+    # there waiting. A cold DNS lookup costs 5.04 s on this Pi and the first
+    # question of the evening was paying all of it. In the background, because
+    # nothing below needs it to have finished -- and it must never delay the
+    # wake word coming up.
+    # ⚠ A THREAD, NOT create_task(). The wake loop below is a BLOCKING
+    # generator inside this async function, so the moment it starts the event
+    # loop stops running anything else and a scheduled coroutine is starved
+    # forever. As a bare create_task this logged "warm in 21.59s" on one start
+    # and nothing at all on the next two -- a warm-up that only sometimes
+    # happens is worse than none, because the cold turn becomes a surprise.
+    # Same pattern, same reason, as tts.preload() and stt.preload() above.
+    if brain_obj is not None and getattr(config, "BRAIN_WARM_ON_START", True):
+        brain_obj.warm_in_background()
 
     async with brain_module.mcp_session() as session:
         listed = await session.list_tools()
@@ -357,6 +378,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                                             timeout=config.MAX_UTTERANCE_S
                                             + config.LISTEN_START_TIMEOUT_S
                                             + 5.0)
+                    said_at = time.monotonic()   # he stopped talking here
                     face.set("thinking")
                     spoken = await turn.call(
                         "TRANSCRIBING", stt.transcribe, audio,
@@ -384,6 +406,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                                 handover_ms=0, deadtime_ms=0),
                             timeout=config.MAX_UTTERANCE_S
                             + config.RETRY_LISTEN_TIMEOUT_S + 5.0)
+                        said_at = time.monotonic()
                         spoken = await turn.call(
                             "TRANSCRIBING", stt.transcribe, audio,
                             timeout=config.STAGE_STT_TIMEOUT_S)
@@ -403,8 +426,10 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                     turn.done("FAILED (capture)")
                 else:
                     if spoken.strip():
-                        await handle(brain_obj, session, voice, face, spoken,
-                                     turn)
+                        # Every tool this turn calls goes through the age
+                        # check -- reflex or brain -- see COMMAND_MAX_AGE_S.
+                        await handle(brain_obj, _FreshOrders(session, said_at),
+                                     voice, face, spoken, turn)
                     else:
                         # Logged as its own outcome. "Heard you, understood
                         # nothing" and "never heard you" are different faults
@@ -491,6 +516,50 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
     return await one_turn(brain_obj, session, voice, face, spoken, turn)
 
 
+class _FreshOrders:
+    """The MCP session, for one turn, refusing to MOVE on an order gone stale.
+
+    Harsh: "it should not execute any previously given command after 5
+    seconds". Transcription has taken 7-17 s on this Pi, so a spoken "turn
+    left" could reach the motors long after he had given up on it. The age is
+    measured from the end of his speech to the moment the tool is called, and
+    only for config.COMMAND_FRESH_TOOLS -- stop() is never refused.
+
+    Everything else is the real session, untouched.
+    """
+
+    def __init__(self, session, said_at: float) -> None:
+        self._session = session
+        self._said_at = said_at
+        self._acted_at: float | None = None
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+    async def call_tool(self, name: str, args=None):
+        # JUDGED ONCE, WHEN SHE STARTS ACTING -- the first tool of the turn.
+        # Checked per tool it refused every move live (06:35, three in a row):
+        # the safety layer's observe() runs first and takes ~3.8 s, so "drive
+        # backwards" understood 3.5 s after he spoke reached move() at 7.3 s.
+        # A plan begun in time runs to its end; one begun late never moves.
+        if self._acted_at is None:
+            self._acted_at = time.monotonic()
+        age = self._acted_at - self._said_at
+        limit = getattr(config, "COMMAND_MAX_AGE_S", 0.0)
+        if (limit and age > limit
+                and name in getattr(config, "COMMAND_FRESH_TOOLS", ())):
+            log.warning("REFUSED %s: the order is %.1fs old (limit %gs)",
+                        name, age, limit)
+            from types import SimpleNamespace
+            text = (f"REFUSED — stale order: {name} was asked for {age:.0f} s "
+                    f"ago, past the {limit:g} s limit, so the robot did not "
+                    f"move. Ask Harsh to say it again.")
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text=text)],
+                isError=True)
+        return await self._session.call_tool(name, args)
+
+
 # Tools that stop things. Their success text says "stopped", which is the same
 # word the safety interrupt uses when it refuses a move, so they are named
 # rather than pattern-matched.
@@ -516,6 +585,8 @@ def _stop_reason(text: str) -> str:
         # Refused for a reason with no distance in it -- an observe() that has
         # gone stale, a tool that said no. Say that plainly rather than
         # inventing a measurement.
+        if "stale order" in text.lower():
+            return "That took me too long, so I didn't move. Say it again?"
         if "refused" in text.lower():
             return "I stopped — the robot refused that one."
         return "Something's in the way, so I stopped."

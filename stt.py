@@ -27,6 +27,7 @@ from __future__ import annotations
 import collections
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -211,11 +212,32 @@ def endpoint(frames, max_seconds: float | None = None,
     # still followed within a few seconds.
     floor_db: list[float] = []          # one-element cell, closed over
     strong: list[int] = [0]             # frames since the last full-margin one
+    loudest: list[float] = [-120.0]     # most dB any frame reached over the floor
+    vad_hits: list[int] = [0]           # frames webrtcvad alone called speech
+
+    # THE LEVEL IS MEASURED IN THE SPEECH BAND ONLY (config.VAD_LEVEL_BAND_HZ).
+    # 2026-09-13 the room was a steady hum at 155 Hz and below, 13 dB louder than
+    # when the gate was tuned: full-band, Harsh from a normal distance sat only
+    # 3-5 dB over it, the 10 dB bar never opened, and every wake ended "nothing
+    # said within 4s". In 300-4000 Hz the same takes are 7-12 dB over the floor
+    # and the room 1.7. The floor and the level use the same measure, so only
+    # the difference matters, not the calibration.
+    band = getattr(config, "VAD_LEVEL_BAND_HZ", None)
+    if band:
+        _freqs = _np.fft.rfftfreq(int(config.MIC_SAMPLE_RATE * FRAME_MS / 1000),
+                                  1.0 / config.MIC_SAMPLE_RATE)
+        _in_band = (_freqs >= band[0]) & (_freqs <= band[1])
+        _window = _np.hanning(_freqs.size * 2 - 2)
 
     def _level_db(buf: bytes) -> float:
         samples = _np.frombuffer(buf, dtype=_np.int16).astype(_np.float32)
         if samples.size == 0:
             return -120.0
+        if band and samples.size == _window.size:
+            power = _np.abs(_np.fft.rfft(samples * _window)) ** 2
+            rms = float(_np.sqrt(power[_in_band].sum() * 2.0
+                                 / (samples.size * (_window ** 2).sum())))
+            return 20.0 * _np.log10(max(rms, 1.0) / 32768.0)
         return 20.0 * _np.log10(max(float(_np.sqrt((samples ** 2).mean())),
                                     1.0) / 32768.0)
 
@@ -238,8 +260,11 @@ def endpoint(frames, max_seconds: float | None = None,
             floor_db[0] = level                      # fall instantly
         else:
             floor_db[0] += config.VAD_FLOOR_RISE_DB  # creep up slowly
+        # What the gate saw, so a "nothing said" can say HOW close it came.
+        loudest[0] = max(loudest[0], level - floor_db[0])
         if not raw:
             return False
+        vad_hits[0] += 1
         if level >= floor_db[0] + margin:
             strong[0] = 0                    # a full-margin frame, right now
             return True
@@ -300,7 +325,9 @@ def endpoint(frames, max_seconds: float | None = None,
                 log.debug("speech started")
             elif time.monotonic() - began > start_timeout:
                 raise Silence(
-                    f"nothing said within {start_timeout:.0f}s")
+                    f"nothing said within {start_timeout:.0f}s (loudest "
+                    f"{loudest[0]:+.1f} dB over the floor, start needs "
+                    f"{margin:g}; webrtcvad heard {vad_hits[0]} frames)")
             continue
 
         voiced.append(frame)
@@ -628,7 +655,33 @@ def transcribe(audio: bytes, language: str | None = None) -> str:
             samples,
             language=language or config.STT_LANGUAGE,
             beam_size=config.STT_BEAM_SIZE,
-            vad_filter=False,           # webrtcvad already endpointed this
+            # SILERO GETS THE SECOND SAY. webrtcvad endpointed this clip, and
+            # webrtcvad is what opens a capture on the room's fan in the first
+            # place -- see the STT_VAD_FILTER block in config.py. Finding no
+            # speech here returns no segments in a fraction of a second, which
+            # is the whole difference between a false wake costing nothing and
+            # a false wake costing two minutes of locked CPU.
+            vad_filter=getattr(config, "STT_VAD_FILTER", True),
+            vad_parameters={
+                "min_silence_duration_ms": getattr(
+                    config, "STT_VAD_MIN_SILENCE_MS", 300),
+                "speech_pad_ms": getattr(config, "STT_VAD_SPEECH_PAD_MS", 120),
+            },
+            # See the STT_CONDITION_ON_PREVIOUS block in config.py: this is the
+            # difference between 5 s of audio taking 6 s and taking 265 s.
+            condition_on_previous_text=getattr(
+                config, "STT_CONDITION_ON_PREVIOUS", False),
+            no_speech_threshold=getattr(
+                config, "STT_NO_SPEECH_THRESHOLD", 0.6),
+            compression_ratio_threshold=getattr(
+                config, "STT_COMPRESSION_RATIO_THRESHOLD", 2.4),
+            # The loop cannot form, and if it forms it ends. Both ceilings sit
+            # far above anything a 6 s command produces.
+            no_repeat_ngram_size=getattr(config, "STT_NO_REPEAT_NGRAM", 3),
+            max_new_tokens=getattr(config, "STT_MAX_NEW_TOKENS", 64),
+            temperature=list(getattr(config, "STT_TEMPERATURES", (0.0, 0.2))),
+            without_timestamps=getattr(
+                config, "STT_WITHOUT_TIMESTAMPS", True),
         )
         text = " ".join(segment.text.strip() for segment in segments).strip()
     finally:
@@ -641,7 +694,38 @@ def transcribe(audio: bytes, language: str | None = None) -> str:
              info.language, info.language_probability, took, heard_s,
              took / max(heard_s, 0.01),
              f", {waited:.1f}s queued" if waited > 0.5 else "", text)
+    rejected = _hallucinated(text, info.language)
+    if rejected:
+        # "" is the SAME answer this function already gives for "nothing
+        # intelligible", so every caller handles it: main.py ABANDONS the turn
+        # instead of speaking. Nothing downstream needed to change.
+        log.warning("discarding this transcript — %s: %r", rejected, text)
+        return ""
     return text
+
+
+def _hallucinated(text: str, language: str | None) -> str | None:
+    """Why this transcript is noise rather than speech, or None if it is fine.
+
+    Whisper does not report "I heard nothing": on near-silence it returns fluent,
+    confident text. Two signatures separate that from a real command, and both
+    are cheap. See the STT_REJECT_* block in config.py for the measurements.
+    """
+    if not text:
+        return None
+    allowed = tuple(getattr(config, "STT_ALLOWED_LANGUAGES", ("en", "hi")))
+    if (getattr(config, "STT_REJECT_FOREIGN", True)
+            and language and allowed and language not in allowed):
+        return f"language {language} is not one she speaks {allowed}"
+    if getattr(config, "STT_REJECT_REPEATS", True):
+        parts = [p.strip().lower() for p in re.split(r"[.!?]+", text) if p.strip()]
+        if len(parts) >= 2:
+            import difflib
+            threshold = float(getattr(config, "STT_REPEAT_SIMILARITY", 0.90))
+            for a, b in zip(parts, parts[1:]):
+                if difflib.SequenceMatcher(None, a, b).ratio() >= threshold:
+                    return "the same phrase repeated (a whisper loop)"
+    return None
 
 
 def save_wav(audio: bytes, path) -> None:
