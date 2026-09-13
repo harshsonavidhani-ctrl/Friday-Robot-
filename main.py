@@ -235,6 +235,53 @@ async def check() -> int:
     return 0
 
 
+# The expressions the AI may choose after an answer. Professional on purpose:
+# no love, wink, angry, excited or bored (personality.md).
+_FACE_CHOICES = ("neutral", "happy", "curious", "proud", "surprised", "sad",
+                 "confused", "success")
+_face_client = None
+
+
+def _pick_face(question: str, reply: str) -> "str | None":
+    """One small-model call: the expression that fits this exchange.
+
+    Runs on its own thread while Friday speaks, so it costs no latency before
+    her voice. Returns None on ANY doubt -- no key, spend cap reached, a slow
+    or failed call, a word outside _FACE_CHOICES -- and the caller shows the
+    old "success" face instead. Counted against the daily spend cap.
+    """
+    global _face_client
+    if not getattr(config, "FACE_AI_DRIVEN", True):
+        return None
+    try:
+        import brain as brain_module
+        if brain_module.spent_today() >= config.DAILY_SPEND_CAP_USD:
+            return None
+        if _face_client is None:
+            import anthropic
+            _face_client = anthropic.Anthropic(
+                api_key=config.ANTHROPIC_API_KEY, timeout=6.0, max_retries=0)
+        model = getattr(config, "FACE_AI_MODEL", config.MODEL_FAST)
+        message = _face_client.messages.create(
+            model=model, max_tokens=5,
+            system=("You choose the facial expression a professional assistant "
+                    "robot shows right after it answers. Reply with exactly one "
+                    "word from: " + ", ".join(_FACE_CHOICES) + ". success = a "
+                    "task done or a fact given; confused = it could not "
+                    "understand or do it; neutral when nothing else fits."),
+            messages=[{"role": "user", "content":
+                       f"He said: {question[:300]}\nRobot answered: {reply[:400]}"}])
+        cost = brain_module._cost_usd(model, message.usage)
+        brain_module._record_spend(model, message.usage, cost)
+        word = "".join(b.text for b in message.content
+                       if getattr(b, "type", None) == "text")
+        word = word.strip().strip(".!").lower()
+        return word if word in _FACE_CHOICES else None
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("AI face choice skipped: %s", exc)
+        return None
+
+
 def _ignored(sentence: str) -> bool:
     """True when the brain said IGNORE: the words were not meant for her."""
     word = getattr(config, "BRAIN_IGNORE", "IGNORE")
@@ -312,10 +359,29 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     turn.note(f"answered by {getattr(brain_obj, 'last_model', '?')}"
               f"{' (fast path)' if getattr(brain_obj, 'last_fast', False) else ''}"
               f", ${getattr(brain_obj, 'last_cost_usd', 0.0):.4f}")
+    # THE FACE IS CHOSEN BY THE AI, on a thread, while she speaks. Harsh: "face
+    # also ai driven". A thread, not a task: run()'s wake loop is a blocking
+    # generator, so an asyncio task would starve (see brain.warm_in_background).
+    chosen: list = [None]
+    picker = threading.Thread(
+        target=lambda: chosen.__setitem__(0, _pick_face(text, reply)),
+        name="face-pick", daemon=True)
+    if reply.strip():
+        picker.start()
+
     turn.stage("SPEAKING", stages.quote(reply, 120))
     voice.wait_until_quiet()
     if reply.strip():
-        face.set("success")
+        picker.join(timeout=getattr(config, "FACE_AI_WAIT_S", 1.5))
+        mood = chosen[0]
+        if mood in ("success", "confused"):
+            face.set(mood)                     # pipeline band
+        elif mood:
+            face.feel(mood)                    # emotion band: outlives rest()
+        else:
+            face.set("success")                # no choice in time: as before
+        if mood:
+            turn.note(f"face chosen by the AI: {mood}")
     turn.done()
     return reply
 
