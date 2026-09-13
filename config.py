@@ -338,9 +338,13 @@ WAKE_PATIENCE = 1
 # of 28, labelled false fires 20 -> 2 of 20. ship_verifier picked 0.7, which
 # drops live wakes to 4/6 and far takes to 4/5 -- 0.4 is the highest cutoff
 # that loses none of his. Old model: state/friday_verifier.before-20260913.npz.
+# Then 0.4 -> 0.35 after re-scoring WITH TODAY'S HUM in front (the harness puts
+# an old quiet-room recording there): far takes 13/16 at every level 0.2-0.5
+# (detector alone 14), close 15/20 at 0.35 vs 14/20 at 0.4, today's false wakes
+# 10/52 vs 9/52 (detector alone 24). A miss costs more than one false wake.
 WAKE_VERIFY = True
 WAKE_VERIFIER_MODEL = ROOT / "assets/models/wake/friday_verifier.npz"
-WAKE_VERIFY_THRESHOLD = 0.4
+WAKE_VERIFY_THRESHOLD = 0.35
 
 # HEARING HIM FROM ACROSS THE ROOM. The misses in his 40 recordings are not
 # scattered -- they are exactly the quiet takes, with clean separation:
