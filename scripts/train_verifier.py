@@ -72,6 +72,37 @@ CACHE = config.ROOT / "state" / "verifier_features.npz"
 AUG_DIR = config.ROOT / "state" / "verifier_aug"
 KEEP_SCORE = 0.2          # features are kept for chunks scoring at least this
 FRIDAY = re.compile(r"\bfri ?day\b")
+# Fires from here on are this room, this hum, and the verifier switched off --
+# see "recent false fires" in clip_table.
+RECENT_FALSE_SINCE = "20260913-064000"
+
+
+def _turns_that_acted(log_path: Path | None = None) -> set[str]:
+    """Fire stamps (YYYYMMDD-HHMMSS) whose turn ran a tool or got an answer.
+
+    Read from the turn log, which records what HAPPENED after a wake -- a move,
+    a stop, a brain reply -- not what the wake model thought. The clip is saved
+    just after the wake is logged, so each wake second and the two after it
+    are all marked.
+    """
+    import datetime as dt
+    path = log_path or config.ROOT / "logs" / "friday.log"
+    if not path.exists():
+        return set()
+    stamp = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ ")
+    acted: set[str] = set()
+    woke = None
+    for line in path.open(encoding="utf-8", errors="replace"):
+        m = stamp.match(line)
+        if not m:
+            continue
+        if "wake word detected" in line:
+            woke = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+        elif woke and ("] TOOL " in line or "answered by" in line):
+            for s in range(3):
+                acted.add((woke + dt.timedelta(seconds=s)).strftime("%Y%m%d-%H%M%S"))
+            woke = None
+    return acted
 
 
 # --- the clips ----------------------------------------------------------------
@@ -104,6 +135,15 @@ def clip_table(synth_dir: Path | None, test_since: str, vosk: dict[str, str],
 
     for p in sorted((WAKE_DIR / "samples").glob("wake_*.wav")):
         rows.append((str(p), "harsh takes", 1, split_for(p.name)))
+
+    # HIS VOICE FROM WHERE HE ACTUALLY STANDS, recorded 2026-09-13 in the
+    # humming room (train_wake.py --record-wakes N --samples .../samples_far).
+    # The verifier was switched off that morning because it had only heard him
+    # close up: live, it rejected ~57 of his attempts at 0.01-0.15. Every third
+    # take is held out so the gate below can ask about them honestly.
+    for n, p in enumerate(sorted((WAKE_DIR / "samples_far").glob("wake_*.wav"))):
+        rows.append((str(p), "harsh far takes", 1,
+                     "test" if n % 3 == 2 else "train"))
 
     # Fires that a real command followed. Very probably a real "hey Friday",
     # but nobody has listened, so they are scored and never trained on.
@@ -149,6 +189,22 @@ def clip_table(synth_dir: Path | None, test_since: str, vosk: dict[str, str],
                 continue
             filed.add(p.name)
             rows.append((str(p), "live wakes (vosk)", 1, split_for(p.name)))
+
+    # THE VIDEO AND CONVERSATION THAT WOKE HER ON 2026-09-13, TRAINED ON. With
+    # the verifier off, 40 of 49 wakes after 06:40 were a video or talk
+    # ("Thanks for watching.", "please subscribe to my channel"). These clips
+    # are contiguous (after the resume() fix) and from this room's hum, which
+    # no older negative has. A fire is filed as false only if the turn it
+    # started did NOTHING -- no tool ran and no brain answered, per the turn
+    # log -- an outcome the wake model never saw. Half train, half test.
+    acted = _turns_that_acted()
+    recent = [p for p in sorted(fires.glob("fire-*.wav"))
+              if "-".join(p.stem.split("-")[1:3]) >= RECENT_FALSE_SINCE
+              and p.name not in filed and p.name[5:20] not in acted]
+    for n, p in enumerate(recent):
+        filed.add(p.name)
+        rows.append((str(p), "recent false fires", 0,
+                     "test" if n % 2 else "train"))
 
     # THE MOST RECENT CONVERSATION, NEVER TRAINED ON. The question that
     # matters at a hackathon is how it does on talk it has never heard, and

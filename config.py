@@ -330,9 +330,17 @@ WAKE_PATIENCE = 1
 # wakes a higher cutoff dropped real and silent turns at the same rate (0.5
 # kept 51/120 vs 70/224), so it was not separating them either. It needs a
 # retrain on LABELLED live clips before it comes back.
-WAKE_VERIFY = False
+#
+# ✅ BACK ON 2026-09-13 10:20, RETRAINED (md5 6d335fcb) on 16 takes Harsh
+# recorded from his normal distance in the humming room + 58 of that morning's
+# video/conversation wakes. Held out, at 0.4: live wakes 6/6, his far takes 5/5,
+# his close takes 6/8 (same as no verifier), that morning's false wakes 22 -> 6
+# of 28, labelled false fires 20 -> 2 of 20. ship_verifier picked 0.7, which
+# drops live wakes to 4/6 and far takes to 4/5 -- 0.4 is the highest cutoff
+# that loses none of his. Old model: state/friday_verifier.before-20260913.npz.
+WAKE_VERIFY = True
 WAKE_VERIFIER_MODEL = ROOT / "assets/models/wake/friday_verifier.npz"
-WAKE_VERIFY_THRESHOLD = 0.3
+WAKE_VERIFY_THRESHOLD = 0.4
 
 # HEARING HIM FROM ACROSS THE ROOM. The misses in his 40 recordings are not
 # scattered -- they are exactly the quiet takes, with clean separation:

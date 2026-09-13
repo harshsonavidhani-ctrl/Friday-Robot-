@@ -88,7 +88,8 @@ def main() -> int:
         c["fold"] = n % 2
     T, P = config.WAKE_THRESHOLD, config.WAKE_PATIENCE
     levels = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-    groups = ["harsh takes", "other voices", "unseen conversation",
+    groups = ["harsh takes", "harsh far takes", "other voices",
+              "unseen conversation", "recent false fires",
               "labelled false fires"]
 
     def rows_for(sel):
@@ -131,9 +132,13 @@ def main() -> int:
         want = "SHOULD wake" if (test[g] and test[g][0]["label"]) else "should NOT"
         line(g, want, base[g], len(test[g]), {v: got[v][g] for v in levels})
 
+    # HIS FAR TAKES ARE THE POINT OF THIS RETRAIN: the 2026-09-13 verifier lost
+    # him from a normal distance and was switched off. At most one held-out far
+    # take may be turned away.
     ok = [v for v in levels
           if got[v]["live"] >= base_live - 2
           and got[v]["harsh takes"] >= base["harsh takes"]
+          and got[v]["harsh far takes"] >= base["harsh far takes"] - 1
           and got[v]["other voices"] >= base["other voices"] - 1]
     if not ok:
         print("\nNO SAFE THRESHOLD — real wakes would be lost. Nothing written.")
