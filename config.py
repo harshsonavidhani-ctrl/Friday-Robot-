@@ -1857,7 +1857,8 @@ CAM_BORROW_SETTLE_S = 0.35   # v4l2 needs a breath between readers
 # Enforced inside the MCP server, in code, on every movement -- before it
 # starts and repeatedly WHILE it runs. The brain cannot disable, raise, or
 # argue with any of these. A prompt can be talked around; this cannot.
-SAFETY_STOP_MM = 250         # stop this far short of anything ahead
+# 250 -> 200 on 2026-09-13, Harsh: "decrease the safety threshold a little bit".
+SAFETY_STOP_MM = 200         # stop this far short of anything ahead
 SAFETY_CAUTION_MM = 450      # below this, forward moves are capped slow
 SAFETY_POLL_S = 0.1          # how often clearance is re-checked mid-move
 CAUTION_SPEED_FACTOR = 0.5   # speed multiplier inside the caution band, so

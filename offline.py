@@ -184,7 +184,7 @@ def _direction_intent(heard: str) -> Intent | None:
         # rule as move, so a bare "turn left" after a pause was refused for a
         # stale look exactly like "go left" was.
         return Intent(name=found, say=f"Turning {found}.",
-                      steps=[("observe", {}),
+                      steps=[("observe", {"camera": "up"}),
                              ("turn_degrees", {"degrees": degrees})])
 
     steps: list = []
@@ -197,7 +197,7 @@ def _direction_intent(heard: str) -> Intent | None:
         # With the pivot first it was judged against whatever look happened
         # to be lying around -- 17s old in the case that found this -- so
         # "go left" had its turn refused every time and then drove forward.
-        steps.append(("observe", {}))
+        steps.append(("observe", {"camera": "up"}))
         steps.append(("turn_degrees", {"degrees": degrees}))
         say = f"Going {found}."
         drive = "forward"
@@ -207,7 +207,7 @@ def _direction_intent(heard: str) -> Intent | None:
 
     # observe() before every move, because the server requires it and moving
     # ages it. This is the safety interrupt's precondition, not a formality.
-    steps.append(("observe", {}))
+    steps.append(("observe", {"camera": "up"}))
     if unit == "cm":
         distance = size if drive == "forward" else -abs(size)
         steps.append(("move_distance", {"cm": distance}))
