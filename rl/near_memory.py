@@ -171,6 +171,39 @@ class NearObstacleMemory:
         self._xy, self._t, self._src = self._xy[idx], self._t[idx], self._src[idx]
 
     # ------------------------------------------------------------- queries ---
+    def snapshot(self, pose, n_beams: int, radius_m: float = REPORT_RADIUS_M
+                 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(points, virtual scan all sources, virtual scan LiDAR-only), ONE transform.
+
+        The loop needs all three every tick. Asked separately they transformed every
+        point three times: measured 8.7 ms per tick with only 58 points held, the
+        second most expensive stage in the loop. This is the per-tick entry point;
+        points() and virtual_scan() remain for tests and one-off queries.
+        """
+        max_r = float(self.cfg.lidar_max_range)
+        vs_all = np.full(n_beams, max_r, np.float32)
+        vs_lidar = np.full(n_beams, max_r, np.float32)
+        empty = np.zeros((0, 2), np.float32)
+        if not self._xy.shape[0]:
+            return empty, vs_all, vs_lidar
+        x, y, th = (float(p) for p in pose)
+        c, s = math.cos(th), math.sin(th)
+        dx, dy = self._xy[:, 0] - x, self._xy[:, 1] - y
+        rx, ry = dx * c + dy * s, -dx * s + dy * c
+        r = np.sqrt(rx * rx + ry * ry)
+        near = r <= radius_m
+        if not near.any():
+            return empty, vs_all, vs_lidar
+        rx, ry, r, src = rx[near], ry[near], r[near], self._src[near]
+        beam = (np.rint(np.arctan2(ry, rx) * (n_beams / (2 * math.pi))).astype(np.int64)
+                % n_beams)
+        r32 = r.astype(np.float32)
+        np.minimum.at(vs_all, beam, r32)
+        lidar = src == SRC_LIDAR
+        if lidar.any():
+            np.minimum.at(vs_lidar, beam[lidar], r32[lidar])
+        return np.stack([rx, ry], axis=1).astype(np.float32), vs_all, vs_lidar
+
     def points(self, pose, sources: tuple[int, ...] = (SRC_LIDAR, SRC_TOF),
                radius_m: float = REPORT_RADIUS_M) -> np.ndarray:
         """Remembered points near her, in the ROBOT frame. (N, 2) float32."""

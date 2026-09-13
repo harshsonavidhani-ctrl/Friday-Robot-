@@ -584,6 +584,8 @@ def main(argv: list[str] | None = None) -> int:
     # THE EIGHTH, wired at the same time as it was added: short-term obstacle memory
     # (near_memory.py). Without this line --no-near-memory would do nothing here.
     loop.memory_enabled = not getattr(args, "no_near_memory", False)
+    # THE NINTH: the decisive escape (escape.py), wired with the flag.
+    loop.decisive_escape = not getattr(args, "no_decisive_escape", False)
     # THE SEVENTH FLAG IN THIS LIST, added here at the same time it was added to
     # pi_deploy's parser rather than discovered missing on hardware later --
     # which is what the paragraph above is warning about.

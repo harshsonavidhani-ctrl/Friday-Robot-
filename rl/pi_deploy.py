@@ -104,6 +104,7 @@ from dwa import DynamicWindowPlanner  # noqa: E402
 from narrator import Narrator  # noqa: E402
 from navigator import Navigator  # noqa: E402
 from near_memory import NearObstacleMemory, SRC_LIDAR  # noqa: E402
+from escape import EscapeManeuver  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
 import friday_freespace as fs_mod  # noqa: E402
@@ -3194,6 +3195,10 @@ class ControlLoop:
         # 2 s of backing out, then hand over to the pivot escape and recovery.
         # Unbounded reversing is how a robot backs across a room it cannot see.
         self.reverse_escape_max_ticks = 20
+        # DECISIVE ESCAPE (escape.py): one committed BACK -> TURN manoeuvre instead
+        # of 2b / 2b-bis / recovery re-deciding every tick. --no-decisive-escape.
+        self.escape = EscapeManeuver(cfg)
+        self.decisive_escape = True
         # Ring buffer. 30 s at 10 Hz is 316 rows, and a longer run silently loses its
         # BEGINNING -- which is where a run that starts badly puts its evidence.
         # Sized from --blackbox-seconds so a long exploration can keep all of it.
@@ -3677,10 +3682,10 @@ class ControlLoop:
                 tof_pts = self.navigator._tof_obstacle_points(depth)
             mem_pose = tuple(float(p) for p in self.map.pose)
             self.memory.update(mem_pose, scan, self.map.blind_beams, tof_pts)
-            self._mem_points = self.memory.points(mem_pose)
-            self._mem_scan = self.memory.virtual_scan(mem_pose, scan.size)
-            self._mem_scan_lidar = self.memory.virtual_scan(
-                mem_pose, scan.size, sources=(SRC_LIDAR,))
+            # One transform for all three (near_memory.snapshot): asked separately
+            # they cost 8.7 ms per tick.
+            (self._mem_points, self._mem_scan,
+             self._mem_scan_lidar) = self.memory.snapshot(mem_pose, scan.size)
             if self._mem_points.shape[0]:
                 self.stats["memory_ticks"] = self.stats.get("memory_ticks", 0) + 1
         else:
@@ -3978,7 +3983,7 @@ class ControlLoop:
         # still run on the result.
         boxed_in = (self._stuck_ticks >= self.escape_after_ticks if cannot_reverse
                     else self._stuck_ticks >= PINNED_ESCAPE_TICKS)
-        if boxed_in:
+        if boxed_in and not self.decisive_escape:
             v = 0.0
             omega = self._open_side(scan) * c.omega_max
             self.stats["escape_turns"] += 1
@@ -4008,6 +4013,7 @@ class ControlLoop:
         # Bounded to reverse_escape_max_ticks so she backs out of a corner rather than
         # backing across a room she is not looking at.
         if (self.reverse_escape and not cannot_reverse and not boxed_in
+                and not self.decisive_escape
                 and self.governor.last_fwd_min <= c.hard_stop and v <= 1e-6):
             self._front_blocked_ticks += 1
         else:
@@ -4029,6 +4035,37 @@ class ControlLoop:
                     f"{rec.lidar_min:.2f} m, {self.governor.last_rear_min:.2f} m clear "
                     f"behind — backing out")
 
+        # ---- 2b-ter. DECISIVE ESCAPE (escape.py) ---------------------------------------
+        #
+        # Harsh, 2026-09-13: "behave and explore like professional rovers do". Stages
+        # 2b, 2b-bis and 2c each decide from their own counter every tick, and the
+        # gate column flips between them -- reverse_escape, planner, governor,
+        # reverse_escape -- so no manoeuvre is ever carried through. This owns the
+        # tick while it runs: straight BACK while the rear is clear, then a TURN toward
+        # the side chosen ONCE, then hand back with a cooldown. It replaces 2b's pivot
+        # and 2b-bis's reverse (their counters still feed `boxed_in` for recovery), and
+        # recovery waits while it is active. The rear gate (2d), the ToF reflex and the
+        # limiter still run on everything it asks for.
+        escape_cmd = None
+        if self.decisive_escape:
+            ex_esc = self.motors.executed()
+            tof_ahead = (self.reflex.last_min
+                         if (c.tof_enabled and not tof_stale) else float("inf"))
+            escape_cmd = self.escape.step(
+                blocked=((self.governor.last_fwd_min <= c.hard_stop
+                          or self.reflex.triggered) and v <= 1e-6),
+                ahead_m=min(self.governor.last_fwd_min, tof_ahead),
+                rear_min_m=self.governor.last_rear_min,
+                can_reverse=self.reverse_escape and not cannot_reverse,
+                open_side=self._open_side(scan),
+                exec_v=ex_esc[0], exec_omega=ex_esc[1], dt=dt_real)
+            if escape_cmd is not None:
+                v, omega, why_esc = escape_cmd
+                self.stats["decisive_escape_ticks"] = (
+                    self.stats.get("decisive_escape_ticks", 0) + 1)
+                gate = "escape_" + self.escape.phase
+                rec.add("escape", v, omega, why_esc)
+
         # ---- 2c. RECOVERY CONTROLLER ----------------------------------------------
         #
         # Fed the EXECUTED twist, never the commanded one. On this drivetrain the creep
@@ -4039,7 +4076,10 @@ class ControlLoop:
         # Its output is a pivot in place, which cannot approach anything -- the
         # footprint does not translate -- so it reduces no safety margin, and the
         # governor, visual gate, reflex and limiter all still run on the result below.
-        if self.recovery_enabled:
+        # Recovery waits while the decisive escape holds the tick: two controllers
+        # authoring escapes in alternate ticks is the dithering 2b-ter exists to end.
+        if (self.recovery_enabled and escape_cmd is None
+                and not self.escape.active):
             # SAME SOURCE OF TRUTH AS DEAD RECKONING. In --simulate the world moves
             # exactly as commanded while the null driver honestly reports executing
             # nothing, so asking the driver would have every simulated run trip
@@ -4663,6 +4703,12 @@ class ControlLoop:
         LOGGER.info("no-reverse turns: %d  (policy asked to back up; this drivetrain "
                     "cannot, so it turned toward open space instead)",
                     self.stats["no_reverse_turns"])
+        if self.escape.episodes:
+            e = self.escape
+            LOGGER.info("decisive escape: %d episodes (%d backed out, %d turned), "
+                        "%d ended with the way ahead clear, %d at their bound; "
+                        "%d ticks in control", e.episodes, e.backs, e.turns,
+                        e.exits_clear, e.exits_bounded, e.ticks_active)
         LOGGER.info("interventions: reflex=%d visual=%d governor=%d rear=%d stale=%d "
                     "scrape=%d overruns=%d",
                     self.stats["reflex_stops"], self.stats["visual_stops"],
@@ -5790,6 +5836,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "governor, exactly as before. Use it to A/B the thing it was "
                         "built to fix: turning per metre, and what fraction of ticks "
                         "end in a safety override.")
+    p.add_argument("--no-decisive-escape", action="store_true",
+                   help="Disable the decisive escape (escape.py) and go back to stages "
+                        "2b / 2b-bis / recovery each deciding every tick. Use it to "
+                        "A/B the dithering it replaces.")
     p.add_argument("--no-near-memory", action="store_true",
                    help="Disable short-term obstacle memory (near_memory.py): every "
                         "stage decides on the live scan and ToF alone, exactly as "
@@ -6149,6 +6199,7 @@ def main(argv: list[str] | None = None) -> int:
         loop.planner_enabled = not args.no_planner
         loop.navigator_enabled = not args.no_navigator
         loop.memory_enabled = not args.no_near_memory
+        loop.decisive_escape = not args.no_decisive_escape
         cfg.nav_speed_authority = float(args.navigator_speed_authority)
         loop.recovery_enabled = not args.no_recovery
         loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]

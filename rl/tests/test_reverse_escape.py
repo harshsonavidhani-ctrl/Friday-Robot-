@@ -54,6 +54,10 @@ def make_loop(driver=None):
              "tof": SensorSlot("tof", cfg.tof_deadline, True)}
     policy = PolicyRunner(HERE / "exploration_model.onnx", cfg, 1)
     loop = ControlLoop(cfg, policy, driver or CanReverseDriver(cfg), slots)
+    # These tests pin STAGE 2b-bis itself. Since 2026-09-13 the decisive escape
+    # (escape.py, test_decisive_escape.py) replaces it by default; switch that off
+    # here so the legacy stage is still tested exactly as it was.
+    loop.decisive_escape = False
     return loop, slots
 
 
