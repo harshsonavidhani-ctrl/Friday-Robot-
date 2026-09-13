@@ -103,6 +103,7 @@ import cameras as _cameras  # noqa: E402
 from dwa import DynamicWindowPlanner  # noqa: E402
 from narrator import Narrator  # noqa: E402
 from navigator import Navigator  # noqa: E402
+from near_memory import NearObstacleMemory, SRC_LIDAR  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
 import friday_freespace as fs_mod  # noqa: E402
@@ -300,8 +301,16 @@ class RobotConfig:
     # It is still the LAST line: the LiDAR governor brakes from safe_distance 0.55 and
     # hard-stops at 0.36, and the navigator's near-field barrier steers around returns
     # at EVERY range (see navigator._tof_constraint) long before any of this.
-    tof_stop_distance: float = 0.24     # [m] any zone closer than this -> emergency stop
-    tof_slow_distance: float = 0.60     # [m] begin proportional braking
+    tof_stop_distance: float = 0.12     # [m] any zone closer than this -> emergency stop
+    # 0.24 -> 0.12, and slow 0.60 -> 0.14: DEMO SETTING, 2026-09-12, sunlight.
+    # Her floor sits at 0.13-0.24 m in this sensor's ground rows, so a 0.24 m stop line
+    # runs THROUGH the floor -- any error in the floor model is an instant emergency
+    # stop. With the window on her right scattering returns that was 90% of ticks, and
+    # ALL 93 stops were in the floor band with NONE genuinely close (nearest 0.15 m).
+    # Below 0.13 m a reading cannot be floor, so a real last-resort stop survives while
+    # the LiDAR governor -- healthy again now the chassis leak is masked -- does the
+    # obstacle work. RESTORE 0.24 / 0.60 once she is out of direct sun.
+    tof_slow_distance: float = 0.14     # [m] begin proportional braking
     tof_min_valid_zones: int = 3        # ignore isolated speckle; need N zones to agree
     tof_max_range: float = 4.00
     # Minimum BUMPER clearance before an emergency stop will still allow rotation.
@@ -375,8 +384,28 @@ class RobotConfig:
     # clear, even when the policy asked for less. 0.0 = off: it may only ever reduce,
     # and she stays exactly as decisive as the network. See stage 1d in tick().
     nav_speed_authority: float = 0.0
-    max_lin_accel: float = 0.8          # [m/s^2] command slew limit -> no wheel slip
-    max_ang_accel: float = 4.0          # [rad/s^2]
+    # Short-term obstacle memory (near_memory.py). How long a remembered point is
+    # trusted -- dead reckoning has no encoders, so seconds, not minutes -- and how
+    # close a LiDAR return must be to be worth remembering at all.
+    near_memory_ttl_s: float = 4.0
+    near_memory_range_m: float = 1.0
+    max_lin_accel: float = 0.8         # [m/s^2] command slew limit -> no wheel slip
+    max_ang_accel: float = 8.0          # [rad/s^2]
+    # 4.0 -> 8.0 on 2026-09-12. Harsh, mid-demo: "make its reaction FASTER AND
+    # STEERING FASTER ... it does not hesitate pls".
+    #
+    # At control_hz 10 the slew limiter lets omega move max_ang_accel * dt per tick,
+    # so 4.0 was 0.40 rad/s per tick and a full-authority turn (omega_max 1.60) took
+    # FOUR ticks -- 0.4 s -- to wind up. That is the hesitation when she is steering
+    # around something while moving.
+    #
+    # pivot_slew_free already exempts PURE pivots (|v| < pivot_slew_v_eps), so this
+    # never bound a turn-in-place. It binds ARCS, which is every avoidance manoeuvre
+    # taken while actually driving -- the ones that matter for not bumping into
+    # things. 8.0 makes that 0.80 rad/s per tick: full authority in two ticks.
+    #
+    # It does NOT raise omega_max, so the fastest she can ever turn is unchanged;
+    # only how quickly she gets there. Revert to 4.0 for the gentler wind-up.
     # A PIVOT IN PLACE IS NOT SLEW LIMITED. The slew limit exists to stop the wheels
     # slipping under a step change in TRANSLATION, which corrupts dead reckoning -- the
     # only odometry this robot has. A differential drive rotating about its own centre
@@ -1089,7 +1118,75 @@ TOF_CLIFF_BEYOND_MM = 90
 # How many near-row cells must agree before it is a cliff and not a dark patch. A real
 # edge crosses the beam pattern and takes several cells at once; absorbing carpet takes
 # one. Same argument and same order of magnitude as tof_min_valid_zones.
-TOF_CLIFF_MIN_CELLS = 4
+TOF_CLIFF_MIN_CELLS = 25
+# 12 -> 25 on 2026-09-12, Harsh's call, FOR THE JUDGE DEMO. The near field is
+# TOF_FLOOR_NEAR_ROWS(3) x 8 = 24 cells, so 25 is unreachable: the silence-based
+# cliff can no longer fire at all. 4 -> 12 was not enough -- measured mid-run, the
+# sun blanked MORE than half the near field and the phantom came back (tof pinned at
+# a floor-profile range went 0.8% -> 33.3%, REFLEX_STOP to 51% of ticks).
+# Cliff detection cannot tell sunlight from a hole: both are "cells return nothing".
+#
+# ⚠ WHAT IS LOST: drop-off detection from cells going silent. Keep her off stairs
+# and table edges while this stands.
+# ⚠ WHAT IS KEPT: the TOF_FLOOR_BOTTOM_MAX_MM backstop, which bypasses this quorum
+# (see below) and catches the floor RECEDING. Ambient IR makes cells read nothing,
+# never too far, so that path cannot be sun-tripped and is still worth having.
+#
+# RESTORE: 4 is the original, 12 is the sun-hardened value. One edit.
+# 4 -> 12 on 2026-09-12, with Harsh's approval, because SUNLIGHT WAS BEING READ AS A
+# STAIRCASE. There is a window on her right; ambient IR swamps the SPADs on that side
+# and those zones return nothing. The rule below reads a silent near-field cell as a
+# cliff, so the sun wrote a phantom edge at the floor's own range (150-250 mm) --
+# inside tof_stop_distance -- and the reflex zeroed forward speed while leaving
+# rotation free. She pivoted on the spot with a clear metre of LiDAR ahead. That is
+# the "clear path but she spins and gets stuck" Harsh watched.
+#
+# Measured 2026-09-12, robot STATIONARY on ordinary floor, nothing in front:
+#   13:36  5 near cells blind (r6c5 0%, r6c6 2%, r5c7 0% of 60 frames)
+#          -> 42% of frames would EMERGENCY-STOP
+#          -> 61% of the three closest "obstacles" came from cells with NO return
+#   13:40  same pose (row 7 medians identical within 3 mm), all 64 cells returning
+#          -> 0% would stop
+# So the blanking is INTERMITTENT and one-sided, which is what ambient IR looks like
+# and what a broken sensor does not.
+#
+# In the runs it cost: 48-56% of all ticks spinning in place, and on the ticks where
+# the LiDAR saw 0.84-0.99 m clear AND the policy asked +0.500 m/s, tof_min sat pinned
+# at exactly 0.150 m -- row 7's floor, i.e. the phantom, not a measurement.
+#
+# WHY 12 AND NOT SOMETHING ELSE: TOF_FLOOR_NEAR_ROWS is 3, so the near field is 24
+# cells. 12 is half of it. The sun blanks a WEDGE -- 5 to 6 cells on one side. A drop
+# she could actually drive into spans the width of the robot and takes the near field
+# out wholesale. This is a threshold on how much of the floor must vanish before she
+# believes it, and the sun cannot vanish half of it.
+#
+# THE REAL FIX IS PHYSICAL: demo away from the window, or shade her right side. This
+# constant buys margin against the sun; it does not give the sensor its zones back.
+# Lowering it back to 4 restores the old sensitivity in one edit if the light changes.
+
+# A CELL THAT HAS NEVER RETURNED ANYTHING IS A BROKEN CELL, NOT A CLIFF.
+# The cliff rule above rests on a measurement -- "rows 5/6/7 returned 8.00 of 8 cells
+# in EVERY frame" -- and that measurement EXPIRED. Re-measured 2026-09-12, stationary
+# on ordinary floor, 60 frames: row 6 col 5 returned 0%, row 6 col 6 2%, row 5 col 7 0%.
+# Five permanently silent near-field cells is more than TOF_CLIFF_MIN_CELLS, so the
+# quorum was met in every frame, forever, by a blind corner of the sensor -- a phantom
+# staircase reported at the floor's own range (150-250 mm), inside tof_stop_distance.
+# The reflex then zeroed forward speed and left rotation alone, so she pivoted on the
+# spot with a clear metre of LiDAR ahead. Measured: 42% of stationary frames would
+# emergency-stop; 61% of the three closest "obstacles" came from cells with no return.
+#
+# So a cell must have been seen working at least once this run before its silence is
+# allowed to mean anything. This does NOT weaken cliff detection: a real edge is a
+# cell that was returning floor and STOPPED, and such a cell has been seen. It only
+# stops a cell that has never reported at all from voting on what is ahead.
+# Same move the floor profile itself already made -- measure it, do not freeze it.
+TOF_BLIND_WARMUP_FRAMES = 30    # frames before the never-seen mask is trusted at all
+
+# How long forward may stay blocked with the robot NOT MOVING before the pivot escape
+# fires on a drivetrain that can reverse. 30 ticks at control_hz 10 = 3 s: long enough
+# that the 2 s reverse escape has had its full turn and failed, short enough that she
+# is never the robot in the demo that just sits there. See the two-fuse block in tick().
+PINNED_ESCAPE_TICKS = 30
 # THE FIT CANNOT SEE A DROP THAT TAKES THE WHOLE FIELD AT ONCE, and this is the bound
 # that catches it. A floor receding uniformly is geometrically indistinguishable from a
 # sensor aimed further out -- every row still grows on the same curve, every cell still
@@ -1155,7 +1252,8 @@ def tof_floor_rows(frame) -> tuple[int, list]:
     return horizon, med
 
 
-def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
+def tof_obstacles_mm(frame: list[list[int]],
+                     never_seen: np.ndarray | None = None) -> tuple[np.ndarray, bool]:
     """One raw 8x8 frame -> (per-cell obstacle range in mm, floor_intact).
 
     Cells that are not an obstacle come back as TOF_NO_RETURN_MM, so the array can be
@@ -1182,9 +1280,30 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
         # not (a 3-of-8 occlusion already drags the median past the 45 mm margin,
         # which hid the object in exactly this row during testing).
         for r in range(horizon, TOF_ROWS):
-            valid = [v for v in frame[r] if 0 < v < TOF_NO_RETURN_MM]
+            valid = sorted(v for v in frame[r] if 0 < v < TOF_NO_RETURN_MM)
             if valid:
-                expected[r] = float(max(valid))
+                # SECOND-LARGEST, not largest, once the row can spare a cell. The max is
+                # still the right IDEA -- an occluding object only ever reads SHORTER
+                # than the floor it sits on, so a high order statistic survives a
+                # minority of occluded cells where the row's MEDIAN does not (a 3-of-8
+                # occlusion already drags the median past TOF_FLOOR_OBSTACLE_MM, which
+                # hid the object in exactly this row during testing).
+                #
+                # But max has no defence against a single cell scattered LONG, and on
+                # 2026-09-12 sunlight through the window on her right was doing exactly
+                # that: one inflated cell raised `expected` for the whole row, every
+                # genuine floor cell then fell more than TOF_FLOOR_OBSTACLE_MM below it,
+                # and THE FLOOR WAS EMITTED AS AN OBJECT at 150-230 mm -- inside
+                # tof_stop_distance. Measured: REFLEX_STOP on 54% of ticks, tof_min p50
+                # 0.160 m, 70% of those stops inside the floor band, while lidar_min sat
+                # at her own body radius -- the LiDAR saw nothing there at all.
+                #
+                # Dropping ONE value costs nothing against occlusion (an object spans
+                # several cells, so the runner-up is still clean floor) and removes the
+                # single-outlier failure entirely. Widening TOF_FLOOR_OBSTACLE_MM to 90
+                # was tried FIRST and test_tof_floor rejected it -- it lost a real object
+                # at 150 mm in row 5. Fix the reference; do not blunt the detector.
+                expected[r] = float(valid[-2] if len(valid) >= 4 else valid[-1])
     else:
         # Too sparse to fit this frame's own floor -- fall back to the fixed,
         # pitch-scaled profile. Never the primary model; see the note above.
@@ -1223,7 +1342,8 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
                 # rows 5/6/7 returned 8.00 of 8 cells in EVERY frame, while row 4
                 # returned 5.59. Row 4's silence is normal and means nothing. A near
                 # row going quiet means the beam went somewhere the floor is not.
-                if near and exp is not None:
+                if near and exp is not None and not (
+                        never_seen is not None and never_seen[r, col]):
                     cliff.append((r, col, exp))
                 continue
             if exp is None:
@@ -1275,8 +1395,17 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
         # robot -- the measured profile's bottom row. Reporting it at the detection
         # bound instead put the hazard at 300 mm, outside tof_stop_distance, and the
         # reflex drove on through it.
+        # WRITTEN STRAIGHT INTO `out`, NOT INTO `cliff` -- this backstop must NOT be
+        # subject to TOF_CLIFF_MIN_CELLS. It can only ever emit TOF_COLS (8) cells,
+        # so when the quorum went 4 -> 12 for the sunlight wedge it silently disabled
+        # this detector entirely; test_tof_floor's "drop that reads long" caught it.
+        # It is a different test from the quorum's: that one counts how many cells
+        # went SILENT, this one is an absolute range check on the bottom row, and it
+        # has already set floor_intact False on its own authority above. Ambient IR
+        # makes cells read NOTHING, never too far, so this path cannot be sun-tripped.
         for col in range(TOF_COLS):
-            cliff.append((TOF_ROWS - 1, col, float(TOF_FLOOR_PROFILE_MM[-1])))
+            out[TOF_ROWS - 1, col] = min(float(out[TOF_ROWS - 1, col]),
+                                         float(TOF_FLOOR_PROFILE_MM[-1]))
 
     if len(cliff) >= TOF_CLIFF_MIN_CELLS:
         for r, col, exp in cliff:
@@ -1335,6 +1464,11 @@ class DFRobotToFThread(SensorThread):
         self._partial: dict[int, list[int]] = {}
         self._recent: deque = deque(maxlen=TOF_CORROBORATE_FRAMES)
         self._frames = self._blind = 0
+        # Which cells have EVER returned a valid range on this sensor, this run.
+        # See TOF_BLIND_WARMUP_FRAMES: a cell that never reports must not be read
+        # as a cliff. Monotonic -- a cell that starts working is trusted at once.
+        self._ever_seen = np.zeros((TOF_ROWS, TOF_COLS), bool)
+        self._blind_warned = False
 
     def _setup(self) -> None:
         import serial
@@ -1388,7 +1522,25 @@ class DFRobotToFThread(SensorThread):
         frame = [self._partial[r] for r in range(TOF_ROWS)]
         self._partial = {}
         self._frames += 1
-        obstacles, intact = tof_obstacles_mm(frame)
+
+        for r in range(TOF_ROWS):
+            for c in range(TOF_COLS):
+                if 0 < frame[r][c] < TOF_NO_RETURN_MM:
+                    self._ever_seen[r, c] = True
+        never_seen = None
+        if self._frames >= TOF_BLIND_WARMUP_FRAMES:
+            never_seen = ~self._ever_seen
+            if never_seen.any() and not self._blind_warned:
+                self._blind_warned = True
+                dead = [f"r{r}c{c}" for r in range(TOF_ROWS) for c in range(TOF_COLS)
+                        if never_seen[r, c]]
+                LOGGER.warning(
+                    "ToF: %d of 64 cells have returned NOTHING in %d frames (%s) -- "
+                    "excluded from cliff detection. This is a HARDWARE symptom: check "
+                    "the sensor is square on its mount and its window is clean.",
+                    len(dead), self._frames, ", ".join(dead))
+
+        obstacles, intact = tof_obstacles_mm(frame, never_seen)
         self._recent.append((obstacles, intact))
 
         # Cannot-see is the majority view -> publish nothing and let the slot go
@@ -2968,6 +3120,16 @@ class ControlLoop:
         # for the measurement that motivated it (515-1799 deg of turning per metre).
         self.navigator = Navigator(cfg, DynamicWindowPlanner(cfg))
         self.navigator_enabled = True
+        # SHORT-TERM OBSTACLE MEMORY. What the LiDAR and ToF saw a few seconds ago,
+        # kept in the odometry frame so a pivot moves it around her instead of erasing
+        # it. USED by three stages -- the arc search (1d), the escape direction
+        # (_open_side) and the rear gate (2d, LiDAR-derived points only) -- and never
+        # by the policy observation or the persistent map. See near_memory.py.
+        self.memory = NearObstacleMemory(cfg)
+        self.memory_enabled = True
+        self._mem_points = np.zeros((0, 2), np.float32)   # this tick, robot frame
+        self._mem_scan = None                             # all sources, per beam
+        self._mem_scan_lidar = None                       # LiDAR-derived only
         # Broader stuck detection than the boxed-in check below. It sees oscillation,
         # spinning and no-progress, which are invisible in any single tick.
         self.recovery = RecoveryController(cfg, self.world)
@@ -3002,6 +3164,9 @@ class ControlLoop:
         # 0.5 s at 10 Hz: long enough that a passing brake is not mistaken for being
         # stuck, short enough that she does not sit against a wall.
         self.escape_after_ticks = 5
+        # See the two-fuse block in tick(): PINNED_ESCAPE_TICKS is the long fuse for a
+        # drivetrain that CAN reverse, so reverse gets first refusal and the pivot is
+        # the backstop rather than the first move.
         self._stuck_ticks = 0
         self._warned_no_reverse = False
         # REVERSE ESCAPE. Harsh, 2026-09-06: "when tof like robots front gets
@@ -3301,6 +3466,11 @@ class ControlLoop:
         the wall you are already against is how a robot gets permanently stuck.
         """
         n = self.cfg.n_beams
+        # Remembered obstacles count as seen (near_memory.py): the side she just turned
+        # away from is not "open" merely because no live sensor can see it any more.
+        mem = self._mem_scan if getattr(self, "memory_enabled", False) else None
+        if mem is not None and mem.shape == scan.shape:
+            scan = np.minimum(scan, mem)
         q = max(1, n // 12)
         left = float(np.mean(np.roll(scan, -((n // 4 - q) % n))[:2 * q + 1]))
         right = float(np.mean(np.roll(scan, -((3 * n // 4 - q) % n))[:2 * q + 1]))
@@ -3497,6 +3667,26 @@ class ControlLoop:
                     "v_policy": 0.0, "omega_policy": 0.0,
                     "v_raw": float("nan"), "omega_raw": float("nan"),
                     "authority": tlm.SRC_SAFETY, "loop_ms": 0.0}
+
+        # ---- 0b. SHORT-TERM OBSTACLE MEMORY: update once, read once, per tick ------
+        # Updated at the pose this scan was taken from (the pose dead-reckoned at the
+        # end of the previous tick), then read by 1d, _open_side and 2d below.
+        if self.memory_enabled:
+            tof_pts = None
+            if self.navigator is not None and not tof_stale:
+                tof_pts = self.navigator._tof_obstacle_points(depth)
+            mem_pose = tuple(float(p) for p in self.map.pose)
+            self.memory.update(mem_pose, scan, self.map.blind_beams, tof_pts)
+            self._mem_points = self.memory.points(mem_pose)
+            self._mem_scan = self.memory.virtual_scan(mem_pose, scan.size)
+            self._mem_scan_lidar = self.memory.virtual_scan(
+                mem_pose, scan.size, sources=(SRC_LIDAR,))
+            if self._mem_points.shape[0]:
+                self.stats["memory_ticks"] = self.stats.get("memory_ticks", 0) + 1
+        else:
+            self._mem_points = np.zeros((0, 2), np.float32)
+            self._mem_scan = self._mem_scan_lidar = None
+        lap("memory")
 
         # ---- 1. policy ------------------------------------------------------------
         obs = self._build_observation(scan)
@@ -3704,7 +3894,9 @@ class ControlLoop:
                 # The near field, so the planner and the reflex stop disagreeing about
                 # what is in front of her. Without this the navigator plans through the
                 # band below the LiDAR's 0.22 m floor and the reflex brakes for it.
-                tof_depth=depth if not tof_stale else None)
+                tof_depth=depth if not tof_stale else None,
+                # What she saw a few seconds ago and can no longer see (stage 0b).
+                memory_points=self._mem_points if self.memory_enabled else None)
             if decision is not None:
                 v_pol, omega_pol = decision.v, decision.omega
                 gate = "navigator"
@@ -3758,12 +3950,34 @@ class ControlLoop:
         # corrected for on 2026-09-02, still living one stage down. Reusing
         # last_fwd_min also guarantees the escape and the law that blocked her agree
         # about the clearance; computing it twice is how they drift apart.
-        if (self.escape_turns and cannot_reverse
+        # THE COUNTER NO LONGER CARRIES THE `cannot_reverse` GATE, because gating the
+        # COUNT meant this escape could never fire on THIS robot at all -- v_min
+        # (-0.150) is executable against the 0.149 floor, so `cannot_reverse` is
+        # permanently False here. The reasoning above is still right for the FAST
+        # path: where reverse works, backing away is the better escape and should get
+        # first refusal. But it was the ONLY path, and the reverse escape is bounded
+        # to 2 s, so when reversing did not free her nothing took its turn.
+        #
+        # MEASURED 2026-09-12, mid-demo: she sat FULLY FROZEN for ~1000 consecutive
+        # ticks (over two minutes), REFLEX_STOP on every one, tof_min 0.03-0.10 m,
+        # while the policy asked for +0.50 m/s. Harsh had to move her by hand -- the
+        # exact "stuck against a wall until a human moved her" this block exists to
+        # prevent. The seam that hid it: the reflex stops on the ToF (0.03 m) while
+        # the escape reads the LiDAR (0.24 m), so nothing upstream believed she was
+        # in trouble.
+        if (self.escape_turns
                 and self.governor.last_fwd_min <= c.hard_stop and v <= 1e-6):
             self._stuck_ticks += 1
         else:
             self._stuck_ticks = 0
-        boxed_in = self._stuck_ticks >= self.escape_after_ticks
+        # Two fuses. Short one where reverse is genuinely unavailable (unchanged).
+        # Long one regardless of drivetrain: if forward has been blocked and she has
+        # not moved for PINNED_ESCAPE_TICKS, reverse has had its turn and failed, so
+        # pivot anyway. A pivot TRANSLATES NOWHERE -- the footprint does not move --
+        # so this reduces no safety margin, and the governor, reflex and limiter all
+        # still run on the result.
+        boxed_in = (self._stuck_ticks >= self.escape_after_ticks if cannot_reverse
+                    else self._stuck_ticks >= PINNED_ESCAPE_TICKS)
         if boxed_in:
             v = 0.0
             omega = self._open_side(scan) * c.omega_max
@@ -3875,7 +4089,14 @@ class ControlLoop:
         # rear, whoever authored the command. It only ever raises v toward 0, so it
         # cannot grant authority, and it is idempotent when nothing is behind.
         v_before_rear = v
-        v = self.governor.gate_reverse(v, scan)
+        # LiDAR-derived memory only: something she passed that has dropped below the
+        # LiDAR floor is still behind her. ToF barrier points are excluded on purpose
+        # -- see near_memory.py for the pivot that did not physically happen.
+        rear_scan = scan
+        if (self.memory_enabled and self._mem_scan_lidar is not None
+                and self._mem_scan_lidar.shape == scan.shape):
+            rear_scan = np.minimum(scan, self._mem_scan_lidar)
+        v = self.governor.gate_reverse(v, rear_scan)
         if v != v_before_rear:
             self.stats["rear_blocks"] = self.stats.get("rear_blocks", 0) + 1
             gate = "rear_blocked"
@@ -5569,6 +5790,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "governor, exactly as before. Use it to A/B the thing it was "
                         "built to fix: turning per metre, and what fraction of ticks "
                         "end in a safety override.")
+    p.add_argument("--no-near-memory", action="store_true",
+                   help="Disable short-term obstacle memory (near_memory.py): every "
+                        "stage decides on the live scan and ToF alone, exactly as "
+                        "before. Use it to A/B what remembering near obstacles changes.")
     p.add_argument("--no-planner", action="store_true",
                    help="Disable frontier target selection. The RL policy then drives "
                         "alone, exactly as before Phase 3 -- useful for an A/B of "
@@ -5628,11 +5853,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # room (2.182 and 1.799 m, sd < 0.005) and are left alone. The wedge is therefore
     # the half-open range [88, 99). friday/config.py has ((89, 98),), which leaks at
     # both ends -- bearing 88 at 0.229 m and bearing 98 at 0.209 m.
-    p.add_argument("--lidar-self-mask", type=str, default="88:99",
+    p.add_argument("--lidar-self-mask", type=str, default="88:99,221:237,319:334",
                    help="Raw sensor bearings looking at the robot's own chassis, as "
                         "LOW:HIGH pairs separated by commas (wrapping past 0 is allowed). "
-                        "Half-open [low, high). Default 88:99 is measured for "
-                        "Friday. Pass '' to disable.")
+                        "Half-open [low, high). Pass '' to disable. "
+                        "THREE wedges measured on Friday 2026-09-12: 88:99 was the "
+                        "only one masked, and the other two were her own chassis "
+                        "leaking into the braking law. Stationary, 310 scans, four "
+                        "beams sat PERMANENTLY at the 0.22 m lidar floor -- robot "
+                        "bearings 175/180/270/275, i.e. raw 226.8/231.8/321.8/326.8. "
+                        "Beam 275 has x>0 and 0.225 m is inside scrape_radius 0.26, so "
+                        "the scrape guard pinned forward clearance at 0.00 and the "
+                        "governor vetoed forward travel while leaving rotation free -- "
+                        "she pivoted on the spot with a clear path ahead, in every "
+                        "room, every run. With all three wedges masked: 0 beams pinned "
+                        "and forward clearance on the same live scan 0.00 -> 1.32 m.")
     p.add_argument("--motor", choices=["null", "friday", "serial"], default="null",
                    help="'null' only logs -- the safe default. 'friday' drives the "
                         "L298N/Arduino stack via friday_motors.ino.")
@@ -5913,6 +6148,7 @@ def main(argv: list[str] | None = None) -> int:
         loop.map_enabled = not args.no_map
         loop.planner_enabled = not args.no_planner
         loop.navigator_enabled = not args.no_navigator
+        loop.memory_enabled = not args.no_near_memory
         cfg.nav_speed_authority = float(args.navigator_speed_authority)
         loop.recovery_enabled = not args.no_recovery
         loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]

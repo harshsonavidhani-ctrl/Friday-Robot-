@@ -50,7 +50,7 @@ SUITES = ["test_ld19.py", "test_reconnect.py", "test_motors.py",
           "test_telemetry.py",
           "test_world.py", "test_explorer.py", "test_recovery.py",
           "test_cameras.py", "test_freespace.py", "test_narrator.py",
-          "test_dwa.py"]
+          "test_dwa.py", "test_near_memory.py"]
 
 failed = []
 for suite in SUITES:

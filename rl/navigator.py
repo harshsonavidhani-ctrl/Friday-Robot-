@@ -424,7 +424,8 @@ class Navigator:
                desired_bearing: float | None = None,
                blind_beams: np.ndarray | None = None,
                v_floor: float = 0.15,
-               tof_depth=None) -> Decision | None:
+               tof_depth=None,
+               memory_points=None) -> Decision | None:
         """Assess, plan, commit. None means "not mine -- use the existing behaviour".
 
         The None path is load-bearing: BLOCKED and "no safe arc" both return it, and
@@ -470,9 +471,18 @@ class Navigator:
         allow = v_allow * speed
         if tof_scale < 1.0:
             allow = max(allow * tof_scale, min(v_floor, allow))
+        # SHORT-TERM OBSTACLE MEMORY (near_memory.py): what the LiDAR and ToF saw a
+        # few seconds ago and can no longer see -- below the LiDAR's 0.22 m floor, or
+        # outside the ToF's forward patch since she turned. Added as obstacles, so it
+        # can only delete arcs that run INTO something, never add one.
+        extra = near
+        if memory_points is not None and len(memory_points):
+            mem = np.asarray(memory_points, dtype=np.float32).reshape(-1, 2)
+            extra = mem if near.shape[0] == 0 else np.vstack([near, mem])
+            self.memory_informed = getattr(self, "memory_informed", 0) + 1
         res = self.planner.choose(scan_m, allow, omega_want,
                                   desired_bearing=want, blind_beams=blind_beams,
-                                  v_floor=v_floor, extra_obstacles=near)
+                                  v_floor=v_floor, extra_obstacles=extra)
         if res is None:
             self.handoffs += 1
             self.handoff_no_arc += 1

@@ -203,7 +203,24 @@ def cliff_frame(mode):
     return f
 
 
-for mode in ("long", "gone"):
+# WHICH CLIFF PATHS ARE LIVE DEPENDS ON THE QUORUM, so derive it rather than freeze
+# it -- the constant moved twice on 2026-09-12 (4 -> 12 -> 25) to keep sunlight from
+# being read as a staircase, and a test that hard-codes the old value tells you the
+# code is broken when it is doing exactly what it was told. See TOF_CLIFF_MIN_CELLS.
+#
+#   "long" is caught by the TOF_FLOOR_BOTTOM_MAX_MM backstop, which BYPASSES the
+#          quorum, so it must fire at every setting.
+#   "gone" is the silence path and is gated by the quorum. Above the size of the near
+#          field it cannot fire by construction -- that is the deliberate demo setting,
+#          not a regression.
+NEAR_CELLS = pi_deploy.TOF_FLOOR_NEAR_ROWS * 8
+SILENCE_CLIFF_LIVE = pi_deploy.TOF_CLIFF_MIN_CELLS <= NEAR_CELLS
+if not SILENCE_CLIFF_LIVE:
+    print(f"  [note] TOF_CLIFF_MIN_CELLS={pi_deploy.TOF_CLIFF_MIN_CELLS} > {NEAR_CELLS} "
+          f"near cells -- cliff-from-silence is DISABLED on purpose; "
+          f"asserting it stays off, and that the backstop still fires")
+
+for mode in (("long", "gone") if SILENCE_CLIFF_LIVE else ("long",)):
     obs, intact = tof_obstacles_mm(cliff_frame(mode))
     # The edge is reported AT THE FLOOR RANGE -- the distance to the last floor that
     # was still there, which is the distance she must not cross.
@@ -245,6 +262,28 @@ check("three dead near cells are still under the cliff quorum", not stop,
       f"stop={stop} nearest={nearest(obs):.0f} mm")
 
 # Clean floor must stay silent, or every one of the above is worthless.
+obs, intact = tof_obstacles_mm(frame())
+# With the silence path off, prove it is off AND that nothing else regressed: a fully
+# blanked near field must NOT stop her (that is the sunlight case), while a real object
+# and the receding-floor backstop must still stop her.
+if not SILENCE_CLIFF_LIVE:
+    obs, _ = tof_obstacles_mm(cliff_frame("gone"))
+    _, stop = ToFReflex(cfg).evaluate(np.asarray(obs, dtype=np.float32) / 1000.0)
+    check("a fully blanked near field does NOT stop her (sunlight)", not stop,
+          f"stop={stop} nearest={nearest(obs):.0f} mm")
+    obs, _ = tof_obstacles_mm(cliff_frame("long"))
+    _, stop = ToFReflex(cfg).evaluate(np.asarray(obs, dtype=np.float32) / 1000.0)
+    check("...but a RECEDING floor still does (backstop survives)", stop, f"stop={stop}")
+    f = frame()
+    for col in (2, 3, 4):
+        f[GROUND0][col] = 150
+        f[GROUND0 + 1][col] = 150
+    obs, _ = tof_obstacles_mm(f)
+    _, stop = ToFReflex(cfg).evaluate(np.asarray(obs, dtype=np.float32) / 1000.0)
+    check("...and a real object still does", stop, f"stop={stop}")
+
+# Recomputed here rather than inherited: the block above reassigns `obs`, and a check
+# that silently reads an earlier frame's result is a test that proves nothing.
 obs, intact = tof_obstacles_mm(frame())
 check("clean floor raises no cliff", nearest(obs) >= NEAR_MM and intact,
       f"nearest={nearest(obs):.0f} mm intact={intact}")

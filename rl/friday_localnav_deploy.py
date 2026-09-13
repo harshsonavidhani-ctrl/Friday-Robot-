@@ -581,6 +581,9 @@ def main(argv: list[str] | None = None) -> int:
     # `run_localnav.sh` drives THIS main(), so a flag that only pi_deploy.main() reads
     # is a flag that does nothing on the robot.
     loop.navigator_enabled = not args.no_navigator
+    # THE EIGHTH, wired at the same time as it was added: short-term obstacle memory
+    # (near_memory.py). Without this line --no-near-memory would do nothing here.
+    loop.memory_enabled = not getattr(args, "no_near_memory", False)
     # THE SEVENTH FLAG IN THIS LIST, added here at the same time it was added to
     # pi_deploy's parser rather than discovered missing on hardware later --
     # which is what the paragraph above is warning about.
