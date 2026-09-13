@@ -163,6 +163,15 @@ def main(argv: list[str] | None = None) -> int:
     # exists once something has already gone right is not much of a reflex.
     reflex.start()
 
+    # WHAT SHE CAN SEE, kept fresh in the background -- see scene.py. Guarded:
+    # a watcher that cannot start costs her a description, never the server.
+    try:
+        import scene
+        scene.start()
+    except Exception as exc:                # noqa: BLE001
+        log.warning("scene watcher did not start: %s: %s",
+                    type(exc).__name__, exc)
+
     try:
         if args.http:
             server.run("streamable-http",

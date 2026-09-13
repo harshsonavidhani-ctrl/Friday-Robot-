@@ -233,9 +233,24 @@ def _post_json(url: str, payload: dict, timeout: float = 5.0) -> dict:
         return _json.loads(response.read().decode())
 
 
+import threading
+
+# ONE CAPTURE AT A TIME IN THIS PROCESS. The scene watcher (scene.py) shoots the
+# up camera every few seconds from a thread inside the MCP server, and a USB
+# webcam takes one reader: an observe() landing mid-shot would fail its open and
+# burn its retries. With the lock it waits for the frame in progress instead.
+_CAPTURE_LOCK = threading.Lock()
+
+
 def capture(device: str, size: tuple[int, int],
             warmup: int | None = None) -> Image.Image:
     """One settled frame from one camera, as a PIL image."""
+    with _CAPTURE_LOCK:
+        return _capture(device, size, warmup)
+
+
+def _capture(device: str, size: tuple[int, int],
+             warmup: int | None = None) -> Image.Image:
     warmup = config.CAM_WARMUP_FRAMES if warmup is None else warmup
     config.CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     stamp = f"{time.monotonic_ns()}"

@@ -184,7 +184,30 @@ BRAIN_IMAGE_TTL_S = 25.0
 # THE CORRECTNESS FIX IS NOT THIS ONE — it is BRAIN_IMAGE_TTL_S above plus the
 # "look before you say what is there" rule in personality.md, both verified
 # working. This is only ever a latency optimisation on top.
-BRAIN_EYES_FIRST = False
+#
+# ON SINCE 2026-09-13 with the scene watcher: brain._cached_view() answers from
+# scene.py's frame when it is fresh (no camera wait at all), and only a stale
+# one falls back to observe-before-asking.
+BRAIN_EYES_FIRST = True
+
+# --- The scene watcher (scene.py, inside the MCP server) -------------------
+# Harsh, 2026-09-13: describe the environment continuously, with object
+# detection. One up-camera frame every SCENE_PERIOD_S, named by SSD-MobileNet
+# (rl/friday_vision.py) on ONE thread -- this Pi is CPU-bound and whisper is the
+# stage he waits on. Skips, never fights: autonomous runs, the dashboard stream.
+SCENE_WATCH = True
+SCENE_PERIOD_S = 8.0
+SCENE_MODEL = ROOT / "assets" / "models" / "vision" / "ssd_mobilenet_v1_10.onnx"
+SCENE_THREADS = 1
+SCENE_CAPTURE_SIZE = (640, 480)   # MJPG; not CAM_C270_MAX -- see scene._tick
+SCENE_WARMUP_FRAMES = 5
+SCENE_MIN_SCORE = 0.6
+SCENE_IMAGE_WIDTH = 640
+SCENE_IMAGE_QUALITY = 80
+SCENE_JSON = ROOT / "state" / "scene.json"
+SCENE_IMAGE = ROOT / "state" / "scene_latest.jpg"
+SCENE_MAX_AGE_S = 30.0       # situation.py names objects no older than this
+SCENE_FRESH_IMAGE_S = 12.0   # the brain answers from the cached frame within this
 BRAIN_EYES_CAMERA = "up"     # the room, not the floor: 2.0 s against 3.3 s for
                              # "both", which returns the same single image
 BRAIN_EYES_WORDS = (

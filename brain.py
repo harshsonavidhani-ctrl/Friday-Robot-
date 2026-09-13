@@ -560,6 +560,37 @@ class Brain:
         self.last_tools_used.append("observe")
         return content
 
+    def _cached_view(self) -> list[dict[str, Any]] | None:
+        """The scene watcher's latest frame (scene.py), if fresh enough to use.
+
+        Costs nothing: the frame is already on disk. Measured before it existed,
+        a vision question paid ~2 s of camera inside observe() plus a whole
+        second round trip to the model. Returns None when there is no frame or
+        it is older than SCENE_FRESH_IMAGE_S -- then the camera path runs.
+        """
+        import base64
+        from pathlib import Path
+        try:
+            meta = json.loads(Path(config.SCENE_JSON).read_text())
+            age = time.time() - float(meta["taken_at"])
+            if age > float(config.SCENE_FRESH_IMAGE_S) or age < -5:
+                return None
+            data = base64.b64encode(Path(config.SCENE_IMAGE).read_bytes())
+        except Exception:                       # noqa: BLE001
+            return None
+        named = ", ".join(f"{o.get('label')} {o.get('side', '')}".strip()
+                          for o in meta.get("objects") or []) or "nothing"
+        log.info("answering from the scene watcher's frame (%.0fs old)", age)
+        self.last_tools_used.append("scene")
+        return [
+            {"type": "image", "source": {"type": "base64",
+                                         "media_type": "image/jpeg",
+                                         "data": data.decode()}},
+            {"type": "text", "text": (
+                f"Your up camera, {age:.0f} s ago. The object detector named: "
+                f"{named} -- labels can be wrong, so trust the picture.")},
+        ]
+
     async def _tool_list(self, session: Any) -> list[dict[str, Any]]:
         """The tool list, fetched from the MCP server ONCE and kept.
 
@@ -644,15 +675,20 @@ class Brain:
         # front of her. Saves a whole round trip and means the frame she
         # answers from is the one taken for THIS question. See BRAIN_EYES_FIRST.
         if self._is_about_what_she_sees(text):
-            seen = await self._eyes_first(session)
-            if seen is not None:
-                if on_tool:
+            # The scene watcher's frame first -- already on disk, so free. Only
+            # a missing or stale one makes her wait on the camera.
+            seen = self._cached_view()
+            if seen is None:
+                seen = await self._eyes_first(session)
+                if seen is not None and on_tool:
                     on_tool("observe", {"camera": config.BRAIN_EYES_CAMERA})
+            if seen is not None:
                 asked = list(seen) + [{
                     "type": "text",
-                    "text": (f"{asked}\n\n[The picture above was taken just "
-                             f"now, for this question. It is your current "
-                             f"view — answer from it.]")}]
+                    "text": (f"{asked}\n\n[The picture above was taken within "
+                             f"the last few seconds. It is your current view — "
+                             f"answer from it, and describe what is actually "
+                             f"in it.]")}]
 
         self._enrich = (len(self.messages), asked)
         self._remember({"role": "user", "content": text})
