@@ -713,6 +713,10 @@ def _hallucinated(text: str, language: str | None) -> str | None:
     """
     if not text:
         return None
+    low = text.lower()
+    for phrase in getattr(config, "STT_REJECT_PHRASES", ()):
+        if phrase in low:
+            return f"{phrase!r} is a video's line or whisper's, not a command"
     allowed = tuple(getattr(config, "STT_ALLOWED_LANGUAGES", ("en", "hi")))
     if (getattr(config, "STT_REJECT_FOREIGN", True)
             and language and allowed and language not in allowed):

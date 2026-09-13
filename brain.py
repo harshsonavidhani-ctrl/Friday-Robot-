@@ -414,6 +414,11 @@ class Brain:
             f"a post, what happened recently. The slower brain can search the "
             f"web; you cannot, and a confidently stale answer said out loud is "
             f"the worst outcome here.\n\n"
+            f"If the words were plainly NOT said to you — a line from a video "
+            f"or the TV, people talking to each other, or a fragment that "
+            f"makes no sense as something said to a robot — reply with exactly "
+            f"{getattr(config, 'BRAIN_IGNORE', 'IGNORE')} and nothing else. "
+            f"You stay silent. Do not ask them to repeat it.\n\n"
             f"⚠ REPLY WITH THE SPOKEN WORDS AND NOTHING ELSE. Every character "
             f"you return is sent straight to a speech synthesiser and said out "
             f"loud. No markdown, no backticks, no emotion names, no stage "
@@ -459,6 +464,13 @@ class Brain:
 
         self.last_model = model
         self.last_fast = True
+        if reply.strip(" .!\"'`").upper() == getattr(
+                config, "BRAIN_IGNORE", "IGNORE").upper():
+            # NOT SAID TO HER. Kept out of the history: a video's line and her
+            # silence are not a conversation she should be carrying forward.
+            log.info("fast path: not addressed to her — staying silent "
+                     "(%s, $%.5f): %r", model, cost, text[:60])
+            return reply
         log.info("fast path answered on %s ($%.5f)", model, cost)
         # The CLEAN question goes into the history, not the one with the
         # situation block on it. The block is true for one moment; kept in

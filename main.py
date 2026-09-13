@@ -235,6 +235,12 @@ async def check() -> int:
     return 0
 
 
+def _ignored(sentence: str) -> bool:
+    """True when the brain said IGNORE: the words were not meant for her."""
+    word = getattr(config, "BRAIN_IGNORE", "IGNORE")
+    return sentence.strip(" .!\"'`\n").upper() == word.upper()
+
+
 async def one_turn(brain_obj, session, voice: Voice, face: Face,
                    text: str, turn: "stages.Turn | None" = None) -> str:
     """Think about one thing and say the answer."""
@@ -247,7 +253,9 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
             "THINKING",
             brain_obj.ask(
                 text,
-                on_sentence=voice.say,
+                # IGNORE is the brain declining speech that was not said to
+                # her -- a video, the room, a garbled fragment. Never spoken.
+                on_sentence=lambda s: (None if _ignored(s) else voice.say(s)),
                 on_tool=lambda name, args: turn.stage("TOOL", f"{name} {args}"),
                 session=session,
             ),
@@ -278,6 +286,24 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
         voice.say("Something went wrong in my head just then.")
         voice.wait_until_quiet()
         turn.done(f"FAILED ({type(exc).__name__}: {exc})")
+        return ""
+
+    if _ignored(reply):
+        # Heard, judged not meant for her, and not a word said. Logged as its
+        # own outcome so "she ignored me" can be told apart from "she missed".
+        turn.note(f"not addressed to her — silent "
+                  f"({getattr(brain_obj, 'last_model', '?')}): {text[:60]!r}")
+        face.rest()
+        turn.done("IGNORED (not said to her)")
+        return ""
+
+    if _ignored(reply):
+        # Heard, judged not meant for her, and left alone -- no voice, no
+        # success face. Logged as its own outcome so it is never mistaken for
+        # a turn that failed.
+        turn.done(f"IGNORED (not said to her, "
+                  f"{getattr(brain_obj, 'last_model', '?')}): {text[:50]!r}")
+        face.rest()
         return ""
 
     # WHICH BRAIN ANSWERED, in the turn log. The fast path is invisible

@@ -88,6 +88,9 @@ BRAIN_FAST_MAX_TOKENS = 300
 # A fast answer is a SPOKEN answer, so it is capped hard. Anything needing more
 # room than this needed the real brain.
 BRAIN_FAST_UNSURE = "UNSURE"
+# What either brain replies when the words were NOT said to her (a video, the
+# room talking). main._ignored() never speaks it and the turn ends silently.
+BRAIN_IGNORE = "IGNORE"
 # Words that mean the answer depends on the robot, the room, this house, or an
 # action -- anything the fast model cannot honestly know. A false match costs
 # about 1.9 s of latency; a miss costs a wrong answer spoken out loud with
@@ -648,6 +651,14 @@ STT_ALLOWED_LANGUAGES = ("en", "hi")
 # similar, and it only ever applies when there is more than one sentence.
 STT_REJECT_REPEATS = True
 STT_REPEAT_SIMILARITY = 0.90
+# LINES NOBODY SAYS TO A ROBOT. Whisper's best-known hallucinations are YouTube
+# outros, and on 2026-09-13 a real video in the room said them too: turn 30
+# heard "Thank you for watching." and Sonnet answered "Anytime, Harsh" -- which
+# is what "she talks to herself" was. Lowercase substrings; a transcript
+# containing one is discarded exactly like a hallucination.
+STT_REJECT_PHRASES = ("thank you for watching", "thanks for watching",
+                      "subscribe to", "like and subscribe",
+                      "see you in the next video", "don't forget to subscribe")
 
 # ⚠ PINNED TO ENGLISH 2026-09-13 FOR SPEED. Harsh asked for answers in 3-5 s,
 # and auto-detect runs the encoder a second time on every command: measured on

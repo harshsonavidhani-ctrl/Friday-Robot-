@@ -792,22 +792,43 @@ def online(force: bool = False) -> bool:
     wasted attempt, so anything unexpected counts as online and the real call
     is allowed to produce the real error.
     """
-    global _last_check, _last_result
+    # ⚠ IT NEVER BLOCKS A TURN ANY MORE (2026-09-13). The connect timeout does
+    # not cover the DNS lookup in front of it, and on this Pi that lookup
+    # sometimes takes 5 s: 14 spoken turns sat exactly 5.0 s between the
+    # transcript and the brain, and online(force=True) measured 5.04 s then
+    # 0.03 s back to back. A stale cache now answers with the last result at
+    # once and refreshes on a thread; only force=True waits for the answer.
+    global _refreshing
     with _lock:
-        now = time.monotonic()
-        if not force and now - _last_check < config.ONLINE_CHECK_TTL_S:
+        fresh = time.monotonic() - _last_check < config.ONLINE_CHECK_TTL_S
+        if not force:
+            if not fresh and not _refreshing:
+                _refreshing = True
+                threading.Thread(target=_refresh, name="online-check",
+                                 daemon=True).start()
             return _last_result
-        _last_check = now
-        try:
-            with socket.create_connection((config.ONLINE_CHECK_HOST,
-                                           config.ONLINE_CHECK_PORT),
-                                          timeout=config.ONLINE_CHECK_TIMEOUT_S):
-                _last_result = True
-        except OSError:
-            _last_result = False
-        except Exception:                       # noqa: BLE001
-            _last_result = True
-        return _last_result
+    _refresh()
+    return _last_result
+
+
+_refreshing = False
+
+
+def _refresh() -> None:
+    global _last_check, _last_result, _refreshing
+    try:
+        with socket.create_connection((config.ONLINE_CHECK_HOST,
+                                       config.ONLINE_CHECK_PORT),
+                                      timeout=config.ONLINE_CHECK_TIMEOUT_S):
+            result = True
+    except OSError:
+        result = False
+    except Exception:                           # noqa: BLE001
+        result = True
+    with _lock:
+        _last_result = result
+        _last_check = time.monotonic()
+        _refreshing = False
 
 
 def main() -> int:
