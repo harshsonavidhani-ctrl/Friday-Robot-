@@ -162,6 +162,13 @@ class OpenWakeWord(WakeSource):
             maxlen=max(1, int(config.WAKE_FIRE_SECONDS * config.MIC_SAMPLE_RATE
                               / CHUNK_SAMPLES)))
         self.fires_saved = 0
+        # AUTO-GAIN STATE (see _lift and the WAKE_AUTO_GAIN block in config):
+        # a running peak about a second long, and one slow-moving gain derived
+        # from it, so a phrase is lifted as a whole rather than chunk by chunk.
+        self._peaks: "collections.deque[float]" = collections.deque(
+            maxlen=max(1, int(getattr(config, "WAKE_GAIN_WINDOW_S", 1.0)
+                              * config.MIC_SAMPLE_RATE / CHUNK_SAMPLES)))
+        self._gain = 1.0
         # THE SECOND OPINION (wake_verify.py), loaded with the model. None
         # means every confirmed fire wakes her, which is the old behaviour.
         self._verifier = None
@@ -182,6 +189,14 @@ class OpenWakeWord(WakeSource):
             wakeword_model_paths=[str(self.model_path)],
             vad_threshold=config.WAKE_VAD_THRESHOLD,
         )
+        # THE DETECTOR BEFORE IT HAS HEARD ANYTHING, taken here because it is
+        # the only moment that state exists. _reset_model() puts it back after
+        # every turn; recomputing it there would mean ~10 s of zeros through
+        # the embedding model in front of every wake.
+        pre = self._model.preprocessor
+        self._clean = (list(pre.raw_data_buffer), pre.accumulated_samples,
+                       pre.melspectrogram_buffer.copy(),
+                       pre.feature_buffer.copy())
         log.info("openWakeWord ready in %.1fs (%s, threshold %.2f)",
                  time.monotonic() - started, self.model_path.name,
                  self.threshold)
@@ -208,6 +223,13 @@ class OpenWakeWord(WakeSource):
         if self._sub is not None:
             self._sub.clear()
         self._reset_model()
+        # THE SAVED-CLIP RING TOO. Only SCORED chunks enter _recent, so without
+        # this a fire just after a turn saves up to 3 s that is mostly the
+        # PREVIOUS turn's audio -- usually the wake phrase that started it --
+        # glued onto under a second of new sound, and Whisper hears "Friday" in
+        # the old half. On 2026-09-13, 8 of the 11 "rejected hey Friday" clips
+        # were splices like that, and a retrain took them as positives.
+        self._recent.clear()
         # CLEAR THE COOLDOWN. Its only job is to stop ONE utterance scoring
         # high across neighbouring frames and firing twice. Once the turn it
         # belongs to is over that job is done, and carrying it into the next
@@ -242,17 +264,44 @@ class OpenWakeWord(WakeSource):
         if self._sub is not None:
             self._sub.clear()
         self._reset_model()
+        self._recent.clear()            # a gap in the audio -- see resume()
 
     def sleeping_for(self) -> float:
         return max(0.0, self._sleep_until - time.monotonic())
 
     def _reset_model(self) -> None:
-        reset = getattr(self._model, "reset", None)
-        if callable(reset):
-            try:
-                reset()
-            except Exception:                   # noqa: BLE001
-                pass
+        """Forget what the detector has HEARD, not just its last scores.
+
+        ⚠ openWakeWord's Model.reset() clears ONLY the prediction buffer. The
+        preprocessor keeps ~10 s of raw audio, mel frames and embeddings, and
+        the Silero VAD keeps its history and RNN state -- so after a turn the
+        first predictions were computed over the wake phrase that STARTED that
+        turn, spliced onto the new audio. Measured 2026-09-13 over 311 resumes:
+        the first over-threshold score came at 1.5/s in the first scorable
+        0.3 s, against 0.14/s from 1.5 s on. Offline, restoring the
+        preprocessor took stale high scores on an empty room from 4/16 to 0/16
+        and still caught 14/20 of Harsh's takes said straight after a turn --
+        the same as before.
+        """
+        model = self._model
+        if model is None:
+            return
+        try:
+            model.reset()
+            clean = getattr(self, "_clean", None)
+            if clean is not None:
+                pre = model.preprocessor
+                pre.raw_data_buffer.clear()
+                pre.raw_data_buffer.extend(clean[0])
+                pre.accumulated_samples = clean[1]
+                pre.melspectrogram_buffer = clean[2].copy()
+                pre.feature_buffer = clean[3].copy()
+            vad = getattr(model, "vad", None)
+            if vad is not None:
+                vad.reset_states()
+                vad.prediction_buffer.clear()
+        except Exception as exc:                # noqa: BLE001
+            log.debug("wake detector reset incomplete: %s", exc)
 
     # -- the detector thread --
     def _detect(self) -> None:
@@ -331,7 +380,14 @@ class OpenWakeWord(WakeSource):
                 self._recent.append(chunk)
                 try:
                     samples = np.frombuffer(chunk, dtype=np.int16)
-                    scores = self.model().predict(samples)
+                    # LIFT A QUIET CHUNK BEFORE SCORING IT, never after. His
+                    # misses are the quiet takes and the mic gain is already
+                    # maxed in hardware -- see the WAKE_AUTO_GAIN block in
+                    # config.py for the bounds that stop this amplifying the
+                    # room. `samples` is the only thing changed: _recent above
+                    # holds the raw chunk, and last_rms below is measured on
+                    # the raw one too.
+                    scores = self.model().predict(self._lift(samples))
                 except Exception as exc:        # noqa: BLE001
                     # A prediction that blows up must not end the thread —
                     # that would leave Friday permanently deaf.
@@ -414,6 +470,50 @@ class OpenWakeWord(WakeSource):
                     # that notify and a disk write in front of it is latency
                     # Harsh hears as Friday being slow to answer.
                     self._save_fire(audio, score)
+
+    # -- hearing him from further away --
+    def _lift(self, samples):
+        """A quiet chunk, raised toward the level the model was trained on.
+
+        Driven by a running PEAK over about a second rather than by this chunk
+        alone: openWakeWord reads the shape of the phrase over time, and a
+        per-chunk normaliser would flatten that shape into a constant and take
+        the model's best cue away with it. One gain, moving slowly, applied to
+        the whole phrase.
+
+        Returns the input untouched whenever there is any reason to -- gain
+        off, nothing loud enough to be speech, or already loud enough. Never
+        raises: a failure here must not end the detector thread, because that
+        leaves Friday permanently deaf.
+        """
+        if not getattr(config, "WAKE_AUTO_GAIN", False):
+            return samples
+        import numpy as np
+        try:
+            peak = float(np.abs(samples).max()) / 32768.0
+            if peak <= 0.0:
+                return samples
+            self._peaks.append(peak)
+            window = max(self._peaks)
+            floor = 10.0 ** (config.WAKE_GAIN_FLOOR_DBFS / 20.0)
+            if window < floor:
+                # Room tone. A wake word "found" in amplified room tone is a
+                # false fire, so this is where the normaliser stays out.
+                self._gain = 1.0
+                return samples
+            target = 10.0 ** (config.WAKE_GAIN_TARGET_DBFS / 20.0)
+            ceiling = 10.0 ** (config.WAKE_GAIN_MAX_DB / 20.0)
+            want = min(max(target / window, 1.0), ceiling)
+            # Move toward it rather than jumping: a gain that steps between
+            # chunks puts an edge in the audio that is not in the room.
+            self._gain += (want - self._gain) * 0.35
+            if self._gain <= 1.02:
+                return samples
+            lifted = samples.astype(np.float32) * self._gain
+            return np.clip(lifted, -32768, 32767).astype(np.int16)
+        except Exception as exc:                # noqa: BLE001
+            log.debug("auto-gain skipped: %s", exc)
+            return samples
 
     # -- the second opinion --
     def _verify(self) -> "tuple[bool, float | None]":
