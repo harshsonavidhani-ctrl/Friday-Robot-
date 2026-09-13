@@ -122,7 +122,14 @@ YAWN_MOUTH_LEAD = 0.45
 # =====================================================================
 # TIMING — tune these
 # =====================================================================
-FPS = 30
+FPS = 15
+# WHILE SHE IS THINKING THE FACE STEPS DOWN, because that is exactly when
+# whisper and the brain need the CPU. Measured 2026-09-13 on his own clips,
+# back to back: whisper x2.83 with the face running at 15 fps, x1.90 with the
+# face paused, x3.08 running again -- a 2 s command took ~6 s to transcribe
+# instead of ~4. "thinking" is set the moment the capture ends and lasts
+# through transcription and the brain; listening and speaking keep full rate.
+THINKING_FPS = 5
 TRANSITION_S = 0.28               # cross-fade between emotions
 BLINK_MIN_INTERVAL = 2.0
 BLINK_MAX_INTERVAL = 6.0
@@ -1310,7 +1317,8 @@ class FridayFace:
     def run(self, follow_file: bool = True) -> None:
         now = 0.0
         while self.running:
-            dt = self.clock.tick(FPS) / 1000.0
+            dt = self.clock.tick(THINKING_FPS if self._name == "thinking"
+                                 else FPS) / 1000.0
             now += dt
             self.handle_events()
             if follow_file:
