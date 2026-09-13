@@ -125,12 +125,27 @@ def clip_table(synth_dir: Path | None, test_since: str, vosk: dict[str, str],
         else:
             rows.append((str(p), "labelled false fires", 0, split_for(p.name)))
 
-    # LIVE WAKES from the unlabelled piles: only where Vosk heard "friday".
-    for d in (WAKE_DIR / "unsure", fires):
+    # LIVE WAKES from the unlabelled piles: only where a recogniser heard
+    # "friday". The REJECTED pile is included too -- a verifier that turned a
+    # real "hey Friday" away is precisely the clip it most needs to train on.
+    # ⚠ BUT ONLY IF THE CLIP IS CONTIGUOUS. Until wake_word.resume() cleared
+    # its clip ring, a fire just after a turn saved the PREVIOUS turn's wake
+    # phrase glued onto <1 s of new audio. "Hey Friday, good morning." (fire
+    # 20260913-003611, rejected at 0.09) was exactly that -- 0.7 s fresh --
+    # and so were 8 of the 11 rejected name-clips that night. Clips saved
+    # before that fix are not trustworthy positives.
+    #
+    # ⚠ NO DATE CUTOFF HERE ANY MORE, and that matters. test_since used to
+    # exclude recent clips from this pool while the loop below filed every
+    # recent fire as conversation -- so the newest real wakes, the ones from
+    # the conditions that are actually failing, were being trained on as
+    # NEGATIVES. Holdout is still honoured through split_for().
+    for d in (WAKE_DIR / "unsure", fires, Path(config.WAKE_REJECT_DIR)):
+        if not d.exists():
+            continue
         for p in sorted(d.glob("fire-*.wav")):
-            stamp = "-".join(p.stem.split("-")[1:3])
             if (p.name in filed or p.name in command_followed
-                    or stamp >= test_since or not heard_friday(p.name)):
+                    or not heard_friday(p.name)):
                 continue
             filed.add(p.name)
             rows.append((str(p), "live wakes (vosk)", 1, split_for(p.name)))
@@ -140,7 +155,10 @@ def clip_table(synth_dir: Path | None, test_since: str, vosk: dict[str, str],
     # this is the only honest way to ask it.
     for p in sorted(fires.glob("fire-*.wav")):
         stamp = "-".join(p.stem.split("-")[1:3])
-        if stamp >= test_since:
+        # `filed` is checked so a clip a recogniser heard her name in is never
+        # ALSO counted as conversation -- it would be a positive and a negative
+        # at once, and the negative is simply wrong.
+        if stamp >= test_since and p.name not in filed:
             rows.append((str(p), "unseen conversation", 0, "test"))
 
     # Other voices -- a stand-in for the judges. One whole voice is held out,
@@ -262,13 +280,22 @@ def stream_clip(path: str):
 def load_cache() -> dict[str, tuple[np.ndarray, dict[int, np.ndarray]]]:
     if not CACHE.exists():
         return {}
-    z = np.load(CACHE)
-    offsets = np.concatenate([[0], np.cumsum(z["lengths"])])
+    # ⚠ EVERY ARRAY READ ONCE, INTO A LOCAL. An NpzFile is not a dict: each
+    # z["feats"] decompresses the whole 14 MB array again, and z["feats"][row]
+    # is a view that keeps that fresh copy alive. Indexed inside the loop that
+    # was one full copy PER FEATURE ROW -- ~2300 x 14 MB, about 32 GB -- and on
+    # 2026-09-13 it took the Pi from 2 GB available to 130 MB in 45 s and reset
+    # it, before a single clip was streamed. A run with no cache yet never
+    # reaches this, which is why the first retrain survived and the next did not.
+    with np.load(CACHE) as z:
+        paths, lengths, scores, idx, feats = (
+            z[k] for k in ("paths", "lengths", "scores", "idx", "feats"))
+    offsets = np.concatenate([[0], np.cumsum(lengths)])
     per: dict[int, dict[int, np.ndarray]] = {}
-    for row, (n, k) in enumerate(z["idx"]):
-        per.setdefault(int(n), {})[int(k)] = z["feats"][row]
-    return {str(p): (z["scores"][offsets[n]:offsets[n + 1]], per.get(n, {}))
-            for n, p in enumerate(z["paths"])}
+    for row, (n, k) in enumerate(idx):
+        per.setdefault(int(n), {})[int(k)] = feats[row]
+    return {str(p): (scores[offsets[n]:offsets[n + 1]], per.get(n, {}))
+            for n, p in enumerate(paths)}
 
 
 def save_cache(cache) -> None:

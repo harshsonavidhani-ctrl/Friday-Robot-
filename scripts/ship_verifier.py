@@ -60,7 +60,18 @@ def make_synth() -> list[str]:
 
 
 def main() -> int:
-    vosk = tv.read_vosk(WAKE / "vosk_heard.tsv")
+    # BOTH LABELLERS. Vosk did 68 clips at 3.6 s each; Whisper is already on
+    # this Pi and catches up with the pile (scripts/whisper_label_fires.py).
+    # Vosk wins a disagreement only because it was the one checked against
+    # Harsh's ears; in practice they rarely overlap.
+    # ⚠ LOWERCASED, OR NONE OF THEM COUNT. train_verifier's FRIDAY regex is
+    # r"\bfri ?day\b" with no IGNORECASE -- written for Vosk, which emits
+    # lowercase. Whisper writes "Hey Friday.", so without this every Whisper
+    # positive fails the match and the retrain quietly gets zero new wakes.
+    vosk = {k: v.lower()
+            for k, v in tv.read_vosk(WAKE / "whisper_heard.tsv").items()}
+    vosk.update(tv.read_vosk(WAKE / "vosk_heard.tsv"))
+    print(f"{len(vosk)} clips have an independent transcript", flush=True)
     rows = tv.clip_table(None, "20260911-2350", vosk, set())
     for p in make_synth():
         held = Path(p).stem.startswith(VOICES[0])
