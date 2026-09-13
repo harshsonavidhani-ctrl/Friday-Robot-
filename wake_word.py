@@ -280,8 +280,10 @@ class OpenWakeWord(WakeSource):
         the first over-threshold score came at 1.5/s in the first scorable
         0.3 s, against 0.14/s from 1.5 s on. Offline, restoring the
         preprocessor took stale high scores on an empty room from 4/16 to 0/16
-        and still caught 14/20 of Harsh's takes said straight after a turn --
-        the same as before.
+        and caught 27/40 of Harsh's takes said straight after a turn, against
+        29/40 with no turn in front. Refilling with room sound instead scored
+        identically (0/16, 27/40), so the simpler snapshot stayed. Live, wakes
+        within 1.5 s of a turn went from 23/191 to 0/25.
         """
         model = self._model
         if model is None:
