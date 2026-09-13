@@ -55,6 +55,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from dashboard import map_view
 from dashboard import robot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -438,6 +439,9 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, timeout=10)
 
 
+COGNITIVE_UNIT = "friday-cognitive.service"
+
+
 def _explore_active() -> tuple[str | None, int | None]:
     """The exploration unit running right now, and how many minutes it is for.
 
@@ -463,6 +467,15 @@ def _explore_active() -> tuple[str | None, int | None]:
         found = re.search(r"@(\d+)\.service$", name)
         return name, (int(found.group(1)) if found else None)
     return None, None
+
+
+def _cognitive_active() -> bool:
+    """Is the Tier-2 planner up? `activating` counts -- it takes a moment."""
+    try:
+        out = _systemctl("is-active", COGNITIVE_UNIT)
+    except Exception:                                   # noqa: BLE001
+        return False
+    return out.stdout.strip() in ("active", "activating")
 
 
 def _explore_progress(mode: dict) -> dict:
@@ -576,6 +589,10 @@ def _explore_state() -> dict:
         "unit": unit,
         "minutes": minutes,
         "max_minutes": EXPLORE_MINUTES_MAX,
+        # WHICH MODE SHE IS OUT IN. "thinking" is the Tier-2 planner steering
+        # by heading order; without it the run is the frozen RL + frontier
+        # behaviour, which is what every run before 2026-09-12 was.
+        "thinking": _cognitive_active(),
         # Only meaningful while she is out; painted from the run's own log.
         "progress": _explore_progress(mode) if unit else {},
         # The mode file is written on every exit path including a kill, so the
@@ -592,6 +609,23 @@ def _explore_state() -> dict:
             "saved_at": vault.get("saved_at"),
         },
     }
+
+
+async def api_map_png(request: web.Request) -> web.Response:
+    """Friday's exploration map as a PNG -- read-only, see dashboard/map_view.py."""
+    png, meta = await asyncio.to_thread(map_view.current)
+    if not png:
+        raise web.HTTPNotFound(text=meta.get("why", "no map"))
+    return web.Response(body=png, content_type="image/png",
+                        headers={"Cache-Control": "no-store"})
+
+
+async def api_map_meta(request: web.Request) -> web.Response:
+    """When the map was saved, how much is known and driven, and her pose."""
+    _, meta = await asyncio.to_thread(map_view.current)
+    meta = dict(meta)
+    meta["running"] = _explore_active()[0] is not None
+    return web.json_response(meta)
 
 
 async def api_explore_get(request: web.Request) -> web.Response:
@@ -627,6 +661,7 @@ async def api_explore_post(request: web.Request) -> web.Response:
         # --no-block: the EXIT trap in run_localnav.sh has up to 90 s to put
         # her services back, and a request that waited for it would time out
         # long before.
+        _systemctl("stop", "--no-block", COGNITIVE_UNIT)
         done = _systemctl("stop", "--no-block", unit)
         if done.returncode != 0:
             raise web.HTTPBadRequest(text=done.stderr.strip()[:300] or "stop failed")
@@ -648,6 +683,11 @@ async def api_explore_post(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(
             text=f"minutes must be between 1 and {EXPLORE_MINUTES_MAX}")
 
+    # TWO EXPLORATION MODES, ONE RUN. `thinking` adds the Tier-2 planner on top
+    # of the identical run -- it does not replace or reconfigure it, so the
+    # plain mode stays byte-for-byte the frozen confident_explore behaviour.
+    thinking = bool(payload.get("thinking", False))
+
     # START THROUGH THE MCP SERVER, SO IT CAN LEASE THE HARDWARE TO THE RUN.
     # Harsh, 2026-09-08: "yes wire up the lease so mcp stays up during run".
     #
@@ -663,8 +703,8 @@ async def api_explore_post(request: web.Request) -> web.Response:
     # controls, and the face keeps its voice, while the run owns the ports.
     leased = False
     try:
-        answer = json.loads(await robot.call("start_exploration",
-                                             {"minutes": minutes}))
+        answer = json.loads(await robot.call(
+            "start_exploration", {"minutes": minutes, "thinking": thinking}))
         if not answer.get("started"):
             # A refusal is an ANSWER, not a failure to start -- "I am already
             # exploring" must not fall through and start a second run on top
@@ -695,6 +735,11 @@ async def api_explore_post(request: web.Request) -> web.Response:
         if done.returncode != 0:
             raise web.HTTPBadRequest(
                 text=done.stderr.strip()[:300] or "start failed")
+        # The leased path starts the planner inside start_exploration; this is
+        # the unleased fallback, which has to do it itself or "thinking" would
+        # silently mean nothing whenever friday-mcp is down.
+        if thinking:
+            _systemctl("start", "--no-block", COGNITIVE_UNIT)
 
     # HAND THE CAMERAS BACK BEFORE SHE NEEDS THEM. This dashboard used to be
     # STOPPED for the duration, so its ffmpeg children released /dev/video*
@@ -762,6 +807,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/screen", api_screen_get)
     app.router.add_post("/api/screen", api_screen_post)
     app.router.add_get("/api/explore", api_explore_get)
+    app.router.add_get("/api/map.png", api_map_png)
+    app.router.add_get("/api/map", api_map_meta)
     app.router.add_post("/api/explore", api_explore_post)
 
     async def index(request: web.Request) -> web.StreamResponse:

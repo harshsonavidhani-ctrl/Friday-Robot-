@@ -743,3 +743,24 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
 #panel-explore .seg:disabled,
 #panel-explore button:disabled,
 #panel-explore input:disabled{opacity:.4;cursor:not-allowed}
+
+
+/* The exploration mode toggle. Sits in a .screenrow beside the duration
+   controls, so it has to line up with them rather than fill the row. */
+.thinkmode {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+.thinkmode input { width: 1.05rem; height: 1.05rem; cursor: pointer; }
+.thinkmode small { opacity: .65; font-weight: 400; display: block; }
+
+/* ---------- map (read-only view of state/rl_map.npz) ---------- */
+
+.mapimg{
+  display:block;width:100%;height:auto;
+  border-radius:8px;border:1px solid var(--line);
+  image-rendering:pixelated;background:#2e3440;
+}

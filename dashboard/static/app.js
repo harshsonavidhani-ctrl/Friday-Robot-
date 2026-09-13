@@ -291,6 +291,13 @@ function buildScreen() {
 const EXPLORE_STEPS = [5, 10, 20];
 let exploreState = {};
 
+/* Whether the Thinking box is ticked. A missing element reads as OFF, so a
+   cached older page can never start a mode it has no control for. */
+function thinkOn() {
+  const box = $('explorethink');
+  return !!(box && box.checked);
+}
+
 function buildExplore() {
   if (!$('exploreseg')) return;
 
@@ -300,14 +307,14 @@ function buildExplore() {
     const b = document.createElement('button');
     b.className = 'seg';
     b.textContent = mins + 'm';
-    b.onclick = () => explorePost({ action: 'start', minutes: mins });
+    b.onclick = () => explorePost({ action: 'start', minutes: mins, thinking: thinkOn() });
     seg.appendChild(b);
   }
 
   $('explorego').onclick = () => {
     const mins = Number($('exploremins').value);
     if (!mins || mins < 1) { toast('How many minutes?', true); return; }
-    explorePost({ action: 'start', minutes: mins });
+    explorePost({ action: 'start', minutes: mins, thinking: thinkOn() });
   };
 
   $('explorestop').onclick = () => explorePost({ action: 'stop' });
@@ -327,6 +334,25 @@ async function explorePost(body) {
   } catch (e) { toast(String(e), true); }
 }
 
+/* ---------- map (read-only: dashboard/map_view.py) ---------- */
+
+let mapVersion = null;
+async function refreshMap() {
+  if (!$('mapimg')) return;
+  let m;
+  try { m = await (await fetch('/api/map')).json(); } catch { return; }
+  if (!m.ok) { $('mapnow').textContent = 'no map'; return; }
+  if (m.version !== mapVersion) {          // re-fetch the picture only when it changed
+    mapVersion = m.version;
+    $('mapimg').src = '/api/map.png?v=' + m.version;
+  }
+  $('mapnow').textContent = m.running ? 'last saved · run in progress' : 'saved ' + m.saved;
+  $('mapnote').textContent =
+    `${m.size_m[0]} × ${m.size_m[1]} m · known ${m.known_m2} m² · driven ${m.driven_m2} m² · ` +
+    `${m.sweeps} sweeps · white free, black obstacle, orange driven, red her position, grid 1 m` +
+    (m.running ? ' · updates when this run ends' : '');
+}
+
 async function refreshExplore() {
   try { paintExplore(await (await fetch('/api/explore')).json()); }
   catch { /* the dashboard is stopped during a run; the panel keeps its text */ }
@@ -340,9 +366,13 @@ function paintExplore(state) {
   const prog = state.progress || {};
   const badge = $('explorenow');
   const forMins = state.minutes ? ` · ${state.minutes}m` : '';
+  // THE BADGE SAYS WHICH MODE SHE IS OUT IN, because from the outside a
+  // thinking run and a plain one look identical -- she drives either way, and
+  // the only visible difference is where she chooses to go.
+  const brain = state.thinking ? ' · thinking' : '';
   badge.textContent = !running ? 'idle'
-    : prog.phase === 'driving' ? `driving${forMins}`
-    : `starting${forMins}`;
+    : prog.phase === 'driving' ? `driving${forMins}${brain}`
+    : `starting${forMins}${brain}`;
   badge.classList.toggle('urgent', running);
 
   $('explorestop').hidden = !running;
@@ -351,6 +381,7 @@ function paintExplore(state) {
   for (const b of $('exploreseg').children) b.disabled = running;
   $('explorego').disabled = running;
   $('exploremins').disabled = running;
+  if ($('explorethink')) $('explorethink').disabled = running;
 
   const last = state.last || {};
   let wrong = false;                // red note: she is out and going nowhere,
@@ -728,6 +759,7 @@ async function heartbeat() {
   paintRobot(s.robot_online);
   paintScreen(s.screen);          // rides the same beat; no extra request
   refreshExplore();               // cheap, and the panel must not go stale
+  refreshMap();                   // one stat() server-side until the map changes
 }
 
 /* friday-mcp is a separate service from this one, so the dashboard opens and
@@ -774,6 +806,7 @@ function showPane(id) {
 
   buildExplore();
   await refreshExplore();
+  refreshMap();
 
   connect();
   setInterval(heartbeat, 4000);

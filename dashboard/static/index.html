@@ -195,6 +195,20 @@
              its control loop and still sit reflex-stopped against a wall. The
              note below says which, because from here they look the same. -->
 
+        <!-- TWO MODES, ONE RUN. Unchecked is the frozen confident_explore
+             behaviour -- RL policy plus frontier planner, no internet needed.
+             Checked ALSO starts friday-cognitive.service, which reads her
+             LiDAR, ToF and her own account of the run every 5 s and nudges her
+             toward somewhere new by heading order. It adds to the run; it does
+             not reconfigure it, so the offline mode stays exactly as measured. -->
+        <div class="screenrow">
+          <label for="explorethink">Mode</label>
+          <label class="thinkmode">
+            <input type="checkbox" id="explorethink">
+            <span>Thinking <small>(Claude steers &middot; needs internet &middot; ~$0.004 a decision)</small></span>
+          </label>
+        </div>
+
         <div class="screenrow">
           <label>For</label>
           <div class="segmented" id="exploreseg"></div>
@@ -213,6 +227,22 @@
 
         <p class="drivenote" id="explorenote"></p>
         <p class="drivenote" id="exploremap"></p>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-map">
+      <div class="panelhead">
+        <h2>Map</h2>
+        <span class="badge" id="mapnow">saved</span>
+      </div>
+      <div class="screen">
+        <!-- READ-ONLY view of state/rl_map.npz, the map the exploration run
+             loads (dashboard/map_view.py). The run saves it when it ends, so
+             during a run this is the previous map; the note says when. -->
+        <img id="mapimg" class="mapimg" alt="Friday's exploration map"
+             src="/api/map.png">
+        <p class="drivenote" id="mapnote">white free · black obstacle · slate unknown ·
+          orange driven · red her position · grid 1 m</p>
       </div>
     </section>
 
