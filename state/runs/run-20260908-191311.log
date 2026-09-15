@@ -1,0 +1,293 @@
+19:13:14 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+19:13:14 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+19:13:14 INFO    friday.localnav: LiDAR chassis self-mask: 88-99 (raw bearings, pre-offset); mounting offset -51.8 deg
+19:13:14 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+19:13:14 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+19:13:14 INFO    pi_deploy: Cameras resolved by USB serial: up=/dev/video0
+19:13:14 WARNING pi_deploy: camera down (serial 20181212000000) is not on the bus right now. The thread starts anyway and will pick it up when it returns -- the down camera on this robot is known to re-enumerate on its own.
+19:13:14 WARNING pi_deploy: camera down not present at startup (serial 20181212000000) -- will keep retrying; the visual gate stays fail-open meanwhile.
+19:13:15 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+19:13:15 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+19:13:15 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+19:13:15 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+[ WARN:0@0.940] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+19:13:15 WARNING pi_deploy: camera up not present at startup (serial 9B5B4130) -- will keep retrying; the visual gate stays fail-open meanwhile.
+[ WARN:0@2.121] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+19:13:17 INFO    pi_deploy: Motors: FRIDAY-MOTORS 1 on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+19:13:17 INFO    pi_deploy: Firmware watchdog armed at 500 ms (control period 100 ms)
+19:13:17 WARNING pi_deploy: Stiction floor 80 => slowest achievable wheel speed ~0.15 m/s (policy range is -0.15..0.50 m/s).
+19:13:17 WARNING pi_deploy: MOTORS ARE LIVE (max_duty=0.85). Wheels can turn.
+19:13:17 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+19:13:17 INFO    pi_deploy: Exploration map ignores 3 blind beam(s) (chassis): [np.int32(7), np.int32(8), np.int32(9)]
+19:13:17 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+19:13:17 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port, --motor. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+19:13:17 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
+19:13:17 INFO    pi_deploy: Reflex thread running at 30 Hz
+19:13:43 INFO    friday.vision: Object detection ON: ssd_mobilenet_v1_10.onnx at 320x320, ~1.0 Hz on 2 threads
+[ WARN:0@29.638] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+19:13:44 INFO    friday.tts: loading Piper voice en_US-hfc_female-medium.onnx (takes ~10s)
+19:13:54 INFO    friday.tts: Piper voice ready
+19:13:54 INFO    friday.tts: output volume: sink 0.95, Speaker 85%
+[ WARN:0@40.458] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+19:13:55 INFO    pi_deploy: World map restored from rl_map.npz: 321.7 m^2 known, 6441 sweeps, 50.7 m^2 previously driven
+[ WARN:0@45.129] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+[ WARN:0@53.579] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+19:14:08 INFO    pi_deploy: Relocalisation: score 1.276 (min 0.15), sharpness 5.91 (min 1.40), moved 0.00 m / 0 deg from the saved pose -- ACCEPTED
+19:14:08 INFO    pi_deploy: Frontier planner running every 2.0 s (heading bias only, capped at 55% of omega_max)
+19:14:08 INFO    pi_deploy: Control loop starting at 10 Hz. Ctrl+C to stop.
+19:14:12 INFO    pi_deploy: t=    5 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+0.89) -> out(+0.00,+0.00) | REFLEX_STOP  | 151.1 ms
+[ WARN:0@64.153] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+19:14:18 INFO    pi_deploy: t=   10 | lidar 0.31 | tof 0.12 | vis 0.00 | pol(+0.50,+0.65) -> out(+0.00,+0.00) | REFLEX_STOP  | 799.2 ms
+19:14:22 INFO    pi_deploy: t=   15 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+0.39) -> out(+0.00,+0.00) | REFLEX_STOP  | 1149.5 ms
+19:14:27 INFO    pi_deploy: t=   20 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+0.65) -> out(+0.00,+0.00) | REFLEX_STOP  | 573.5 ms
+19:14:27 INFO    pi_deploy: t=   20 | lidar nan | tof nan | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | stale_lidar  | 0.0 ms
+[ WARN:0@74.682] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+19:14:32 INFO    pi_deploy: t=   25 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.42,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 833.9 ms
+19:14:37 INFO    pi_deploy: t=   30 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 809.2 ms
+[ WARN:0@84.963] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+19:14:39 INFO    pi_deploy: t=   35 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+1.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 367.6 ms
+19:14:39 INFO    pi_deploy: t=   40 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+1.23) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.8 ms
+19:14:40 INFO    pi_deploy: t=   45 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+0.45) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.5 ms
+19:14:40 INFO    pi_deploy: t=   50 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+0.47) -> out(+0.00,+0.00) | REFLEX_STOP  | 11.3 ms
+19:14:41 INFO    pi_deploy: t=   55 | lidar 0.22 | tof 0.20 | vis 0.00 | pol(+0.50,+0.74) -> out(+0.00,-1.60) | REFLEX_STOP  | 13.1 ms
+19:14:41 INFO    pi_deploy: t=   60 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+0.94) -> out(+0.00,+0.00) | REFLEX_STOP  | 12.2 ms
+19:14:42 INFO    pi_deploy: t=   65 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+0.95) -> out(+0.00,+0.00) | REFLEX_STOP  | 15.0 ms
+19:14:42 INFO    pi_deploy: t=   70 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+0.94) -> out(+0.00,+0.00) | REFLEX_STOP  | 7.7 ms
+19:14:43 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+19:14:43 INFO    pi_deploy: t=   75 | lidar 0.22 | tof 0.13 | vis 0.00 | pol(+0.50,-0.65) -> out(+0.00,-0.65) | REFLEX_STOP  | 13.7 ms
+19:14:44 INFO    pi_deploy: t=   80 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-0.65) -> out(+0.00,+0.00) | REFLEX_STOP  | 48.0 ms
+19:14:44 INFO    pi_deploy: t=   85 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.50,-0.66) -> out(+0.00,+0.00) | REFLEX_STOP  | 34.4 ms
+19:14:45 INFO    pi_deploy: t=   90 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-0.67) -> out(+0.00,+0.00) | REFLEX_STOP  | 27.4 ms
+19:14:45 INFO    pi_deploy: t=   95 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-0.65) -> out(+0.00,+0.00) | REFLEX_STOP  | 24.1 ms
+19:14:46 INFO    pi_deploy: t=  100 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-0.67) -> out(+0.00,+0.00) | REFLEX_STOP  | 17.7 ms
+19:14:47 INFO    pi_deploy: t=  105 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-0.68) -> out(+0.00,+0.00) | REFLEX_STOP  | 14.7 ms
+19:14:47 INFO    pi_deploy: t=  110 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-0.66) -> out(+0.00,+0.00) | REFLEX_STOP  | 16.8 ms
+19:14:48 INFO    pi_deploy: t=  115 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.42,-0.68) -> out(+0.00,+0.00) | REFLEX_STOP  | 13.3 ms
+19:14:49 INFO    pi_deploy: t=  120 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 17.3 ms
+[ WARN:0@95.113] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+19:14:49 INFO    pi_deploy: t=  125 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 17.4 ms
+19:14:50 INFO    pi_deploy: t=  130 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.42,+1.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 50.0 ms
+19:14:50 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+19:14:50 INFO    pi_deploy: t=  135 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.50,+1.23) -> out(+0.00,+0.00) | REFLEX_STOP  | 39.2 ms
+19:14:52 INFO    pi_deploy: t=  140 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 215.8 ms
+19:14:53 INFO    pi_deploy: t=  145 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-0.05) -> out(+0.00,+0.00) | REFLEX_STOP  | 138.3 ms
+19:14:54 INFO    pi_deploy: t=  150 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 41.9 ms
+19:14:55 INFO    pi_deploy: t=  155 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.42,-1.56) -> out(+0.00,-1.56) | REFLEX_STOP  | 81.5 ms
+19:14:56 INFO    pi_deploy: t=  160 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 52.6 ms
+19:14:57 INFO    pi_deploy: t=  165 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 152.2 ms
+19:14:58 INFO    pi_deploy: t=  170 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.42,+1.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 58.3 ms
+19:14:58 INFO    pi_deploy: t=  175 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+1.23) -> out(+0.00,+0.00) | REFLEX_STOP  | 66.4 ms
+19:14:59 INFO    pi_deploy: t=  180 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 47.3 ms
+19:15:00 INFO    pi_deploy: t=  185 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 51.4 ms
+19:15:00 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+19:15:01 INFO    pi_deploy: t=  190 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.42,+1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 51.7 ms
+19:15:01 INFO    pi_deploy: t=  195 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 45.3 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:01 INFO    pi_deploy: camera up came back on /dev/video0 (reconnect 1)
+19:15:02 INFO    pi_deploy: t=  200 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 96.1 ms
+19:15:02 WARNING pi_deploy: CAPABILITY MISMATCH: the policy asked to reverse at -0.001 m/s, below the 0.149 m/s stiction floor. Note v_min -0.150 m/s IS executable, so this is a PARTIAL mismatch -- only reverses slower than the floor are being substituted with a pivot (CAPABILITY_ADAPTER in telemetry; raw policy output preserved). The margin is 0.001 m/s, which is thin enough that measurement error in wheel_speed_max could close it. --no-reverse-fallback shows the raw behaviour.
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+19:15:04 INFO    pi_deploy: t=  205 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.50,-1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 186.2 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:05 INFO    pi_deploy: t=  210 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,+0.00) | REFLEX_STOP  | 195.4 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:06 INFO    pi_deploy: t=  215 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.53) -> out(+0.00,+0.00) | REFLEX_STOP  | 95.3 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:15:08 INFO    pi_deploy: t=  220 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 100.2 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+19:15:09 INFO    pi_deploy: t=  225 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 165.1 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd3
+19:15:10 INFO    pi_deploy: t=  230 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 246.4 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:15:10 INFO    pi_deploy: t=  235 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 29.4 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:11 INFO    pi_deploy: t=  240 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.53) -> out(+0.00,+0.00) | REFLEX_STOP  | 67.9 ms
+19:15:11 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:11 INFO    pi_deploy: t=  245 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 92.5 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:12 INFO    pi_deploy: t=  250 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.53) -> out(+0.00,+0.00) | REFLEX_STOP  | 51.4 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:13 INFO    pi_deploy: t=  255 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.00,+0.00) | REFLEX_STOP  | 40.1 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+19:15:14 INFO    pi_deploy: t=  260 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-0.68) -> out(+0.00,+0.00) | REFLEX_STOP  | 288.7 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+19:15:16 INFO    pi_deploy: t=  265 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.50,-0.69) -> out(+0.00,+0.00) | REFLEX_STOP  | 146.2 ms
+19:15:17 INFO    pi_deploy: t=  270 | lidar 0.32 | tof 0.12 | vis 0.00 | pol(+0.50,-0.69) -> out(+0.00,+0.00) | REFLEX_STOP  | 130.6 ms
+19:15:18 INFO    pi_deploy: t=  275 | lidar 0.43 | tof 0.12 | vis 0.00 | pol(+0.50,-0.70) -> out(+0.00,+0.00) | REFLEX_STOP  | 60.6 ms
+19:15:18 INFO    pi_deploy: t=  280 | lidar 0.42 | tof 0.12 | vis 0.00 | pol(+0.50,-0.68) -> out(+0.00,+0.00) | REFLEX_STOP  | 62.8 ms
+19:15:19 INFO    pi_deploy: t=  285 | lidar 0.43 | tof 0.12 | vis 0.00 | pol(+0.50,-0.69) -> out(+0.00,+0.00) | REFLEX_STOP  | 59.3 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+19:15:19 INFO    pi_deploy: t=  290 | lidar 0.45 | tof 0.12 | vis 0.00 | pol(+0.50,-1.55) -> out(-0.15,+0.00) | REFLEX_STOP  | 25.3 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:15:20 INFO    pi_deploy: t=  295 | lidar 0.46 | tof 0.12 | vis 0.00 | pol(+0.50,-1.53) -> out(-0.15,+0.00) | REFLEX_STOP  | 60.0 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+19:15:20 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+19:15:20 INFO    pi_deploy: t=  300 | lidar 0.46 | tof 0.12 | vis 0.00 | pol(+0.50,-1.53) -> out(-0.15,+0.00) | REFLEX_STOP  | 54.7 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:22 INFO    pi_deploy: t=  305 | lidar 0.46 | tof 0.12 | vis 0.00 | pol(+0.50,-1.54) -> out(-0.15,+0.00) | REFLEX_STOP  | 344.6 ms
+19:15:23 INFO    pi_deploy: t=  310 | lidar 0.22 | tof 0.19 | vis 0.00 | pol(+0.50,-0.34) -> out(+0.00,-0.34) | REFLEX_STOP  | 114.5 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:15:24 INFO    pi_deploy: t=  315 | lidar 0.22 | tof 0.20 | vis 0.00 | pol(+0.50,-0.12) -> out(+0.00,-0.12) | REFLEX_STOP  | 88.9 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:15:25 INFO    pi_deploy: t=  320 | lidar 0.22 | tof 0.20 | vis 0.00 | pol(+0.50,+0.23) -> out(+0.00,+0.23) | REFLEX_STOP  | 26.5 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:27 INFO    pi_deploy: t=  325 | lidar 0.22 | tof 0.19 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.00,+0.16) | REFLEX_STOP  | 76.2 ms
+19:15:27 INFO    pi_deploy: t=  330 | lidar 0.22 | tof 0.21 | vis 0.00 | pol(+0.42,+1.57) -> out(+0.00,+1.57) | REFLEX_STOP  | 56.0 ms
+19:15:28 INFO    pi_deploy: t=  335 | lidar 0.22 | tof 0.13 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.00,+1.56) | REFLEX_STOP  | 79.4 ms
+19:15:28 INFO    pi_deploy: t=  340 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.50,+1.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 38.8 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+19:15:29 INFO    pi_deploy: t=  345 | lidar 0.23 | tof 0.19 | vis 0.00 | pol(+0.42,+1.58) -> out(+0.00,-0.80) | REFLEX_STOP  | 130.5 ms
+19:15:29 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+19:15:30 INFO    pi_deploy: t=  350 | lidar 0.23 | tof 0.19 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,-0.80) | REFLEX_STOP  | 142.2 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:15:31 INFO    pi_deploy: t=  355 | lidar 0.24 | tof 0.12 | vis 0.00 | pol(+0.50,+1.58) -> out(+0.00,-0.80) | REFLEX_STOP  | 99.6 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+19:15:31 INFO    pi_deploy: t=  360 | lidar 0.24 | tof 0.20 | vis 0.00 | pol(+0.50,+1.23) -> out(+0.00,-0.80) | REFLEX_STOP  | 109.3 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:33 INFO    pi_deploy: t=  365 | lidar 0.24 | tof 0.15 | vis 0.00 | pol(+0.50,+0.65) -> out(+0.00,+0.65) | REFLEX_STOP  | 246.7 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:34 INFO    pi_deploy: t=  370 | lidar 0.24 | tof 0.20 | vis 0.00 | pol(+0.50,+0.63) -> out(+0.00,+0.63) | REFLEX_STOP  | 112.8 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:15:35 INFO    pi_deploy: t=  375 | lidar 0.24 | tof 0.12 | vis 0.00 | pol(+0.50,+0.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 184.1 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+19:15:37 INFO    pi_deploy: t=  380 | lidar 0.24 | tof 0.14 | vis 0.00 | pol(+0.50,+1.47) -> out(+0.00,+1.47) | REFLEX_STOP  | 93.0 ms
+19:15:38 INFO    pi_deploy: t=  385 | lidar 0.24 | tof 0.14 | vis 0.00 | pol(+0.42,+0.94) -> out(+0.00,+0.94) | REFLEX_STOP  | 152.9 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+19:15:38 INFO    pi_deploy: t=  390 | lidar 0.24 | tof 0.19 | vis 0.00 | pol(+0.50,+0.69) -> out(+0.00,+0.69) | REFLEX_STOP  | 29.2 ms
+19:15:39 INFO    pi_deploy: t=  395 | lidar 0.24 | tof 0.20 | vis 0.00 | pol(+0.50,+0.30) -> out(+0.00,-0.80) | REFLEX_STOP  | 49.2 ms
+19:15:39 INFO    pi_deploy: t=  400 | lidar 0.24 | tof 0.19 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,-0.80) | REFLEX_STOP  | 69.9 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:40 INFO    pi_deploy: t=  405 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.50,-0.68) -> out(+0.00,+0.00) | REFLEX_STOP  | 72.4 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:41 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:15:41 INFO    pi_deploy: t=  410 | lidar 0.25 | tof 0.15 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,-0.80) | REFLEX_STOP  | 263.8 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:43 INFO    pi_deploy: t=  415 | lidar 0.25 | tof 0.15 | vis 0.00 | pol(+0.50,-0.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 212.6 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:44 INFO    pi_deploy: t=  420 | lidar 0.24 | tof 0.12 | vis 0.00 | pol(+0.50,-0.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 218.0 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:46 INFO    pi_deploy: t=  425 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.42,+1.57) -> out(+0.00,+1.57) | REFLEX_STOP  | 230.0 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:47 INFO    pi_deploy: t=  430 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+1.57) | REFLEX_STOP  | 199.8 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:48 INFO    pi_deploy: t=  435 | lidar 0.25 | tof 0.15 | vis 0.00 | pol(+0.50,+1.59) -> out(+0.00,+1.59) | REFLEX_STOP  | 43.7 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:48 INFO    pi_deploy: t=  440 | lidar 0.24 | tof 0.12 | vis 0.00 | pol(+0.50,+1.23) -> out(+0.00,+0.00) | REFLEX_STOP  | 43.4 ms
+19:15:49 INFO    pi_deploy: t=  445 | lidar 0.25 | tof 0.15 | vis 0.00 | pol(+0.50,+0.06) -> out(+0.00,-0.80) | REFLEX_STOP  | 80.4 ms
+19:15:50 INFO    pi_deploy: t=  450 | lidar 0.25 | tof 0.15 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,-0.80) | REFLEX_STOP  | 45.2 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:50 INFO    pi_deploy: t=  455 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 28.8 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:15:50 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:15:51 INFO    pi_deploy: t=  460 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 119.5 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+19:15:52 INFO    pi_deploy: t=  465 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.50,-0.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 93.6 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+19:15:54 INFO    pi_deploy: t=  470 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.50,-0.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 66.7 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+19:15:55 INFO    pi_deploy: t=  475 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 186.7 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+19:15:56 INFO    pi_deploy: t=  480 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.50,-0.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 158.6 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+19:15:57 INFO    pi_deploy: t=  485 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.50,-0.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 25.3 ms
+19:15:58 INFO    pi_deploy: t=  490 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.50,-0.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 31.2 ms
+19:15:59 INFO    pi_deploy: t=  495 | lidar 0.33 | tof 0.12 | vis 0.00 | pol(+0.50,-0.18) -> out(+0.00,+0.00) | REFLEX_STOP  | 16.1 ms
+19:15:59 INFO    pi_deploy: t=  500 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.34,-1.58) -> out(-0.15,+0.00) | REFLEX_STOP  | 14.7 ms
+19:16:00 INFO    pi_deploy: t=  505 | lidar 0.22 | tof 0.20 | vis 0.00 | pol(+0.34,+1.59) -> out(-0.15,-0.80) | REFLEX_STOP  | 25.2 ms
+19:16:00 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+19:16:00 INFO    pi_deploy: t=  510 | lidar 0.23 | tof 0.20 | vis 0.00 | pol(+0.50,+1.59) -> out(-0.15,-0.80) | REFLEX_STOP  | 45.2 ms
+19:16:01 INFO    pi_deploy: t=  515 | lidar 0.22 | tof 0.20 | vis 0.00 | pol(+0.42,+1.59) -> out(-0.15,-0.80) | REFLEX_STOP  | 76.2 ms
+19:16:02 INFO    pi_deploy: t=  520 | lidar 0.32 | tof 0.19 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+1.57) | REFLEX_STOP  | 139.8 ms
+19:16:03 INFO    pi_deploy: t=  525 | lidar 0.32 | tof 0.20 | vis 0.00 | pol(+0.50,+1.58) -> out(+0.00,+1.58) | REFLEX_STOP  | 101.4 ms
+19:16:05 INFO    pi_deploy: t=  530 | lidar 0.22 | tof 0.20 | vis 0.00 | pol(+0.26,+0.90) -> out(+0.00,+0.90) | REFLEX_STOP  | 70.5 ms
+19:16:06 INFO    pi_deploy: t=  535 | lidar 0.24 | tof 0.20 | vis 0.00 | pol(+0.17,+1.58) -> out(+0.00,+1.58) | REFLEX_STOP  | 79.5 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+19:16:07 INFO    pi_deploy: t=  540 | lidar 0.24 | tof 0.20 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 33.6 ms
+19:16:07 INFO    pi_deploy: t=  545 | lidar 0.24 | tof 0.15 | vis 0.00 | pol(+0.00,+1.59) -> out(+0.00,+1.59) | REFLEX_STOP  | 22.6 ms
+19:16:08 INFO    pi_deploy: t=  550 | lidar 0.23 | tof 0.15 | vis 0.00 | pol(+0.01,+1.35) -> out(+0.00,-0.80) | REFLEX_STOP  | 118.7 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+19:16:09 INFO    pi_deploy: Planner: 8 chosen, 0 ARRIVED at, 0 revealed without arriving, 7 abandoned, 9 cycles, 5 frontiers left
+19:16:09 INFO    pi_deploy: World map saved: rl_map.npz  (321.7 m^2 known, 50.7 m^2 driven, 32.7 m^2 re-entered, revisit ratio 0.64, 56 sweeps, 186 superseded)
+19:16:09 INFO    pi_deploy: Black box written: /home/harsh/friday/rl/blackbox-20260908-191609.csv (550 rows)
+19:16:09 INFO    pi_deploy: ==========================================================================
+19:16:09 INFO    pi_deploy: ticks=550  explored=36.3 m^2
+19:16:09 INFO    pi_deploy: loop ms over the LAST 200 ticks: mean 99.16 | p95 230.21 | max 338.49 (budget 100) -- the black box has the whole run
+19:16:09 INFO    pi_deploy: budget by stage, mean ms/tick over all 550 ticks: pose+telemetry 75.3  sensors+obs 36.8  cameras 24.6  navigator 20.7  governor+escape+rear 10.1  actuate 6.2  policy 3.7  adapter 3.1  reflex 1.5  planner-bias 0.2
+19:16:09 INFO    pi_deploy:   measured inside tick(): 182.2 ms/tick; wall clock per tick (last 200): 99.2 ms; unaccounted 0.0 ms = time this thread was NOT RUNNING (other threads holding the GIL)
+19:16:09 INFO    pi_deploy: navigator: 0 ticks steered (0%), 548 handed back (0 blocked ahead, 548 no drivable arc); open 0 / corridor 0 / cluttered 0
+19:16:09 INFO    pi_deploy:   near field: 548 ticks with a ToF barrier in the arc search (548 of them already inside the reflex's stop distance -- the other 0 are arcs steered around something the reflex could only have braked for), 548 ticks speed-capped by it
+19:16:09 INFO    pi_deploy:   commitments 0 taken, 0 reversed by a better option (0 of those because the committed side ran out of arcs -- the L-corner flip), 0 expired on age; arc choice 12.49 ms mean (a HIGH handback count means she is spending her time in places with no drivable way forward)
+19:16:09 INFO    pi_deploy: escape turns: 0  (boxed in: forward blocked and not moving, so she turned toward open space)
+19:16:09 INFO    pi_deploy: reverse lifts: 2  (policy asked for a reverse too gentle to execute; honoured at the executable v_min instead of pivoting)
+19:16:09 INFO    pi_deploy: reverse floor lifts: 0  (a reverse from ANY stage -- escape, recovery, the policy -- that was under the stiction floor and would have executed as a stop, reissued at the slowest speed the wheels can actually turn)
+19:16:09 INFO    pi_deploy: no-reverse turns: 0  (policy asked to back up; this drivetrain cannot, so it turned toward open space instead)
+19:16:09 INFO    pi_deploy: interventions: reflex=550 visual=0 governor=195 rear=164 stale=13 scrape=0 overruns=190
+19:16:09 INFO    pi_deploy: object detection: 57 frames, 951 ms mean, 0 failures; currently sees nothing
+19:16:09 INFO    pi_deploy: cameras: free-space updates=304 failures=0, nudges=0, ticks driven on vision=0
+19:16:09 INFO    pi_deploy: lidar: 0 sub-footprint returns rejected outside the self-mask (a growing count means the chassis wedge moved -- re-measure --lidar-self-mask); 33 ticks braked for closing rate alone
+19:16:09 INFO    pi_deploy:   sensor lidar  updates=945     stale=False
+19:16:09 INFO    pi_deploy:   sensor tof    updates=2110    stale=False
+19:16:09 INFO    pi_deploy:   sensor cam_up updates=516     stale=False
+19:16:09 INFO    pi_deploy:   sensor cam_down updates=0       stale=True
+19:16:09 INFO    pi_deploy:   sensor cam_up_rgb updates=516     stale=False
+19:16:09 INFO    pi_deploy: ==========================================================================
+19:16:09 INFO    friday.localnav: policy source: LEROBOT_EXPERIMENTAL
+19:16:09 INFO    friday.explore: exploration: phase=navigate explored=36.3 m^2 frontier_cells=203
+19:16:09 INFO    friday.explore: targets: selected=9 reached=0 abandoned=2  blacklisted=1
+19:16:09 INFO    friday.explore: recoveries: 11 attempted, 11 successful
+19:16:09 INFO    friday.localnav: no_target_ticks=0
+19:16:09 INFO    friday.voice: voice: backend=friday spoken=10 dropped(cooldown=725 full=14)
+19:16:09 INFO    friday.localnav: ACT chunks: 69 forward passes over 550 ticks (7.97 ticks/pass)
+19:16:09 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+FATAL: exception not rethrown

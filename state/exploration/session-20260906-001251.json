@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "session_id": "d7baa29e",
+  "state": "finished",
+  "requested_minutes": 1.0,
+  "started_at": 1788633771.1114156,
+  "updated_at": 1788633867.9733014,
+  "elapsed_s": 96.9,
+  "remaining_s": 0.0,
+  "progress": 1.0,
+  "stopped_because": "finished the time asked for",
+  "pose": {
+    "x_m": 22.913,
+    "y_m": 1.156,
+    "theta_deg": -80.9,
+    "grid_col": 450,
+    "grid_row": 79,
+    "cell_m": 0.05
+  },
+  "map": {
+    "cell_m": 0.05,
+    "origin_m": [
+      0.4,
+      -2.8000000000000003
+    ],
+    "size_cells": [
+      480,
+      480
+    ],
+    "scans": 5416,
+    "occupied_cells": 2381,
+    "free_cells": 126921,
+    "floor_m2": 317.3
+  },
+  "counts": {},
+  "feature_count": 0,
+  "features": [],
+  "events": [
+    {
+      "ts": 1788633805.8801506,
+      "level": "warn",
+      "text": "the run did not start: FAILED \u2014 TimeoutExpired: Command '('systemctl', '--user', 'start', 'friday-explore.service')' timed out after 20 seconds"
+    },
+    {
+      "ts": 1788633805.880879,
+      "level": "speech",
+      "text": "Exploring for 1 minutes."
+    }
+  ]
+}

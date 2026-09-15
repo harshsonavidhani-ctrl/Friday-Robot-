@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "session_id": "bfd622ac",
+  "state": "stopped",
+  "requested_minutes": 0.5,
+  "started_at": 1788636939.3678458,
+  "updated_at": 1788636955.7889428,
+  "elapsed_s": 16.4,
+  "remaining_s": 13.6,
+  "progress": 0.547,
+  "stopped_because": "the run ended on its own",
+  "pose": {
+    "x_m": 21.715,
+    "y_m": 1.753,
+    "theta_deg": 142.6,
+    "grid_col": 426,
+    "grid_row": 91,
+    "cell_m": 0.05
+  },
+  "map": {
+    "cell_m": 0.05,
+    "origin_m": [
+      0.4,
+      -2.8000000000000003
+    ],
+    "size_cells": [
+      480,
+      480
+    ],
+    "scans": 5423,
+    "occupied_cells": 2368,
+    "free_cells": 127286,
+    "floor_m2": 318.2
+  },
+  "counts": {
+    "wall": 2,
+    "dead_end": 1,
+    "opening": 2,
+    "obstacle": 1,
+    "objects": 1
+  },
+  "feature_count": 7,
+  "features": [
+    {
+      "id": "f449732d16a1",
+      "kind": "wall",
+      "label": "There's a wall right up against me behind me on the left",
+      "ts": 1788636949.4076014,
+      "bearing_deg": 135.0,
+      "distance_mm": 100,
+      "local_x_m": -0.071,
+      "local_y_m": 0.071,
+      "global_x_m": 21.729,
+      "global_y_m": 1.654,
+      "grid_col": 426,
+      "grid_row": 89,
+      "cell_m": 0.05,
+      "confidence": 0.9,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "7d7cb393a6a5",
+      "kind": "dead_end",
+      "label": "This looks like a dead end.",
+      "ts": 1788636949.4068537,
+      "bearing_deg": 0.0,
+      "distance_mm": 600,
+      "local_x_m": 0.6,
+      "local_y_m": 0.0,
+      "global_x_m": 21.239,
+      "global_y_m": 2.117,
+      "grid_col": 416,
+      "grid_row": 98,
+      "cell_m": 0.05,
+      "confidence": 0.8,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "a25fdce68594",
+      "kind": "wall",
+      "label": "There's a wall right up against me on the right",
+      "ts": 1788636949.4074748,
+      "bearing_deg": -90.0,
+      "distance_mm": 200,
+      "local_x_m": 0.0,
+      "local_y_m": -0.2,
+      "global_x_m": 21.837,
+      "global_y_m": 1.912,
+      "grid_col": 428,
+      "grid_row": 94,
+      "cell_m": 0.05,
+      "confidence": 0.75,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "c07a3175c3bd",
+      "kind": "opening",
+      "label": "An opening ahead and to the right, going 1.7 metres",
+      "ts": 1788636949.4071612,
+      "bearing_deg": -30.0,
+      "distance_mm": 1700,
+      "local_x_m": 1.472,
+      "local_y_m": -0.85,
+      "global_x_m": 21.061,
+      "global_y_m": 3.322,
+      "grid_col": 413,
+      "grid_row": 122,
+      "cell_m": 0.05,
+      "confidence": 0.7,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "3868fec915a4",
+      "kind": "opening",
+      "label": "An opening ahead, going 2.4 metres",
+      "ts": 1788636949.4073205,
+      "bearing_deg": 15.0,
+      "distance_mm": 2350,
+      "local_x_m": 2.27,
+      "local_y_m": 0.608,
+      "global_x_m": 19.542,
+      "global_y_m": 2.648,
+      "grid_col": 382,
+      "grid_row": 108,
+      "cell_m": 0.05,
+      "confidence": 0.7,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "a4e72e1b1530",
+      "kind": "obstacle",
+      "label": "Something's right up against me ahead and to the left",
+      "ts": 1788636949.4077253,
+      "bearing_deg": 45.0,
+      "distance_mm": 350,
+      "local_x_m": 0.247,
+      "local_y_m": 0.247,
+      "global_x_m": 21.368,
+      "global_y_m": 1.707,
+      "grid_col": 419,
+      "grid_row": 90,
+      "cell_m": 0.05,
+      "confidence": 0.6,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "ebf2afaf94da",
+      "kind": "objects",
+      "label": "I can't describe what I'm looking at without my connection, but the way ahead is clear for about 0.5 metres.\n\n[up cam ok; nearest surface ahead 0.5 metres, to my left 0.3 metres, to my right 1.9 metres, behind me 0.4 metres]",
+      "ts": 1788636955.4763174,
+      "bearing_deg": 0.0,
+      "distance_mm": 0,
+      "local_x_m": 0.0,
+      "local_y_m": 0.0,
+      "global_x_m": 21.715,
+      "global_y_m": 1.753,
+      "grid_col": 426,
+      "grid_row": 91,
+      "cell_m": 0.05,
+      "confidence": 0.5,
+      "source": "camera",
+      "spoken": true
+    }
+  ],
+  "events": [
+    {
+      "ts": 1788636949.151361,
+      "level": "info",
+      "text": "attached to run-20260906-003927.log"
+    },
+    {
+      "ts": 1788636949.151836,
+      "level": "speech",
+      "text": "Exploring for 0.5 minutes."
+    },
+    {
+      "ts": 1788636955.4772377,
+      "level": "speech",
+      "text": "I can't describe what I'm looking at without my connection, but the way ahead is clear for about 0.5 metres.\n\n[up cam ok; nearest surface ahead 0.5 metres, to my left 0.3 metres, to my right 1.9 metres, behind me 0.4 metres]"
+    }
+  ]
+}

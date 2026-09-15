@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "session_id": "cccc6ccf",
+  "state": "finished",
+  "requested_minutes": 0.5,
+  "started_at": 1788634533.8050494,
+  "updated_at": 1788634609.7649567,
+  "elapsed_s": 76.0,
+  "remaining_s": 0.0,
+  "progress": 1.0,
+  "stopped_because": "finished the time asked for",
+  "pose": {
+    "x_m": 22.496,
+    "y_m": 1.177,
+    "theta_deg": 69.4,
+    "grid_col": 441,
+    "grid_row": 79,
+    "cell_m": 0.05
+  },
+  "map": {
+    "cell_m": 0.05,
+    "origin_m": [
+      0.4,
+      -2.8000000000000003
+    ],
+    "size_cells": [
+      480,
+      480
+    ],
+    "scans": 5421,
+    "occupied_cells": 2368,
+    "free_cells": 126994,
+    "floor_m2": 317.5
+  },
+  "counts": {
+    "objects": 1
+  },
+  "feature_count": 1,
+  "features": [
+    {
+      "id": "effedcb2eeef",
+      "kind": "objects",
+      "label": "I can't describe what I'm looking at without my connection, but the way ahead is clear for about 0.6 metres.\n\n[up cam ok; nearest surface ahead 0.6 metres, to my left 0.5 metres, to my right 1.7 metres, behind me 0.4 metres]",
+      "ts": 1788634581.7329347,
+      "bearing_deg": 0.0,
+      "distance_mm": 0,
+      "local_x_m": 0.0,
+      "local_y_m": 0.0,
+      "global_x_m": 22.496,
+      "global_y_m": 1.177,
+      "grid_col": 441,
+      "grid_row": 79,
+      "cell_m": 0.05,
+      "confidence": 0.5,
+      "source": "camera",
+      "spoken": true
+    }
+  ],
+  "events": [
+    {
+      "ts": 1788634565.395845,
+      "level": "speech",
+      "text": "Exploring for 0.5 minutes."
+    },
+    {
+      "ts": 1788634581.7344294,
+      "level": "speech",
+      "text": "I can't describe what I'm looking at without my connection, but the way ahead is clear for about 0.6 metres.\n\n[up cam ok; nearest surface ahead 0.6 metres, to my left 0.5 metres, to my right 1.7 metres, behind me 0.4 metres]"
+    }
+  ]
+}

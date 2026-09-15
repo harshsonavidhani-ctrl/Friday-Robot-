@@ -1,0 +1,269 @@
+01:12:53 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+01:12:53 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+01:12:53 INFO    friday.localnav: LiDAR chassis self-mask: 88-99 (raw bearings, pre-offset); mounting offset -51.8 deg
+01:12:53 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+01:12:53 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+01:12:53 INFO    pi_deploy: Cameras resolved by USB serial: down=/dev/video2  up=/dev/video0
+01:12:54 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+01:12:54 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+01:12:54 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+01:12:54 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+[ WARN:0@0.831] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:12:54 WARNING pi_deploy: camera up not present at startup (serial 9B5B4130) -- will keep retrying; the visual gate stays fail-open meanwhile.
+01:12:54 INFO    pi_deploy: camera down opened on /dev/video2 (320x240)
+[ WARN:0@1.897] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:12:56 INFO    pi_deploy: Motors: FRIDAY-MOTORS 1 on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+01:12:56 INFO    pi_deploy: Firmware watchdog armed at 500 ms (control period 100 ms)
+01:12:56 WARNING pi_deploy: Stiction floor 80 => slowest achievable wheel speed ~0.15 m/s (policy range is -0.15..0.50 m/s).
+01:12:56 WARNING pi_deploy: MOTORS ARE LIVE (max_duty=0.85). Wheels can turn.
+01:12:56 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+01:12:56 INFO    pi_deploy: Exploration map ignores 3 blind beam(s) (chassis): [np.int32(7), np.int32(8), np.int32(9)]
+01:12:56 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+01:12:56 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port, --motor. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+01:12:56 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
+01:12:56 INFO    pi_deploy: Reflex thread running at 30 Hz
+01:13:33 WARNING friday.tts: could not set the pipewire sink volume: Command '['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', '0.95']' timed out after 5 seconds
+01:13:33 INFO    friday.vision: Object detection ON: ssd_mobilenet_v1_10.onnx at 320x320, ~1.0 Hz on 2 threads
+01:13:33 WARNING pi_deploy: camera down disappeared from the bus -- dropping and waiting for it to come back.
+[ WARN:0@40.027] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:13:33 INFO    friday.tts: output volume: Speaker 85%
+01:13:33 INFO    friday.tts: loading Piper voice en_US-hfc_female-medium.onnx (takes ~10s)
+01:13:44 INFO    friday.tts: Piper voice ready
+[ WARN:0@51.229] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:13:44 INFO    pi_deploy: camera down came back on /dev/video2 (reconnect 1)
+01:13:44 INFO    pi_deploy: World map restored from rl_map.npz: 303.4 m^2 known, 5405 sweeps, 46.1 m^2 previously driven
+[ WARN:0@55.503] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:13:54 INFO    pi_deploy: Relocalisation: score 1.164 (min 0.15), sharpness 5.90 (min 1.40), moved 0.02 m / 0 deg from the saved pose -- ACCEPTED
+01:13:54 INFO    pi_deploy: Frontier planner running every 2.0 s (heading bias only, capped at 55% of omega_max)
+01:13:54 INFO    pi_deploy: Control loop starting at 10 Hz. Ctrl+C to stop.
+01:13:56 INFO    pi_deploy: t=    5 | lidar 0.33 | tof 0.31 | vis 0.00 | pol(+0.50,+0.96) -> out(+0.50,-0.17) | navigator    | 93.1 ms
+[ WARN:0@63.715] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:13:57 INFO    pi_deploy: t=   10 | lidar 1.06 | tof 0.78 | vis 0.00 | pol(+0.50,+0.96) -> out(+0.50,+0.96) | navigator    | 64.7 ms
+01:13:59 INFO    pi_deploy: t=   15 | lidar 0.30 | tof 0.03 | vis 0.00 | pol(+0.50,+0.89) -> out(+0.00,+0.00) | REFLEX_STOP  | 98.1 ms
+01:14:00 INFO    pi_deploy: t=   20 | lidar 0.30 | tof 0.03 | vis 0.00 | pol(+0.26,+0.89) -> out(+0.00,+0.00) | REFLEX_STOP  | 159.5 ms
+01:14:01 INFO    pi_deploy: t=   25 | lidar 0.30 | tof 0.06 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 137.5 ms
+01:14:02 INFO    pi_deploy: t=   30 | lidar 0.22 | tof 0.09 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 117.0 ms
+01:14:03 INFO    pi_deploy: t=   35 | lidar 0.22 | tof 0.09 | vis 0.00 | pol(+0.01,+1.37) -> out(+0.00,+0.00) | REFLEX_STOP  | 21.5 ms
+01:14:03 INFO    pi_deploy: t=   40 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(+0.01,+1.36) -> out(+0.00,+0.00) | REFLEX_STOP  | 111.5 ms
+01:14:04 INFO    pi_deploy: t=   45 | lidar 0.23 | tof 0.01 | vis 0.00 | pol(+0.01,-0.08) -> out(+0.00,+0.00) | REFLEX_STOP  | 61.1 ms
+01:14:04 WARNING pi_deploy: CAPABILITY MISMATCH: the policy asked to reverse at -0.069 m/s, below the 0.149 m/s stiction floor. Note v_min -0.150 m/s IS executable, so this is a PARTIAL mismatch -- only reverses slower than the floor are being substituted with a pivot (CAPABILITY_ADAPTER in telemetry; raw policy output preserved). The margin is 0.001 m/s, which is thin enough that measurement error in wheel_speed_max could close it. --no-reverse-fallback shows the raw behaviour.
+01:14:05 INFO    pi_deploy: t=   50 | lidar 0.23 | tof 0.01 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.00) | REFLEX_STOP  | 17.4 ms
+01:14:05 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:14:05 INFO    pi_deploy: t=   55 | lidar 0.23 | tof 0.01 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.00) | REFLEX_STOP  | 71.4 ms
+01:14:06 INFO    pi_deploy: t=   60 | lidar 0.25 | tof 0.09 | vis 0.00 | pol(-0.15,-0.97) -> out(+0.00,+0.00) | REFLEX_STOP  | 58.2 ms
+[ WARN:0@73.877] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:14:07 INFO    pi_deploy: t=   65 | lidar 0.26 | tof 0.09 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 130.7 ms
+01:14:08 INFO    pi_deploy: t=   70 | lidar 0.27 | tof 0.09 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 33.1 ms
+01:14:09 INFO    pi_deploy: t=   75 | lidar 0.23 | tof 0.09 | vis 0.00 | pol(+0.01,-1.42) -> out(+0.00,+0.00) | REFLEX_STOP  | 35.7 ms
+01:14:10 INFO    pi_deploy: t=   80 | lidar 0.33 | tof 0.09 | vis 0.00 | pol(+0.01,-1.41) -> out(+0.00,+0.00) | REFLEX_STOP  | 67.0 ms
+01:14:11 INFO    pi_deploy: t=   85 | lidar 0.36 | tof 0.09 | vis 0.00 | pol(+0.01,-1.42) -> out(+0.00,+0.00) | REFLEX_STOP  | 43.0 ms
+01:14:12 INFO    pi_deploy: t=   90 | lidar 0.36 | tof 0.09 | vis 0.00 | pol(-0.15,-0.80) -> out(-0.15,+0.00) | REFLEX_STOP  | 170.4 ms
+01:14:13 INFO    pi_deploy: t=   95 | lidar 0.37 | tof 4.00 | vis 0.00 | pol(-0.15,-0.68) -> out(-0.15,-0.68) | planner      | 72.8 ms
+01:14:14 INFO    pi_deploy: t=  100 | lidar 0.33 | tof 0.26 | vis 0.00 | pol(+0.01,-0.86) -> out(+0.00,-0.80) | rear_blocked | 104.3 ms
+01:14:14 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:14:15 INFO    pi_deploy: t=  105 | lidar 0.31 | tof 0.26 | vis 0.00 | pol(+0.01,-0.71) -> out(+0.00,-0.80) | rear_blocked | 180.7 ms
+01:14:16 INFO    pi_deploy: t=  110 | lidar 0.22 | tof 0.62 | vis 0.00 | pol(+0.37,-1.12) -> out(+0.00,-0.80) | rear_blocked | 82.9 ms
+[ WARN:0@83.990] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:14:17 INFO    pi_deploy: t=  115 | lidar 0.22 | tof 1.43 | vis 0.00 | pol(+0.31,-0.48) -> out(+0.31,-0.48) | navigator    | 71.1 ms
+01:14:18 INFO    pi_deploy: t=  120 | lidar 0.67 | tof 1.16 | vis 0.00 | pol(+0.38,-0.48) -> out(+0.08,-0.48) | navigator    | 74.2 ms
+01:14:20 INFO    pi_deploy: t=  125 | lidar 0.65 | tof 0.70 | vis 0.00 | pol(+0.27,-1.60) -> out(+0.24,-1.36) | navigator    | 79.2 ms
+01:14:21 INFO    pi_deploy: t=  130 | lidar 0.73 | tof 0.29 | vis 0.00 | pol(+0.34,-1.60) -> out(+0.00,-1.60) | governor     | 108.7 ms
+01:14:22 INFO    pi_deploy: t=  135 | lidar 0.99 | tof 0.67 | vis 0.00 | pol(+0.42,-0.80) -> out(+0.42,-0.80) | navigator    | 77.3 ms
+01:14:23 INFO    pi_deploy: t=  140 | lidar 0.55 | tof 0.33 | vis 0.00 | pol(+0.26,-1.54) -> out(+0.13,-1.54) | tof_slow     | 64.6 ms
+01:14:24 INFO    pi_deploy: t=  145 | lidar 0.36 | tof 0.40 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,+0.00) | governor     | 182.0 ms
+01:14:24 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:14:25 INFO    pi_deploy: t=  150 | lidar 0.44 | tof 0.52 | vis 0.00 | pol(+0.50,-1.00) -> out(+0.08,-1.00) | tof_slow     | 53.8 ms
+01:14:25 INFO    pi_deploy: t=  155 | lidar 0.22 | tof 0.31 | vis 0.00 | pol(+0.50,-1.02) -> out(+0.10,-1.02) | planner      | 36.4 ms
+01:14:26 INFO    pi_deploy: t=  160 | lidar 0.26 | tof 0.93 | vis 0.00 | pol(+0.50,+1.44) -> out(+0.50,+1.44) | navigator    | 64.3 ms
+[ WARN:0@94.152] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:14:27 INFO    pi_deploy: t=  165 | lidar 0.62 | tof 0.30 | vis 0.00 | pol(+0.31,+1.60) -> out(+0.31,+1.60) | navigator    | 48.8 ms
+01:14:28 INFO    pi_deploy: t=  170 | lidar 0.56 | tof 0.36 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 31.5 ms
+01:14:29 INFO    pi_deploy: t=  175 | lidar 0.59 | tof 4.00 | vis 0.00 | pol(+0.50,-1.44) -> out(+0.14,-1.44) | planner      | 52.4 ms
+01:14:31 INFO    pi_deploy: t=  180 | lidar 0.47 | tof 0.31 | vis 0.00 | pol(+0.26,-0.90) -> out(+0.00,-0.90) | governor     | 300.9 ms
+01:14:32 INFO    pi_deploy: t=  185 | lidar 0.22 | tof 0.94 | vis 0.00 | pol(+0.01,-0.72) -> out(+0.01,-0.72) | planner      | 75.2 ms
+01:14:32 INFO    pi_deploy: t=  190 | lidar 0.32 | tof 0.31 | vis 0.00 | pol(+0.01,-0.87) -> out(+0.00,+0.00) | governor     | 59.0 ms
+01:14:33 INFO    pi_deploy: t=  195 | lidar 0.41 | tof 4.00 | vis 0.00 | pol(+0.16,+0.16) -> out(+0.16,+0.16) | navigator    | 39.5 ms
+01:14:34 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.6 metres ahead. I am changing my route.
+01:14:34 INFO    pi_deploy: t=  200 | lidar 0.62 | tof 0.32 | vis 0.00 | pol(+0.01,-0.98) -> out(+0.01,+0.00) | planner      | 132.3 ms
+01:14:35 INFO    pi_deploy: t=  205 | lidar 0.60 | tof 0.62 | vis 0.00 | pol(+0.01,-0.72) -> out(+0.00,-0.72) | governor     | 72.5 ms
+01:14:36 INFO    pi_deploy: t=  210 | lidar 0.68 | tof 0.70 | vis 0.00 | pol(+0.25,+1.60) -> out(+0.24,+1.60) | navigator    | 73.1 ms
+01:14:37 INFO    pi_deploy: t=  215 | lidar 0.57 | tof 0.69 | vis 0.00 | pol(+0.25,+1.60) -> out(+0.25,+1.60) | navigator    | 39.3 ms
+[ WARN:0@104.220] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:14:38 INFO    pi_deploy: t=  220 | lidar 0.42 | tof 1.24 | vis 0.00 | pol(+0.33,+0.48) -> out(+0.17,+0.48) | navigator    | 108.4 ms
+01:14:39 INFO    pi_deploy: t=  225 | lidar 0.56 | tof 0.85 | vis 0.00 | pol(+0.19,+0.16) -> out(+0.19,+0.16) | navigator    | 159.9 ms
+01:14:40 INFO    pi_deploy: t=  230 | lidar 0.39 | tof 0.65 | vis 0.00 | pol(+0.33,+1.28) -> out(+0.24,+1.28) | navigator    | 80.0 ms
+01:14:42 INFO    pi_deploy: t=  235 | lidar 0.27 | tof 0.61 | vis 0.00 | pol(+0.22,+0.80) -> out(+0.22,+0.80) | navigator    | 191.7 ms
+01:14:43 INFO    pi_deploy: t=  240 | lidar 0.43 | tof 2.48 | vis 0.00 | pol(+0.16,+1.60) -> out(+0.00,+1.60) | governor     | 95.4 ms
+01:14:43 INFO    pi_deploy: t=  245 | lidar 0.54 | tof 4.00 | vis 0.00 | pol(+0.27,+0.16) -> out(+0.27,+0.16) | navigator    | 204.6 ms
+01:14:44 INFO    pi_deploy: t=  250 | lidar 0.60 | tof 0.89 | vis 0.00 | pol(+0.25,+0.16) -> out(+0.25,+0.16) | navigator    | 109.7 ms
+01:14:45 INFO    pi_deploy: t=  255 | lidar 0.65 | tof 0.31 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.09,+1.56) | tof_slow     | 97.7 ms
+01:14:46 INFO    pi_deploy: t=  260 | lidar 0.82 | tof 0.65 | vis 0.00 | pol(+0.50,+1.59) -> out(+0.00,+1.59) | governor     | 125.0 ms
+01:14:47 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:14:47 INFO    pi_deploy: t=  265 | lidar 0.68 | tof 3.58 | vis 0.00 | pol(+0.31,+0.16) -> out(+0.00,+0.16) | governor     | 194.8 ms
+[ WARN:0@114.417] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:14:48 INFO    pi_deploy: t=  270 | lidar 0.56 | tof 3.30 | vis 0.00 | pol(+0.27,+0.32) -> out(+0.00,+0.32) | governor     | 69.0 ms
+01:14:49 INFO    pi_deploy: t=  275 | lidar 0.69 | tof 0.80 | vis 0.00 | pol(+0.23,+0.32) -> out(+0.23,+0.32) | navigator    | 103.0 ms
+01:14:50 INFO    pi_deploy: t=  280 | lidar 0.39 | tof 0.55 | vis 0.00 | pol(+0.22,-1.60) -> out(+0.00,-1.60) | governor     | 37.9 ms
+01:14:51 INFO    pi_deploy: t=  285 | lidar 0.24 | tof 1.20 | vis 0.00 | pol(+0.19,-0.16) -> out(+0.19,-0.16) | navigator    | 69.0 ms
+01:14:52 INFO    pi_deploy: t=  290 | lidar 0.35 | tof 0.93 | vis 0.00 | pol(+0.16,-0.32) -> out(+0.16,-0.32) | navigator    | 136.5 ms
+01:14:53 INFO    pi_deploy: t=  295 | lidar 0.35 | tof 0.30 | vis 0.00 | pol(+0.01,+1.35) -> out(+0.00,+1.35) | governor     | 121.3 ms
+01:14:54 INFO    pi_deploy: t=  300 | lidar 0.22 | tof 0.65 | vis 0.00 | pol(+0.01,+1.35) -> out(+0.01,+1.35) | ok           | 103.8 ms
+01:14:55 INFO    pi_deploy: t=  305 | lidar 0.22 | tof 1.08 | vis 0.00 | pol(+0.01,+1.35) -> out(+0.00,+1.35) | governor     | 81.3 ms
+01:14:56 INFO    pi_deploy: t=  310 | lidar 0.27 | tof 0.89 | vis 0.00 | pol(+0.19,+0.00) -> out(+0.19,+0.13) | navigator    | 114.1 ms
+01:14:57 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:14:57 INFO    pi_deploy: t=  315 | lidar 0.37 | tof 0.90 | vis 0.00 | pol(+0.16,-1.60) -> out(+0.00,-1.60) | governor     | 54.8 ms
+[ WARN:0@124.512] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:14:58 INFO    pi_deploy: t=  320 | lidar 0.35 | tof 0.86 | vis 0.00 | pol(+0.16,-0.16) -> out(+0.00,-0.16) | governor     | 27.7 ms
+01:14:59 INFO    pi_deploy: t=  325 | lidar 0.32 | tof 0.84 | vis 0.00 | pol(+0.16,-0.16) -> out(+0.00,-0.16) | governor     | 116.8 ms
+01:15:00 INFO    pi_deploy: t=  330 | lidar 0.31 | tof 0.86 | vis 0.00 | pol(+0.19,-0.16) -> out(+0.14,-0.90) | navigator    | 82.3 ms
+01:15:02 INFO    pi_deploy: t=  335 | lidar 0.30 | tof 0.91 | vis 0.00 | pol(+0.16,-1.60) -> out(+0.00,+0.00) | governor     | 59.2 ms
+01:15:03 INFO    pi_deploy: t=  340 | lidar 0.36 | tof 0.32 | vis 0.00 | pol(-0.15,+0.96) -> out(-0.15,+0.96) | reverse_lifted | 47.0 ms
+01:15:04 INFO    pi_deploy: t=  345 | lidar 0.38 | tof 0.31 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 82.8 ms
+01:15:05 INFO    pi_deploy: t=  350 | lidar 0.48 | tof 0.86 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 95.0 ms
+01:15:06 INFO    pi_deploy: t=  355 | lidar 0.22 | tof 1.30 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 118.1 ms
+01:15:07 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:15:07 INFO    pi_deploy: t=  360 | lidar 0.22 | tof 1.36 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 59.9 ms
+[ WARN:0@134.645] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:15:08 INFO    pi_deploy: t=  365 | lidar 0.22 | tof 1.35 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 14.7 ms
+01:15:08 INFO    pi_deploy: t=  370 | lidar 0.22 | tof 0.91 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 23.4 ms
+01:15:09 INFO    pi_deploy: t=  375 | lidar 0.23 | tof 1.30 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 111.3 ms
+01:15:11 INFO    pi_deploy: t=  380 | lidar 0.22 | tof 0.95 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.01,-1.59) | ok           | 95.7 ms
+01:15:12 INFO    pi_deploy: t=  385 | lidar 0.35 | tof 2.26 | vis 0.00 | pol(+0.34,-1.54) -> out(+0.00,-1.54) | governor     | 129.5 ms
+01:15:13 INFO    pi_deploy: t=  390 | lidar 0.28 | tof 0.26 | vis 0.00 | pol(+0.26,-1.55) -> out(+0.00,-1.55) | governor     | 163.3 ms
+01:15:14 INFO    pi_deploy: t=  395 | lidar 0.22 | tof 0.73 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,-1.60) | governor     | 106.8 ms
+01:15:15 INFO    pi_deploy: t=  400 | lidar 0.22 | tof 0.96 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,-1.60) | recovery     | 109.4 ms
+01:15:16 INFO    pi_deploy: t=  405 | lidar 0.33 | tof 2.25 | vis 0.00 | pol(+0.38,+0.96) -> out(+0.00,-1.60) | recovery     | 115.4 ms
+01:15:16 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:15:17 INFO    pi_deploy: t=  410 | lidar 0.43 | tof 0.27 | vis 0.00 | pol(+0.34,-0.96) -> out(+0.03,-0.04) | governor     | 31.1 ms
+[ WARN:0@144.728] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:15:18 INFO    pi_deploy: t=  415 | lidar 0.36 | tof 2.30 | vis 0.00 | pol(+0.32,+1.60) -> out(+0.00,+1.60) | governor     | 76.2 ms
+01:15:19 INFO    pi_deploy: t=  420 | lidar 0.24 | tof 0.79 | vis 0.00 | pol(+0.38,+0.64) -> out(+0.00,+0.64) | governor     | 136.9 ms
+01:15:21 INFO    pi_deploy: t=  425 | lidar 0.25 | tof 0.85 | vis 0.00 | pol(+0.31,+0.32) -> out(+0.31,+0.32) | navigator    | 214.5 ms
+01:15:22 INFO    pi_deploy: t=  430 | lidar 0.34 | tof 0.70 | vis 0.00 | pol(+0.38,-0.96) -> out(+0.00,-0.96) | governor     | 84.6 ms
+01:15:24 INFO    pi_deploy: t=  435 | lidar 0.22 | tof 0.71 | vis 0.00 | pol(+0.31,-0.80) -> out(+0.31,-0.80) | navigator    | 104.2 ms
+01:15:26 INFO    pi_deploy: t=  440 | lidar 0.35 | tof 0.67 | vis 0.00 | pol(+0.32,-1.60) -> out(+0.00,+0.00) | governor     | 159.4 ms
+01:15:27 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:15:27 INFO    pi_deploy: t=  445 | lidar 0.34 | tof 0.10 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,+0.00) | REFLEX_STOP  | 31.3 ms
+[ WARN:0@154.975] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:15:28 INFO    pi_deploy: t=  450 | lidar 0.34 | tof 0.10 | vis 0.00 | pol(+0.26,-1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 53.5 ms
+01:15:29 INFO    pi_deploy: t=  455 | lidar 0.31 | tof 0.10 | vis 0.00 | pol(+0.26,-1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 22.8 ms
+01:15:30 INFO    pi_deploy: t=  460 | lidar 0.35 | tof 0.10 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 33.2 ms
+01:15:31 INFO    pi_deploy: t=  465 | lidar 0.35 | tof 0.10 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | REFLEX_STOP  | 150.8 ms
+01:15:32 INFO    pi_deploy: t=  470 | lidar 0.33 | tof 0.12 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | REFLEX_STOP  | 84.9 ms
+01:15:33 INFO    pi_deploy: t=  475 | lidar 0.38 | tof 0.15 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,-1.60) | REFLEX_STOP  | 40.2 ms
+01:15:34 INFO    pi_deploy: t=  480 | lidar 0.36 | tof 0.22 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.59) | REFLEX_STOP  | 45.3 ms
+01:15:35 INFO    pi_deploy: t=  485 | lidar 0.37 | tof 0.13 | vis 0.00 | pol(+0.01,-0.91) -> out(+0.00,-1.60) | REFLEX_STOP  | 115.8 ms
+01:15:36 INFO    pi_deploy: t=  490 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-0.71) -> out(+0.00,+0.00) | REFLEX_STOP  | 57.8 ms
+01:15:37 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:15:37 INFO    pi_deploy: t=  495 | lidar 0.36 | tof 0.12 | vis 0.00 | pol(+0.01,-0.71) -> out(+0.00,+0.00) | REFLEX_STOP  | 51.7 ms
+[ WARN:0@165.102] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:15:38 INFO    pi_deploy: t=  500 | lidar 0.37 | tof 0.15 | vis 0.00 | pol(+0.01,-0.72) -> out(+0.00,+0.00) | REFLEX_STOP  | 101.5 ms
+01:15:39 INFO    pi_deploy: t=  505 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-0.71) -> out(+0.00,-0.71) | REFLEX_STOP  | 92.1 ms
+01:15:40 INFO    pi_deploy: t=  510 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.0 ms
+01:15:41 INFO    pi_deploy: t=  515 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 11.6 ms
+01:15:42 INFO    pi_deploy: t=  520 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 43.5 ms
+01:15:43 INFO    pi_deploy: t=  525 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 50.2 ms
+01:15:44 INFO    pi_deploy: t=  530 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 240.4 ms
+01:15:45 INFO    pi_deploy: t=  535 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 83.1 ms
+01:15:45 INFO    pi_deploy: t=  540 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 43.7 ms
+01:15:47 INFO    pi_deploy: t=  545 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 114.5 ms
+01:15:47 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:15:48 INFO    pi_deploy: t=  550 | lidar 0.55 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 60.4 ms
+[ WARN:0@175.251] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:15:48 INFO    pi_deploy: t=  555 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 40.5 ms
+01:15:49 INFO    pi_deploy: t=  560 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 103.2 ms
+01:15:51 INFO    pi_deploy: t=  565 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 35.3 ms
+01:15:52 INFO    pi_deploy: t=  570 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 74.0 ms
+01:15:53 INFO    pi_deploy: t=  575 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 81.8 ms
+01:15:54 INFO    pi_deploy: t=  580 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 21.9 ms
+01:15:55 INFO    pi_deploy: t=  585 | lidar 0.45 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 196.2 ms
+01:15:56 INFO    pi_deploy: t=  590 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 44.3 ms
+01:15:57 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:15:57 INFO    pi_deploy: t=  595 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 60.8 ms
+01:15:58 INFO    pi_deploy: t=  600 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 74.0 ms
+[ WARN:0@185.407] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:15:59 INFO    pi_deploy: t=  605 | lidar 0.36 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 18.7 ms
+01:16:00 INFO    pi_deploy: t=  610 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 31.6 ms
+01:16:01 INFO    pi_deploy: t=  615 | lidar 0.36 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 33.1 ms
+01:16:02 INFO    pi_deploy: t=  620 | lidar 0.36 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 113.2 ms
+01:16:03 INFO    pi_deploy: t=  625 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 90.0 ms
+01:16:05 INFO    pi_deploy: t=  630 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 119.2 ms
+01:16:06 INFO    pi_deploy: t=  635 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 63.7 ms
+01:16:06 INFO    pi_deploy: t=  640 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 60.2 ms
+01:16:07 INFO    pi_deploy: t=  645 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 107.5 ms
+01:16:07 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:16:08 INFO    pi_deploy: t=  650 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 168.5 ms
+[ WARN:0@195.531] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:16:09 INFO    pi_deploy: t=  655 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 117.4 ms
+01:16:10 INFO    pi_deploy: t=  660 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 91.6 ms
+01:16:11 INFO    pi_deploy: t=  665 | lidar 0.36 | tof 0.11 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 108.7 ms
+01:16:12 INFO    pi_deploy: t=  670 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 116.0 ms
+01:16:13 INFO    pi_deploy: t=  675 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 68.4 ms
+01:16:14 INFO    pi_deploy: t=  680 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 78.5 ms
+01:16:14 INFO    pi_deploy: t=  685 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 27.1 ms
+01:16:15 INFO    pi_deploy: t=  690 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 23.0 ms
+01:16:15 INFO    pi_deploy: t=  695 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 27.4 ms
+01:16:16 INFO    pi_deploy: t=  700 | lidar 0.36 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 92.2 ms
+01:16:16 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:16:16 INFO    pi_deploy: t=  705 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 67.5 ms
+01:16:18 INFO    pi_deploy: t=  710 | lidar 0.36 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 190.4 ms
+[ WARN:0@205.647] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:16:20 INFO    pi_deploy: t=  715 | lidar 0.36 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 173.1 ms
+01:16:21 INFO    pi_deploy: t=  720 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 70.5 ms
+01:16:23 INFO    pi_deploy: t=  725 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 95.4 ms
+01:16:24 INFO    pi_deploy: t=  730 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 99.2 ms
+01:16:26 INFO    pi_deploy: t=  735 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 179.2 ms
+01:16:27 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:16:27 INFO    pi_deploy: t=  740 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 97.8 ms
+[ WARN:0@215.826] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:16:29 INFO    pi_deploy: t=  745 | lidar 0.27 | tof 0.11 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 163.6 ms
+01:16:30 INFO    pi_deploy: t=  750 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 160.9 ms
+01:16:31 INFO    pi_deploy: t=  755 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 130.5 ms
+01:16:33 INFO    pi_deploy: t=  760 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 147.8 ms
+01:16:35 INFO    pi_deploy: t=  765 | lidar 0.26 | tof 0.42 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,-1.60) | governor     | 82.5 ms
+01:16:36 INFO    pi_deploy: t=  770 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.01,-0.81) -> out(+0.01,-0.81) | planner      | 87.8 ms
+01:16:38 INFO    pi_deploy: t=  775 | lidar 0.23 | tof 0.94 | vis 0.00 | pol(+0.01,-0.55) -> out(+0.00,-0.55) | governor     | 170.8 ms
+01:16:38 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:16:39 INFO    pi_deploy: t=  780 | lidar 0.27 | tof 0.86 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | planner      | 94.3 ms
+[ WARN:0@226.024] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:16:40 INFO    pi_deploy: t=  785 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(-0.15,+0.55) -> out(+0.00,+0.55) | governor     | 177.1 ms
+01:16:41 INFO    pi_deploy: t=  790 | lidar 0.26 | tof 0.66 | vis 0.00 | pol(+0.09,+0.91) -> out(+0.00,+1.60) | recovery     | 171.3 ms
+01:16:43 INFO    pi_deploy: t=  795 | lidar 0.22 | tof 0.31 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+1.60) | recovery     | 195.0 ms
+01:16:44 INFO    pi_deploy: t=  800 | lidar 0.22 | tof 0.32 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,-1.60) | governor     | 192.6 ms
+01:16:45 INFO    pi_deploy: t=  805 | lidar 0.22 | tof 0.36 | vis 0.00 | pol(+0.01,-1.22) -> out(+0.01,-1.22) | planner      | 77.9 ms
+01:16:46 INFO    pi_deploy: t=  810 | lidar 0.22 | tof 0.37 | vis 0.00 | pol(-0.15,-0.10) -> out(+0.00,-0.10) | governor     | 68.2 ms
+01:16:46 INFO    pi_deploy: t=  815 | lidar 0.23 | tof 0.38 | vis 0.00 | pol(+0.50,-0.10) -> out(+0.16,-0.10) | planner      | 74.0 ms
+01:16:47 INFO    pi_deploy: t=  820 | lidar 0.24 | tof 0.32 | vis 0.00 | pol(+0.50,+0.29) -> out(+0.00,+0.29) | governor     | 79.1 ms
+01:16:47 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.7 metres ahead. I am changing my route.
+01:16:48 INFO    pi_deploy: t=  825 | lidar 0.30 | tof 0.29 | vis 0.00 | pol(+0.50,+0.60) -> out(+0.00,+0.60) | governor     | 77.9 ms
+01:16:48 INFO    pi_deploy: t=  830 | lidar 0.28 | tof 0.79 | vis 0.00 | pol(+0.50,-0.79) -> out(+0.00,-0.79) | governor     | 69.8 ms
+[ WARN:0@236.188] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:16:49 INFO    pi_deploy: t=  835 | lidar 0.28 | tof 0.35 | vis 0.00 | pol(+0.42,-0.66) -> out(+0.00,-0.66) | governor     | 94.7 ms
+01:16:50 INFO    pi_deploy: t=  840 | lidar 0.29 | tof 0.39 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,-1.54) | governor     | 25.4 ms
+01:16:51 INFO    pi_deploy: t=  845 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.34,-1.55) -> out(+0.00,-1.55) | REFLEX_STOP  | 64.8 ms
+01:16:52 INFO    pi_deploy: t=  850 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.26,-1.57) -> out(+0.00,-1.57) | REFLEX_STOP  | 91.2 ms
+01:16:52 INFO    pi_deploy: t=  855 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.42,-1.59) -> out(+0.00,-1.59) | REFLEX_STOP  | 42.6 ms
+01:16:53 INFO    pi_deploy: t=  860 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.50,-0.96) -> out(+0.00,-0.96) | REFLEX_STOP  | 32.8 ms
+01:16:53 INFO    pi_deploy: t=  865 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.50,+0.78) -> out(+0.00,+0.78) | REFLEX_STOP  | 41.6 ms
+01:16:54 INFO    pi_deploy: t=  870 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,+0.24) -> out(+0.00,+0.00) | REFLEX_STOP  | 198.3 ms
+01:16:56 INFO    pi_deploy: t=  875 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.50,+0.06) -> out(+0.00,+0.06) | REFLEX_STOP  | 97.9 ms
+01:16:57 INFO    pi_deploy: t=  880 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.50,+0.06) -> out(+0.00,+0.06) | REFLEX_STOP  | 188.6 ms
+01:16:58 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:16:58 INFO    pi_deploy: t=  885 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+1.59) | REFLEX_STOP  | 100.5 ms
+01:16:59 INFO    pi_deploy: t=  890 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.34,+1.34) -> out(+0.00,+1.34) | REFLEX_STOP  | 123.9 ms
+[ WARN:0@246.272] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:17:01 INFO    pi_deploy: t=  895 | lidar 0.22 | tof 0.13 | vis 0.00 | pol(+0.34,+0.80) -> out(+0.00,+0.80) | REFLEX_STOP  | 68.3 ms
+01:17:02 INFO    pi_deploy: t=  900 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.26,+0.47) -> out(+0.00,+0.47) | REFLEX_STOP  | 75.3 ms
+01:17:03 INFO    pi_deploy: t=  905 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.26,+0.02) -> out(+0.00,+0.80) | REFLEX_STOP  | 156.8 ms
+01:17:05 INFO    pi_deploy: t=  910 | lidar 0.28 | tof 0.13 | vis 0.00 | pol(+0.09,+0.97) -> out(+0.00,+0.80) | REFLEX_STOP  | 165.3 ms
+01:17:06 INFO    pi_deploy: t=  915 | lidar 0.22 | tof 0.14 | vis 0.00 | pol(+0.17,+1.38) -> out(+0.00,+0.80) | REFLEX_STOP  | 174.1 ms
+01:17:07 INFO    pi_deploy: t=  920 | lidar 0.22 | tof 0.22 | vis 0.00 | pol(+0.17,+0.34) -> out(+0.00,+0.34) | REFLEX_STOP  | 220.8 ms
+01:17:08 INFO    pi_deploy: t=  925 | lidar 0.23 | tof 0.21 | vis 0.00 | pol(+0.17,-1.12) -> out(+0.00,-1.12) | REFLEX_STOP  | 149.6 ms
+01:17:08 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:17:09 INFO    pi_deploy: t=  930 | lidar 0.22 | tof 0.27 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.00,-0.32) | governor     | 87.4 ms
+[ WARN:0@256.452] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+01:17:10 INFO    pi_deploy: t=  935 | lidar 0.23 | tof 0.13 | vis 0.00 | pol(+0.50,+0.49) -> out(+0.00,+0.49) | REFLEX_STOP  | 143.1 ms
+01:17:11 INFO    pi_deploy: t=  940 | lidar 0.23 | tof 0.15 | vis 0.00 | pol(+0.50,+0.35) -> out(+0.00,+0.35) | REFLEX_STOP  | 53.6 ms
+01:17:12 INFO    pi_deploy: t=  945 | lidar 0.23 | tof 0.15 | vis 0.00 | pol(+0.50,+0.20) -> out(+0.00,+0.20) | REFLEX_STOP  | 142.8 ms
+01:17:14 INFO    pi_deploy: t=  950 | lidar 0.23 | tof 0.13 | vis 0.00 | pol(+0.50,+0.07) -> out(+0.00,+0.80) | REFLEX_STOP  | 340.8 ms
+01:17:15 INFO    pi_deploy: t=  955 | lidar 0.23 | tof 0.13 | vis 0.00 | pol(+0.50,-0.05) -> out(+0.00,+0.80) | REFLEX_STOP  | 158.3 ms

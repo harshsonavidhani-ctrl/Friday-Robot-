@@ -1,0 +1,51 @@
+19:30:07 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+19:30:07 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+19:30:07 INFO    friday.localnav: LiDAR chassis self-mask: 88-99 (raw bearings, pre-offset); mounting offset -51.8 deg
+19:30:07 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+19:30:07 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+19:30:08 INFO    pi_deploy: Cameras resolved by USB serial: up=/dev/video0
+19:30:08 WARNING pi_deploy: camera down (serial 20181212000000) is not on the bus right now. The thread starts anyway and will pick it up when it returns -- the down camera on this robot is known to re-enumerate on its own.
+19:30:08 WARNING pi_deploy: camera down not present at startup (serial 20181212000000) -- will keep retrying; the visual gate stays fail-open meanwhile.
+19:30:09 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+19:30:09 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+19:30:09 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+19:30:09 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+19:30:11 INFO    pi_deploy: Motors: FRIDAY-MOTORS 1 on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+19:30:11 INFO    pi_deploy: Firmware watchdog armed at 500 ms (control period 100 ms)
+19:30:11 WARNING pi_deploy: Stiction floor 80 => slowest achievable wheel speed ~0.15 m/s (policy range is -0.15..0.50 m/s).
+19:30:11 WARNING pi_deploy: MOTORS ARE LIVE (max_duty=0.85). Wheels can turn.
+19:30:11 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+19:30:11 INFO    pi_deploy: Exploration map ignores 3 blind beam(s) (chassis): [np.int32(7), np.int32(8), np.int32(9)]
+19:30:11 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+19:30:11 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port, --motor. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+19:30:11 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
+19:30:11 INFO    pi_deploy: Reflex thread running at 30 Hz
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+19:30:53 INFO    pi_deploy: camera up opened on /dev/video0 (320x240)
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd1
+19:30:53 INFO    friday.vision: Object detection ON: ssd_mobilenet_v1_10.onnx at 320x320, ~1.0 Hz on 2 threads
+19:30:53 INFO    friday.tts: output volume: sink 0.95, Speaker 85%
+19:30:53 INFO    friday.tts: loading Piper voice en_US-hfc_female-medium.onnx (takes ~10s)
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+19:31:07 INFO    friday.tts: Piper voice ready
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+19:31:08 INFO    pi_deploy: World map restored from rl_map.npz: 321.7 m^2 known, 6497 sweeps, 50.7 m^2 previously driven
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 11 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd1

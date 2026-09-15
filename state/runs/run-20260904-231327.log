@@ -1,0 +1,430 @@
+23:13:28 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+23:13:28 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+23:13:28 INFO    friday.localnav: LiDAR chassis self-mask: 88-99 (raw bearings, pre-offset); mounting offset -51.8 deg
+23:13:28 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+23:13:28 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+23:13:29 INFO    pi_deploy: Cameras resolved by USB serial: up=/dev/video0
+23:13:29 WARNING pi_deploy: camera down (serial 20181212000000) is not on the bus right now. The thread starts anyway and will pick it up when it returns -- the down camera on this robot is known to re-enumerate on its own.
+23:13:29 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+23:13:29 WARNING pi_deploy: Motor driver = NULL: commands are logged, wheels will NOT turn. Use --motor friday once you have bench-tested.
+23:13:29 WARNING pi_deploy: camera down not present at startup (serial 20181212000000) -- will keep retrying; the visual gate stays fail-open meanwhile.
+23:13:29 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+23:13:29 INFO    pi_deploy: Exploration map ignores 3 blind beam(s) (chassis): [np.int32(7), np.int32(8), np.int32(9)]
+23:13:29 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+23:13:29 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+23:13:29 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+23:13:29 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
+23:13:29 INFO    pi_deploy: Reflex thread running at 30 Hz
+23:13:47 INFO    friday.vision: Object detection ON: ssd_mobilenet_v1_10.onnx at 320x320, ~1.0 Hz on 2 threads
+23:13:47 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+23:13:47 WARNING friday.tts: could not set the pipewire sink volume: Command '['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', '0.95']' timed out after 5 seconds
+23:13:47 INFO    friday.tts: output volume: Speaker 85%
+23:13:47 INFO    friday.tts: loading Piper voice en_US-hfc_female-medium.onnx (takes ~10s)
+23:13:53 INFO    friday.tts: Piper voice ready
+23:13:53 INFO    pi_deploy: World map restored from rl_map.npz: 299.6 m^2 known, 5342 sweeps, 46.1 m^2 previously driven
+23:13:53 WARNING pi_deploy: Only 19 usable beams (need 40); too few to relocalise.
+23:13:53 WARNING pi_deploy: Could not place the robot in the restored map, so this run rebuilds from scratch -- every target named from it would be at the wrong address. The old map is NOT deleted: /home/harsh/friday/state/map-archive-20260904-231353 (rl_map.npz, rl_map.pose.json, rl_map.visits.npz)
+23:13:53 INFO    pi_deploy: Frontier planner running every 2.0 s (heading bias only, capped at 55% of omega_max)
+23:13:53 INFO    pi_deploy: Control loop starting at 10 Hz. Ctrl+C to stop.
+23:13:53 INFO    pi_deploy: t=    5 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.20) | navigator    | 32.2 ms
+23:13:54 INFO    pi_deploy: t=   10 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 43.8 ms
+23:13:54 INFO    pi_deploy: t=   15 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.14,-1.60) -> out(+0.14,-1.60) | navigator    | 25.8 ms
+23:13:55 INFO    pi_deploy: t=   20 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.14,-1.60) -> out(+0.14,-1.60) | navigator    | 29.2 ms
+23:13:56 INFO    pi_deploy: t=   25 | lidar 0.68 | tof 0.39 | vis 0.00 | pol(+0.08,-1.60) -> out(+0.08,-1.60) | navigator    | 310.0 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+23:13:56 INFO    pi_deploy: camera up opened on /dev/video0 (320x240)
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 7 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+23:13:57 INFO    pi_deploy: t=   30 | lidar 0.68 | tof 0.42 | vis 0.00 | pol(+0.09,-1.60) -> out(+0.09,-1.60) | navigator    | 332.7 ms
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+23:13:57 INFO    pi_deploy: t=   35 | lidar 0.68 | tof 0.38 | vis 0.00 | pol(+0.08,-1.60) -> out(+0.08,-1.60) | navigator    | 13.8 ms
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+23:13:58 INFO    pi_deploy: t=   40 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 14.7 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+23:13:58 INFO    pi_deploy: t=   45 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 12.8 ms
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 7 extraneous bytes before marker 0xd9
+23:13:59 INFO    pi_deploy: t=   50 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.10,-1.60) -> out(+0.00,-1.60) | recovery     | 20.6 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+23:13:59 INFO    pi_deploy: t=   55 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | recovery     | 21.0 ms
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+23:14:00 INFO    pi_deploy: t=   60 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.13,-1.60) | navigator    | 22.6 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 7 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+23:14:00 INFO    pi_deploy: t=   65 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.13,-1.60) -> out(+0.13,-1.60) | navigator    | 20.1 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+23:14:01 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd6
+23:14:01 INFO    pi_deploy: t=   70 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 50.4 ms
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+23:14:01 INFO    pi_deploy: t=   75 | lidar 0.68 | tof 0.29 | vis 0.00 | pol(+0.05,-1.60) -> out(+0.05,-1.60) | navigator    | 54.8 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+23:14:02 INFO    pi_deploy: t=   80 | lidar 0.68 | tof 0.42 | vis 0.00 | pol(+0.16,-1.60) -> out(+0.16,-1.60) | navigator    | 95.8 ms
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 8 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd4
+23:14:02 INFO    pi_deploy: t=   85 | lidar 0.68 | tof 0.29 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.07,-1.49) | tof_slow     | 95.2 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+23:14:03 INFO    pi_deploy: t=   90 | lidar 0.68 | tof 0.38 | vis 0.00 | pol(+0.11,-1.60) -> out(-0.11,-0.80) | recovery     | 50.5 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+23:14:03 INFO    pi_deploy: t=   95 | lidar 0.68 | tof 0.39 | vis 0.00 | pol(+0.13,-1.60) -> out(-0.15,-0.80) | recovery     | 63.0 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+23:14:04 INFO    pi_deploy: t=  100 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.14,-1.60) -> out(-0.15,-0.80) | recovery     | 122.8 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 7 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+23:14:04 INFO    pi_deploy: t=  105 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.10,-1.60) -> out(+0.10,-1.60) | navigator    | 22.9 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+23:14:05 INFO    pi_deploy: t=  110 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 22.2 ms
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+23:14:05 INFO    pi_deploy: t=  115 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.08,-1.60) -> out(+0.08,-1.60) | navigator    | 12.0 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+23:14:06 INFO    pi_deploy: t=  120 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 28.1 ms
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd1
+23:14:06 INFO    pi_deploy: t=  125 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.14,-1.60) -> out(+0.14,-1.60) | navigator    | 12.0 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd4
+23:14:07 INFO    pi_deploy: t=  130 | lidar 0.68 | tof 0.39 | vis 0.00 | pol(+0.12,-1.60) -> out(+0.12,-1.60) | navigator    | 21.3 ms
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd7
+23:14:07 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 9 extraneous bytes before marker 0xd0
+23:14:07 INFO    pi_deploy: t=  135 | lidar 0.68 | tof 0.33 | vis 0.00 | pol(+0.08,-1.60) -> out(-0.15,-0.80) | recovery     | 33.3 ms
+Corrupt JPEG data: 7 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd6
+23:14:08 INFO    pi_deploy: t=  140 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.12,-1.60) -> out(-0.15,-0.80) | recovery     | 87.8 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+23:14:09 INFO    pi_deploy: t=  145 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.12,-1.60) -> out(-0.15,-0.80) | recovery     | 75.8 ms
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd0
+23:14:09 INFO    pi_deploy: t=  150 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(-0.15,-0.80) | recovery     | 71.0 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 10 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd7
+23:14:10 INFO    pi_deploy: t=  155 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.13,-1.60) -> out(+0.13,-1.60) | navigator    | 213.2 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd2
+23:14:10 INFO    pi_deploy: t=  160 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.16,-1.60) -> out(+0.16,-1.60) | navigator    | 106.1 ms
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+23:14:11 INFO    pi_deploy: t=  165 | lidar 0.68 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 34.4 ms
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 7 extraneous bytes before marker 0xd6
+23:14:11 INFO    pi_deploy: t=  170 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.10,-1.60) -> out(+0.10,-1.60) | navigator    | 15.3 ms
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd0
+23:14:12 INFO    pi_deploy: t=  175 | lidar 0.68 | tof 0.42 | vis 0.00 | pol(+0.16,-1.60) -> out(+0.16,-1.60) | navigator    | 29.5 ms
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+23:14:12 INFO    pi_deploy: t=  180 | lidar 0.68 | tof 0.29 | vis 0.00 | pol(+0.05,-1.60) -> out(+0.05,-1.60) | navigator    | 13.8 ms
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+23:14:13 INFO    pi_deploy: t=  185 | lidar 0.68 | tof 0.30 | vis 0.00 | pol(+0.05,-1.60) -> out(-0.15,-0.80) | recovery     | 75.3 ms
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 7 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 9 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+23:14:14 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+Corrupt JPEG data: 9 extraneous bytes before marker 0xd2
+23:14:14 INFO    pi_deploy: Planner: 10 chosen, 9 ARRIVED at, 0 revealed without arriving, 0 abandoned, 10 cycles, 8 frontiers left
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd0
+23:14:14 INFO    pi_deploy: World map saved: rl_map.npz  (4.0 m^2 known, 0.3 m^2 driven, 0.0 m^2 re-entered, revisit ratio 0.00, 88 sweeps, 98 superseded)
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd6
+23:14:14 INFO    pi_deploy: Black box written: /home/harsh/friday/rl/blackbox-20260904-231414.csv (186 rows)
+23:14:14 INFO    pi_deploy: ==========================================================================
+23:14:14 INFO    pi_deploy: ticks=186  explored=26.2 m^2
+23:14:14 INFO    pi_deploy: loop ms over the LAST 186 ticks: mean 52.08 | p95 122.31 | max 332.66 (budget 100) -- the black box has the whole run
+23:14:14 INFO    pi_deploy: budget by stage, mean ms/tick over all 186 ticks: cameras 16.0  navigator 14.8  sensors+obs 11.9  governor+escape+rear 4.2  pose+telemetry 3.6  policy 1.9  adapter 0.7  reflex 0.3  actuate 0.2  planner-bias 0.0
+23:14:14 INFO    pi_deploy:   measured inside tick(): 53.7 ms/tick; wall clock per tick (last 186): 52.1 ms; unaccounted 0.0 ms = time this thread was NOT RUNNING (other threads holding the GIL)
+23:14:14 INFO    pi_deploy: navigator: 184 ticks steered (99%), 2 handed back (0 blocked ahead, 2 no drivable arc); open 1 / corridor 0 / cluttered 183
+23:14:14 INFO    pi_deploy:   near field: 186 ticks with a ToF barrier in the arc search (0 of them already inside the reflex's stop distance -- the other 186 are arcs steered around something the reflex could only have braked for), 186 ticks speed-capped by it
+23:14:14 INFO    pi_deploy:   commitments 2 taken, 3 reversed by a better option, 5 expired on age; arc choice 10.63 ms mean (a HIGH handback count means she is spending her time in places with no drivable way forward)
+23:14:14 INFO    pi_deploy: escape turns: 0  (boxed in: forward blocked and not moving, so she turned toward open space)
+23:14:14 INFO    pi_deploy: reverse lifts: 0  (policy asked for a reverse too gentle to execute; honoured at the executable v_min instead of pivoting)
+23:14:14 INFO    pi_deploy: reverse floor lifts: 0  (a reverse from ANY stage -- escape, recovery, the policy -- that was under the stiction floor and would have executed as a stop, reissued at the slowest speed the wheels can actually turn)
+23:14:14 INFO    pi_deploy: no-reverse turns: 0  (policy asked to back up; this drivetrain cannot, so it turned toward open space instead)
+23:14:14 INFO    pi_deploy: interventions: reflex=0 visual=0 governor=1 rear=0 stale=0 scrape=0 overruns=18
+23:14:14 INFO    pi_deploy: object detection: 17 frames, 463 ms mean, 0 failures; currently sees nothing
+23:14:14 INFO    pi_deploy: cameras: free-space updates=159 failures=0, nudges=2, ticks driven on vision=0
+23:14:14 INFO    pi_deploy: lidar: 0 sub-footprint returns rejected outside the self-mask (a growing count means the chassis wedge moved -- re-measure --lidar-self-mask); 1 ticks braked for closing rate alone
+23:14:14 INFO    pi_deploy:   sensor lidar  updates=212     stale=False
+23:14:14 INFO    pi_deploy:   sensor tof    updates=351     stale=False
+23:14:14 INFO    pi_deploy:   sensor cam_up updates=277     stale=False
+23:14:14 INFO    pi_deploy:   sensor cam_down updates=0       stale=True
+23:14:14 INFO    pi_deploy:   sensor cam_up_rgb updates=277     stale=False
+23:14:14 INFO    pi_deploy: ==========================================================================
+23:14:14 INFO    friday.localnav: policy source: LEROBOT_EXPERIMENTAL
+23:14:14 INFO    friday.explore: exploration: phase=recover explored=26.2 m^2 frontier_cells=1882
+23:14:14 INFO    friday.explore: targets: selected=1 reached=0 abandoned=0  blacklisted=0
+23:14:14 INFO    friday.explore: recoveries: 3 attempted, 2 successful
+23:14:14 INFO    friday.localnav: no_target_ticks=0
+23:14:14 INFO    friday.voice: voice: backend=friday spoken=3 dropped(cooldown=90 full=1)
+23:14:14 INFO    friday.localnav: ACT chunks: 24 forward passes over 186 ticks (7.75 ticks/pass)
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 7 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 7 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 6 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 5 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd5
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd1
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd6
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd0
+Corrupt JPEG data: 3 extraneous bytes before marker 0xd7
+Corrupt JPEG data: 4 extraneous bytes before marker 0xd3
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd4
+Corrupt JPEG data: 2 extraneous bytes before marker 0xd2
+Corrupt JPEG data: 1 extraneous bytes before marker 0xd2
+terminate called without an active exception

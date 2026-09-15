@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "session_id": "e808dfe2",
+  "state": "finished",
+  "requested_minutes": 2.0,
+  "started_at": 1789273100.8671558,
+  "updated_at": 1789273245.096326,
+  "elapsed_s": 144.2,
+  "remaining_s": 0.0,
+  "progress": 1.0,
+  "stopped_because": "finished the time asked for",
+  "pose": {
+    "x_m": 6.869,
+    "y_m": 17.893,
+    "theta_deg": 20.5,
+    "grid_col": 118,
+    "grid_row": 246,
+    "cell_m": 0.05
+  },
+  "map": {
+    "cell_m": 0.05,
+    "origin_m": [
+      0.9500000000000001,
+      5.550000000000001
+    ],
+    "size_cells": [
+      353,
+      377
+    ],
+    "scans": 7055,
+    "occupied_cells": 540,
+    "free_cells": 68377,
+    "floor_m2": 170.9
+  },
+  "counts": {
+    "obstacle": 1
+  },
+  "feature_count": 1,
+  "features": [
+    {
+      "id": "fb1b6f7fca32",
+      "kind": "obstacle",
+      "label": "Something's about 1.1 metres behind me on the left",
+      "ts": 1789273115.1581676,
+      "bearing_deg": 135.0,
+      "distance_mm": 1050,
+      "local_x_m": -0.742,
+      "local_y_m": 0.742,
+      "global_x_m": 5.913,
+      "global_y_m": 18.328,
+      "grid_col": 99,
+      "grid_row": 255,
+      "cell_m": 0.05,
+      "confidence": 0.6,
+      "source": "map",
+      "spoken": true
+    }
+  ],
+  "events": [
+    {
+      "ts": 1789273109.3234,
+      "level": "info",
+      "text": "attached to run-20260912-154734.log"
+    },
+    {
+      "ts": 1789273109.3237798,
+      "level": "speech",
+      "text": "Exploring for 2 minutes."
+    },
+    {
+      "ts": 1789273115.1590629,
+      "level": "speech",
+      "text": "Something's about 1.1 metres behind me on the left"
+    }
+  ]
+}

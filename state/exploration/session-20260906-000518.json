@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "session_id": "a1cda2f7",
+  "state": "finished",
+  "requested_minutes": 0.5,
+  "started_at": 1788633318.3370345,
+  "updated_at": 1788633369.1169806,
+  "elapsed_s": 50.8,
+  "remaining_s": 0.0,
+  "progress": 1.0,
+  "stopped_because": "finished the time asked for",
+  "pose": {
+    "x_m": 22.913,
+    "y_m": 1.156,
+    "theta_deg": -80.9,
+    "grid_col": 450,
+    "grid_row": 79,
+    "cell_m": 0.05
+  },
+  "map": {
+    "cell_m": 0.05,
+    "origin_m": [
+      0.4,
+      -2.8000000000000003
+    ],
+    "size_cells": [
+      480,
+      480
+    ],
+    "scans": 5416,
+    "occupied_cells": 2381,
+    "free_cells": 126921,
+    "floor_m2": 317.3
+  },
+  "counts": {
+    "objects": 1,
+    "wall": 2
+  },
+  "feature_count": 3,
+  "features": [
+    {
+      "id": "b569f0fa9e2d",
+      "kind": "objects",
+      "label": "I can't describe what I'm looking at without my connection, but the way ahead is clear for about 0.6 metres.\n\n[up cam ok; nearest surface ahead 0.6 metres, to my left 0.3 metres, to my right 2.2 metres, behind me 0.3 metres]",
+      "ts": 1788633341.113785,
+      "bearing_deg": 0.0,
+      "distance_mm": 0,
+      "local_x_m": 0.0,
+      "local_y_m": 0.0,
+      "global_x_m": 22.913,
+      "global_y_m": 1.156,
+      "grid_col": 450,
+      "grid_row": 79,
+      "cell_m": 0.05,
+      "confidence": 0.5,
+      "source": "camera",
+      "spoken": true
+    },
+    {
+      "id": "73827aed235c",
+      "kind": "wall",
+      "label": "There's a wall right up against me on the right",
+      "ts": 1788633344.186435,
+      "bearing_deg": -111.8,
+      "distance_mm": 359,
+      "local_x_m": -0.133,
+      "local_y_m": -0.333,
+      "global_x_m": 22.563,
+      "global_y_m": 1.235,
+      "grid_col": 443,
+      "grid_row": 80,
+      "cell_m": 0.05,
+      "confidence": 0.9,
+      "source": "lidar",
+      "spoken": false
+    },
+    {
+      "id": "151f8ba290fd",
+      "kind": "wall",
+      "label": "There's a wall right up against me behind me",
+      "ts": 1788633344.186524,
+      "bearing_deg": 158.2,
+      "distance_mm": 473,
+      "local_x_m": -0.439,
+      "local_y_m": 0.176,
+      "global_x_m": 23.017,
+      "global_y_m": 1.618,
+      "grid_col": 452,
+      "grid_row": 88,
+      "cell_m": 0.05,
+      "confidence": 0.75,
+      "source": "lidar",
+      "spoken": false
+    }
+  ],
+  "events": [
+    {
+      "ts": 1788633336.2133908,
+      "level": "speech",
+      "text": "Exploring for 0.5 minutes."
+    },
+    {
+      "ts": 1788633341.1159303,
+      "level": "speech",
+      "text": "I can't describe what I'm looking at without my connection, but the way ahead is clear for about 0.6 metres.\n\n[up cam ok; nearest surface ahead 0.6 metres, to my left 0.3 metres, to my right 2.2 metres, behind me 0.3 metres]"
+    }
+  ]
+}

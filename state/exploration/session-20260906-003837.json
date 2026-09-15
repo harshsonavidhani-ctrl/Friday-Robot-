@@ -1,0 +1,262 @@
+{
+  "schema": 1,
+  "session_id": "a4d3ee46",
+  "state": "finished",
+  "requested_minutes": 10.0,
+  "started_at": 1788635317.6554594,
+  "updated_at": 1788635970.0809255,
+  "elapsed_s": 652.4,
+  "remaining_s": 0.0,
+  "progress": 1.0,
+  "stopped_because": "finished the time asked for",
+  "pose": {
+    "x_m": 21.715,
+    "y_m": 1.753,
+    "theta_deg": 142.6,
+    "grid_col": 426,
+    "grid_row": 91,
+    "cell_m": 0.05
+  },
+  "map": {
+    "cell_m": 0.05,
+    "origin_m": [
+      0.4,
+      -2.8000000000000003
+    ],
+    "size_cells": [
+      480,
+      480
+    ],
+    "scans": 5423,
+    "occupied_cells": 2368,
+    "free_cells": 127286,
+    "floor_m2": 318.2
+  },
+  "counts": {
+    "wall": 2,
+    "dead_end": 1,
+    "opening": 2,
+    "obstacle": 1,
+    "objects": 4
+  },
+  "feature_count": 10,
+  "features": [
+    {
+      "id": "fe38ec8bde76",
+      "kind": "wall",
+      "label": "There's a wall right up against me behind me on the left",
+      "ts": 1788635728.9881096,
+      "bearing_deg": 135.0,
+      "distance_mm": 100,
+      "local_x_m": -0.071,
+      "local_y_m": 0.071,
+      "global_x_m": 21.729,
+      "global_y_m": 1.654,
+      "grid_col": 426,
+      "grid_row": 89,
+      "cell_m": 0.05,
+      "confidence": 0.9,
+      "source": "map",
+      "spoken": true
+    },
+    {
+      "id": "62c54ea9acbb",
+      "kind": "dead_end",
+      "label": "This looks like a dead end.",
+      "ts": 1788635728.986819,
+      "bearing_deg": 0.0,
+      "distance_mm": 600,
+      "local_x_m": 0.6,
+      "local_y_m": 0.0,
+      "global_x_m": 21.239,
+      "global_y_m": 2.117,
+      "grid_col": 416,
+      "grid_row": 98,
+      "cell_m": 0.05,
+      "confidence": 0.8,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "5bcf407fc0b9",
+      "kind": "wall",
+      "label": "There's a wall right up against me on the right",
+      "ts": 1788635728.988019,
+      "bearing_deg": -90.0,
+      "distance_mm": 200,
+      "local_x_m": 0.0,
+      "local_y_m": -0.2,
+      "global_x_m": 21.837,
+      "global_y_m": 1.912,
+      "grid_col": 428,
+      "grid_row": 94,
+      "cell_m": 0.05,
+      "confidence": 0.75,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "c3af4a5cf819",
+      "kind": "opening",
+      "label": "An opening ahead and to the right, going 1.7 metres",
+      "ts": 1788635728.987485,
+      "bearing_deg": -30.0,
+      "distance_mm": 1700,
+      "local_x_m": 1.472,
+      "local_y_m": -0.85,
+      "global_x_m": 21.061,
+      "global_y_m": 3.322,
+      "grid_col": 413,
+      "grid_row": 122,
+      "cell_m": 0.05,
+      "confidence": 0.7,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "46dcc3f02189",
+      "kind": "opening",
+      "label": "An opening ahead, going 2.4 metres",
+      "ts": 1788635728.9878178,
+      "bearing_deg": 15.0,
+      "distance_mm": 2350,
+      "local_x_m": 2.27,
+      "local_y_m": 0.608,
+      "global_x_m": 19.542,
+      "global_y_m": 2.648,
+      "grid_col": 382,
+      "grid_row": 108,
+      "cell_m": 0.05,
+      "confidence": 0.7,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "a3c0d6ccbff1",
+      "kind": "obstacle",
+      "label": "Something's right up against me ahead and to the left",
+      "ts": 1788635728.9882023,
+      "bearing_deg": 45.0,
+      "distance_mm": 350,
+      "local_x_m": 0.247,
+      "local_y_m": 0.247,
+      "global_x_m": 21.368,
+      "global_y_m": 1.707,
+      "grid_col": 419,
+      "grid_row": 90,
+      "cell_m": 0.05,
+      "confidence": 0.6,
+      "source": "map",
+      "spoken": false
+    },
+    {
+      "id": "62b2e62dd43f",
+      "kind": "objects",
+      "label": "I can't see what's ahead of me at the moment, so I'd rather not guess.\n\n[up cam ok; the range sensors cannot see in any direction right now]",
+      "ts": 1788635744.3219707,
+      "bearing_deg": 0.0,
+      "distance_mm": 0,
+      "local_x_m": 0.0,
+      "local_y_m": 0.0,
+      "global_x_m": 21.715,
+      "global_y_m": 1.753,
+      "grid_col": 426,
+      "grid_row": 91,
+      "cell_m": 0.05,
+      "confidence": 0.5,
+      "source": "camera",
+      "spoken": true
+    },
+    {
+      "id": "7e1c92e590f9",
+      "kind": "objects",
+      "label": "Something is right in front of me, about 213 millimetres away. I'm not going anywhere.\n\n[up cam ok; nearest surface ahead 213 millimetres, to my left 3.5 metres, to my right 248 millimetres, behind me 0.5 metres]",
+      "ts": 1788635805.5140703,
+      "bearing_deg": 0.0,
+      "distance_mm": 0,
+      "local_x_m": 0.0,
+      "local_y_m": 0.0,
+      "global_x_m": 21.715,
+      "global_y_m": 1.753,
+      "grid_col": 426,
+      "grid_row": 91,
+      "cell_m": 0.05,
+      "confidence": 0.5,
+      "source": "camera",
+      "spoken": true
+    },
+    {
+      "id": "311c1c8e872d",
+      "kind": "objects",
+      "label": "Something is right in front of me, about 182 millimetres away. I'm not going anywhere.\n\n[up cam ok; nearest surface ahead 182 millimetres, to my left 181 millimetres, to my right 0.7 metres, behind me 235 millimetres]",
+      "ts": 1788635869.3801308,
+      "bearing_deg": 0.0,
+      "distance_mm": 0,
+      "local_x_m": 0.0,
+      "local_y_m": 0.0,
+      "global_x_m": 21.715,
+      "global_y_m": 1.753,
+      "grid_col": 426,
+      "grid_row": 91,
+      "cell_m": 0.05,
+      "confidence": 0.5,
+      "source": "camera",
+      "spoken": true
+    },
+    {
+      "id": "02d67bfef519",
+      "kind": "objects",
+      "label": "Something is right in front of me, about 183 millimetres away. I'm not going anywhere.\n\n[up cam ok; nearest surface ahead 183 millimetres, to my left 181 millimetres, to my right 0.7 metres, behind me 235 millimetres]",
+      "ts": 1788635934.2743626,
+      "bearing_deg": 0.0,
+      "distance_mm": 0,
+      "local_x_m": 0.0,
+      "local_y_m": 0.0,
+      "global_x_m": 21.715,
+      "global_y_m": 1.753,
+      "grid_col": 426,
+      "grid_row": 91,
+      "cell_m": 0.05,
+      "confidence": 0.5,
+      "source": "camera",
+      "spoken": true
+    }
+  ],
+  "events": [
+    {
+      "ts": 1788635358.7560635,
+      "level": "warn",
+      "text": "the run did not start: FAILED \u2014 TimeoutExpired: Command '('systemctl', '--user', 'start', 'friday-explore.service')' timed out after 20 seconds"
+    },
+    {
+      "ts": 1788635358.7571957,
+      "level": "speech",
+      "text": "Exploring for 10 minutes."
+    },
+    {
+      "ts": 1788635728.9968438,
+      "level": "speech",
+      "text": "There's a wall right up against me behind me on the left"
+    },
+    {
+      "ts": 1788635744.3228812,
+      "level": "speech",
+      "text": "I can't see what's ahead of me at the moment, so I'd rather not guess.\n\n[up cam ok; the range sensors cannot see in any direction right now]"
+    },
+    {
+      "ts": 1788635805.515194,
+      "level": "speech",
+      "text": "Something is right in front of me, about 213 millimetres away. I'm not going anywhere.\n\n[up cam ok; nearest surface ahead 213 millimetres, to my left 3.5 metres, to my right 248 millimetres, behind me 0.5 metres]"
+    },
+    {
+      "ts": 1788635869.3848414,
+      "level": "speech",
+      "text": "Something is right in front of me, about 182 millimetres away. I'm not going anywhere.\n\n[up cam ok; nearest surface ahead 182 millimetres, to my left 181 millimetres, to my right 0.7 metres, behind me 235 millimetres]"
+    },
+    {
+      "ts": 1788635934.2754657,
+      "level": "speech",
+      "text": "Something is right in front of me, about 183 millimetres away. I'm not going anywhere.\n\n[up cam ok; nearest surface ahead 183 millimetres, to my left 181 millimetres, to my right 0.7 metres, behind me 235 millimetres]"
+    }
+  ]
+}

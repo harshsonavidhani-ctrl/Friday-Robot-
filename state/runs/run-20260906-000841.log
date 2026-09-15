@@ -1,0 +1,34 @@
+00:08:47 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+00:08:47 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+00:08:47 INFO    friday.localnav: LiDAR chassis self-mask: 88-99 (raw bearings, pre-offset); mounting offset -51.8 deg
+00:08:47 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+00:08:47 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+00:08:47 INFO    pi_deploy: Cameras resolved by USB serial: up=/dev/video0
+00:08:47 WARNING pi_deploy: camera down (serial 20181212000000) is not on the bus right now. The thread starts anyway and will pick it up when it returns -- the down camera on this robot is known to re-enumerate on its own.
+00:08:47 WARNING pi_deploy: camera down not present at startup (serial 20181212000000) -- will keep retrying; the visual gate stays fail-open meanwhile.
+[ WARN:0@0.620] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+00:08:48 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+00:08:48 WARNING pi_deploy: camera up not present at startup (serial 9B5B4130) -- will keep retrying; the visual gate stays fail-open meanwhile.
+00:08:48 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+00:08:48 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+00:08:48 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+[ WARN:0@2.597] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+00:08:50 INFO    pi_deploy: Motors: FRIDAY-MOTORS 1 on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+00:08:50 INFO    pi_deploy: Firmware watchdog armed at 500 ms (control period 100 ms)
+00:08:50 WARNING pi_deploy: Stiction floor 80 => slowest achievable wheel speed ~0.15 m/s (policy range is -0.15..0.50 m/s).
+00:08:50 WARNING pi_deploy: MOTORS ARE LIVE (max_duty=0.85). Wheels can turn.
+00:08:50 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+00:08:50 INFO    pi_deploy: Exploration map ignores 3 blind beam(s) (chassis): [np.int32(7), np.int32(8), np.int32(9)]
+00:08:50 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+00:08:50 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port, --motor. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+00:08:50 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
+00:08:50 INFO    pi_deploy: Reflex thread running at 30 Hz
+00:09:23 ERROR   pi_deploy: Motor write failed: Write timeout
+00:09:23 INFO    friday.vision: Object detection ON: ssd_mobilenet_v1_10.onnx at 320x320, ~1.0 Hz on 2 threads
+[ WARN:0@37.052] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+00:09:23 INFO    friday.tts: loading Piper voice en_US-hfc_female-medium.onnx (takes ~10s)
+00:09:36 INFO    friday.tts: Piper voice ready
+00:09:36 INFO    friday.tts: output volume: sink 0.95, Speaker 85%
+[ WARN:0@50.014] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name
+00:09:36 INFO    pi_deploy: World map restored from rl_map.npz: 303.5 m^2 known, 5416 sweeps, 46.1 m^2 previously driven
+[ WARN:0@54.163] global cap.cpp:212 open VIDEOIO(V4L2): backend is generally available but can't be used to capture by name

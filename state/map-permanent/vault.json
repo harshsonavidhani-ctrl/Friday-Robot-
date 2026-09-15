@@ -1,14 +1,14 @@
 {
-  "saved_at": "2026-09-08T02:37:10+0530",
-  "reason": "after friday-explore@abc",
-  "explored_m2": 321.6,
-  "occupied_cells": 1344,
-  "sweeps_total": 6302,
+  "saved_at": "2026-09-12T14:10:05+0530",
+  "reason": "before friday-explore (20 min default)",
+  "explored_m2": 323.3,
+  "occupied_cells": 1540,
+  "sweeps_total": 8135,
   "files": [
     "rl_map.npz",
     "rl_map.pose.json",
     "rl_map.visits.npz"
   ],
-  "previous_explored_m2": 321.6,
-  "history_snapshot": "map-permanent/history/20260908-023710"
+  "previous_explored_m2": 323.3,
+  "history_snapshot": "map-permanent/history/20260912-141005"
 }
