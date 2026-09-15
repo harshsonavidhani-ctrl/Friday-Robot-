@@ -178,3 +178,9 @@ state/rl_map.visits.npz
 # The RL stack's live autonomy state, rewritten every half-second while a run is in
 # progress. Runtime output for the dashboard and the voice layer to read, not source.
 state/rl_autonomy.json
+
+# The scene watcher's last look (scene.py), rewritten every ~8 s by friday-mcp.
+# Committed once by "commit everything" on 2026-09-16, which left git status
+# permanently dirty. Runtime output, and the jpg is a photo of Harsh's room.
+state/scene.json
+state/scene_latest.jpg
