@@ -65,6 +65,11 @@ LEASE_MARGIN_S = 300.0
 DEFAULT_RUN_S = 1200.0
 
 
+# The Tier-2 planner's unit. Started beside a run when thinking is asked for,
+# and ALWAYS stopped when the run stops -- see stop_exploration().
+COGNITIVE_UNIT = "friday-cognitive.service"
+
+
 def _systemctl(*args: str) -> tuple[int, str]:
     done = subprocess.run(("systemctl", "--user", *args),
                           capture_output=True, text=True, timeout=20)
@@ -147,7 +152,8 @@ def _running() -> bool:
 
 
 @tool
-def start_exploration(minutes: float | None = None) -> str:
+def start_exploration(minutes: float | None = None,
+                      thinking: bool | None = None) -> str:
     """Go and explore on my own, driving myself, until I am done or you stop me.
 
     Use this when Harsh says explore, go explore, map the house, look around on
@@ -160,6 +166,13 @@ def start_exploration(minutes: float | None = None) -> str:
 
     Args:
         minutes: how long to explore. Defaults to 20.
+        thinking: True to ALSO think about where to go while I drive -- my
+            Tier-2 planner reads my LiDAR, ToF and my own account of the run
+            every few seconds and nudges me toward somewhere new instead of
+            re-driving ground I already have. Use it when Harsh says think,
+            thinking, smart, intelligent, LLM, AI or "properly" about
+            exploring. It needs the internet and it costs a little per
+            decision, so it is off unless asked for.
 
     Returns JSON: whether it started, how long for, and where the log is.
     """
@@ -193,10 +206,26 @@ def start_exploration(minutes: float | None = None) -> str:
         log.error("could not start %s: %s", unit, out)
         return json.dumps({"started": False, "why": out or "systemctl refused"})
 
-    log.warning("autonomous exploration started for %.0fs (%s)", run_s, unit)
+    # THINKING IS A SEPARATE UNIT, STARTED SECOND AND NEVER ALLOWED TO FAIL THE
+    # RUN. friday-cognitive only reads the run's published state and writes
+    # heading orders, so a run without it is exactly the run that has always
+    # existed -- which is why a failure here is reported and not raised.
+    thought = "off (ask for thinking to turn it on)"
+    if thinking:
+        tcode, tout = _systemctl("start", "--no-block", COGNITIVE_UNIT)
+        if tcode == 0:
+            thought = "on -- I will think about where to go while I drive"
+            log.warning("cognitive planner started alongside the run")
+        else:
+            thought = f"asked for, but it would not start ({tout or 'systemctl refused'})"
+            log.error("could not start %s: %s", COGNITIVE_UNIT, tout)
+
+    log.warning("autonomous exploration started for %.0fs (%s, thinking=%s)",
+                run_s, unit, bool(thinking))
     return json.dumps({
         "started": True,
         "minutes": mins,
+        "thinking": thought,
         "unit": unit,
         "status_file": str(config.ROOT / "state" / "explore_mode.json"),
         "note": "my motors and range sensors belong to the run until it ends; "
@@ -212,6 +241,17 @@ def stop_exploration() -> str:
     ordinary stop() only reaches moves this server is making, and an autonomous
     run is a separate process, so it needs this.
     """
+    # THE PLANNER GOES DOWN FIRST AND UNCONDITIONALLY. It is stopped before the
+    # run so it cannot write one more heading order into a run that is already
+    # tearing down, and it is stopped even when no run is out -- otherwise a
+    # planner left up from a previous run keeps issuing orders at the next one.
+    # A standing order expires on its own 15 s TTL anyway; this makes it
+    # immediate. Never allowed to fail the stop.
+    try:
+        _systemctl("stop", "--no-block", COGNITIVE_UNIT)
+    except Exception as exc:                        # noqa: BLE001
+        log.error("could not stop %s: %s", COGNITIVE_UNIT, exc)
+
     if not _running():
         hardware.lease_return()
         return "I was not exploring. Wheels are mine again anyway."

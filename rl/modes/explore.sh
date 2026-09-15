@@ -93,6 +93,10 @@ fi
 # identical to the frozen configuration.
 [ "${MODE_BRAIN_TARGET:-0}" = "1" ] && ARGS+=(--brain-target)
 
+# Cameras off, same shape as every other MODE_ flag. Default 1 (cameras on)
+# keeps a run without the mode file identical to the frozen configuration.
+[ "${MODE_CAMERAS:-1}" = "0" ] && ARGS+=(--no-cameras)
+
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes
 # `explore.sh --duration 600` work without a second mode file.

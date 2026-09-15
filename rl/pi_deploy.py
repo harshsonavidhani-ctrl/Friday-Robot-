@@ -5903,7 +5903,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # room (2.182 and 1.799 m, sd < 0.005) and are left alone. The wedge is therefore
     # the half-open range [88, 99). friday/config.py has ((89, 98),), which leaks at
     # both ends -- bearing 88 at 0.229 m and bearing 98 at 0.209 m.
-    p.add_argument("--lidar-self-mask", type=str, default="88:99,221:237,319:334",
+    # 71:79 added 2026-09-13: a dome post, 207-223 mm on raw 71-77 in every sweep
+    # while 70 and 78 saw 2-4 m. Unmasked, the 12:55 run logged `lidar 0.22` and
+    # REFLEX_STOP on all 218 ticks. Matches config.LIDAR_SELF_MASK (71, 78).
+    p.add_argument("--lidar-self-mask", type=str, default="71:79,88:99,221:237,319:334",
                    help="Raw sensor bearings looking at the robot's own chassis, as "
                         "LOW:HIGH pairs separated by commas (wrapping past 0 is allowed). "
                         "Half-open [low, high). Pass '' to disable. "

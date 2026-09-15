@@ -67,7 +67,13 @@ log = logging.getLogger("friday.cognitive")
 # --- configuration -----------------------------------------------------------
 
 MODEL = "claude-sonnet-5"
-API_TIMEOUT_S = 20.0           # a planner that answers late is worse than none
+# HARSH, 2026-09-12: "reduce the thinking time to 5 seconds max". This is the
+# WALL-CLOCK bound on one decision -- asyncio.wait_for around the whole call,
+# so it covers the model's thinking, the two images going up and the JSON
+# coming back, not just generation. Overrun is not an error: it returns
+# fallback_decision(), which is HOLD_POSITION, and Tier 1 keeps driving on its
+# own reflexes. Was 20.0.
+API_TIMEOUT_S = 5.0            # a planner that answers late is worse than none
 TICK_SECONDS = 5.0
 MAX_TOKENS = 4096              # the schema is tiny; adaptive thinking needs room
 EFFORT = "low"                 # "low" | "medium" | "high" | "xhigh" | "max"
@@ -658,7 +664,19 @@ async def query_sonnet5_planner(client, vision: VisionFrames, lidar: LidarMetric
                 # removed (sending it is a 400). Depth comes from effort.
                 thinking={"type": "adaptive"},
                 output_config={
-                    "effort": "max" if memory.looping() else EFFORT,
+                    # THE LOOP ESCALATION IS GONE. It jumped to "max" first,
+                    # then "medium" -- the deepest setting that still answers
+                    # inside API_TIMEOUT_S. Harsh, 2026-09-12: "decrease more
+                    # the thinking of brain", so there is no escalation left at
+                    # all and every tick thinks at EFFORT. A deadlock is now
+                    # answered by the same shallow call as any other tick, which
+                    # is the point: the deepest call was also the one most
+                    # likely to time out into HOLD_POSITION and stop her.
+                    # EFFORT is "low", the floor -- below this there is only
+                    # thinking={"type": "disabled"}, which Sonnet 5 accepts but
+                    # which would take the reasoning out of a tool-choosing
+                    # planner entirely. Not done.
+                    "effort": EFFORT,
                     "format": {"type": "json_schema", "schema": DECISION_SCHEMA},
                 },
             ),
@@ -826,12 +844,86 @@ def emit_payload(payload: dict[str, Any], log_path: Path | None = None) -> None:
             log.warning("could not write %s (%s)", log_path, exc)
 
 
+# THE HEADING DEADBAND, kept equal to rl/brain_target.HEADING_ARRIVED_RAD (8
+# degrees). An order smaller than the arrival tolerance is satisfied the instant
+# it is armed, so issuing one costs a file write and changes nothing. Tier 2 is
+# for decisive changes anyway -- the frontier planner already does the fine
+# corrections, and the system prompt says so.
+STEER_DEADBAND_DEG = 8.0
+STEER_TTL_S = 15.0
+NEVER_STEER_MODES = {"HOLD_POSITION"}
+
+
+def network_up() -> bool:
+    """Is there a route to the API right now?
+
+    ⚠ ONLINE/OFFLINE IS NOT DECIDED HERE. offline.online() is Friday's single
+    answer to that question -- a cached TCP connect to the API host, already used
+    by main.py's voice loop every turn -- so the cognitive planner switches on
+    exactly the same signal the rest of the robot does, with the same TTL and the
+    same fail-open behaviour. Duplicating the check would let the two halves of
+    the robot disagree about whether she is online.
+
+    Fails OPEN (True) if offline.py cannot be imported at all: the API call then
+    makes the real attempt and produces the real error, which is strictly more
+    informative than a planner that silently decides it is offline.
+    """
+    try:
+        import offline
+    except Exception:                                   # noqa: BLE001
+        return True
+    try:
+        return bool(offline.online())
+    except Exception:                                   # noqa: BLE001
+        return True
+
+
+def steer(decision: dict[str, Any], live_run: bool, enabled: bool) -> str:
+    """SEAM 5b -- turn a decision into a standing order the run will act on.
+
+    Returns a human-readable account of what it did, which goes into the payload
+    as `steering`, so a decision log always says whether the wheels could have
+    heard it. Every refusal is a normal outcome, not an error.
+
+    ⚠ SIGN: `target_heading_offset` is positive-RIGHT and so is
+    rl_control.heading()'s `turn_right_deg`, so this passes it straight through.
+    The single negation into the wire's positive-LEFT convention happens inside
+    rl_control.heading() and nowhere else.
+    """
+    if not enabled:
+        return "not_wired (log only)"
+    if not live_run:
+        return "no live run to steer"
+    if decision.get("degraded"):
+        # A degraded decision is the API timing out or failing. It is already
+        # HOLD_POSITION; writing an order from it would steer her on a guess.
+        return "degraded decision -- no order written"
+    mode = str(decision.get("action_mode", ""))
+    if mode in NEVER_STEER_MODES:
+        return f"{mode} -- no order written"
+    try:
+        offset = float(decision.get("target_heading_offset", 0.0))
+    except (TypeError, ValueError):
+        return "unusable heading -- no order written"
+    if abs(offset) < STEER_DEADBAND_DEG:
+        return f"{offset:+.0f} deg is inside the {STEER_DEADBAND_DEG:.0f} deg deadband"
+    try:
+        import rl_control
+        message = rl_control.heading(offset, ttl_s=STEER_TTL_S)
+    except Exception as exc:                            # noqa: BLE001
+        return f"order FAILED ({type(exc).__name__}: {exc})"
+    return (f"heading order {offset:+.0f} deg "
+            f"(wire {message['heading_deg']:+.0f} deg, positive=left), "
+            f"ttl {STEER_TTL_S:.0f}s, token {message['token']}")
+
+
 async def tick(client, memory: SpatialMemory, spend: SpendGuard,
                dry_run: bool, state: str | None = None,
                autonomy: dict | None = None, age_s: float = float("inf"),
                manual_battery: float | None = None,
                log_path: Path | None = None,
-               vision_enabled: bool = True) -> dict[str, Any]:
+               vision_enabled: bool = True,
+               steering_enabled: bool = False) -> dict[str, Any]:
     """One full cycle: sense, decide, remember, log.
 
     The run state is read ONCE by the caller and passed in. Reading it again in
@@ -846,25 +938,41 @@ async def tick(client, memory: SpatialMemory, spend: SpendGuard,
     context = exploration_context(autonomy)
 
     decision = battery_override(battery_pct, lidar)
+    online_now = True
     if decision is None:
         if dry_run:
             decision = fallback_decision("--dry-run, no API call made")
+        elif not network_up():
+            # OFFLINE IS A MODE, NOT A FAILURE. The run underneath carries on
+            # exploring on the RL policy and the frontier planner exactly as it
+            # does when this process is not running at all -- Tier 2 going quiet
+            # takes nothing away, which is the whole point of it being advisory.
+            # Nothing about the offline path changes; this just stops burning a
+            # 5 s timeout per tick on a socket that cannot connect.
+            online_now = False
+            decision = fallback_decision("offline — no route to the API")
         else:
             decision = await query_sonnet5_planner(
                 client, vision, lidar, state, battery_pct, memory, spend,
                 context, battery_note)
 
     memory.remember(decision, lidar)
+    live_run = bool(autonomy) and age_s <= STALE_AFTER_S
+    steering = steer(decision, live_run, steering_enabled)
     payload = {
         "schema": "friday.cognitive.v1",
         "at": round(time.time(), 2),
         "tier": 2,
         "advisory": True,
-        # NOTHING STEERS ON THIS. No consumer is wired: this process observes a
-        # run and writes down what it would have advised. Wiring it to motion is
-        # a separate, deliberate step -- and the brain-target seam is still the
-        # only cognitive->motion link on this robot, itself never proven.
-        "steering": "not_wired (log only)",
+        # WITH --steer THIS IS THE COGNITIVE->MOTION LINK. The decision becomes
+        # a heading order in state/rl_command.json, which the run reads through
+        # rl/brain_target.py when it was started with --brain-target. Without
+        # the flag the process is exactly what it was: an observer that writes
+        # down what it would have advised. Tier 1 outranks it either way -- the
+        # governor, the ToF reflex, the rear gate and recovery all sit
+        # downstream of bearing_error() and all still win.
+        "steering": steering,
+        "mode": "online" if online_now else "offline",
         "robot_state": state,
         "battery_percent": battery_pct,
         "sources": {
@@ -901,6 +1009,11 @@ async def main() -> int:
     ap.add_argument("--log", type=Path, default=DECISION_LOG,
                     help="append every decision here as JSONL (default %(default)s)")
     ap.add_argument("--no-log", action="store_true")
+    ap.add_argument("--steer", action="store_true",
+                    help="WRITE HEADING ORDERS THE RUN WILL ACT ON. Without "
+                         "this the planner only observes and logs. The run must "
+                         "have been started with --brain-target for the orders "
+                         "to be read; Tier 1 outranks them either way.")
     ap.add_argument("--no-vision", action="store_true",
                     help="skip the cameras (they are the token bill, and an "
                          "exploration run owns them while it drives)")
@@ -936,7 +1049,8 @@ async def main() -> int:
                                      state_now, autonomy, age_s,
                                      args.battery_pct,
                                      None if args.no_log else args.log,
-                                     not args.no_vision)
+                                     not args.no_vision,
+                                     args.steer)
             except Exception as exc:                    # noqa: BLE001
                 # One bad tick must never end the loop: a planner that dies is a
                 # robot that silently stops thinking while still driving.

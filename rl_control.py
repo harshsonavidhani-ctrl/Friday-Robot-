@@ -103,6 +103,46 @@ def target(label: str, ttl_s: float = DEFAULT_TTL_S) -> dict:
     return message
 
 
+def heading(turn_right_deg: float, ttl_s: float = 15.0) -> dict:
+    """Ask the running exploration to turn this many degrees from where it faces.
+
+    ⚠ THE PARAMETER IS NAMED FOR ITS SIGN ON PURPOSE. `turn_right_deg` is
+    POSITIVE TO THE RIGHT -- the convention of the cognitive planner's
+    `target_heading_offset` and of ordinary speech ("turn right 90"). The wire
+    format and rl/brain_target.py are the OPPOSITE way round, POSITIVE IS LEFT,
+    matching omega and bearing_error(). This function is the ONE place that
+    negation happens; do it anywhere else as well and she turns away from what
+    the planner reasoned about, which is the exact failure
+    scripts/test_brain_target.py exists to catch.
+
+    THE ORDER IS RELATIVE TO HER HEADING WHEN THE RUN ADOPTS IT, and the run
+    turns it into an absolute heading on the first pose it sees. It then decays
+    as she turns and goes quiet within 8 degrees, handing the wheels back to the
+    frontier planner. So this is a nudge that ENDS -- it is not a bias that has
+    to be cancelled.
+
+    THE TTL IS SHORT BECAUSE THE PLANNER RE-ISSUES. A Tier-2 planner that dies
+    mid-turn must not leave a standing order steering her; 15 s is a few planner
+    ticks, so a live planner always refreshes it and a dead one stops mattering.
+    """
+    try:
+        deg = float(turn_right_deg)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("a heading order needs a number of degrees") from exc
+    if not -180.0 <= deg <= 180.0:
+        raise ValueError(f"heading {deg} is outside -180..180")
+    message = {
+        # negated HERE, exactly once -- see the warning above
+        "heading_deg": -deg,
+        "requested_turn_right_deg": deg,     # what the caller asked, unnegated
+        "token": time.monotonic_ns(),
+        "ttl_s": float(ttl_s),
+        "issued_at": time.time(),
+    }
+    _write_atomic(COMMAND_FILE, message, ".rlcmd.")
+    return message
+
+
 def clear() -> dict:
     """Stop steering at anything; go back to exploring on the frontier planner.
 
@@ -110,6 +150,15 @@ def clear() -> dict:
     cancelled order are the same to the run either way, but leaving the message
     behind means `status()` can still say what happened and when.
     """
+    # ⚠ THIS DOES NOT CANCEL A HEADING ORDER INSTANTLY, and the difference
+    # matters. An empty label is read as NO ORDER (read_command returns None),
+    # which is the long-standing contract the run and the tests both rely on --
+    # so a standing order is not replaced, it simply stops being refreshed and
+    # LAPSES. For a label order that is the 90 s TTL; for a heading order it is
+    # 15 s, and in practice much less, because a heading order goes quiet by
+    # itself as soon as she is within 8 degrees of it. To stop her turning NOW,
+    # stop the planner that is re-issuing the order -- Tier 1 is what actually
+    # holds the brakes either way.
     message = {"label": "", "token": time.monotonic_ns(),
                "ttl_s": 0.0, "issued_at": time.time()}
     _write_atomic(COMMAND_FILE, message, ".rlcmd.")

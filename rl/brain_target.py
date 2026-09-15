@@ -66,6 +66,17 @@ except Exception:                           # noqa: BLE001 - importable standalo
 
 COMMAND_FILE = _ROOT / "state" / "rl_command.json"
 
+# A HEADING ORDER IS SATISFIED WHEN SHE IS THIS CLOSE, and then it goes quiet so
+# the frontier planner takes the wheel back with no gap. Without an arrival test
+# a heading order is a bias that never ends: she turns past it, the error flips
+# sign, and she hunts around the heading until the TTL runs out.
+HEADING_ARRIVED_RAD = math.radians(8.0)
+
+
+def _wrap(angle: float) -> float:
+    """To (-pi, +pi]. The same wrap explorer.bearing_error uses."""
+    return (float(angle) + math.pi) % (2.0 * math.pi) - math.pi
+
 
 # =====================================================================
 # pure rules
@@ -151,9 +162,6 @@ def read_command(path: Path = COMMAND_FILE) -> dict | None:
         return None
     if not isinstance(data, dict):
         return None
-    label = str(data.get("label", "")).strip()
-    if not label:
-        return None
     try:
         token = int(data.get("token", 0))
     except (TypeError, ValueError):
@@ -162,7 +170,35 @@ def read_command(path: Path = COMMAND_FILE) -> dict | None:
         ttl = float(data.get("ttl_s", _TTL_S))
     except (TypeError, ValueError):
         ttl = _TTL_S
-    return {"label": label, "token": token, "ttl_s": max(0.0, ttl)}
+    ttl = max(0.0, ttl)
+
+    # A HEADING ORDER, from the Tier-2 cognitive planner. Checked BEFORE the
+    # label so a message carrying both is unambiguous: a heading is a direct
+    # instruction and a label is a thing to look for.
+    #
+    # ⚠ SIGN. On the wire `heading_deg` is in THIS FILE'S convention -- POSITIVE
+    # IS LEFT, matching omega, bearing_error() and `where`. The cognitive
+    # planner's own schema is the opposite way round (its target_heading_offset
+    # is positive-RIGHT), so whoever writes this file does the negation once;
+    # rl_control.heading() is that one place. Getting this backwards means she
+    # turns away from what the planner reasoned about, which is the failure this
+    # module's whole no-robot test suite exists to catch.
+    raw_heading = data.get("heading_deg", None)
+    if raw_heading is not None:
+        try:
+            heading_deg = float(raw_heading)
+        except (TypeError, ValueError):
+            return None
+        if not -180.0 <= heading_deg <= 180.0:
+            return None
+        return {"kind": "heading", "label": None, "heading_deg": heading_deg,
+                "token": token, "ttl_s": ttl}
+
+    label = str(data.get("label", "")).strip()
+    if not label:
+        return None
+    return {"kind": "label", "label": label, "heading_deg": None,
+            "token": token, "ttl_s": ttl}
 
 
 # =====================================================================
@@ -207,6 +243,19 @@ class BrainTarget:
         self.sightings = 0
         self.orders = 0
 
+        # -- the heading order ------------------------------------------
+        # kind is "label", "heading" or None. A heading order carries no
+        # sighting and no detector: it is armed against her CURRENT heading the
+        # first time a pose reaches it, and from then on it reports what is
+        # LEFT to turn. That is what stops it being a bias held forever -- see
+        # heading_error().
+        self.kind: str | None = None
+        self.heading_rad: float | None = None      # relative, positive = left
+        self._heading_target: float | None = None  # absolute, armed from pose
+        self._heading_done = False
+        self._heading_steering = False
+        self.headings = 0
+
     # -- the command channel ------------------------------------------------
     def poll(self, now: float | None = None,
              command: dict | None = None) -> bool:
@@ -221,21 +270,77 @@ class BrainTarget:
         msg = read_command(self.command_file) if command is None else command
         if msg is None:
             return False
-        if msg["token"] == self.token and self.label == msg["label"]:
+        kind = msg.get("kind", "label")
+        if (msg["token"] == self.token and self.label == msg["label"]
+                and self.kind == kind):
             return False
+        self.kind = kind
         self.label = msg["label"]
         self.token = int(msg["token"])
         self.expires_at = now + float(msg.get("ttl_s", self.ttl_s))
         self._nudge = None
         self._seen_at = 0.0
+        # A NEW ORDER RE-ARMS FROM SCRATCH. The absolute target is deliberately
+        # dropped here rather than recomputed: it is armed from the next pose,
+        # so an order issued while she is mid-turn still means "turn this much
+        # from where you are NOW", which is what the planner reasoned about.
+        self._heading_target = None
+        self._heading_done = False
+        self._heading_steering = False
+        if kind == "heading":
+            self.heading_rad = math.radians(float(msg["heading_deg"]))
+            self.headings += 1
+        else:
+            self.heading_rad = None
         self.orders += 1
         return True
 
     def clear(self) -> None:
         self.label = None
+        self.kind = None
         self._nudge = None
         self._seen_at = 0.0
         self.expires_at = 0.0
+        self.heading_rad = None
+        self._heading_target = None
+        self._heading_done = False
+        self._heading_steering = False
+
+    # -- the heading order --------------------------------------------------
+    def heading_error(self, theta: float, now: float | None = None) -> float | None:
+        """What is LEFT to turn on a heading order, or None to stay out of it.
+
+        ⚠ THIS IS WHY A HEADING ORDER IS NOT JUST A HELD BIAS. The planner says
+        "turn 170 degrees" relative to where she faces at that moment. Returning
+        that same number every tick would ask her to turn 170 degrees from
+        wherever she has GOT to -- she would spin on the spot until the TTL ran
+        out and call it exploring. So the relative offset is converted ONCE into
+        an absolute heading in the map frame, and after that this reports the
+        remaining error, which shrinks to zero as she turns. Exactly the shape
+        of explorer.bearing_error(), and it self-terminates.
+
+        Returns None -- handing the wheel straight back to the frontier planner
+        -- when the order has expired, has been satisfied, or is a label order.
+        """
+        now = self._clock() if now is None else now
+        self._heading_steering = False
+        if self.kind != "heading" or self.heading_rad is None:
+            return None
+        if now >= self.expires_at:
+            self.clear()
+            return None
+        if self._heading_done:
+            return None
+        if self._heading_target is None:
+            self._heading_target = _wrap(float(theta) + self.heading_rad)
+        error = _wrap(self._heading_target - float(theta))
+        if abs(error) <= HEADING_ARRIVED_RAD:
+            # Latched, not re-tested every tick: without this she would creep
+            # back into the deadband on drift and start steering again.
+            self._heading_done = True
+            return None
+        self._heading_steering = True
+        return error
 
     # -- the sighting -------------------------------------------------------
     def update(self, detections: Iterable[Any],
@@ -279,7 +384,13 @@ class BrainTarget:
         return self._nudge
 
     def active(self, now: float | None = None) -> bool:
-        return self.nudge(now) is not None
+        """Is she steering on the brain right now -- by label OR by heading?
+
+        The heading half reads a flag set by the last heading_error() call
+        rather than recomputing, because that is the only one of the two that
+        needs a pose and this is called from places that do not have one.
+        """
+        return self._heading_steering or self.nudge(now) is not None
 
     def state(self, now: float | None = None) -> dict:
         """For the published state, so "why is she turning" is answerable."""
@@ -287,9 +398,16 @@ class BrainTarget:
         nudge = self.nudge(now)
         return {
             "label": self.label,
+            "kind": self.kind,
             "token": self.token,
-            "steering": nudge is not None,
+            "steering": (nudge is not None) or self._heading_steering,
             "nudge_rad": None if nudge is None else round(nudge, 4),
+            "heading_order_deg": (None if self.heading_rad is None
+                                  else round(math.degrees(self.heading_rad), 1)),
+            "heading_target_rad": (None if self._heading_target is None
+                                   else round(self._heading_target, 4)),
+            "heading_arrived": self._heading_done,
+            "headings": self.headings,
             "sighting_age_s": (None if not self._seen_at
                                else round(now - self._seen_at, 2)),
             "expires_in_s": (round(max(0.0, self.expires_at - now), 1)
@@ -338,6 +456,23 @@ class TargetedPlanner:
         steering_bias() -- capped at 0.55 * omega_max -- and to the DWA as
         `desired_bearing`, so one override reaches both without touching either.
         """
+        # THE HEADING ORDER OUTRANKS BOTH, and it is first because it is the
+        # only one that needs the pose. It answers None the moment it is
+        # satisfied or expired, so the frontier planner underneath resumes with
+        # no gap -- the same "transparent proxy" property the label path has.
+        # ⚠ POSE IS ONLY TOUCHED WHEN A HEADING ORDER IS ACTUALLY LIVE. The
+        # label path has always been pose-free -- the loop and the tests both
+        # call this with None -- and reading pose[2] unconditionally turned
+        # every label-only call into a TypeError.
+        if self._brain.kind == "heading" and pose is not None:
+            try:
+                theta = float(pose[2])
+            except (TypeError, IndexError, ValueError, KeyError):
+                theta = None
+            if theta is not None:
+                error = self._brain.heading_error(theta)
+                if error is not None:
+                    return error
         nudge = self._brain.nudge()
         if nudge is not None:
             return nudge

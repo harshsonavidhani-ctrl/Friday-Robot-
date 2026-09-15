@@ -1150,7 +1150,14 @@ LIDAR_FORWARD_DEG = 51.8
 # behind it (stdev 796, 306 and 177 mm respectively, against under 2 mm inside
 # the run). 10 of 360 bearings, so 2.8% of the sweep is blind -- re-measure
 # with scripts/lidar_self_mask.py if anything is ever bolted to the dome.
-LIDAR_SELF_MASK = ((89, 98),)
+#
+# 71-78 is a second dome post, measured 2026-09-13: 207-223 mm on 71/72-77 in
+# three sweeps while 70 and 78 saw 2.3-3.9 m, and it stayed put through pivots
+# and a whole scene change. It sits ~22 deg right of the forward bearing, so
+# unmasked it pinned `forward` at ~210 mm and the reflex cut every forward move
+# at 197. Harsh confirmed it is part of the dome, not removable. The bumper ToF
+# still covers straight ahead.
+LIDAR_SELF_MASK = ((71, 78), (89, 98))
 
 # The D500 is specified to 12 m, but indoors a long return is usually a
 # doorway or a window rather than a wall, and those are the points that drag a

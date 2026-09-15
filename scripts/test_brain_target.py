@@ -139,7 +139,9 @@ cmd.write_text('{"label": "chair", "token": "not-a-number"}')
 check("a bad token is no order", bt.read_command(cmd) is None)
 cmd.write_text('{"label": "chair", "token": 7, "ttl_s": 30}')
 got = bt.read_command(cmd)
-check("a good order reads back", got == {"label": "chair", "token": 7, "ttl_s": 30.0},
+check("a good order reads back",
+      got == {"kind": "label", "label": "chair", "heading_deg": None,
+              "token": 7, "ttl_s": 30.0},
       f"got {got}")
 
 target = bt.BrainTarget(command_file=cmd)
@@ -270,6 +272,115 @@ check("describe() puts a positive where on the LEFT", "chair on my left" in line
 check("  and a negative where on the RIGHT", "person on my right" in line, line)
 rl_control.AUTONOMY_FILE.write_text('{"seen": "not a list"}')
 check("a malformed seen field is empty, not a crash", rl_control.seen() == [])
+
+
+# --------------------------------------------------------------------------
+print("\nTHE HEADING ORDER — Tier 2 steering, and the sign that costs a run\n")
+
+import math                                             # noqa: E402
+
+hcmd = tmp / "rl_heading.json"
+
+hcmd.write_text('{"heading_deg": 45, "token": 1, "ttl_s": 20}')
+got = bt.read_command(hcmd)
+check("a heading order reads back as kind=heading",
+      got == {"kind": "heading", "label": None, "heading_deg": 45.0,
+              "token": 1, "ttl_s": 20.0}, f"got {got}")
+hcmd.write_text('{"heading_deg": 200, "token": 2}')
+check("a heading beyond +-180 is no order", bt.read_command(hcmd) is None)
+hcmd.write_text('{"heading_deg": "left a bit", "token": 3}')
+check("a non-numeric heading is no order", bt.read_command(hcmd) is None)
+hcmd.write_text('{"heading_deg": 30, "label": "chair", "token": 4}')
+check("a heading BEATS a label in the same message",
+      bt.read_command(hcmd)["kind"] == "heading")
+
+# -- the sign, stated the only way that matters: against a real pose ---------
+h = bt.BrainTarget(command_file=hcmd, ttl_s=90.0)
+h.poll(now=0.0, command={"kind": "heading", "label": None,
+                         "heading_deg": 90.0, "token": 10, "ttl_s": 90.0})
+err = h.heading_error(0.0, now=0.0)          # facing theta=0
+check("a POSITIVE wire heading gives a POSITIVE error (turn LEFT)",
+      err is not None and err > 0, f"got {err}")
+h2 = bt.BrainTarget(command_file=hcmd, ttl_s=90.0)
+h2.poll(now=0.0, command={"kind": "heading", "label": None,
+                          "heading_deg": -90.0, "token": 11, "ttl_s": 90.0})
+check("a NEGATIVE wire heading gives a NEGATIVE error (turn RIGHT)",
+      (h2.heading_error(0.0, now=0.0) or 0) < 0)
+
+# -- it decays as she turns, which is what stops her spinning ----------------
+h3 = bt.BrainTarget(command_file=hcmd, ttl_s=90.0)
+h3.poll(now=0.0, command={"kind": "heading", "label": None,
+                          "heading_deg": 90.0, "token": 12, "ttl_s": 90.0})
+e0 = h3.heading_error(0.0, now=1.0)                  # armed here: target = +90 deg
+e1 = h3.heading_error(math.radians(30), now=2.0)     # she has turned 30 left
+e2 = h3.heading_error(math.radians(60), now=3.0)     # ...and 30 more
+check("the error SHRINKS as she turns toward it",
+      e0 > e1 > e2 > 0, f"got {e0:.3f} {e1:.3f} {e2:.3f}")
+check("  it is the REMAINING turn, not the original order",
+      abs(e1 - math.radians(60)) < 1e-6, f"got {math.degrees(e1):.1f} deg")
+check("ARRIVING hands the wheel back (None, so the frontier planner resumes)",
+      h3.heading_error(math.radians(88), now=4.0) is None)
+check("  and it stays handed back — no re-trigger on drift",
+      h3.heading_error(math.radians(70), now=5.0) is None,
+      "without the latch she would hunt around the heading until the TTL ran out")
+
+# -- wrap, expiry, and staying out of the label path -------------------------
+h4 = bt.BrainTarget(command_file=hcmd, ttl_s=90.0)
+h4.poll(now=0.0, command={"kind": "heading", "label": None,
+                          "heading_deg": 170.0, "token": 13, "ttl_s": 90.0})
+h4.heading_error(math.radians(170), now=1.0)         # target wraps past +180
+e_wrap = h4.heading_error(math.radians(-150), now=2.0)
+check("the target wraps across +-180 instead of unwinding the long way",
+      e_wrap is not None and abs(e_wrap) <= math.pi, f"got {e_wrap}")
+
+h5 = bt.BrainTarget(command_file=hcmd, ttl_s=90.0)
+h5.poll(now=0.0, command={"kind": "heading", "label": None,
+                          "heading_deg": 90.0, "token": 14, "ttl_s": 10.0})
+check("a heading order expires on its TTL", h5.heading_error(0.0, now=11.0) is None)
+check("  and expiry clears it", h5.kind is None)
+
+h6 = bt.BrainTarget(command_file=hcmd, ttl_s=90.0)
+h6.poll(now=0.0, command={"kind": "label", "label": "chair",
+                          "heading_deg": None, "token": 15, "ttl_s": 90.0})
+check("a LABEL order never answers heading_error",
+      h6.heading_error(0.0, now=1.0) is None)
+
+# -- through the planner wrapper, which is where the loop actually calls it --
+fp = FakePlanner(bearing=0.5)
+# THE CLOCK IS INJECTED HERE FOR THE REASON BrainTarget's OWN DOCSTRING GIVES:
+# TargetedPlanner.bearing_error() calls heading_error() with no `now`, so it
+# reads the clock itself. Polling at a fake now=0.0 against the wall clock makes
+# the order look 60-odd days expired and the wrapper correctly falls through to
+# the frontier planner -- a green test for broken code, or here a red one for
+# working code. One clock, used by both.
+fake_now = [1000.0]
+hb = bt.BrainTarget(command_file=hcmd, ttl_s=90.0, clock=lambda: fake_now[0])
+wrapped_h = bt.TargetedPlanner(fp, hb)
+check("with no order the frontier planner answers, pose untouched",
+      wrapped_h.bearing_error(None) == 0.5)
+hb.poll(command={"kind": "heading", "label": None,
+                 "heading_deg": 90.0, "token": 16, "ttl_s": 90.0})
+be = wrapped_h.bearing_error([0.0, 0.0, 0.0])
+check("a heading order OUTRANKS the frontier planner",
+      be is not None and abs(be - math.radians(90)) < 1e-6, f"got {be}")
+check("  and note_progress is held back while it steers",
+      (wrapped_h.note_progress([0.0, 0.0, 0.0]), fp.progress_calls)[1] == 0)
+check("once arrived the frontier planner gets the wheel back",
+      wrapped_h.bearing_error([0.0, 0.0, math.radians(90)]) == 0.5)
+
+# -- the writer does the negation exactly once ------------------------------
+rl_control.COMMAND_FILE = tmp / "rl_command.json"
+msg = rl_control.heading(-170.0)                     # "turn LEFT 170"
+check("rl_control.heading negates: turn_right -170 -> wire +170 (LEFT)",
+      msg["heading_deg"] == 170.0, f"got {msg['heading_deg']}")
+check("  and it keeps what the caller actually asked for",
+      msg["requested_turn_right_deg"] == -170.0)
+for bad in (181.0, -181.0, "left"):
+    try:
+        rl_control.heading(bad)
+        check(f"heading({bad!r}) is refused", False, "no exception raised")
+    except ValueError:
+        check(f"heading({bad!r}) is refused", True)
 
 
 print(f"\n{PASS} passed, {FAIL} failed\n")
