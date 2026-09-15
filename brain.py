@@ -200,7 +200,7 @@ class Brain:
                 "ANTHROPIC_API_KEY is not set, so the brain cannot run. That "
                 "is correct while BUILDING Friday (Claude Code bills the "
                 "subscription instead). Export it to actually run Friday.")
-        self.model = model or config.MODEL_MAIN
+        self.model = model or getattr(config, "BRAIN_MODEL", config.MODEL_MAIN)
         self.client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
         self.system = system_prompt or self._load_system_prompt()
         self.messages: list[dict[str, Any]] = []
@@ -301,8 +301,15 @@ class Brain:
         """Anthropic-hosted tools. Web search, for facts Friday cannot know."""
         if not config.ENABLE_WEB_SEARCH:
             return []
+        # THE VERSION DEPENDS ON THE MODEL, and the wrong one is a 400 on every
+        # turn that carries tools. web_search_20260209 (dynamic filtering)
+        # needs Sonnet 5 / Sonnet 4.6 / Opus 4.6+; Haiku 4.5, which the brain
+        # runs on since 2026-09-16 (config.BRAIN_MODEL), only takes the basic
+        # web_search_20250305.
+        kind = ("web_search_20260209" if self.model == config.MODEL_MAIN
+                else "web_search_20250305")
         return [{
-            "type": "web_search_20260209",
+            "type": kind,
             "name": "web_search",
             "max_uses": config.WEB_SEARCH_MAX_USES,
         }]
@@ -808,11 +815,14 @@ class Brain:
             "system": self._system_blocks(),
             "messages": self._outgoing(),
             "tools": tools,
-            # Adaptive is the only on-mode on Sonnet 5; budget_tokens is
-            # removed there and returns a 400.
-            "thinking": {"type": "adaptive"},
-            "output_config": {"effort": config.BRAIN_EFFORT},
         }
+        # Adaptive is the only on-mode on Sonnet 5; budget_tokens is removed
+        # there and returns a 400. Haiku 4.5 is the other way round: it has no
+        # adaptive mode and no effort setting, and sending either is a 400 --
+        # so they go only to MODEL_MAIN, the same rule brain_router._call uses.
+        if self.model == config.MODEL_MAIN:
+            kwargs["thinking"] = {"type": "adaptive"}
+            kwargs["output_config"] = {"effort": config.BRAIN_EFFORT}
 
         async with self.client.messages.stream(**kwargs) as stream:
             async for event in stream:

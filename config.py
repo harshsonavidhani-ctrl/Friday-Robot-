@@ -29,6 +29,15 @@ MODEL_FAST = "claude-haiku-4-5"            # reflexes, simple classification
 # rejects -- the model IDs are complete as written and a date-suffixed
 # variant is a 404, not an older pin. Nothing caught it because the brain
 # has never had an API key to call with.
+
+# THE VOICE BRAIN RUNS ON HAIKU ONLY. Harsh, 2026-09-16: "switch the brain
+# model to only haiku only for less consumption and fast answers". Haiku 4.5
+# is half Sonnet 5's price per token (1/5 vs 2/10) and measured 1.31 s to the
+# first token with the tools against Sonnet's 2.61 s (table below). Every turn
+# -- the fast path AND the full turn with tools -- now uses it. brain_router's
+# exploration decisions (PLAN/TAG/STUCK) still route to MODEL_MAIN.
+# Set this back to MODEL_MAIN to put Sonnet behind the full turn again.
+BRAIN_MODEL = MODEL_FAST
 SYSTEM_PROMPT_FILE = ROOT / "personality.md"
 MAX_REPLY_SENTENCES = 3
 ENABLE_WEB_SEARCH = True

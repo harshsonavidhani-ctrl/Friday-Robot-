@@ -132,6 +132,18 @@ def microphone(preferred: str) -> str | None:
     return _resolve(preferred, "Audio/Source", "microphone")
 
 
+def microphone_present(preferred: str) -> bool:
+    """Is the preferred mic's CARD among pipewire's sources right now?
+
+    Quiet on purpose, so it can be polled: _resolve() logs on every miss, and
+    returns None WITHOUT A WORD when pipewire has no sources at all yet.
+    """
+    key = card_key(preferred)
+    return any(cls == "Audio/Source" and (name == preferred
+                                          or (key and card_key(name) == key))
+               for cls, name in _nodes())
+
+
 def target_args(node: str | None) -> list[str]:
     """`--target=NODE`, or nothing at all when we want the default.
 

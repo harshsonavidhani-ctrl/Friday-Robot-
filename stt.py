@@ -110,6 +110,32 @@ class Microphone:
                                ) * BYTES_PER_SAMPLE
         self._process: subprocess.Popen | None = None
 
+    def _wait_until_present(self) -> None:
+        """Hold off until pipewire actually has this mic, up to a limit.
+
+        AT BOOT THE MIC CAN OPEN BEFORE WIREPLUMBER HAS MADE ANY SOURCES.
+        2026-09-16: pipewire started at 22.97 s, wireplumber loaded its profile
+        at 23.79 s, and the brain opened the mic at 24.60 s -- to NO sources,
+        which audio_routing answers with "use the default" and no log line. The
+        default became the down camera's mic, and the wake word listened
+        through it for the whole boot. Waiting here costs seconds once; the
+        wrong mic costs the evening.
+        """
+        wait_s = getattr(config, "MIC_APPEAR_WAIT_S", 30.0)
+        started = time.monotonic()
+        warned = False
+        while not audio_routing.microphone_present(self.device):
+            waited = time.monotonic() - started
+            if waited >= wait_s:
+                return              # _resolve() below says loudly what it uses
+            if not warned:
+                log.info("waiting for %s to appear in pipewire", self.device)
+                warned = True
+            time.sleep(0.5)
+        if warned:
+            log.info("microphone %s appeared after %.1fs", self.device,
+                     time.monotonic() - started)
+
     def open(self) -> "Microphone":
         if not shutil.which("pw-cat"):
             raise STTError("pw-cat is not installed — cannot reach the mic")
@@ -120,6 +146,7 @@ class Microphone:
         # from the DEFAULT source instead, so on 2026-09-04 the wake word spent
         # the evening listening through the webcam's microphone while every
         # heartbeat looked perfectly healthy. See audio_routing.
+        self._wait_until_present()
         target = audio_routing.microphone(self.device)
         self._process = subprocess.Popen(
             ["pw-cat", "--record", "--raw", *audio_routing.target_args(target),
