@@ -127,6 +127,12 @@ BRAIN_FAST_NEVER = (
     "alarm", "timer", "reminder", "remind", "schedule", "news",
     "here", "there", "behind", "around you", "where are you",
     "what are you doing", "yourself", "your name",
+    # SEARCH COMMANDS. Harsh, 2026-09-16: "give her the ability to go and
+    # search the web for anything when commanded". The fast path has no tools,
+    # so "search the web for X" sent there is answered from memory -- the one
+    # thing he asked her not to do. These always get the brain that can search.
+    "search", "google", "internet", "online", "web", "website", "browse",
+    "find out", "latest",
 )
 
 # Warm the API connection while she is still booting. A COLD DNS LOOKUP COSTS

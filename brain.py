@@ -710,10 +710,43 @@ class Brain:
             self._remember({"role": "assistant",
                             "content": reply.content})
 
+            # WEB SEARCHES NEVER COME THROUGH THE TOOL LOOP BELOW. The server
+            # runs them and returns the results inline, so without this a search
+            # left no trace: the 2026-09-16 01:01 turn SAID "I'll search for
+            # current information" and nothing could tell whether it had (398
+            # input tokens says it had not).
+            for block in reply.content:
+                kind = getattr(block, "type", None)
+                if kind == "server_tool_use":
+                    inputs = block.input if isinstance(block.input, dict) else {}
+                    self.last_tools_used.append(block.name)
+                    log.info("web search %r", inputs.get("query", ""))
+                    if on_tool:
+                        on_tool(block.name, {"query": inputs.get("query", "")})
+                elif kind == "web_search_tool_result":
+                    found = getattr(block, "content", None)
+                    # A failed search is NOT an exception: HTTP 200, and the
+                    # content is one error object instead of a list of results.
+                    if isinstance(found, list):
+                        log.info("web search -> %d results", len(found))
+                    else:
+                        log.warning("web search failed: %s",
+                                    getattr(found, "error_code", found))
+
             if reply.stop_reason == "refusal":
                 detail = getattr(reply, "stop_details", None)
                 return ("I can't help with that one — "
                         f"{getattr(detail, 'category', 'declined')}.")
+
+            # A WEB SEARCH CAN PAUSE THE TURN. The server runs its own loop for
+            # hosted tools and returns pause_turn when it wants another request.
+            # The history above already ends on that paused assistant message,
+            # so asking again is all it takes -- the API resumes from it, and
+            # does not want a "continue" message added. This used to fall
+            # through to the break below and end the answer half-said.
+            if reply.stop_reason == "pause_turn":
+                log.info("web search paused the turn — resuming")
+                continue
 
             if reply.stop_reason != "tool_use":
                 final_text = spoken
@@ -989,7 +1022,11 @@ def _mentions_tools(message: dict[str, Any]) -> bool:
     for block in content:
         kind = (block.get("type") if isinstance(block, dict)
                 else getattr(block, "type", None))
-        if kind in ("tool_use", "tool_result"):
+        # A WEB SEARCH COUNTS. Its blocks are server_tool_use and
+        # web_search_tool_result, not tool_use, and a history holding them sent
+        # to the no-tools fast path is the same rejected request.
+        if kind in ("tool_use", "tool_result", "server_tool_use",
+                    "web_search_tool_result"):
             return True
     return False
 
