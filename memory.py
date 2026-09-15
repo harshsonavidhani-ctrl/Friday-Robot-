@@ -455,6 +455,20 @@ def summaries(limit: int = 3) -> list[str]:
 
 # --- what the brain sees -------------------------------------------------
 
+def warm() -> None:
+    """Build the recall index now, so the first question does not pay for it.
+
+    sklearn's import plus the TF-IDF fit cost 6.39 s cold on this Pi and 0.04 s
+    warm (measured 2026-09-16), and that cost used to land in front of the
+    first thing Harsh asked after every restart. Unlike recall(), this touches
+    no usage counts -- a warm-up is not a use.
+    """
+    with _lock:
+        rows = _fact_rows()
+        if rows:
+            _index.search("warm", rows, 1)
+
+
 def context_block(query: str, task: str | None = None) -> str:
     """Everything relevant to this turn, as text to prepend to the prompt.
 

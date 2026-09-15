@@ -386,6 +386,19 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     return reply
 
 
+def _warm_memory() -> None:
+    """Build memory's recall index in the background. Never raises."""
+    started = time.monotonic()
+    try:
+        import memory
+        memory.warm()
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("could not warm the memory index (%s: %s) — the first "
+                    "question will pay for it instead", type(exc).__name__, exc)
+        return
+    log.info("memory index warm in %.1fs", time.monotonic() - started)
+
+
 class _BrainLoader:
     """`import brain` and Brain(), on a thread, behind the wake word.
 
@@ -433,6 +446,15 @@ class _BrainLoader:
             # stt.preload().
             if getattr(config, "BRAIN_WARM_ON_START", True):
                 self._brain.warm_in_background()
+            # THE MEMORY INDEX TOO, on its own thread so get() is not held by
+            # it. Every question is looked up in memory first, and building
+            # that index cold is 6.4 s. openwakeword's import used to load
+            # sklearn at start-up by accident; since the wake word stopped
+            # doing that (2026-09-15), the first question after a restart
+            # was paying for all of it before the request was even sent.
+            if getattr(config, "MEMORY_IN_CONTEXT", True):
+                threading.Thread(target=_warm_memory, name="memory-warm",
+                                 daemon=True).start()
         except BaseException as exc:            # noqa: BLE001 - raised in get()
             self._error = exc
 
