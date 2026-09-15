@@ -48,6 +48,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import wave
 from pathlib import Path
 from typing import Iterator
@@ -61,6 +62,32 @@ log = logging.getLogger("friday.wake")
 # chunk before scoring.
 CHUNK_SAMPLES = 1280
 CHUNK_BYTES = CHUNK_SAMPLES * 2
+
+
+def _skip_verifier_training_import() -> None:
+    """Keep openwakeword's TRAINING helper from loading sklearn at start-up.
+
+    `import openwakeword` runs its __init__, which imports custom_verifier_model
+    only to export train_custom_verifier -- and that drags in sklearn and scipy.
+    Measured 2026-09-15 with Friday's services running: 4.96 s of a 5.8 s
+    import, 0.86 s without it. It was most of why the wake word took so long
+    to come up at boot. Model() never touches that module unless it is handed
+    custom_verifier_models, and it is not (Friday's verifier is wake_verify.py).
+    So a stand-in goes in first; calling it still loads the real one.
+    """
+    name = "openwakeword.custom_verifier_model"
+    if name in sys.modules or "openwakeword" in sys.modules:
+        return
+    stand_in = types.ModuleType(name)
+
+    def train_custom_verifier(*args, **kwargs):
+        import importlib
+        sys.modules.pop(name, None)
+        return importlib.import_module(name).train_custom_verifier(*args,
+                                                                   **kwargs)
+
+    stand_in.train_custom_verifier = train_custom_verifier
+    sys.modules[name] = stand_in
 
 
 class WakeSource:
@@ -182,6 +209,7 @@ class OpenWakeWord(WakeSource):
         if not self.model_path.exists():
             raise FileNotFoundError(
                 f"wake word model not found: {self.model_path}")
+        _skip_verifier_training_import()
         from openwakeword.model import Model
 
         started = time.monotonic()

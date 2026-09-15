@@ -386,54 +386,109 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     return reply
 
 
-async def run(once: bool = False, typed: str | None = None) -> int:
+class _BrainLoader:
+    """`import brain` and Brain(), on a thread, behind the wake word.
+
+    anthropic alone is ~5.6 s of import on this Pi, and hearing "hey Friday"
+    needs none of it. get() waits for it; anything it raised is raised there,
+    exactly where it used to be raised at start-up.
+    """
+
+    def __init__(self) -> None:
+        self._brain = None
+        self._error: BaseException | None = None
+        self._thread = threading.Thread(target=self._load, name="brain-load",
+                                        daemon=True)
+
+    def start(self) -> "_BrainLoader":
+        self._thread.start()
+        return self
+
+    def _load(self) -> None:
+        try:
+            import brain as brain_module
+            # A MISSING API KEY MUST NOT BE FATAL. This runs under systemd
+            # with Restart=always, so exiting here would crash-loop every few
+            # seconds and look, from the outside, exactly like a broken robot.
+            # It is also the normal state before the key is set. Friday comes
+            # up deaf to reasoning but still awake: the wake word works, and
+            # the offline keyword handler still drives, stops, turns and tells
+            # the time.
+            try:
+                self._brain = brain_module.Brain()
+            except brain_module.BrainError as exc:
+                log.warning("no brain (%s) — running on the offline handler "
+                            "only. Set ANTHROPIC_API_KEY and restart to "
+                            "enable it.", exc)
+                return
+            # WARM THE CONNECTION WHILE SHE IS STILL BOOTING, not when Harsh
+            # is stood there waiting. A cold DNS lookup costs 5.04 s on this Pi
+            # and the first question of the evening was paying all of it.
+            # ⚠ A THREAD, NOT create_task(). The wake loop in run() is a
+            # BLOCKING generator inside an async function, so the moment it
+            # starts the event loop stops running anything else and a
+            # scheduled coroutine is starved forever. As a bare create_task
+            # this logged "warm in 21.59s" on one start and nothing at all on
+            # the next two. Same pattern, same reason, as tts.preload() and
+            # stt.preload().
+            if getattr(config, "BRAIN_WARM_ON_START", True):
+                self._brain.warm_in_background()
+        except BaseException as exc:            # noqa: BLE001 - raised in get()
+            self._error = exc
+
+    async def get(self):
+        await asyncio.to_thread(self._thread.join)
+        if self._error is not None:
+            raise self._error
+        return self._brain
+
+
+# HOW LONG A TURN WAITS FOR friday-mcp. At boot it refuses connections for
+# ~29 s while it brings the hardware and Piper up (2026-09-15: unit started at
+# 15.1 s, serving at 44.2 s), and this process used to connect once, crash into
+# the refusal, and pay a whole restart before the wake word was back.
+MCP_CONNECT_WAIT_S = 60.0
+MCP_CONNECT_RETRY_S = 1.0
+
+
+async def _mcp_session(held: "contextlib.AsyncExitStack", wait_s: float):
+    """A friday-mcp session kept open on `held`, retried for up to wait_s."""
     import brain as brain_module
+
+    deadline = time.monotonic() + wait_s
+    while True:
+        try:
+            session = await held.enter_async_context(
+                brain_module.mcp_session())
+            break
+        except Exception:                       # noqa: BLE001
+            if time.monotonic() >= deadline:
+                raise
+            await asyncio.sleep(MCP_CONNECT_RETRY_S)
+    listed = await session.list_tools()
+    log.info("connected to %s — %d tools", config.MCP_SERVER_NAME,
+             len(listed.tools))
+    return session
+
+
+async def run(once: bool = False, typed: str | None = None) -> int:
+    import contextlib
+
     import stt
     import wake_word
 
     face = Face()
     face.set(config.FACE_DEFAULT_EMOTION)
-    voice = Voice(face).start()
-    preload_models()
 
-    # A MISSING API KEY MUST NOT BE FATAL. This runs under systemd with
-    # Restart=always, so exiting here would crash-loop every few seconds and
-    # look, from the outside, exactly like a broken robot. It is also the
-    # normal state before the key is set. Friday comes up deaf to reasoning
-    # but still awake: the wake word works, and the offline keyword handler
-    # still drives, stops, turns and tells the time.
-    brain_obj = None
-    try:
-        brain_obj = brain_module.Brain()
-    except brain_module.BrainError as exc:
-        log.warning("no brain (%s) — running on the offline handler only. "
-                    "Set ANTHROPIC_API_KEY and restart to enable it.", exc)
-
-    # WARM THE CONNECTION WHILE SHE IS STILL BOOTING, not when Harsh is stood
-    # there waiting. A cold DNS lookup costs 5.04 s on this Pi and the first
-    # question of the evening was paying all of it. In the background, because
-    # nothing below needs it to have finished -- and it must never delay the
-    # wake word coming up.
-    # ⚠ A THREAD, NOT create_task(). The wake loop below is a BLOCKING
-    # generator inside this async function, so the moment it starts the event
-    # loop stops running anything else and a scheduled coroutine is starved
-    # forever. As a bare create_task this logged "warm in 21.59s" on one start
-    # and nothing at all on the next two -- a warm-up that only sometimes
-    # happens is worse than none, because the cold turn becomes a surprise.
-    # Same pattern, same reason, as tts.preload() and stt.preload() above.
-    if brain_obj is not None and getattr(config, "BRAIN_WARM_ON_START", True):
-        brain_obj.warm_in_background()
-
-    async with brain_module.mcp_session() as session:
-        listed = await session.list_tools()
-        log.info("connected to %s — %d tools", config.MCP_SERVER_NAME,
-                 len(listed.tools))
-
-        if typed is not None:
-            await handle(brain_obj, session, voice, face, typed)
-            voice.close()
-            return 0
-
+    # THE WAKE WORD COMES UP BEFORE ANYTHING ELSE IS LOADED. Harsh, 2026-09-15:
+    # "wake word also just starts on boot within 4 seconds". It was 37 s after
+    # this process started and 88 s after power-on, because it queued behind
+    # `import brain`, Piper and faster-whisper loading beside it, and the MCP
+    # connection -- which friday-mcp refuses for ~29 s at boot, and which
+    # crashed this process on that boot. Hearing "hey Friday" needs none of
+    # them, so the mic and the detector start first and the rest loads behind.
+    stream = source = None
+    if typed is None:
         # ONE microphone stream, shared by the wake detector and the capture.
         # Opened here so both get the same one -- see stt.AudioStream for why
         # a second reader on this USB card is not an option.
@@ -443,10 +498,29 @@ async def run(once: bool = False, typed: str | None = None) -> int:
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
         _explore_hush(source)
-        _explore_targeter(voice)
-        face.rest()
 
-        try:
+    try:
+        voice = Voice(face).start()
+        preload_models()
+        brains = _BrainLoader().start()
+
+        # The session is opened on this stack, in this task, so it is closed
+        # by the same task that opened it -- the anyio task group inside it
+        # requires that.
+        async with contextlib.AsyncExitStack() as held:
+            if typed is not None:
+                session = await _mcp_session(held, MCP_CONNECT_WAIT_S)
+                await handle(await brains.get(), session, voice, face, typed)
+                voice.close()
+                return 0
+
+            # CONNECTED ON THE FIRST TURN, not here. Waiting here for
+            # friday-mcp would park the wake loop behind it again, which is
+            # the whole delay this ordering removes.
+            session = None
+            _explore_targeter(voice)
+            face.rest()
+
             for trigger in source.listen():
                 turn = stages.Turn(trigger)
                 # Acknowledge instantly: the face and the beep both land
@@ -518,10 +592,31 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                     turn.done("FAILED (capture)")
                 else:
                     if spoken.strip():
-                        # Every tool this turn calls goes through the age
-                        # check -- reflex or brain -- see COMMAND_MAX_AGE_S.
-                        await handle(brain_obj, _FreshOrders(session, said_at),
-                                     voice, face, spoken, turn)
+                        brain_obj = await brains.get()
+                        if session is None:
+                            # At boot friday-mcp may still be coming up, so
+                            # the first turn waits for it. The age check below
+                            # still counts from said_at, so a move asked for
+                            # before it answered is refused as stale, never
+                            # driven late.
+                            try:
+                                session = await _mcp_session(
+                                    held, MCP_CONNECT_WAIT_S)
+                            except Exception as exc:    # noqa: BLE001
+                                log.error("friday-mcp did not answer within "
+                                          "%.0fs: %s: %s", MCP_CONNECT_WAIT_S,
+                                          type(exc).__name__, exc)
+                        if session is None:
+                            face.alarm("dizzy")
+                            voice.say("Sorry, I lost that one.")
+                            voice.wait_until_quiet()
+                            turn.done("FAILED (friday-mcp not answering)")
+                        else:
+                            # Every tool this turn calls goes through the age
+                            # check -- reflex or brain -- see COMMAND_MAX_AGE_S.
+                            await handle(brain_obj,
+                                         _FreshOrders(session, said_at),
+                                         voice, face, spoken, turn)
                     else:
                         # Logged as its own outcome. "Heard you, understood
                         # nothing" and "never heard you" are different faults
@@ -544,8 +639,13 @@ async def run(once: bool = False, typed: str | None = None) -> int:
 
                 if once:
                     break
-        finally:
+    finally:
+        # Closed on EVERY exit, including one before the loop was reached:
+        # the mic's pw-cat is a child process, and one left behind would be a
+        # second reader on the card when systemd starts the next instance.
+        if source is not None:
             source.close()
+        if stream is not None:
             stream.close()
 
     voice.close()
