@@ -264,7 +264,7 @@ def _pick_face(question: str, reply: str) -> "str | None":
         model = getattr(config, "FACE_AI_MODEL", config.MODEL_FAST)
         message = _face_client.messages.create(
             model=model, max_tokens=5,
-            system=("You choose the facial expression a professional assistant "
+            system=("You choose the facial expression a friendly assistant "
                     "robot shows right after it answers. Reply with exactly one "
                     "word from: " + ", ".join(_FACE_CHOICES) + ". success = a "
                     "task done or a fact given; confused = it could not "

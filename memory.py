@@ -476,7 +476,8 @@ def context_block(query: str, task: str | None = None) -> str:
     section, because it teaches the model that this block is usually noise.
     """
     try:
-        facts = recall(query)
+        facts = recall(query, limit=getattr(config, "MEMORY_CONTEXT_FACTS",
+                                            config.MEMORY_RECALL_LIMIT))
         experience = recall_experience(task or query)
         past = summaries(limit=1)
     except Exception as exc:                    # noqa: BLE001

@@ -2084,6 +2084,12 @@ def missing_hardware_settings() -> list[str]:
 # still exists for deliberate lookups, but Harsh should not have to ask Friday
 # to consult its own memory any more than a person would.
 MEMORY_IN_CONTEXT = True
+# File 08 step 4: "pull 1-2 relevant recent entries into context so Friday
+# references shared history instead of responding cold". Facts attached per
+# turn -- on the fast path too, which answers most of what is said to her and
+# had no memory at all. MEMORY_RECALL_LIMIT (5) stays for the recall TOOL, a
+# deliberate lookup. Measured warm: 9-41 ms per turn.
+MEMORY_CONTEXT_FACTS = 2
 
 # Attach what she can already see about herself -- the time, her mood, whether
 # a run is driving, the last clearance around her, the weather -- to each

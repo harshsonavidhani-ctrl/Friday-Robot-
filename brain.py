@@ -422,10 +422,10 @@ class Brain:
         unsure = getattr(config, "BRAIN_FAST_UNSURE", "UNSURE")
         system = (
             f"{self.system}\n\n"
-            f"You are answering on the FAST PATH: no tools, no sensors, no "
-            f"memory lookup and no web. Answer only what "
-            f"you know from general knowledge, from this conversation, and "
-            f"from the 'right now' notes attached to the question. If the "
+            f"You are answering on the FAST PATH: no tools, no sensors and "
+            f"no web. Answer only from general knowledge, this conversation, "
+            f"and the memory and 'right now' notes attached to the question. "
+            f"If the "
             f"answer needs any of the things you have not got, or needs to "
             f"know anything else about this robot, this room or this house, "
             f"reply with exactly {unsure} and nothing else — a slower brain "
@@ -440,7 +440,10 @@ class Brain:
             f"or the TV, people talking to each other, or a fragment that "
             f"makes no sense as something said to a robot — reply with exactly "
             f"{getattr(config, 'BRAIN_IGNORE', 'IGNORE')} and nothing else. "
-            f"You stay silent. Do not ask them to repeat it.\n\n"
+            f"You stay silent. Do not ask them to repeat it. But anything "
+            f"that reads as said TO you is for you, however odd — a joke, a "
+            f"compliment, an insult, an exclamation, small talk: answer it."
+            f"\n\n"
             + (f"{unsure} and {getattr(config, 'BRAIN_IGNORE', 'IGNORE')} "
                f"go in the reply object's `reply` field like any other answer. "
                f"⚠ Every character of `reply` is said out loud: no markdown, no "
@@ -458,13 +461,17 @@ class Brain:
         if config.ENABLE_PROMPT_CACHING:
             blocks[0]["cache_control"] = {"type": "ephemeral"}
 
+        # MEMORY RIDES ON IT TOO (file 08 step 4): the fast path answers most of
+        # what is said to her, and it answered all of it cold. Two facts at most
+        # (MEMORY_CONTEXT_FACTS), 9-41 ms warm, nothing attached when nothing
+        # is relevant.
         # THE SITUATION BLOCK RIDES ON THE FAST PATH TOO, and it is what makes
         # the fast path worth having for questions about her rather than about
         # the world. "What time is it", "how are you feeling", "are you
         # exploring" are all answerable from it with no tool and no sensor, so
         # they come back in about a second instead of going to the big model
         # and, before situation.py existed, a tool round trip on top.
-        asked: Any = self._with_situation(text)
+        asked: Any = self._with_situation(self._with_memory(text))
         if getattr(config, "BRAIN_STRUCTURED_REPLY", True):
             # The same wire-only reminder as the full turn (see _outgoing):
             # without it the fast path wrote the answer in plain words and then
