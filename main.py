@@ -386,17 +386,84 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
         if brain_face is None:
             picker.join(timeout=getattr(config, "FACE_AI_WAIT_S", 1.5))
         mood = chosen[0]
-        if mood in ("success", "confused"):
-            face.set(mood)                     # pipeline band
-        elif mood:
-            face.feel(mood)                    # emotion band: outlives rest()
-        else:
-            face.set("success")                # no choice in time: as before
+        # No choice in time: "success", as before.
+        _show_face(face, mood or "success")
         if mood:
             turn.note(f"face from the reply object: {mood}" if brain_face
                       else f"face chosen by the AI: {mood}")
     turn.done()
     return reply
+
+
+def _show_face(face: "Face", mood: str) -> None:
+    """The face a turn ends on, into the band it belongs to."""
+    if mood in ("success", "confused"):
+        face.set(mood)                         # pipeline band
+    else:
+        face.feel(mood)                        # emotion band: outlives rest()
+
+
+async def _scene_turn(brains: "_BrainLoader", voice: "Voice", face: "Face",
+                      source, trigger: str) -> None:
+    """Something new came into view: one short remark, or nothing.
+
+    File 08 step 7 -- the gates live in scene_bridge.py; by the time a trigger
+    gets here it has passed them all. Run from the wake loop like a voice turn,
+    so it can never overlap one, and with the detector paused while she speaks
+    so her own voice cannot wake her. Never raises.
+    """
+    import offline
+    import scene_bridge
+
+    seen = scene_bridge.parse_trigger(trigger)
+    if seen is None:
+        return
+    turn = stages.Turn(f"scene: {seen['label']}")
+    # Not while the brain is still loading (get() would hold the wake loop) and
+    # not offline: a remark is never worth waiting for.
+    if brains._thread.is_alive() or not offline.online():
+        turn.done("SKIPPED (no brain yet, or offline)")
+        return
+    brain_obj = await brains.get()
+    if brain_obj is None:
+        turn.done("SKIPPED (no brain)")
+        return
+
+    source.pause()
+    try:
+        face.feel("curious")                   # she has noticed, before a word
+        reply = await turn.run(
+            "THINKING",
+            brain_obj.remark(
+                scene_bridge.event_text(seen),
+                seen=scene_bridge.frame_blocks(),
+                on_sentence=lambda s: (None if _ignored(s) else voice.say(s))),
+            timeout=config.STAGE_BRAIN_TIMEOUT_S)
+        cost = getattr(brain_obj, "last_cost_usd", 0.0)
+        if not reply:
+            turn.done("ABANDONED (could not ask the brain)")
+            return
+        if _ignored(reply):
+            turn.done(f"QUIET (not worth a remark, ${cost:.4f})")
+            return
+        turn.note(f"remark by {getattr(brain_obj, 'last_model', '?')}, "
+                  f"${cost:.4f}")
+        turn.stage("SPEAKING", stages.quote(reply, 120))
+        voice.wait_until_quiet()
+        response = getattr(brain_obj, "last_response", None) or {}
+        mood = response.get("emotion") or "curious"
+        _show_face(face, mood)
+        turn.note(f"face from the reply object: {mood}")
+        if response.get("memory_note"):
+            _keep_note(response["memory_note"], turn)
+        turn.done()
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("scene remark failed: %s: %s", type(exc).__name__, exc)
+        turn.done(f"FAILED ({type(exc).__name__})")
+    finally:
+        face.rest()
+        source.resume()
+        turn.listening()
 
 
 def _keep_note(note: str, turn: "stages.Turn") -> None:
@@ -547,13 +614,24 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     # connection -- which friday-mcp refuses for ~29 s at boot, and which
     # crashed this process on that boot. Hearing "hey Friday" needs none of
     # them, so the mic and the detector start first and the rest loads behind.
-    stream = source = None
+    stream = source = scene_watch = None
     if typed is None:
         # ONE microphone stream, shared by the wake detector and the capture.
         # Opened here so both get the same one -- see stt.AudioStream for why
         # a second reader on this USB card is not an option.
         stream = stt.AudioStream().start()
         source = wake_word.make(stream=stream)
+        # SOMETHING NEW IN VIEW is one more wake source (file 08 step 7): it
+        # comes through this same loop, so a remark waits for Harsh's turn and
+        # never talks over it. Added FLAT into the AnyOf, not nested -- nesting
+        # would turn "openwakeword: 0.52" into "any: openwakeword: 0.52" in
+        # every turn log.
+        if getattr(config, "SCENE_BRIDGE", False):
+            import scene_bridge
+            scene_watch = scene_bridge.NewObjectWatch()
+            inner = (source.sources if isinstance(source, wake_word.AnyOf)
+                     else (source,))
+            source = wake_word.AnyOf(*inner, scene_watch)
         global WAKE
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
@@ -582,6 +660,11 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             face.rest()
 
             for trigger in source.listen():
+                if scene_watch is not None and trigger.startswith("scene: "):
+                    await _scene_turn(brains, voice, face, source, trigger)
+                    if once:
+                        break
+                    continue
                 turn = stages.Turn(trigger)
                 # Acknowledge instantly: the face and the beep both land
                 # before any model runs, so Harsh knows he was heard rather
@@ -689,6 +772,8 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                         face.set("confused")
                         turn.done("ABANDONED (empty transcript)")
                 finally:
+                    if scene_watch is not None and spoken.strip():
+                        scene_watch.heard_harsh()   # he is here; give him a moment
                     # RE-ARM, ALWAYS. Every path above lands here, including
                     # the timeouts and the crashes, because a turn that ends
                     # without handing the microphone back is exactly the bug

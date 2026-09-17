@@ -400,23 +400,33 @@ class Brain:
         return bool(_FAST_NEVER_RE.search(text))
 
     async def _try_fast(self, text: str,
-                        on_sentence: SentenceCallback | None) -> str | None:
+                        on_sentence: SentenceCallback | None,
+                        seen: list[dict[str, Any]] | None = None,
+                        event: bool = False) -> str | None:
         """Answer with the small model and no tools, or None to escalate.
 
         Returns None whenever there is ANY doubt -- the words suggest the
         robot, the history contains tool calls (which cannot be replayed to a
         request that defines no tools), the model said UNSURE, or the call
         failed at all. Every one of those falls through to the normal turn.
+
+        event=True is remark() -- something she noticed, not something said.
+        There is nothing to escalate to, so the word check is skipped, a history
+        holding tool calls is left off the request instead of closing the path,
+        and UNSURE means stay quiet. `seen` is image blocks put in front of it.
         """
-        if not getattr(config, "BRAIN_FAST_PATH", True):
+        if not event and not getattr(config, "BRAIN_FAST_PATH", True):
             return None
-        if self._might_need_the_robot(text):
+        if not event and self._might_need_the_robot(text):
             return None
         # A history holding tool_use blocks cannot go to a request with no
         # tools defined -- the API rejects it. Once she has used a tool this
         # conversation, the fast path is done until the history trims away.
+        history = self.messages
         if any(_mentions_tools(m) for m in self.messages):
-            return None
+            if not event:
+                return None
+            history = []
 
         model = getattr(config, "BRAIN_FAST_MODEL", config.MODEL_FAST)
         unsure = getattr(config, "BRAIN_FAST_UNSURE", "UNSURE")
@@ -478,7 +488,11 @@ class Brain:
             # the object as well, 2 times in 4.
             asked = [{"type": "text", "text": asked},
                      {"type": "text", "text": reply_contract.REMINDER}]
-        pending = self.messages + [{"role": "user", "content": asked}]
+        if seen:
+            if isinstance(asked, str):
+                asked = [{"type": "text", "text": asked}]
+            asked = list(seen) + asked
+        pending = history + [{"role": "user", "content": asked}]
         try:
             message = await self.client.messages.create(
                 model=model,
@@ -502,8 +516,13 @@ class Brain:
         _record_spend(model, message.usage, cost)
 
         if not reply or reply.strip().strip(".!").upper() == unsure.upper():
-            log.info("fast path said %s — escalating to %s", unsure, self.model)
-            return None
+            if event:
+                reply = getattr(config, "BRAIN_IGNORE", "IGNORE")
+                parsed = reply_contract.Reply(reply=reply)
+            else:
+                log.info("fast path said %s — escalating to %s", unsure,
+                         self.model)
+                return None
 
         self.last_model = model
         self.last_fast = True
@@ -530,6 +549,35 @@ class Brain:
             if on_sentence:
                 on_sentence(sentence)
         return reply
+
+    async def remark(self, event: str, seen: list[dict[str, Any]] | None = None,
+                     on_sentence: SentenceCallback | None = None) -> str:
+        """React to something she noticed rather than something he said.
+
+        File 08 step 7 (scene_bridge.py). One fast-model call, no tools: the
+        reply object, spoken as it would be for a question. Returns the words,
+        or IGNORE when it is not worth saying (main.py then says nothing), or
+        "" when it could not be asked at all -- no budget, a failed call.
+        Never raises: an unprompted remark is never worth a crash.
+
+        The event text goes in the history so "what was that?" can be
+        answered; the picture does not (see _try_fast -- the fast path sends
+        history as stored, and a stored photo would be resent forever).
+        """
+        self.last_cost_usd = 0.0
+        self.last_tools_used = ["scene"] if seen else []
+        self.last_model = self.model
+        self.last_fast = False
+        self.last_response = None
+        if spent_today() >= config.DAILY_SPEND_CAP_USD:
+            return ""
+        try:
+            return await self._try_fast(event, on_sentence, seen=seen,
+                                        event=True) or ""
+        except Exception as exc:                # noqa: BLE001
+            log.warning("could not remark on what she saw: %s: %s",
+                        type(exc).__name__, exc)
+            return ""
 
     async def ask(self, text: str,
                   on_sentence: SentenceCallback | None = None,

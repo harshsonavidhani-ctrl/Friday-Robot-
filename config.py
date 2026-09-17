@@ -237,6 +237,22 @@ SCENE_JSON = ROOT / "state" / "scene.json"
 SCENE_IMAGE = ROOT / "state" / "scene_latest.jpg"
 SCENE_MAX_AGE_S = 30.0       # situation.py names objects no older than this
 SCENE_FRESH_IMAGE_S = 12.0   # the brain answers from the cached frame within this
+
+# --- She remarks on something new in view (file 08 step 7) ---------------
+# scene_bridge.py reads scene.json (above) and, rarely, hands a NEW object to
+# the brain for one short remark. Every gate must pass or no call is made; the
+# worst case is one fast Haiku call (with the frame, ~$0.003) per cooldown.
+# The numbers are behaviour knobs chosen, not measured -- change them freely.
+SCENE_BRIDGE = True
+SCENE_BRIDGE_POLL_S = 2.0            # how often scene.json is re-read (a file stat)
+SCENE_BRIDGE_MIN_SCORE = 0.6         # SCENE_MIN_SCORE already drops below this
+SCENE_BRIDGE_CONFIRM_TICKS = 2       # ticks in a row before a label is real
+SCENE_BRIDGE_FORGET_S = 1800.0       # unseen this long -> new again
+SCENE_BRIDGE_RESEED_GAP_S = 120.0    # not watching this long -> view is baseline
+SCENE_BRIDGE_COOLDOWN_S = 180.0      # between remarks
+SCENE_BRIDGE_QUIET_AFTER_TURN_S = 20.0   # after Harsh last spoke to her
+SCENE_BRIDGE_AUDIENCE_S = 900.0      # he spoke, or a person was seen, this recently
+SCENE_BRIDGE_IGNORE = ("person",)    # somebody, not something
 BRAIN_EYES_CAMERA = "up"     # the room, not the floor: 2.0 s against 3.3 s for
                              # "both", which returns the same single image
 BRAIN_EYES_WORDS = (
