@@ -72,6 +72,9 @@ ARGS=(--motor "$MODE_MOTOR"
       --i-am-watching
       --duration "$MODE_DURATION"
       --navigator-speed-authority "$MODE_NAV_AUTHORITY")
+# Her body as the LiDAR sees it TODAY; see confident_explore.env for why the
+# restored 21:18 code cannot use its own default.
+[ -n "${MODE_LIDAR_SELF_MASK:-}" ] && ARGS+=(--lidar-self-mask "$MODE_LIDAR_SELF_MASK")
 [ "${MODE_VOICE:-0}" = "1" ] && ARGS+=(--voice)
 # Which services go quiet for the run. This was face + brain + dashboard (the
 # 21:18 run); it is the face alone since 2026-09-08, so the dashboard's stop
