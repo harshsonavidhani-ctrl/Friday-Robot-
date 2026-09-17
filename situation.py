@@ -179,16 +179,27 @@ def _scene() -> str | None:
             f"can be wrong; look before describing details)")
 
 
-def block() -> str:
+def block(eyes: bool = True) -> str:
     """One short paragraph of what Friday already knows, or "".
 
     Never raises. Kept SHORT on purpose: this goes on every single turn, so a
     long block is paid for on every single turn, and a model handed six lines
     of context it did not need learns to skim the section.
+
+    ⚠ eyes=False LEAVES OUT WHAT THE CAMERA SAW, and the fast path passes it.
+    MEASURED LIVE 2026-09-17 23:09: the detector had named a "cat" (it was a
+    suitcase), the line went to the fast path -- which has no camera and no
+    tools -- and she said out loud "Let me look at what's there right now.
+    There's a cat ahead, about a metre away, looks calm. I'm stopping here so I
+    don't..." She had not looked, there was no cat, and the distance and the
+    stopping were invented. A brain that cannot look must not be handed
+    something that reads like what it can see.
     """
     try:
         lines = [f"It is {_clock()}."]
-        for fact in (_mood(), _exploring(), _around_me(), _scene(), _weather()):
+        parts = (_mood(), _exploring(), _around_me(),
+                 _scene() if eyes else None, _weather())
+        for fact in parts:
             if fact:
                 lines.append(fact[0].upper() + fact[1:] + ".")
     except Exception as exc:                    # noqa: BLE001

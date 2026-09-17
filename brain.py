@@ -358,7 +358,7 @@ class Brain:
         return f"{block}\n\n---\n\n{text}"
 
     @staticmethod
-    def _with_situation(text: str) -> str:
+    def _with_situation(text: str, eyes: bool = True) -> str:
         """The question, with what she can already see about herself attached.
 
         Same place and the same reason as the memory block: after the cached
@@ -372,7 +372,7 @@ class Brain:
             return text
         try:
             import situation
-            block = situation.block()
+            block = situation.block(eyes=eyes)
         except Exception as exc:                # noqa: BLE001
             log.warning("situation lookup failed, answering without it: %s", exc)
             return text
@@ -435,7 +435,12 @@ class Brain:
             f"You are answering on the FAST PATH: no tools, no sensors and "
             f"no web. Answer only from general knowledge, this conversation, "
             f"and the memory and 'right now' notes attached to the question. "
-            f"If the "
+            f"⚠ YOU CANNOT SEE AND YOU HAVE NOT LOOKED. Never say you are "
+            f"looking or have looked, never describe what is in front of you or "
+            f"around you, never give a distance, and never narrate an action "
+            f"you are taking — you are not taking any. Anything needing eyes, a "
+            f"sensor or the motors is {unsure}, however much the notes seem to "
+            f"hint at an answer. If the "
             f"answer needs any of the things you have not got, or needs to "
             f"know anything else about this robot, this room or this house, "
             f"reply with exactly {unsure} and nothing else — a slower brain "
@@ -481,7 +486,10 @@ class Brain:
         # exploring" are all answerable from it with no tool and no sensor, so
         # they come back in about a second instead of going to the big model
         # and, before situation.py existed, a tool round trip on top.
-        asked: Any = self._with_situation(self._with_memory(text))
+        # eyes=False: NOT what the camera saw. This path has no camera, and
+        # handed that line it described a "cat" it had never looked at --
+        # see situation.block.
+        asked: Any = self._with_situation(self._with_memory(text), eyes=False)
         if getattr(config, "BRAIN_STRUCTURED_REPLY", True):
             # The same wire-only reminder as the full turn (see _outgoing):
             # without it the fast path wrote the answer in plain words and then
