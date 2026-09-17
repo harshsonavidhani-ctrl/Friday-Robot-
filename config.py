@@ -39,6 +39,19 @@ MODEL_FAST = "claude-haiku-4-5"            # reflexes, simple classification
 # Set this back to MODEL_MAIN to put Sonnet behind the full turn again.
 BRAIN_MODEL = MODEL_FAST
 SYSTEM_PROMPT_FILE = ROOT / "personality.md"
+# File 08 step 1: every turn ends with {"reply", "emotion", "memory_note"} -- see
+# reply_contract.py. The reply is still spoken as it streams. emotion replaces
+# main._pick_face's second Haiku call whenever it is valid; memory_note is saved
+# with memory.remember(source=BRAIN_NOTE_SOURCE). False = plain spoken answers
+# again, exactly as before (the parser passes plain text straight through).
+BRAIN_STRUCTURED_REPLY = True
+BRAIN_NOTE_SOURCE = "brain-note"
+# Plain characters (spaces not counted) spoken since the last tool call after
+# which a reply object's "reply" is treated as the same answer AGAIN and not
+# spoken. Live on Haiku it wrote the gold price in plain words, then the object
+# with the gold price. "Here's what I found." is 17 -- under it, so a lead-in
+# never swallows the real answer. See reply_contract.ReplyStream.
+BRAIN_REPLY_ECHO_CHARS = 40
 MAX_REPLY_SENTENCES = 3
 ENABLE_WEB_SEARCH = True
 ENABLE_PROMPT_CACHING = True

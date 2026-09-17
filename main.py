@@ -39,6 +39,7 @@ import threading
 import time
 
 import config
+import reply_contract
 import stages
 
 log = logging.getLogger("friday")
@@ -359,31 +360,69 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     turn.note(f"answered by {getattr(brain_obj, 'last_model', '?')}"
               f"{' (fast path)' if getattr(brain_obj, 'last_fast', False) else ''}"
               f", ${getattr(brain_obj, 'last_cost_usd', 0.0):.4f}")
+    # THE REPLY OBJECT (file 08, step 1): the face and anything worth keeping
+    # came back in the same response as the words. See reply_contract.py.
+    response = getattr(brain_obj, "last_response", None) or {}
+    brain_face = response.get("emotion")
+    if brain_face in reply_contract.IN_PROGRESS:
+        brain_face = None                      # the voice loop owns those
+    if response.get("memory_note"):
+        _keep_note(response["memory_note"], turn)
+
     # THE FACE IS CHOSEN BY THE AI, on a thread, while she speaks. Harsh: "face
     # also ai driven". A thread, not a task: run()'s wake loop is a blocking
     # generator, so an asyncio task would starve (see brain.warm_in_background).
-    chosen: list = [None]
+    # Only when the reply object did not already carry a face -- then it is a
+    # second Haiku call that is not needed.
+    chosen: list = [brain_face]
     picker = threading.Thread(
         target=lambda: chosen.__setitem__(0, _pick_face(text, reply)),
         name="face-pick", daemon=True)
-    if reply.strip():
+    if reply.strip() and brain_face is None:
         picker.start()
 
     turn.stage("SPEAKING", stages.quote(reply, 120))
     voice.wait_until_quiet()
     if reply.strip():
-        picker.join(timeout=getattr(config, "FACE_AI_WAIT_S", 1.5))
+        if brain_face is None:
+            picker.join(timeout=getattr(config, "FACE_AI_WAIT_S", 1.5))
         mood = chosen[0]
-        if mood in ("success", "confused"):
+        if mood in ("success", "confused", "sleepy", "sleeping"):
             face.set(mood)                     # pipeline band
         elif mood:
             face.feel(mood)                    # emotion band: outlives rest()
         else:
             face.set("success")                # no choice in time: as before
         if mood:
-            turn.note(f"face chosen by the AI: {mood}")
+            turn.note(f"face from the reply object: {mood}" if brain_face
+                      else f"face chosen by the AI: {mood}")
     turn.done()
     return reply
+
+
+def _keep_note(note: str, turn: "stages.Turn") -> None:
+    """Save the reply object's memory_note, on a thread. Never raises.
+
+    A thread because memory.remember checks for a near-duplicate against the
+    recall index, which rebuilds after every write -- not something to hold
+    the end of a turn for. Near-duplicates UPDATE the existing fact, so a note
+    that repeats something she already knows (or that she also passed to the
+    remember tool) does not become a second copy.
+    """
+    turn.note(f"memory note: {note[:80]!r}")
+
+    def save() -> None:
+        try:
+            import memory
+            stored = memory.remember(
+                note, source=getattr(config, "BRAIN_NOTE_SOURCE", "brain-note"))
+            log.info("memory note %s: %r",
+                     "updated" if stored["updated"] else "kept", stored["text"])
+        except Exception as exc:                # noqa: BLE001
+            log.warning("could not keep the memory note (%s: %s): %r",
+                        type(exc).__name__, exc, note[:80])
+
+    threading.Thread(target=save, name="memory-note", daemon=True).start()
 
 
 def _warm_memory() -> None:

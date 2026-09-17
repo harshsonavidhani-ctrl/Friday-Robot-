@@ -24,6 +24,12 @@ SPEAKING EARLY. The reply is streamed and sentences are handed to the caller
 the moment they complete, so Piper can start on sentence one instead of waiting
 for the whole answer. Synthesis is only ~1.1x realtime on this Pi, so that
 matters.
+
+THE REPLY OBJECT (file 08, step 1). Every turn ends with {"reply", "emotion",
+"memory_note"} -- see reply_contract.py. ask() still returns the spoken words,
+so every caller is unchanged; the whole object is on `brain.last_response`.
+The "reply" string is spoken AS IT STREAMS, character by character out of the
+unfinished JSON, so the object costs no time to the first word.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from typing import Any, Awaitable, Callable
 import anthropic
 
 import config
+import reply_contract
 
 log = logging.getLogger("friday.brain")
 
@@ -203,7 +210,15 @@ class Brain:
         self.model = model or getattr(config, "BRAIN_MODEL", config.MODEL_MAIN)
         self.client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
         self.system = system_prompt or self._load_system_prompt()
+        # THE CONTRACT GOES AT THE END OF THE SYSTEM PROMPT, which is cached:
+        # it is the same bytes every turn, so it costs nothing after the first.
+        if getattr(config, "BRAIN_STRUCTURED_REPLY", True):
+            self.system = f"{self.system}\n\n{reply_contract.INSTRUCTIONS}"
         self.messages: list[dict[str, Any]] = []
+        # The last turn's reply object: {"reply", "emotion", "memory_note"}.
+        # emotion and memory_note are None when the model did not give a valid
+        # one -- including when it answered in plain words instead.
+        self.last_response: dict[str, Any] | None = None
         self.last_cost_usd = 0.0
         self.last_tools_used: list[str] = []
         self.last_model = self.model
@@ -408,7 +423,7 @@ class Brain:
         system = (
             f"{self.system}\n\n"
             f"You are answering on the FAST PATH: no tools, no sensors, no "
-            f"memory, no web, and NO CONTROL OF YOUR FACE. Answer only what "
+            f"memory lookup and no web. Answer only what "
             f"you know from general knowledge, from this conversation, and "
             f"from the 'right now' notes attached to the question. If the "
             f"answer needs any of the things you have not got, or needs to "
@@ -426,12 +441,18 @@ class Brain:
             f"makes no sense as something said to a robot — reply with exactly "
             f"{getattr(config, 'BRAIN_IGNORE', 'IGNORE')} and nothing else. "
             f"You stay silent. Do not ask them to repeat it.\n\n"
-            f"⚠ REPLY WITH THE SPOKEN WORDS AND NOTHING ELSE. Every character "
-            f"you return is sent straight to a speech synthesiser and said out "
-            f"loud. No markdown, no backticks, no emotion names, no stage "
-            f"directions — the face is handled for you on this path, and "
-            f"writing `speaking` or `face: neutral` makes the robot read those "
-            f"words aloud."
+            + (f"{unsure} and {getattr(config, 'BRAIN_IGNORE', 'IGNORE')} "
+               f"go in the reply object's `reply` field like any other answer. "
+               f"⚠ Every character of `reply` is said out loud: no markdown, no "
+               f"emotion names, no stage directions in it — the face goes in "
+               f"`emotion`, nowhere else."
+               if getattr(config, "BRAIN_STRUCTURED_REPLY", True) else
+               f"⚠ REPLY WITH THE SPOKEN WORDS AND NOTHING ELSE. Every character "
+               f"you return is sent straight to a speech synthesiser and said "
+               f"out loud. No markdown, no backticks, no emotion names, no stage "
+               f"directions — the face is handled for you on this path, and "
+               f"writing `speaking` or `face: neutral` makes the robot read "
+               f"those words aloud.")
         )
         blocks: list[dict[str, Any]] = [{"type": "text", "text": system}]
         if config.ENABLE_PROMPT_CACHING:
@@ -459,8 +480,10 @@ class Brain:
                      type(exc).__name__, exc, self.model)
             return None
 
-        reply = _spoken_only("".join(b.text for b in message.content
-                                     if getattr(b, "type", None) == "text"))
+        raw = "".join(b.text for b in message.content
+                      if getattr(b, "type", None) == "text")
+        parsed = reply_contract.parse(raw)
+        reply = _spoken_only(parsed.reply)
         cost = _cost_usd(model, message.usage)
         self.last_cost_usd += cost
         _record_spend(model, message.usage, cost)
@@ -471,6 +494,7 @@ class Brain:
 
         self.last_model = model
         self.last_fast = True
+        self.last_response = {**parsed.as_dict(), "reply": reply}
         if reply.strip(" .!\"'`").upper() == getattr(
                 config, "BRAIN_IGNORE", "IGNORE").upper():
             # NOT SAID TO HER. Kept out of the history: a video's line and her
@@ -478,13 +502,16 @@ class Brain:
             log.info("fast path: not addressed to her — staying silent "
                      "(%s, $%.5f): %r", model, cost, text[:60])
             return reply
-        log.info("fast path answered on %s ($%.5f)", model, cost)
+        log.info("fast path answered on %s ($%.5f)%s", model, cost,
+                 _contract_note(parsed))
         # The CLEAN question goes into the history, not the one with the
         # situation block on it. The block is true for one moment; kept in
         # history it becomes ten turns of contradictory clocks, all claiming
         # the present tense. Every request gets a freshly built one anyway.
         self._remember({"role": "user", "content": text})
-        self._remember({"role": "assistant", "content": reply})
+        # The RAW object goes in the history, not just its words: she reads her
+        # own earlier turns, and a history of plain answers teaches plain ones.
+        self._remember({"role": "assistant", "content": raw.strip() or reply})
         self._trim_history()
         for sentence in _sentences(reply):
             if on_sentence:
@@ -511,6 +538,7 @@ class Brain:
         self.last_tools_used = []
         self.last_model = self.model
         self.last_fast = False
+        self.last_response = None
 
         # THE FAST PATH FIRST, and only when it is plainly safe. Measured on
         # this Pi: 0.75 s to the first token instead of 2.61 s, because most of
@@ -659,6 +687,20 @@ class Brain:
         index, enriched = getattr(self, "_enrich", (None, None))
         if index is not None and 0 <= index < len(outgoing):
             outgoing[index] = {**outgoing[index], "content": enriched}
+
+        # THE REPLY-OBJECT REMINDER, on the last user message and on the wire
+        # only -- the question or the tool results she is about to answer.
+        # Stored, it would pile up once per round. See reply_contract.REMINDER.
+        if (getattr(config, "BRAIN_STRUCTURED_REPLY", True) and outgoing
+                and outgoing[-1].get("role") == "user"):
+            last = outgoing[-1]
+            content = last.get("content")
+            reminder = {"type": "text", "text": reply_contract.REMINDER}
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}, reminder]
+            elif isinstance(content, list):
+                content = list(content) + [reminder]
+            outgoing[-1] = {**last, "content": content}
         return outgoing
 
     async def _run(self, text: str, session: Any,
@@ -703,9 +745,10 @@ class Brain:
         # spent something before escalating to this -- zeroing it there would
         # hide that from the turn's cost and from the dashboard.
         final_text = ""
+        parsed = reply_contract.Reply(reply="")
 
         for _ in range(config.MAX_TOOL_ROUNDS):
-            reply, spoken = await self._stream_once(tools, on_sentence)
+            reply, spoken, parsed = await self._stream_once(tools, on_sentence)
 
             self._remember({"role": "assistant",
                             "content": reply.content})
@@ -806,13 +849,21 @@ class Brain:
                           or "I got stuck going back and forth on that one.")
 
         self._trim_history()
+        self.last_response = {**parsed.as_dict(), "reply": final_text.strip()}
+        log.info("reply object:%s", _contract_note(parsed) or " complete")
         return final_text.strip()
 
     async def _stream_once(self, tools: list[dict[str, Any]],
                            on_sentence: SentenceCallback | None):
-        """One streamed request. Returns (final_message, text_spoken)."""
+        """One streamed request. Returns (final_message, text_spoken, Reply).
+
+        Text goes through reply_contract.ReplyStream on its way to Piper, so a
+        reply object is spoken as its "reply" string arrives and the JSON
+        around it never is. Plain text passes through untouched.
+        """
         pending = ""
         spoken: list[str] = []
+        contract = reply_contract.ReplyStream()
 
         def hand_over(sentence: str) -> None:
             """One finished sentence, on its way to Piper.
@@ -859,12 +910,18 @@ class Brain:
 
         async with self.client.messages.stream(**kwargs) as stream:
             async for event in stream:
-                if (event.type == "content_block_delta"
+                if event.type == "content_block_start":
+                    if getattr(event.content_block, "type", "") == "text":
+                        contract.new_block()
+                    else:
+                        contract.tool_boundary()
+                elif (event.type == "content_block_delta"
                         and getattr(event.delta, "type", "") == "text_delta"):
-                    pending += event.delta.text
+                    pending += contract.feed(event.delta.text)
                     flush()
             message = await stream.get_final_message()
 
+        pending += contract.flush_held()
         flush(force=True)
 
         usage = message.usage
@@ -874,7 +931,7 @@ class Brain:
         log.info("turn: %s in / %s out, cache read %s, $%.4f",
                  usage.input_tokens, usage.output_tokens,
                  getattr(usage, "cache_read_input_tokens", 0), cost)
-        return message, " ".join(spoken)
+        return message, " ".join(spoken), contract.finish()
 
     def _trim_history(self) -> None:
         """Keep the conversation short.
@@ -914,6 +971,14 @@ _FACE_DIRECTIVE = re.compile(
     re.IGNORECASE)
 
 
+# Citation markup written INTO the words. A web search answer normally carries
+# its citations as structured blocks, but inside the reply object's JSON string
+# there is nowhere for them to go, and Haiku typed them out instead -- live,
+# 2026-09-17: '(cite index="1-1">Today's gold price ... </cite>'. Piper would
+# have read "cite index equals one dash one". Both brackets seen, so both kept.
+_CITE_TAG = re.compile(r"[<(]\s*/?\s*cite\b[^>)]*[>)]", re.IGNORECASE)
+
+
 def _spoken_only(text: str) -> str:
     """The part of a reply that should actually be said out loud.
 
@@ -930,10 +995,25 @@ def _spoken_only(text: str) -> str:
     """
     kept = [line for line in text.splitlines()
             if line.strip() and not _FACE_DIRECTIVE.match(line)]
-    cleaned = "\n".join(kept).replace("`", "").strip()
+    cleaned = _CITE_TAG.sub("", "\n".join(kept)).replace("`", "").strip()
     # If that removed everything, the reply WAS only stage directions. Say
     # nothing rather than say "neutral" out loud.
     return cleaned
+
+
+def _contract_note(parsed: "reply_contract.Reply") -> str:
+    """A log suffix saying what the reply object lacked, or "" if nothing.
+
+    The point is to see in friday.log how often Haiku keeps the contract --
+    a plain-words answer still works, it just carries no face and no note.
+    """
+    if not getattr(config, "BRAIN_STRUCTURED_REPLY", True):
+        return ""
+    if not parsed.structured:
+        return " — answered in PLAIN WORDS, not the reply object"
+    if parsed.emotion is None:
+        return " — reply object had no valid emotion"
+    return ""
 
 
 def _sentences(text: str) -> list[str]:
