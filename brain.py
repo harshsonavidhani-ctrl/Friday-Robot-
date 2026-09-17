@@ -464,7 +464,13 @@ class Brain:
         # exploring" are all answerable from it with no tool and no sensor, so
         # they come back in about a second instead of going to the big model
         # and, before situation.py existed, a tool round trip on top.
-        asked = self._with_situation(text)
+        asked: Any = self._with_situation(text)
+        if getattr(config, "BRAIN_STRUCTURED_REPLY", True):
+            # The same wire-only reminder as the full turn (see _outgoing):
+            # without it the fast path wrote the answer in plain words and then
+            # the object as well, 2 times in 4.
+            asked = [{"type": "text", "text": asked},
+                     {"type": "text", "text": reply_contract.REMINDER}]
         pending = self.messages + [{"role": "user", "content": asked}]
         try:
             message = await self.client.messages.create(

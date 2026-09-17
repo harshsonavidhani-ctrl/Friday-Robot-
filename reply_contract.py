@@ -36,11 +36,42 @@ from typing import Any
 import config
 from face_control import EMOTIONS
 
-# The voice loop sets these itself as a turn moves (main.py), so a turn cannot
-# END on one of them -- "speaking" after she has stopped speaking is a lie.
-# Valid names, so a turn that picks one is not malformed; the caller just
-# treats it as "no emotion chosen".
-IN_PROGRESS = ("listening", "thinking", "speaking")
+# File 08 step 2 -- THE EMOTION TABLE, in two halves.
+#
+# Owned by the hardware and the pipeline. The voice loop sets listening,
+# thinking and speaking as a turn moves; the face's own idle decay sets sleepy
+# and sleeping. The model must never output one: a reply object that does is
+# read as "no emotion chosen" (see _clean_emotion), and main.py falls back.
+PIPELINE_OWNED = ("listening", "speaking", "thinking", "sleepy", "sleeping")
+
+# Content-driven: the model picks exactly one per reply. Harsh's table,
+# verbatim in meaning. Order is the order he wrote it.
+EMOTION_TRIGGERS: dict[str, str] = {
+    "neutral": "default, no strong signal",
+    "happy": "compliment, good news, positive exchange",
+    "sad": "bad news, user upset, a task failed",
+    "angry": "user is rude/insulting, repeated failure frustration",
+    "surprised": "unexpected input or sudden fact",
+    "confused": "ambiguous command, unclear intent",
+    "dizzy": "internal error, a tool call failed",
+    "success": "task completed, goal achieved",
+    "excited": "fun plan, anticipation",
+    "wink": "joke, tease, sarcasm",
+    "love": "user expresses affection toward Friday",
+    "curious": "new/unknown object seen, new topic raised",
+    "proud": "user praises Friday's skill, or Friday completes something notable",
+    "bored": "idle small talk, repetitive mundane request",
+    "scared": "loud/startling event, critical low battery",
+}
+
+# The two halves must be exactly the face's 20, or a face exists that nobody
+# may choose (or a name is offered that the face cannot draw).
+assert set(EMOTION_TRIGGERS) | set(PIPELINE_OWNED) == set(EMOTIONS), \
+    "reply_contract's emotion table has drifted from face_control.EMOTIONS"
+assert not set(EMOTION_TRIGGERS) & set(PIPELINE_OWNED)
+
+_TABLE = "\n".join(f"  - `{name}` — {why}"
+                   for name, why in EMOTION_TRIGGERS.items())
 
 INSTRUCTIONS = f"""\
 ## How every turn ends — the reply object
@@ -52,12 +83,22 @@ JSON object and nothing else — no markdown fence, no words before or after it:
 
 - `reply` — the words you say out loud, and ONLY those. It is spoken by a speech
   synthesiser the moment you write it, so it comes FIRST, and every rule in
-  Voice applies to it. `IGNORE` and `UNSURE` go here when they apply.
-- `emotion` — the face you show once you have finished speaking, exactly one
-  of: {", ".join(n for n in EMOTIONS if n not in IN_PROGRESS)}.
-  `neutral` when nothing else fits; `success` for a task done or a fact given;
-  `confused` when you could not understand or could not do it. Never
-  `listening`, `thinking` or `speaking` — those are set for you.
+  Voice applies to it. `IGNORE` goes here when it applies.
+- `emotion` — the face you show once you have finished speaking. Exactly one
+  row of this table: the one whose trigger matches what Harsh said or what
+  happened this turn.
+{_TABLE}
+  **The face is where your reaction shows; your words stay professional.** So
+  an insult is `angry` even when you only say "Understood.", a fun plan is
+  `excited` even when you answer it plainly, a fact he offers that you did not
+  expect is `surprised`, and the same request again and again is `bored`.
+  `neutral` only when no row matches — a plain question answered plainly.
+  Never {", ".join(f"`{n}`" for n in PIPELINE_OWNED)}: the robot sets those
+  itself.
+  **Judge THIS turn alone.** An emotion does not carry over: after a happy or
+  sad moment, the next turn about something unrelated is `neutral` again (or
+  whatever that turn itself calls for). The emotions in your earlier replies
+  are not a mood to keep.
 - `memory_note` — one clear third-person sentence worth keeping after this
   conversation ("Harsh's sister is called Riya"), or `null`. Almost always
   `null`. Set it only when Harsh told you something that will still be true
@@ -103,11 +144,17 @@ class Reply:
                 "memory_note": self.memory_note}
 
 
+def _normal(text: str) -> str:
+    """Text compared for an echo: case, spacing and backticks ignored."""
+    return " ".join(text.replace("`", "").lower().split())
+
+
 def _clean_emotion(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     name = value.strip().lower()
-    return name if name in EMOTIONS else None
+    # A pipeline-owned name is not the model's to choose (file 08 step 2).
+    return name if name in EMOTION_TRIGGERS else None
 
 
 def _clean_note(value: Any) -> str | None:
@@ -145,11 +192,17 @@ class ReplyStream:
 
     ⚠ AND THEN THE ANSWER IS SAID TWICE. The plain sentences were already
     spoken by the time the object arrives, and its "reply" is the same answer
-    again (live: the gold price, twice). Words cannot be unsaid, so an object
-    that follows BRAIN_REPLY_ECHO_CHARS of plain text since the last tool call
-    is read for its emotion and memory_note but its reply is NOT spoken. A
-    short lead-in ("Here's what I found.") is under the threshold and the
-    answer in the object is still spoken.
+    again. Words cannot be unsaid, so two guards, both read only for the
+    object's reply -- its emotion and memory_note are always kept:
+      * an EXACT echo -- the fast path wrote "I'm sorry to hear that, Harsh."
+        and then the object with the same words (2 of 4 live). The reply is
+        held back while it still matches the plain text since the last tool,
+        released the moment it differs, and dropped if it ends still matching.
+      * a PARAPHRASED echo -- the gold price in plain words, then again in the
+        object with the numbers spelled out. Nothing matches character for
+        character, so an object after BRAIN_REPLY_ECHO_CHARS of plain text is
+        not spoken at all. A short lead-in ("Here's what I found.") is under
+        it, and the answer in the object is then still spoken.
     """
 
     def __init__(self) -> None:
@@ -157,6 +210,9 @@ class ReplyStream:
         self._held = ""                # whitespace/fence held while idle
         self._plain_since_tool = 0     # non-space plain chars since a tool
         self._mute = False             # this object's reply is an echo
+        self._since_tool: list[str] = []  # the plain text itself, since a tool
+        self._echo_of = ""             # normalised plain text it may repeat
+        self._holding: list[str] | None = None  # reply held while it matches
         self._gap = ""                  # a space owed after a tool call
         self._plain: list[str] = []
         self._objects: list[dict[str, Any]] = []
@@ -181,6 +237,7 @@ class ReplyStream:
         """A non-text block began (a tool call or a search result). Plain
         text before it was a lead-in, not the answer."""
         self._plain_since_tool = 0
+        self._since_tool = []
         if self._plain and not self._plain[-1][-1:].isspace():
             self._gap = " "            # "up." + "Today's" is one sentence
         self.new_block()
@@ -248,6 +305,7 @@ class ReplyStream:
     def _plain_char(self, text: str) -> str:
         text, self._gap = self._gap + text, ""
         self._plain.append(text)
+        self._since_tool.append(text)
         self._plain_since_tool += len("".join(text.split()))
         return text
 
@@ -267,6 +325,8 @@ class ReplyStream:
         self._reset_object()
         self._mute = (self._plain_since_tool
                       >= getattr(config, "BRAIN_REPLY_ECHO_CHARS", 40))
+        self._echo_of = _normal("".join(self._since_tool))
+        self._holding = [] if (self._echo_of and not self._mute) else None
         self._json_char("{")
         before = "".join(self._plain)
         return " " if before and not before[-1].isspace() else ""
@@ -324,6 +384,9 @@ class ReplyStream:
             self._escape = "\\"
             return ""
         if char == '"':
+            if self._speaking() and self._holding is not None:
+                # The whole reply matched what was already said: an echo.
+                self._holding = None
             self._in_string = False
             value = "".join(self._string)
             if self._string_is_key:
@@ -334,10 +397,24 @@ class ReplyStream:
 
     def _decoded(self, text: str) -> str:
         self._string.append(text)
-        if self._speaking() and not self._mute:
-            self._said.append(text)
-            return text
-        return ""
+        if not self._speaking() or self._mute:
+            return ""
+        if self._holding is not None:
+            self._holding.append(text)
+            held = "".join(self._holding)
+            if self._echo_of.startswith(_normal(held)):
+                return ""                      # still the same words
+            self._holding = None               # it differs: say it...
+            text = held
+            if _normal(held).startswith(self._echo_of):
+                # ...but only what comes AFTER the words already said:
+                # "Tokyo." then {"reply": "Tokyo. It is the capital."}.
+                for cut in range(len(held) + 1):
+                    if _normal(held[:cut]) == self._echo_of:
+                        text = held[cut:]
+                        break
+        self._said.append(text)
+        return text
 
     def _close_object(self) -> None:
         raw = "".join(self._raw)

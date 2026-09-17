@@ -39,7 +39,6 @@ import threading
 import time
 
 import config
-import reply_contract
 import stages
 
 log = logging.getLogger("friday")
@@ -363,9 +362,9 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     # THE REPLY OBJECT (file 08, step 1): the face and anything worth keeping
     # came back in the same response as the words. See reply_contract.py.
     response = getattr(brain_obj, "last_response", None) or {}
+    # Already only a content-driven name, or None: reply_contract refuses the
+    # pipeline-owned five (listening, speaking, thinking, sleepy, sleeping).
     brain_face = response.get("emotion")
-    if brain_face in reply_contract.IN_PROGRESS:
-        brain_face = None                      # the voice loop owns those
     if response.get("memory_note"):
         _keep_note(response["memory_note"], turn)
 
@@ -387,7 +386,7 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
         if brain_face is None:
             picker.join(timeout=getattr(config, "FACE_AI_WAIT_S", 1.5))
         mood = chosen[0]
-        if mood in ("success", "confused", "sleepy", "sleeping"):
+        if mood in ("success", "confused"):
             face.set(mood)                     # pipeline band
         elif mood:
             face.feel(mood)                    # emotion band: outlives rest()

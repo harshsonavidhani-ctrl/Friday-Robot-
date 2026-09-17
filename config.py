@@ -48,7 +48,8 @@ BRAIN_STRUCTURED_REPLY = True
 BRAIN_NOTE_SOURCE = "brain-note"
 # Plain characters (spaces not counted) spoken since the last tool call after
 # which a reply object's "reply" is treated as the same answer AGAIN and not
-# spoken. Live on Haiku it wrote the gold price in plain words, then the object
+# spoken -- the guard for a PARAPHRASED echo; an exact one is caught at any
+# length. Live on Haiku it wrote the gold price in plain words, then the object
 # with the gold price. "Here's what I found." is 17 -- under it, so a lead-in
 # never swallows the real answer. See reply_contract.ReplyStream.
 BRAIN_REPLY_ECHO_CHARS = 40
