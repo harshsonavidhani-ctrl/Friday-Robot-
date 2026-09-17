@@ -179,6 +179,25 @@ def _scene() -> str | None:
             f"can be wrong; look before describing details)")
 
 
+def _studied() -> str | None:
+    """Something she looked up while idle and has not mentioned yet.
+
+    File 08 step 8: this is how "I read something about X earlier" happens --
+    it is in front of her for exactly one turn (idle_study.mark_offered).
+    """
+    try:
+        import idle_study
+        note = idle_study.pending()
+    except Exception:                           # noqa: BLE001
+        return None
+    if not note:
+        return None
+    topic = f" about {note['topic']}" if note.get("topic") else ""
+    return (f"while you were idle {_said_age(note['age_s'])} you looked "
+            f"something up{topic} and learned: {note['fact']} — worth "
+            f"mentioning once if it fits, in your own words")
+
+
 def block(eyes: bool = True) -> str:
     """One short paragraph of what Friday already knows, or "".
 
@@ -198,7 +217,7 @@ def block(eyes: bool = True) -> str:
     try:
         lines = [f"It is {_clock()}."]
         parts = (_mood(), _exploring(), _around_me(),
-                 _scene() if eyes else None, _weather())
+                 _scene() if eyes else None, _weather(), _studied())
         for fact in parts:
             if fact:
                 lines.append(fact[0].upper() + fact[1:] + ".")

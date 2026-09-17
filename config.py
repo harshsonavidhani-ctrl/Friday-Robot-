@@ -253,6 +253,23 @@ SCENE_BRIDGE_COOLDOWN_S = 180.0      # between remarks
 SCENE_BRIDGE_QUIET_AFTER_TURN_S = 20.0   # after Harsh last spoke to her
 SCENE_BRIDGE_AUDIENCE_S = 900.0      # he spoke, or a person was seen, this recently
 SCENE_BRIDGE_IGNORE = ("person",)    # somebody, not something
+
+# --- She looks things up in the quiet (file 08 step 8) -------------------
+# idle_study.py, on its own thread with its own client -- never in the wake
+# loop, where a 3-15 s search would swallow a "hey Friday" (see the module).
+# Silent: it searches, saves ONE sentence through memory.remember(), and the
+# next turn may mention it (situation.py reads idle_study.pending()).
+IDLE_STUDY = True
+IDLE_STUDY_AFTER_S = 300.0           # quiet this long before she wonders
+IDLE_STUDY_MIN_INTERVAL_S = 1800.0   # ...and at most one look-up that often
+IDLE_STUDY_MAX_PER_DAY = 8           # measured ~$0.02 each when it searches
+IDLE_STUDY_POLL_S = 20.0
+IDLE_STUDY_MAX_SEARCHES = 2          # searches within one look-up
+IDLE_STUDY_MAX_ROUNDS = 4            # requests, including pause_turn resumes
+IDLE_STUDY_MAX_TOKENS = 400
+IDLE_STUDY_FRESH_S = 7200.0          # after this she no longer brings it up
+IDLE_STUDY_SOURCE = "idle-study"     # source= in the facts table
+IDLE_STUDY_FILE = ROOT / "state" / "idle_study.json"
 BRAIN_EYES_CAMERA = "up"     # the room, not the floor: 2.0 s against 3.3 s for
                              # "both", which returns the same single image
 BRAIN_EYES_WORDS = (

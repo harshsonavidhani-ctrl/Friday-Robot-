@@ -395,6 +395,18 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     return reply
 
 
+def _idle_turn_ended(spoken: str = "") -> None:
+    """A turn ended: the quiet starts again, and a note she was given in front
+    of that turn has now been offered. Never raises."""
+    try:
+        import idle_study
+        idle_study.turn_ended()
+        if spoken.strip():
+            idle_study.mark_offered()
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("idle curiosity bookkeeping skipped: %s", exc)
+
+
 def _show_face(face: "Face", mood: str) -> None:
     """The face a turn ends on, into the band it belongs to."""
     if mood in ("success", "confused"):
@@ -489,6 +501,25 @@ def _keep_note(note: str, turn: "stages.Turn") -> None:
                         type(exc).__name__, exc, note[:80])
 
     threading.Thread(target=save, name="memory-note", daemon=True).start()
+
+
+def _idle_curiosity(brains: "_BrainLoader") -> None:
+    """Start the idle look-up thread, once the brain exists. Never raises."""
+    def go() -> None:
+        try:
+            import idle_study
+            brain_obj = None
+            while brain_obj is None:
+                brains._thread.join()
+                brain_obj = brains._brain
+                if brain_obj is None:
+                    return              # no key: nothing to be curious with
+            idle_study.start(lambda: list(brain_obj.messages))
+        except Exception as exc:                # noqa: BLE001
+            log.warning("could not start the idle curiosity (%s: %s)",
+                        type(exc).__name__, exc)
+
+    threading.Thread(target=go, name="idle-study-start", daemon=True).start()
 
 
 def _warm_memory() -> None:
@@ -657,6 +688,10 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             # the whole delay this ordering removes.
             session = None
             _explore_targeter(voice)
+            # SHE LOOKS THINGS UP IN THE QUIET (file 08 step 8). A thread with
+            # its own client, deliberately NOT part of this loop: a search
+            # takes 3-15 s and the loop must stay free to hear him.
+            _idle_curiosity(brains)
             face.rest()
 
             for trigger in source.listen():
@@ -774,6 +809,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 finally:
                     if scene_watch is not None and spoken.strip():
                         scene_watch.heard_harsh()   # he is here; give him a moment
+                    _idle_turn_ended(spoken)
                     # RE-ARM, ALWAYS. Every path above lands here, including
                     # the timeouts and the crashes, because a turn that ends
                     # without handing the microphone back is exactly the bug
