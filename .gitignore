@@ -95,6 +95,10 @@ state/.emotion.*
 # runtime state (written by app_control.py and the screen apps)
 state/app_command.json
 state/app_status.json
+state/speaking.json
+state/.speaking.*
+state/rate_limits.json
+state/.ratelimit.*
 state/schedule.json
 state/ring.wav
 # The last weather reading, cached so wttr.in is not asked twice a minute.
