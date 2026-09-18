@@ -78,6 +78,9 @@ IDLE = 10
 # Which names belong to which band, so a caller cannot smuggle "scared" in
 # through emotion() and get safety priority for it.
 SAFETY_FACES = {"scared", "dizzy"}
+# Asking for either of these is asking to be left alone; see _dormant.
+SLEEPING = "sleeping"
+DORMANT_FACES = {SLEEPING, "sleepy"}
 PIPELINE_FACES = {"listening", "thinking", "speaking", "success", "confused",
                   "sleepy", "sleeping"}
 EMOTION_FACES = {"happy", "love", "proud", "excited", "curious", "surprised",
@@ -111,6 +114,14 @@ class FaceDirector:
         self._until = 0.0            # when it expires (0 = holds until replaced)
         self._last_activity = time.monotonic()
         self._idle_stage = 0
+        # ASLEEP IS A STATE, NOT A MOMENT. Once "sleeping" is up -- because she
+        # was told to sleep, or because the drift got there on its own -- it
+        # stays up until something real happens. Harsh, 2026-09-19: "when
+        # sleeping face is triggered it will remain sleeping face until wake
+        # word spoken". Without this, the turn that set it ends in rest(),
+        # which reset the idle clock and put neutral back, and 45 s later the
+        # drift showed BORED at a robot that was supposed to be asleep.
+        self._dormant = False
         self._pending: tuple[str, int, float] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -169,8 +180,17 @@ class FaceDirector:
         self._request(name, EMOTION, config.FACE_EMOTION_HOLD_S)
 
     def rest(self) -> None:
-        """The activity is over. Let the face settle back."""
+        """The activity is over. Let the face settle back.
+
+        Except when she is asleep: resting a dormant face re-asserts sleeping
+        rather than neutral. Every turn ends here, including the turn that
+        just put her to sleep.
+        """
         with self._lock:
+            if self._dormant:
+                if self._priority <= PIPELINE:
+                    self._apply(SLEEPING, IDLE, hold=0.0)
+                return
             self._last_activity = time.monotonic()
             self._idle_stage = 0
             if self._priority <= PIPELINE:
@@ -185,6 +205,12 @@ class FaceDirector:
         with self._lock:
             self._last_activity = now
             self._idle_stage = 0
+            # SHE IS AWAKE AGAIN. The wake word arrives here as the "listening"
+            # face, which is the moment Harsh asked for: anything she is
+            # actually doing, or feeling, ends the sleep. Asking for sleeping
+            # or sleepy starts it instead.
+            if priority >= PIPELINE:
+                self._dormant = name in DORMANT_FACES
 
             # Safety is never queued, never debounced, never outranked.
             if priority >= SAFETY:
@@ -291,8 +317,14 @@ class FaceDirector:
         except Exception as exc:                # noqa: BLE001
             log.debug("could not read the face back: %s", exc)
             return False
-        self._last_activity = now
-        self._idle_stage = 0
+        # NOT WHILE SHE IS ASLEEP. Adopting the name keeps _current honest,
+        # but restarting the idle clock here is what put bored on a sleeping
+        # robot: the drift would see a fresh clock, disagree with stage 3, and
+        # write neutral over her. Whatever was written stays on screen; the
+        # drift simply stops arguing with it.
+        if not self._dormant:
+            self._last_activity = now
+            self._idle_stage = 0
         if name == self._current:
             return False
         log.debug("face adopted %s -> %s (written elsewhere)",
@@ -331,6 +363,12 @@ class FaceDirector:
             # Nothing at all for a while: drift down through the idle stages.
             if self._priority > IDLE:
                 return
+            # Already asleep: the drift has nowhere left to go. Without this
+            # the clock keeps running and any nudge -- a face written by the
+            # dashboard, a restored expression -- restarts it at neutral and
+            # walks her back up through bored.
+            if self._dormant:
+                return
             quiet = now - self._last_activity
             stage = 0
             if quiet >= config.FACE_SLEEPING_AFTER_S:
@@ -341,8 +379,12 @@ class FaceDirector:
                 stage = 1
             if stage != self._idle_stage:
                 self._idle_stage = stage
-                self._apply(("neutral", "bored", "sleepy", "sleeping")[stage],
+                self._apply(("neutral", "bored", "sleepy", SLEEPING)[stage],
                             IDLE, hold=0.0)
+                # Drifting all the way down counts as falling asleep, and she
+                # stays there until something happens.
+                if stage == 3:
+                    self._dormant = True
 
     # -- introspection --
     def state(self) -> dict:

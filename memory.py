@@ -255,12 +255,24 @@ def remember(text: str, kind: str = "fact", source: str | None = None) -> dict:
         existing = _near_duplicate(text)
         now = time.time()
         if existing is not None:
-            db().execute("UPDATE facts SET text=?, source=?, created_at=? "
-                         "WHERE id=?", (text, source, now, existing))
+            # KEEP THE CATEGORY. This UPDATE used to leave `kind` alone, so a
+            # correction saved as a learned_preference that happened to
+            # near-duplicate an ordinary fact stayed kind='fact' and dropped
+            # straight out of the query it was stored for (file 09 step 1).
+            #
+            # But a DEFAULT kind never overwrites an explicit one: an ordinary
+            # brain-note that lands near a preference Harsh corrected must not
+            # quietly declassify it. Only a named kind can reclassify a row.
+            was = db().execute("SELECT kind FROM facts WHERE id=?",
+                               (existing,)).fetchone()
+            keep = kind if kind != "fact" else (was["kind"] if was else kind)
+            db().execute("UPDATE facts SET text=?, kind=?, source=?, "
+                         "created_at=? WHERE id=?",
+                         (text, keep, source, now, existing))
             db().commit()
             _index.mark_dirty()
-            log.info("updated fact %d: %r", existing, text[:60])
-            return {"id": existing, "text": text, "kind": kind,
+            log.info("updated fact %d (%s): %r", existing, keep, text[:60])
+            return {"id": existing, "text": text, "kind": keep,
                     "updated": True}
 
         cursor = db().execute(
@@ -290,15 +302,45 @@ def _fact_rows() -> list[sqlite3.Row]:
         "ORDER BY id"))
 
 
-def recall(query: str, limit: int | None = None) -> list[Fact]:
-    """Facts relevant to this query, best first."""
+def recall(query: str, limit: int | None = None,
+           kinds: "tuple[str, ...] | None" = None,
+           exclude_kinds: "tuple[str, ...] | None" = None) -> list[Fact]:
+    """Facts relevant to this query, best first.
+
+    kinds / exclude_kinds narrow it to (or away from) a category — file 09
+    step 2 pulls learned_preference rows on their own, and keeps them out of
+    the ordinary "what you remember" list so they are not said twice.
+
+    ⚠ THE FILTER IS APPLIED TO THE RESULTS, never by handing search() a subset
+    of the rows. _Index.search refits whenever the row list changes, and that
+    refit is the cold start memory.warm() exists to pay exactly once (6 s, and
+    it used to land in front of the first question of the day). So the search
+    runs over everything, as always, and the narrowing happens after -- which
+    is why it over-fetches first.
+    """
     limit = limit or config.MEMORY_RECALL_LIMIT
     with _lock:
         rows = _fact_rows()
         if not rows:
             return []
         by_id = {row["id"]: row for row in rows}
-        hits = _index.search(query, rows, limit)
+        wanted = limit
+        if kinds or exclude_kinds:
+            wanted = max(limit * 4, limit + 10)
+        hits = _index.search(query, rows, wanted)
+        if kinds or exclude_kinds:
+            kept = []
+            for fact_id, score in hits:
+                row = by_id.get(fact_id)
+                if row is None:
+                    continue
+                kind = row["kind"]
+                if kinds and kind not in kinds:
+                    continue
+                if exclude_kinds and kind in exclude_kinds:
+                    continue
+                kept.append((fact_id, score))
+            hits = kept[:limit]
         found = []
         for fact_id, score in hits:
             row = by_id.get(fact_id)
@@ -328,6 +370,23 @@ def all_facts(limit: int = 200) -> list[Fact]:
         rows = db().execute(
             "SELECT id, text, kind, source, created_at FROM facts "
             "ORDER BY id DESC LIMIT ?", (limit,))
+        return [Fact(id=r["id"], text=r["text"], kind=r["kind"],
+                     source=r["source"], created_at=r["created_at"])
+                for r in rows]
+
+
+def facts_of_kind(kind: str, limit: int = 100) -> list[Fact]:
+    """Everything stored under one category, newest first.
+
+    File 09 step 1 asks for corrections to be queryable SEPARATELY from
+    ordinary memory, and `kind` (which this table has had all along) is that
+    separation. recall() searches by meaning across everything; this is the
+    plain "show me all of them" list.
+    """
+    with _lock:
+        rows = db().execute(
+            "SELECT id, text, kind, source, created_at FROM facts "
+            "WHERE kind=? ORDER BY id DESC LIMIT ?", (kind, limit))
         return [Fact(id=r["id"], text=r["text"], kind=r["kind"],
                      source=r["source"], created_at=r["created_at"])
                 for r in rows]
@@ -379,6 +438,25 @@ def recall_experience(task: str, limit: int | None = None) -> list[dict]:
         return [{"text": r["text"], "task": r["task"],
                  "outcome": r["outcome"], "age": _ago(r["created_at"])}
                 for r in rows]
+
+
+def events_of_task(task: str, limit: int = 50) -> list[dict]:
+    """Every event logged under one task label, newest first.
+
+    Unlike recall_experience() this does NOT require an outcome, because the
+    thing file 09 step 3 logs has no outcome: an uncertain answer is a gap to
+    go and fill, not an experience to learn from. That is also why it stays
+    invisible to the "how similar things went before" section -- that query
+    filters on `outcome IS NOT NULL`, so a gap can never be read back to her
+    as a lesson about what works.
+    """
+    with _lock:
+        rows = db().execute(
+            "SELECT id, task, text, outcome, meta, created_at FROM events "
+            "WHERE task=? ORDER BY id DESC LIMIT ?", (task, limit))
+        return [{"id": r["id"], "task": r["task"], "text": r["text"],
+                 "outcome": r["outcome"], "created_at": r["created_at"],
+                 "age": _ago(r["created_at"])} for r in rows]
 
 
 def recent_events(limit: int = 10) -> list[dict]:
@@ -469,15 +547,54 @@ def warm() -> None:
             _index.search("warm", rows, 1)
 
 
+def _preferences_for(query: str, kind: str) -> list[Fact]:
+    """The corrections that should be in front of the model this turn.
+
+    ⚠ RELEVANCE ALONE IS NOT ENOUGH, and that is the whole point of step 2.
+    "Do not call him Sujoo" has to apply when Harsh says "hi", not only when
+    he says the word "Sujoo" — a standing instruction that waits to be
+    mentioned never changes anything. Measured while building this: "what is
+    my name" scored 0.00 against exactly that correction, so a relevance-only
+    pull left it out of the one turn it most needed to be in.
+
+    So: the relevant ones first, then the most RECENT ones to fill the
+    remaining slots. Still bounded by PREFERENCE_CONTEXT_MAX, because a
+    section that grows forever is one the model learns to skim, and it is paid
+    for on every single turn.
+    """
+    cap = int(getattr(config, "PREFERENCE_CONTEXT_MAX", 3))
+    if cap <= 0:
+        return []
+    chosen = recall(query, limit=cap, kinds=(kind,))
+    if len(chosen) < cap:
+        seen = {f.id for f in chosen}
+        for fact in facts_of_kind(kind, limit=cap):
+            if fact.id not in seen:
+                chosen.append(fact)
+                if len(chosen) >= cap:
+                    break
+    return chosen
+
+
 def context_block(query: str, task: str | None = None) -> str:
     """Everything relevant to this turn, as text to prepend to the prompt.
 
     Returns "" when nothing is relevant — an empty section is worse than no
     section, because it teaches the model that this block is usually noise.
     """
+    preference_kind = getattr(config, "LEARNED_PREFERENCE_KIND",
+                              "learned_preference")
     try:
+        # FILE 09 STEP 2. Preferences are pulled SEPARATELY and kept out of the
+        # list below. Left mixed in they competed with ordinary facts for the
+        # same two slots and arrived labelled "what you remember" -- which is
+        # how she was told about a correction as though it were trivia, and why
+        # being corrected changed the log but not the behaviour.
+        preferences = _preferences_for(query, preference_kind) if getattr(
+            config, "PREFERENCE_IN_CONTEXT", True) else []
         facts = recall(query, limit=getattr(config, "MEMORY_CONTEXT_FACTS",
-                                            config.MEMORY_RECALL_LIMIT))
+                                            config.MEMORY_RECALL_LIMIT),
+                       exclude_kinds=(preference_kind,))
         experience = recall_experience(task or query)
         past = summaries(limit=1)
     except Exception as exc:                    # noqa: BLE001
@@ -487,6 +604,14 @@ def context_block(query: str, task: str | None = None) -> str:
         return ""
 
     sections: list[str] = []
+    if preferences:
+        lines = "\n".join(f"- {p.text}" for p in preferences)
+        # Worded as an instruction, not as a memory. This section exists to
+        # change what she does, so it has to read like something she was told
+        # to do rather than something she happens to know.
+        sections.append(
+            "How Harsh has told you to behave — he corrected you on these "
+            f"before, so follow them:\n{lines}")
     if facts:
         lines = "\n".join(f"- {f.text}" for f in facts)
         sections.append(f"What you remember that may be relevant:\n{lines}")

@@ -102,6 +102,17 @@ def _describe_with_haiku(image, summary: str) -> str | None:
     if brain.spent_today() >= config.DAILY_SPEND_CAP_USD:
         log.warning("over the daily spend cap; describing from sensors only")
         return None
+    # AND A SPEED LIMIT, NOT JUST A CEILING (file 08 step 10). The cap above is
+    # the end of the day's money; this is what stops one loop reaching it in a
+    # minute. "Let me look again" is a reasonable-sounding thought for a model
+    # to have twice a second, and nothing here used to disagree. Falling back
+    # to the sensor sentence is not a failure -- _offline_sentence still
+    # describes the room, from real clearances, for nothing.
+    import rate_limit                                   # noqa: PLC0415
+    allowed, why = rate_limit.allow("vision_describe")
+    if not allowed:
+        log.info("describing from sensors only — %s", why)
+        return None
 
     buffer = io.BytesIO()
     image.save(buffer, "JPEG", quality=config.CAPTURE_QUALITY)
@@ -139,6 +150,7 @@ def _describe_with_haiku(image, summary: str) -> str | None:
     try:
         brain._record_spend(config.MODEL_FAST, reply.usage,
                             brain._cost_usd(config.MODEL_FAST, reply.usage))
+        rate_limit.used("vision_describe")
     except Exception:                                   # noqa: BLE001
         log.warning("could not record the cost of the description")
 

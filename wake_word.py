@@ -156,6 +156,15 @@ class OpenWakeWord(WakeSource):
         self._ready = threading.Condition()
         self._paused = threading.Event()
         self._settle_until = 0.0
+        # HER OWN VOICE, FROM ANY PROCESS. _paused only covers the voice turn
+        # in main.py; exploration narration, pi_deploy, the RL scripts and the
+        # MCP speak/say_what_you_see tools all talk out of a different process
+        # with this detector wide open, and she has answered her own narration
+        # as a command. tts.speak() marks the moment on disk wherever it runs;
+        # this is the gate that reads it. See config.SPEAKING_FILE.
+        self._own_voice_until = 0.0         # monotonic, like _settle_until
+        self._own_voice_checked = 0.0
+        self._heard_herself = False
         # DO NOT DISTURB, and deliberately NOT the same flag as _paused.
         # _paused is owned by the turn -- main.py sets it while Friday talks
         # and clears it when she stops -- so a sleep stored there would be
@@ -278,6 +287,36 @@ class OpenWakeWord(WakeSource):
         self._settle_until = time.monotonic() + config.WAKE_RESUME_SETTLE_S
         self._paused.clear()
 
+    def _hearing_herself(self, now_f: float) -> bool:
+        """Is Friday's own voice in the room right now, whoever is playing it?
+
+        Cheap on purpose: the mark is a ~90-byte file read four times a
+        second, not once per frame. Between reads the answer comes from
+        _own_voice_until, which is already in this loop's clock.
+        """
+        if now_f >= self._own_voice_checked + config.WAKE_SPEECH_POLL_S:
+            self._own_voice_checked = now_f
+            try:
+                import tts
+                quiet_at = tts.quiet_at()       # wall clock, or 0.0
+            except Exception as exc:            # noqa: BLE001
+                log.debug("could not read the speaking mark: %s", exc)
+                quiet_at = 0.0
+            # THE LATEST MARK WINS, never the longest. While she is speaking
+            # no end is known, so the mark is believed until it goes stale --
+            # and taking the max() of that with the real end, once it
+            # arrives, left her deaf for the whole stale window after every
+            # sentence. A mark that has gone, or gone bad, clears the gate:
+            # the safe direction to fail here is hearing, not deafness.
+            if quiet_at:
+                # Wall clock into this loop's clock, plus the settle every
+                # other gate uses for the tail that is still in flight.
+                self._own_voice_until = (now_f + (quiet_at - time.time())
+                                         + config.WAKE_RESUME_SETTLE_S)
+            else:
+                self._own_voice_until = 0.0
+        return now_f < self._own_voice_until
+
     def sleep(self, seconds: float) -> float:
         seconds = max(0.0, min(seconds, config.SLEEP_MAX_MINUTES * 60.0))
         self._sleep_until = time.monotonic() + seconds
@@ -399,6 +438,24 @@ class OpenWakeWord(WakeSource):
                 buffer.clear()
                 self._above = 0
                 continue
+            if self._hearing_herself(now_f):
+                if not self._heard_herself:
+                    log.info("Friday is speaking somewhere — not listening to "
+                             "her own voice")
+                    self._heard_herself = True
+                buffer.clear()
+                self._above = 0
+                continue
+            if self._heard_herself:
+                # SHE HAS STOPPED. Everything the classifier holds is from
+                # before she started, and gluing it onto what comes next is
+                # how a wake gets spliced out of two halves of nothing -- the
+                # same reason resume() resets. Start clean.
+                self._heard_herself = False
+                self._sub.clear()
+                self._reset_model()
+                self._recent.clear()
+                log.info("listening again")
 
             buffer.extend(frame)
             while len(buffer) >= CHUNK_BYTES:

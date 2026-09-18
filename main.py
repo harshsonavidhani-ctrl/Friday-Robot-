@@ -367,6 +367,14 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     brain_face = response.get("emotion")
     if response.get("memory_note"):
         _keep_note(response["memory_note"], turn)
+    # HE TOLD HER SHE GOT IT WRONG (file 09 step 1). Before spoke() below, so
+    # the correction is filed against the reply he was reacting to, not this
+    # one. Handles both ways in: the reply object's `correction`, and the
+    # phrase tripwire for when the brain did not notice.
+    _keep_correction(text, response.get("correction"), turn)
+    # SHE ANSWERED WITHOUT REALLY KNOWING (file 09 step 3). Logged, never
+    # spoken: the reply above already went out without hedging.
+    _keep_uncertainty(response.get("uncertain"), text, reply, turn)
 
     # THE FACE IS CHOSEN BY THE AI, on a thread, while she speaks. Harsh: "face
     # also ai driven". A thread, not a task: run()'s wake loop is a blocking
@@ -391,8 +399,43 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
         if mood:
             turn.note(f"face from the reply object: {mood}" if brain_face
                       else f"face chosen by the AI: {mood}")
+    _remember_what_she_said(reply)
     turn.done()
     return reply
+
+
+def _keep_correction(said: str, note: str | None,
+                     turn: "stages.Turn") -> None:
+    """File 09 step 1: keep a correction, under its own kind. Never raises."""
+    try:
+        import corrections
+        stored = corrections.capture(said, note=note)
+        if stored:
+            turn.note(f"learned preference: {stored['text'][:80]!r}")
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("correction capture skipped: %s", exc)
+
+
+def _keep_uncertainty(topic: str | None, asked: str, said: str,
+                      turn: "stages.Turn") -> None:
+    """File 09 step 3: log a gap, silently. Never raises."""
+    if not topic:
+        return
+    try:
+        import uncertainty
+        if uncertainty.log_gap(topic, said=said, asked=asked):
+            turn.note(f"uncertain about: {topic[:60]!r}")
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("uncertainty logging skipped: %s", exc)
+
+
+def _remember_what_she_said(reply: str) -> None:
+    """What a correction on the NEXT turn will be about. Never raises."""
+    try:
+        import corrections
+        corrections.spoke(reply)
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not record the reply: %s", exc)
 
 
 def _idle_turn_ended(spoken: str = "") -> None:
@@ -405,6 +448,40 @@ def _idle_turn_ended(spoken: str = "") -> None:
             idle_study.mark_offered()
     except Exception as exc:                    # noqa: BLE001
         log.debug("idle curiosity bookkeeping skipped: %s", exc)
+    try:
+        import physical_curiosity
+        physical_curiosity.turn_ended()
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("physical curiosity bookkeeping skipped: %s", exc)
+    # THE OFFLINE PATH GETS THE TRIPWIRE TOO. one_turn() handles a turn the
+    # brain answered; a turn answered locally -- no internet, over the cap, a
+    # reflex command -- never goes through it, and "aise mat bolo" is exactly
+    # the sentence he says when she is being stupid without a brain.
+    # corrections.capture drops the second offer of the same sentence.
+    try:
+        import corrections
+        corrections.capture(spoken)
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("correction tripwire skipped: %s", exc)
+
+
+def _physical_curiosity() -> None:
+    """Start step 9's thread. Never raises, and does nothing when it is off."""
+    try:
+        import physical_curiosity
+        physical_curiosity.start()
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("could not start the physical curiosity (%s: %s)",
+                    type(exc).__name__, exc)
+
+
+def _curiosity_heard() -> None:
+    """He is talking: stop any outing. Never raises, called on every wake."""
+    try:
+        import physical_curiosity
+        physical_curiosity.heard()
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not stop the outing: %s", exc)
 
 
 def _show_face(face: "Face", mood: str) -> None:
@@ -692,6 +769,11 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             # its own client, deliberately NOT part of this loop: a search
             # takes 3-15 s and the loop must stay free to hear him.
             _idle_curiosity(brains)
+            # SHE GOES AND LOOKS FOR HERSELF (file 08 step 9), if and only if
+            # config.PHYSICAL_CURIOSITY is on -- it ships off. Its own thread
+            # for the same reason as step 8, and it drives through the MCP
+            # server's explore_room, never past it.
+            _physical_curiosity()
             face.rest()
 
             for trigger in source.listen():
@@ -705,6 +787,10 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 # before any model runs, so Harsh knows he was heard rather
                 # than wondering whether to repeat himself.
                 face.set("listening")
+                # WHEELS FIRST. If step 9 has her out looking around, she
+                # stops here -- before the capture, while he is still
+                # talking -- rather than driving through his question.
+                _curiosity_heard()
                 if hasattr(source, "beep"):
                     source.beep()
 

@@ -120,6 +120,65 @@ def main() -> int:
     check("stop() is still ungated",
           "Never gated" in movement or "emergency_stop()" in movement)
 
+    # FILE 08 STEP 9/10 — the autonomous drive and the money.
+    curiosity = source("config.py")
+    check("physical curiosity still ships OFF",
+          "\nPHYSICAL_CURIOSITY = False" in curiosity,
+          "config.PHYSICAL_CURIOSITY is not False in the committed source — "
+          "step 9 must never default to on (file 08 step 10)")
+    step9 = source("physical_curiosity.py")
+    # What it CALLS, not what it talks about: the docstring names
+    # safety.guarded_move on purpose, to say what it is trusting.
+    check("the idle drive still goes through explore_room, not the motors",
+          'call_tool(\n                "explore_room"' in step9
+          or '"explore_room"' in step9,
+          "step 9 no longer drives through the server's explore_room")
+    check("the idle drive still touches no motor of its own",
+          "import motor" not in step9 and "import serial" not in step9
+          and 'call_tool("move' not in step9
+          and 'call_tool("turn' not in step9,
+          "step 9 must not drive the motors or judge clearance itself")
+    check("the idle drive still stops when he speaks",
+          "def heard(" in step9 and 'call_tool("stop"' in step9)
+    check("a wake still stops the idle drive",
+          "_curiosity_heard()" in source("main.py"),
+          "main.py no longer stops an outing when the wake word fires")
+    check("vision-triggered Haiku calls are still rate limited",
+          'rate_limit.allow("vision_describe")' in source(
+              "mcp_server/tools/narrate.py"),
+          "say_what_you_see could be called in a loop (file 08 step 10)")
+    check("web search still has a per-turn ceiling",
+          "max_uses" in source("brain.py"))
+
+    # FILE 09 STEP 1 — corrections are a separate category, not ordinary notes.
+    fixes = source("corrections.py")
+    check("corrections are still kept under their own kind",
+          "LEARNED_PREFERENCE_KIND" in fixes
+          and "LEARNED_PREFERENCE_KIND" in source("config.py"),
+          "a correction stored as an ordinary fact cannot be queried apart "
+          "from everything else Friday has been told")
+    check("the reply object still carries the correction field",
+          '"correction"' in source("reply_contract.py"))
+    check("a near-duplicate no longer drops the kind",
+          "UPDATE facts SET text=?, kind=?" in source("memory.py"),
+          "a correction that lands on an existing fact would be declassified")
+
+    # FILE 09 STEPS 2-3 — the learning has to reach the model, and gaps must
+    # never become facts.
+    mem = source("memory.py")
+    check("corrections are still injected as instructions, not trivia",
+          "told you to behave" in mem and "_preferences_for" in mem,
+          "being corrected would change the log and nothing else")
+    check("...and are still kept out of the ordinary memory list",
+          "exclude_kinds=(preference_kind,)" in mem)
+    check("an uncertain answer is still logged WITHOUT an outcome",
+          "outcome" not in source("uncertainty.py").split(
+              "memory.log_event(")[1].split(")")[0],
+          "an outcome would make a gap resurface as a lesson that worked")
+    check("recall_experience still returns only events with an outcome",
+          "outcome IS NOT NULL" in mem,
+          "a logged guess could be read back to her as experience")
+
     guard = source("mcp_server/devguard.py")
     for essential in ("mcp_server/safety.py", "mcp_server/reflex.py",
                       "mcp_server/devguard.py", "scripts/rollback.sh"):

@@ -191,9 +191,25 @@ def study(history: list[dict[str, Any]]) -> dict | None:
     )
     tool = {"type": "web_search_20250305", "name": "web_search",
             "max_uses": int(getattr(config, "IDLE_STUDY_MAX_SEARCHES", 2))}
+    # FILE 09 STEP 3 FEEDS THIS. A gap she logged during a turn is better than
+    # anything this thread can infer from a transcript: she was there, she
+    # answered, and she knew at the time that she did not really know. Offered,
+    # not forced -- the conversation may have moved on to something better.
+    gap = ""
+    try:
+        import uncertainty                              # noqa: PLC0415
+        topic = uncertainty.next_topic()
+        if topic:
+            gap = (f"Earlier today you answered about \"{topic}\" without "
+                   f"really knowing. If that is still the most useful thing "
+                   f"to settle, start there.\n\n")
+    except Exception as exc:                            # noqa: BLE001
+        log.debug("could not read the logged gaps: %s", exc)
+
     messages: list[dict[str, Any]] = [{"role": "user", "content": (
         f"This is what was said in the room a few minutes ago:\n\n"
         f"{conversation}\n\n"
+        f"{gap}"
         f"Search for the one thing worth looking up, then give the one "
         f"sentence — or {NOTHING}.")}]
 

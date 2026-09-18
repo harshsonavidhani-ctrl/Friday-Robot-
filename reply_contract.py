@@ -79,7 +79,8 @@ INSTRUCTIONS = f"""\
 Your FINAL message in every turn, after any tools have finished, is exactly one
 JSON object and nothing else — no markdown fence, no words before or after it:
 
-{{"reply": "...", "emotion": "...", "memory_note": null}}
+{{"reply": "...", "emotion": "...", "memory_note": null, "correction": null,
+ "uncertain": null}}
 
 - `reply` — the words you say out loud, and ONLY those. It is spoken by a speech
   synthesiser the moment you write it, so it comes FIRST, and every rule in
@@ -106,6 +107,28 @@ JSON object and nothing else — no markdown fence, no words before or after it:
   It is saved for you after you speak — do not also call `remember` for it.
   Never for small talk, for what you just did, or for anything you can sense
   or look up again.
+
+- `correction` — set this ONLY when Harsh is telling you that something you
+  said or did was wrong, in any language: "nahi yeh galat hai", "aise mat
+  bolo", "that's not right", "don't call me that". One sentence naming BOTH
+  halves — what YOU got wrong, and what to do instead ("Harsh does not want to
+  be called Sujoo; his name is Harsh"). Write it about YOUR behaviour, taken
+  from your own previous reply: never quote his correction back as if it were
+  the thing you said. If you cannot tell what you did wrong, ask him in
+  `reply` and leave this `null` — a guess here becomes a standing instruction. It is saved as a standing instruction
+  and read back to you later, so an ordinary disagreement about a fact is not
+  one: "no, the match was on Tuesday" is a `memory_note`, not a correction.
+  `null` on every other turn, which is nearly all of them.
+
+- `uncertain` — the TOPIC you were not confident about in the answer you just
+  gave, in a few words ("how loop closure works in her map"), or `null`. Set it
+  for a guess, a half-remembered number, a subject you do not really know.
+  **This field is never spoken** — it is a private note so the gap can be
+  looked up later, and setting it is not a reason to add an apology or a
+  disclaimer you would not otherwise have given. Saying plainly that you do not
+  know is still right when it is true (see Voice); what you must not do is hedge
+  BECAUSE of this field. It is NOT `UNSURE`: that word hands the turn to a
+  bigger brain BEFORE you answer, while this is about an answer you did give.
 
 Before a tool call you may say one short plain sentence ("Let me look that
 up."). After the tools, write the object straight away: never the answer in
@@ -137,11 +160,22 @@ class Reply:
     reply: str
     emotion: str | None = None
     memory_note: str | None = None
+    # File 09 step 1. A FIELD ADDED TO THIS CONTRACT, not a new one: a turn
+    # where Harsh corrected her carries what she got wrong and what to do
+    # instead, and corrections.py files it under its own kind. Almost always
+    # None -- being corrected is rare, and a model that fills this in on an
+    # ordinary turn is inventing a preference nobody expressed.
+    correction: str | None = None
+    # File 09 step 3. The topic she was not confident about, logged and never
+    # spoken: it feeds the idle look-up (file 08 step 8) and the reflection.
+    uncertain: str | None = None
     structured: bool = False          # False = came back as plain words
 
     def as_dict(self) -> dict[str, Any]:
         return {"reply": self.reply, "emotion": self.emotion,
-                "memory_note": self.memory_note}
+                "memory_note": self.memory_note,
+                "correction": self.correction,
+                "uncertain": self.uncertain}
 
 
 def _normal(text: str) -> str:
@@ -459,6 +493,8 @@ class ReplyStream:
         return Reply(reply=spoken,
                      emotion=_clean_emotion(last.get("emotion")),
                      memory_note=_clean_note(last.get("memory_note")),
+                     correction=_clean_note(last.get("correction")),
+                     uncertain=_clean_note(last.get("uncertain")),
                      structured="emotion" in last or "memory_note" in last)
 
 

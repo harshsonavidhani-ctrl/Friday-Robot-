@@ -33,6 +33,7 @@ ALSA fallback is only for a headless boot with no audio server.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import queue
@@ -41,6 +42,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import wave
 from pathlib import Path
 
@@ -312,6 +314,67 @@ def louden(samples, rate: int):
     return np.clip(boosted * smoothed, -1.0, 1.0).astype(np.float32)
 
 
+# --- "she is talking", for anything that is listening ---------------------
+# One small file, written the way face_control writes the emotion: a temp file
+# in the same directory and a rename, so a reader never sees half of it. The
+# wake detector reads it (see wake_word._own_voice_until) and drops audio while
+# it says her voice is in the room. See config.SPEAKING_FILE for the two
+# measured turns that made this necessary.
+#
+# NEVER RAISES, and never blocks speech. If the mark cannot be written, Friday
+# still talks -- she is just audible to her own microphone again, which is
+# exactly where this started.
+
+def _mark(state: str, until: float = 0.0) -> None:
+    try:
+        path = config.SPEAKING_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps({"state": state, "at": time.time(),
+                              "until": until, "pid": os.getpid()})
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".speaking.",
+                                   suffix=".tmp")
+        with os.fdopen(fd, "w") as handle:
+            handle.write(payload)
+        os.replace(tmp, path)
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not mark the speaking state: %s", exc)
+
+
+@contextlib.contextmanager
+def _audible():
+    """Hold the "she is talking" mark for the length of an utterance."""
+    _mark("speaking")
+    try:
+        yield
+    finally:
+        # Stamped INTO THE FUTURE: the player has returned but the tail is
+        # still in the sink and in the room. config.AUDIO_DRAIN_S is how much
+        # of it is left; the detector settles on top of that.
+        _mark("quiet", until=time.time() + config.AUDIO_DRAIN_S)
+
+
+def quiet_at() -> float:
+    """When her own voice will have left the room (wall clock), or 0.0.
+
+    Returns a moment in the future while she is speaking or has just stopped,
+    and 0.0 when the mark is missing, unreadable, or too old to believe.
+    """
+    try:
+        mark = json.loads(config.SPEAKING_FILE.read_text())
+        stamped = float(mark.get("at", 0.0))
+        if time.time() - stamped > config.SPEAKING_MARK_STALE_S:
+            return 0.0                  # left behind by a process that died
+        if mark.get("state") == "speaking":
+            # No end is known yet, so believe it until the mark goes stale.
+            return stamped + config.SPEAKING_MARK_STALE_S
+        return float(mark.get("until", 0.0))
+    except FileNotFoundError:
+        return 0.0
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not read the speaking mark: %s", exc)
+        return 0.0
+
+
 # --- playback ------------------------------------------------------------
 
 def play(path: Path) -> None:
@@ -569,7 +632,7 @@ def speak(text: str) -> str:
         return f"[debug silence — not spoken] {text}"
 
     chunks = sentences(text)
-    with _speak_lock, _mouth_moving() as mouth:
+    with _speak_lock, _audible(), _mouth_moving() as mouth:
         voice()                         # raises TTSError if unavailable
         rendered: queue.Queue = queue.Queue(maxsize=2)
 

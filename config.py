@@ -238,6 +238,41 @@ SCENE_IMAGE = ROOT / "state" / "scene_latest.jpg"
 SCENE_MAX_AGE_S = 30.0       # situation.py names objects no older than this
 SCENE_FRESH_IMAGE_S = 12.0   # the brain answers from the cached frame within this
 
+# --- Her own voice must never reach the wake detector --------------------
+# THE PAUSE IN main.py IS NOT ENOUGH, because main.py is not the only thing
+# that talks. exploration_mode narrates a run through the MCP speak tool,
+# pi_deploy and the RL scripts speak, say_what_you_see speaks from inside the
+# MCP server, and the dashboard can speak on demand -- all in OTHER processes,
+# all while the wake detector in main.py is wide open.
+#
+# MEASURED, in the turn log, during an exploration run:
+#   2026-09-05 01:16:05  TRANSCRIBED "...Can I just talk? Continuing exploration."
+#   2026-09-05 01:17:15  TRANSCRIBED "...Stop! Stop! I'd detected an obstacle 0.7 meters ahead."
+# Both are her OWN narration, heard back through the microphone and answered
+# as if Harsh had said them -- and the first one called start_exploration.
+#
+# So tts.speak() leaves a mark on disk while it plays, whatever process it is
+# in, and the detector drops audio for as long as that mark says her voice is
+# in the room. Same idea as the pause, just one that crosses processes.
+SPEAKING_FILE = ROOT / "state" / "speaking.json"
+
+# How long a "she is speaking" mark is believed before it is treated as
+# rubbish left by a process that died mid-sentence. A deaf robot is a much
+# worse failure than a self-wake, so this is deliberately short: one utterance
+# is seconds, and TTS_TIMEOUT_S already caps a single sentence at 20 s.
+SPEAKING_MARK_STALE_S = 45.0
+
+# How often the detector re-reads the mark. Not per frame: a frame is tens of
+# milliseconds and this Pi has no spare core (the face already eats one).
+WAKE_SPEECH_POLL_S = 0.25
+
+# What the player does not tell us. pw-play exits when it has written the last
+# sample, not when the speaker has finished moving: --latency=AUDIO_PLAY_LATENCY
+# of it is still queued in pipewire, and the room keeps it a little longer. The
+# mark is stamped this far into the future when speech ends, so "quiet" means
+# the sound has actually stopped.
+AUDIO_DRAIN_S = 0.30
+
 # --- She remarks on something new in view (file 08 step 7) ---------------
 # scene_bridge.py reads scene.json (above) and, rarely, hands a NEW object to
 # the brain for one short remark. Every gate must pass or no call is made; the
@@ -249,10 +284,112 @@ SCENE_BRIDGE_MIN_SCORE = 0.6         # SCENE_MIN_SCORE already drops below this
 SCENE_BRIDGE_CONFIRM_TICKS = 2       # ticks in a row before a label is real
 SCENE_BRIDGE_FORGET_S = 1800.0       # unseen this long -> new again
 SCENE_BRIDGE_RESEED_GAP_S = 120.0    # not watching this long -> view is baseline
-SCENE_BRIDGE_COOLDOWN_S = 180.0      # between remarks
+# QUIETER THAN IT WAS, after Harsh heard it on 2026-09-19: "the vision
+# description, when no need it starts speaking". A remark every 3 minutes to
+# anyone who happened to be in the room in the last QUARTER OF AN HOUR is a
+# robot that narrates the furniture; once every 10 minutes, to someone who is
+# actually there, is a robot that noticed something.
+SCENE_BRIDGE_COOLDOWN_S = 600.0      # between remarks
 SCENE_BRIDGE_QUIET_AFTER_TURN_S = 20.0   # after Harsh last spoke to her
-SCENE_BRIDGE_AUDIENCE_S = 900.0      # he spoke, or a person was seen, this recently
+SCENE_BRIDGE_AUDIENCE_S = 300.0      # he spoke, or a person was seen, this recently
 SCENE_BRIDGE_IGNORE = ("person",)    # somebody, not something
+
+# --- When Harsh says that was wrong, keep it (file 09 step 1) ------------
+# corrections.py. Two ways in, because they fail in different places:
+#   1. the brain fills `correction` in the reply object -- it read the whole
+#      turn, so it knows what the right behaviour is, in Hinglish or English
+#   2. a phrase tripwire here -- it still works when the brain is offline,
+#      over the spend cap, or simply did not notice it was being corrected
+# Stored in the facts table under kind=LEARNED_PREFERENCE_KIND, which is what
+# makes it queryable separately from ordinary memory notes. The table has had
+# a `kind` column since it was written; no schema change was needed.
+CORRECTION_CAPTURE = True
+LEARNED_PREFERENCE_KIND = "learned_preference"
+CORRECTION_SOURCE = "correction"
+CORRECTION_MAX_CHARS = 240
+
+# File 09 step 2: the corrections are pulled back into every turn's context as
+# instructions, in their own section, or being corrected changes the log and
+# nothing else. BOUNDED ON PURPOSE -- the most relevant few, not the pile. A
+# section that grows without limit is one the model learns to skim, and it is
+# paid for on every single turn.
+PREFERENCE_IN_CONTEXT = True
+PREFERENCE_CONTEXT_MAX = 3
+
+# File 09 step 3: an answer she was not confident about is logged and NOT
+# spoken. Events table, task="uncertain_response", no outcome -- so it can
+# never be read back to her as a fact she knows or a lesson that worked.
+UNCERTAINTY_LOGGING = True
+UNCERTAINTY_MAX_CHARS = 160
+UNCERTAINTY_FRESH_S = 86400.0        # the idle look-up only chases today's
+
+# ⚠ NO BARE "wrong". "What is wrong with the wifi" is a question, not a
+# correction, and a tripwire that stores it teaches Friday a preference nobody
+# expressed -- and junk facts are read back to her as things she knows (Harsh
+# has already had to delete seven of those). Every pattern below needs the
+# correcting CONTEXT, not just the word. "galat" is the exception: in this
+# house it is only ever said about something that was wrong.
+CORRECTION_PHRASES = (
+    r"\bgalat\b",
+    r"\b(nahi|nahin)[ ,]+(ye|yeh|woh|wo|that)\b",
+    r"\b(aise|aisa|waise|vaise)[ ]+(mat|nahi|nah)\b",
+    r"\b(mat|nahi)[ ]+(bolo|bol|kaho|kaha|karo)\b",
+    r"\b(that'?s|that is|thats|this is)[ ]+(not right|wrong|incorrect)\b",
+    r"\b(you'?re|you are|u r)[ ]+wrong\b",
+    r"\bnot[ ]+(correct|right)\b",
+    r"\bthat'?s not what i[ ]+(said|meant|asked|wanted)\b",
+    r"\b(don'?t|do not|never)[ ]+(say|call me|speak|talk)\b",
+    r"\bstop[ ]+(saying|calling)\b",
+    r"\bi[ ]+(didn'?t|did not)[ ]+ask\b",
+    r"\bwrong[ ]+(answer|name|one|again)\b",
+)
+
+# --- Nothing that costs money may run in a loop (file 08 step 10) --------
+# rate_limit.py enforces these. DAILY_SPEND_CAP_USD above is the ceiling --
+# the wall at the end of the corridor -- and these are the speed limit, so one
+# tool called in a loop cannot spend the whole day's money in a minute.
+#
+# NOT EVERY PAYING PATH IS LISTED HERE, because some already carry their own
+# gates and double-limiting them would just hide where the real one lives:
+#   * a voice turn        -- the wake word is the gate, plus the daily cap
+#   * scene remarks       -- SCENE_BRIDGE_COOLDOWN_S + the audience gate
+#   * idle study          -- IDLE_STUDY_* (quiet, interval, per day)
+#   * web_search          -- WEB_SEARCH_MAX_USES, enforced by the API itself
+# What is listed is what had NO limit of its own.
+RATE_LIMIT_FILE = ROOT / "state" / "rate_limits.json"
+RATE_LIMITS = {
+    # say_what_you_see: one Haiku call with a picture, ~$0.005. The brain can
+    # call it as often as it likes -- "look again" is a reasonable-sounding
+    # thought to have twice a second -- and nothing used to stop it.
+    "vision_describe": {"min_interval_s": 15.0, "per_hour": 20, "per_day": 120},
+    # Not money: wheels. The same three numbers keep the idle drive (step 9,
+    # physical_curiosity.py) from becoming a robot that paces the room.
+    "physical_curiosity": {"min_interval_s": 1800.0, "per_hour": 2,
+                           "per_day": 12},
+}
+
+# --- She goes and looks for herself (file 08 step 9) ---------------------
+# ⛔ OFF BY DEFAULT, AND IT SHIPS OFF. Harsh's own words in the spec: "Make
+# this toggleable with a simple on/off flag, default off, so it can be tested
+# in a controlled, open area before leaving it on unsupervised", and again in
+# step 10: "don't ship it defaulting to on". scripts/test_smoke.py fails if
+# this line ever says True, so turning it on is a thing HE does, on the robot,
+# in a room he is standing in -- never something a change quietly does for him.
+#
+# physical_curiosity.py decides ONE thing: whether now is a good moment. The
+# driving is explore_room() in the MCP server, unchanged -- the same clearance
+# interrupt, duration cap, embodiment check and did-the-turn-happen test that
+# every other move goes through. No stop-distance logic is written here.
+PHYSICAL_CURIOSITY = False
+
+PHYSICAL_CURIOSITY_AFTER_S = 600.0   # quiet this long before she wanders
+PHYSICAL_CURIOSITY_BUDGET_M = 1.5    # a short leash: metres for one outing
+PHYSICAL_CURIOSITY_BUDGET_S = 45.0   # and seconds
+# Daylight only, in whole hours [start, end). An unsupervised robot setting
+# off across a dark room at 3 am is the failure this avoids; she is asleep at
+# that hour anyway (FACE_SLEEPING_AFTER_S).
+PHYSICAL_CURIOSITY_HOURS = (9, 21)
+PHYSICAL_CURIOSITY_TICK_S = 20.0     # how often the gates are re-asked
 
 # --- She looks things up in the quiet (file 08 step 8) -------------------
 # idle_study.py, on its own thread with its own client -- never in the wake
