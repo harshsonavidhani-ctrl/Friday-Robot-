@@ -202,3 +202,78 @@ and correctly, controls motors, sees through its cameras, reacts with the right
 face, remembers things, and keeps working (with basic offline fallback) without
 crashing — **and the Pi still boots, logs in, and accepts SSH after every
 single change.**
+
+---
+
+# PART 4 — What file 08 wired in (2026-09-19)
+
+File 08 ("Full Brain Upgrade") was **wire-up only** — it connected modules that
+already existed rather than building subsystems. This note exists so file 09
+does not have to rediscover any of it. Steps 5 and 11 were never pasted, so
+they were never built; everything else in the file is done except **music**,
+which the spec's opening list names and nothing in the repo plays.
+
+## Every brain turn ends in one object (steps 1-2)
+`reply_contract.py` — the model returns `{"reply", "emotion", "memory_note"}`
+after any tool calls. `brain.ask()` still returns the spoken words; the object
+is `brain.last_response`. Switch: `config.BRAIN_STRUCTURED_REPLY`.
+- It is a **prompt contract, not `output_config.format`** — structured outputs
+  400 when citations are present, and web search answers carry citations.
+- The brain runs on **Haiku only** (`config.BRAIN_MODEL`), a budget decision.
+  Anything Haiku cannot do must be gated to `MODEL_MAIN`, not assumed.
+- `emotion` comes from `reply_contract.EMOTION_TRIGGERS` (15 content emotions).
+  The parser refuses the pipeline-owned five, so the model cannot claim to be
+  listening, speaking, thinking, sleepy or sleeping.
+
+## The face is arbitrated, never set directly (step 2)
+`face_director.py` owns `state/emotion.txt`. Four bands: SAFETY > EMOTION >
+PIPELINE > IDLE, with pipeline changes forced past a lingering emotion but
+never past a live safety face. Anything writing the file from outside (the
+dashboard, a script, an RL run) is adopted at IDLE.
+- **Sleeping latches.** Once "sleeping" is up — told to, or drifted there —
+  `rest()` and the idle drift hold it until a real state arrives (the wake word
+  as "listening", an emotion, or safety). Before this, the turn that put her to
+  sleep ended in `rest()` and she was showing **bored** 45 seconds later.
+
+## Three things now act without being asked
+Each on its own thread, never inside main.py's wake loop — a blocking generator
+lives there and anything awaited beside it swallows a "hey Friday".
+- `scene_bridge.py` (step 7) — a new object in view earns at most one short
+  remark. A **wake source**, so a remark queues behind a real turn instead of
+  landing on top of it. Gates: 2-tick confirm, 30-min forget, ignore person,
+  600 s cooldown, someone there within 5 min.
+- `idle_study.py` (step 8) — in the quiet she looks up an open question and
+  saves one sentence. **Never speaks**; `situation.py` offers it to exactly one
+  later turn. It may only save what a search returned.
+- `physical_curiosity.py` (step 9) — the idle drive. **`config.PHYSICAL_CURIOSITY`
+  is False and ships False**; `scripts/test_smoke.py` fails if that line is ever
+  committed as True. It calls `explore_room()` through the MCP server and
+  **writes no movement or stop-distance logic of its own**, so every move keeps
+  `embodiment.check`, `guarded_move`, the duration cap and the
+  did-the-turn-actually-happen test. `heard()` runs the moment the wake word
+  fires, before the capture, and calls `stop()` on the live session.
+
+## Money and wheels get a speed limit, not just a ceiling (step 10)
+`DAILY_SPEND_CAP_USD` is the wall at the end of the corridor and every paying
+path checks it. `rate_limit.py` + `config.RATE_LIMITS` is the speed limit, so
+one tool in a loop cannot reach the wall in a minute. Web search has its own
+`max_uses` per turn; voice turns, scene remarks and idle study have their own
+gates. **Any new tool that costs money needs an entry in `RATE_LIMITS` or a
+documented gate of its own.** It fails OPEN on a corrupt counter file and is
+deliberately not a safety mechanism — safety lives in `mcp_server/safety.py`.
+
+## Anything that makes sound goes through `tts.speak()`
+`tts.speak()` writes `state/speaking.json` wherever it runs, and the wake
+detector drops audio while that mark says her voice is in the room. Without it
+she answers herself: exploration narration, `say_what_you_see` and the RL
+scripts all speak from **other processes**, where main.py's pause does not
+reach, and the turn log has her acting on her own narration as a command.
+A new way of making noise that bypasses `tts.speak()` re-opens that hole.
+
+## Do not edit these to make something else work
+- **The committed exploration stack** — `exploration_mode.py`,
+  `mcp_server/tools/explore.py`, `slam/`, `rl/`. Harsh, 2026-09-19: "the
+  exploration mode thats committed will not be like editted." Call it, don't
+  change it.
+- `mcp_server/safety.py`, `reflex.py`, `devguard.py` and this file are in
+  devguard's PROTECTED list: Friday cannot edit them through `dev_task`.
