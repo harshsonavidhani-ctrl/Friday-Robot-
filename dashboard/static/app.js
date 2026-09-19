@@ -37,11 +37,12 @@ const log = $('log'), dot = $('dot'), statustext = $('statustext');
   el.addEventListener('click', () => { clearTimeout(timer); done(); });
 })();
 
-const TYPES = ['session_init', 'thinking', 'tool_call', 'tool_result',
-               'text', 'done'];
+const TYPES = ['heard', 'session_init', 'thinking', 'tool_call',
+               'tool_result', 'text', 'done'];
 const LABEL = {
-  session_init: 'Session Init', thinking: 'Thinking', tool_call: 'Tool Call',
-  tool_result: 'Tool Result', text: 'Text', done: 'Done',
+  heard: 'Heard', session_init: 'Session Init', thinking: 'Thinking',
+  tool_call: 'Tool Call', tool_result: 'Tool Result', text: 'Text',
+  done: 'Done',
 };
 
 const store = {
@@ -132,6 +133,12 @@ function card(ev) {
          <span class="d"></span>${esc(s.name)} · ${esc(s.status)}</span>`).join('');
     body = `<div class="model">${esc(ev.model || 'unknown model')}</div>
             ${servers ? `<div class="servers">${servers}</div>` : ''}`;
+  } else if (ev.type === 'heard') {
+    /* His words, not hers. Quoted, because a transcript is a claim about
+       what was said and whisper is often wrong about it. */
+    body = `<div class="body">“${esc(ev.text || '')}”</div>`
+      + (ev.source && ev.source !== 'voice'
+          ? `<div class="footer">${esc(ev.source)}</div>` : '');
   } else if (ev.type === 'thinking') {
     body = `<div class="body">${esc(ev.text || '')}</div>`;
   } else if (ev.type === 'tool_call') {

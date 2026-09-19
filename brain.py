@@ -872,6 +872,7 @@ class Brain:
     async def ask(self, text: str,
                   on_sentence: SentenceCallback | None = None,
                   on_tool: Callable[[str, dict], Any] | None = None,
+                  on_tool_result: Callable[[str, Any], Any] | None = None,
                   session: Any = None) -> str:
         """One turn. Returns the final spoken reply.
 
@@ -901,9 +902,11 @@ class Brain:
             return fast
 
         if session is not None:
-            return await self._run(text, session, on_sentence, on_tool)
+            return await self._run(text, session, on_sentence, on_tool,
+                                   on_tool_result)
         async with mcp_session() as own_session:
-            return await self._run(text, own_session, on_sentence, on_tool)
+            return await self._run(text, own_session, on_sentence, on_tool,
+                                   on_tool_result)
 
     @staticmethod
     def _is_about_what_she_sees(text: str) -> bool:
@@ -1056,7 +1059,9 @@ class Brain:
 
     async def _run(self, text: str, session: Any,
                    on_sentence: SentenceCallback | None,
-                   on_tool: Callable[[str, dict], Any] | None) -> str:
+                   on_tool: Callable[[str, dict], Any] | None,
+                   on_tool_result: Callable[[str, Any], Any] | None = None
+                   ) -> str:
         tools = await self._tool_list(session)
 
         # Relevant memory and her own live state ride along with the question
@@ -1197,6 +1202,14 @@ class Brain:
                                f"{type(exc).__name__}: {exc}")
                     is_error = True
                     log.error("MCP call %s failed: %s", block.name, exc)
+                if on_tool_result:
+                    # The dashboard shows what each tool ANSWERED, not just
+                    # that it was called -- a turn where a move was refused
+                    # looks identical to one where it worked otherwise.
+                    try:
+                        on_tool_result(block.name, content)
+                    except Exception as exc:        # noqa: BLE001
+                        log.debug("tool result callback failed: %s", exc)
                 results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,

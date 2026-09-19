@@ -138,6 +138,9 @@ class Turn:
         self._sender.send({"type": "session_init", "model": self.model,
                            "servers": servers or []})
 
+    def heard(self, text: str, source: str = "voice") -> None:
+        emit({"type": "heard", "text": text, "source": source})
+
     def thinking(self, text: str) -> None:
         self._sender.send({"type": "thinking", "text": text})
 

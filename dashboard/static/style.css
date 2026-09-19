@@ -23,6 +23,7 @@
   --bad:#ff5f6d;
 
   /* one hue per event type: pill colour, tint, and left rule */
+  --c-heard:#ff8a3d;    --t-heard:rgba(255,138,61,.08);
   --c-session:#4da3ff;  --t-session:rgba(77,163,255,.07);
   --c-think:#b98cff;    --t-think:rgba(185,140,255,.07);
   --c-call:#ffab4d;     --t-call:rgba(255,171,77,.07);
@@ -368,6 +369,11 @@ details.fold summary:hover{color:var(--dim)}
 .footer b{color:var(--dim);font-weight:700}
 
 /* per-type colour: pill, tint, and the left rule */
+/* What he said. Friday's own orange, because it is the one card on the
+   stream that is not the robot speaking. */
+.c-heard{background:var(--t-heard);border-left-color:var(--c-heard)}
+.c-heard .pill{color:var(--c-heard)}
+.c-heard .body{color:#ffd9bd;font-size:15px}
 .c-session_init{background:var(--t-session);border-left-color:var(--c-session)}
 .c-session_init .pill{color:var(--c-session)}
 .c-thinking{background:var(--t-think);border-left-color:var(--c-think)}

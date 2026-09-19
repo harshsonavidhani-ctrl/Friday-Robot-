@@ -310,7 +310,10 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
                 # IGNORE is the brain declining speech that was not said to
                 # her -- a video, the room, a garbled fragment. Never spoken.
                 on_sentence=lambda s: (None if _ignored(s) else voice.say(s)),
-                on_tool=lambda name, args: turn.stage("TOOL", f"{name} {args}"),
+                on_tool=lambda name, args: (
+                    turn.stage("TOOL", f"{name} {args}"),
+                    turn.tool_call(name, args)),
+                on_tool_result=turn.tool_result,
                 session=session,
             ),
             timeout=config.STAGE_BRAIN_TIMEOUT_S,
@@ -359,6 +362,12 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
                   f"{getattr(brain_obj, 'last_model', '?')}): {text[:50]!r}")
         face.rest()
         return ""
+
+    # ...and on the dashboard: the closing card carries what she said, which
+    # brain said it and what the turn cost (file 09 step 7).
+    turn.spoke(reply)
+    turn.answered_by(getattr(brain_obj, "last_model", ""),
+                     getattr(brain_obj, "last_cost_usd", 0.0))
 
     # WHICH BRAIN ANSWERED, in the turn log. The fast path is invisible
     # otherwise, and "did that go to Haiku or Sonnet" is the first question
@@ -966,6 +975,12 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
     import offline
 
     turn = turn or stages.Turn("typed")
+    # ONE `heard` CARD PER TURN, and here because handle() is the one funnel
+    # both the microphone and `--say` go through. Beside TRANSCRIBED it fired
+    # twice whenever the first capture came back empty and was retried, which
+    # reads on the dashboard as him saying the same thing twice.
+    turn.heard(spoken, source="typed" if "typed" in (turn.trigger or "")
+               else "voice")
 
     if offline.is_stop(spoken):
         turn.note("STOP heard — going straight to the motors")
@@ -1334,6 +1349,7 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
             # The same ceiling the brain's tool calls get. The offline path is
             # the one that runs when everything else is already degraded, so
             # it is the last place that can afford to hang.
+            turn.tool_call(tool, args)
             result = await turn.run(
                 "TOOL", session.call_tool(tool, args),
                 timeout=config.STAGE_TOOL_TIMEOUT_S, detail=tool)
@@ -1346,7 +1362,8 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
                             for part in (result.content or []))
             kinds = ", ".join(type(part).__name__
                               for part in (result.content or [])) or "nothing"
-            turn.note(f"{tool} -> {text[:120] or kinds}")
+            turn.note(f"{tool} -> {text[:120] or kinds}", dash=False)
+            turn.tool_result(tool, text[:600] or kinds)
             if text.strip():
                 answer = text          # the LAST step's answer is the answer
             # CASE-INSENSITIVE, and that is not a nicety. The server says
@@ -1393,7 +1410,14 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
         if spoken:
             voice.say(spoken)
         else:
-            voice.say("I got nothing back for that one.")
+            spoken = "I got nothing back for that one."
+            voice.say(spoken)
+        turn.spoke(spoken)
+    else:
+        turn.spoke(intent.say)
+    # The closing card should say which brain answered, and "none" IS the
+    # answer here: a reflex is the local table, no model and no money.
+    turn.answered_by("locally, no model", 0.0)
 
     # THE NARRATOR ATTACHES AFTER THE RUN IS ALREADY GOING, and that ordering
     # is the whole fix. Starting the run from inside the spawned process cost

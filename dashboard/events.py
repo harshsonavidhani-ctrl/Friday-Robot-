@@ -23,6 +23,7 @@ import config
 # The card types the front end knows how to render. Anything else is
 # rejected at ingest rather than silently showing up as a blank card.
 EVENT_TYPES = (
+    "heard",          # what was said TO her, as the transcriber heard it
     "session_init",   # model + connected MCP servers, at the start of a turn
     "thinking",       # the model's reasoning text
     "tool_call",      # a tool invocation and its arguments
@@ -168,6 +169,16 @@ class Turn:
             "model": self.model,
             "servers": servers or [],
         })
+
+    def heard(self, text: str, source: str = "voice") -> None:
+        """What was said TO her — the one thing the stream never showed.
+
+        The dashboard has carried her side since it was written (thinking,
+        tool calls, replies) and none of his, because only exploration_mode
+        ever posted to it. A conversation with one side missing reads like a
+        robot talking to itself.
+        """
+        self.bus.emit({"type": "heard", "text": text, "source": source})
 
     def thinking(self, text: str) -> None:
         self.bus.emit({"type": "thinking", "text": text})

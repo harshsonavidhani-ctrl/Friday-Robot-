@@ -398,6 +398,13 @@ REFLECTION_CONTEXT_FRESH_S = 86400.0
 # how long growth.report() may be reused. The dashboard polls /api/state every
 # 4 s and the counts are nine COUNT(*) queries.
 DASHBOARD_PREFERENCES = 8
+# Voice turns on the dashboard's live log (file 09 step 7, and Harsh:
+# "if i am talking to friday the brain also replies should come in dashboard
+# like what tool call and everything"). The stream carried only
+# exploration_mode before this, so a conversation showed nothing at all.
+# Fire and forget: dashboard_log posts on its own thread and drops events
+# when the queue is full.
+DASHBOARD_TURNS = True
 GROWTH_CACHE_S = 20.0
 
 # --- Nothing that costs money may run in a loop (file 08 step 10) --------
