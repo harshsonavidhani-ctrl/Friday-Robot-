@@ -333,6 +333,9 @@ class Brain:
         # content is a plain string normally, or image+text blocks when she
         # looked before answering (BRAIN_EYES_FIRST).
         self._enrich: tuple[int | None, Any] = (None, None)
+        # Set for ONE turn by _try_fast when the conversation window overrules
+        # an IGNORE; read and cleared by _run. See asked_of_her().
+        self._assume_addressed = False
         # WHEN EACH MESSAGE WAS ADDED, one entry per entry in self.messages and
         # trimmed with it. Only images need it (see _outgoing and
         # BRAIN_IMAGE_TTL_S), but keeping one stamp per message is simpler than
@@ -733,6 +736,14 @@ class Brain:
             # the full turn instead of being dropped; outside it, silence.
             log.info("IGNORE overridden — asked of her moments after she "
                      "spoke: %r", text[:60])
+            # ⚠ AND THE FULL PATH HAS TO BE TOLD. Measured 2026-09-20
+            # 00:04:58: the override fired, the turn escalated, and the full
+            # brain reached the same verdict on the same words -- "IGNORE
+            # overridden" in the log, "IGNORED (not said to her)" one line
+            # later, 18.7 s of silence. A second opinion asked in the same
+            # words gets the same answer; what it was missing is the fact
+            # that she had just been talking to him.
+            self._assume_addressed = True
             return None
         if is_ignore(reply):
             # NOT SAID TO HER. Kept out of the history: a video's line and her
@@ -986,6 +997,17 @@ class Brain:
         # copy in at this index for every round of this turn, and the history
         # keeps only what Harsh actually said.
         asked: Any = self._with_situation(self._with_memory(text))
+
+        # THE ONE FACT THAT SETTLES IT, on the wire only. The transcript of
+        # what he said reads like a fragment however many times it is asked
+        # about; that she was mid-conversation with him does not.
+        if getattr(self, "_assume_addressed", False):
+            self._assume_addressed = False
+            asked = (f"{asked}\n\n[You were speaking with him moments ago and "
+                     f"this is a question or a request. It IS addressed to "
+                     f"you, however garbled the transcription is. Do not "
+                     f"reply {getattr(config, 'BRAIN_IGNORE', 'IGNORE')} — "
+                     f"answer it, or ask him to say it again.]")
 
         # LOOK BEFORE ASKING, when the question is plainly about what is in
         # front of her. Saves a whole round trip and means the frame she
