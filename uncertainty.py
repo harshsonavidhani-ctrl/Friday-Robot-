@@ -83,6 +83,31 @@ def admitted_not_knowing(said: str | None, asked: str | None) -> str | None:
         return None
 
 
+# ⚠ WHAT IS NOT A TOPIC. Live, 2026-09-20 01:46, the gap she logged was
+# "All right" -- a discourse marker she had been asked about by a television.
+# A gap is a subject the quiet look-up can go and settle; "All right" sends
+# it searching for nothing, and it counts in step 6 as something she learned.
+_NOT_A_TOPIC = {
+    "all right", "alright", "okay", "ok", "yeah", "yes", "no", "hmm", "hm",
+    "so", "well", "right", "sure", "thanks", "thank you", "hello", "hi",
+    "that", "this", "it", "what", "something", "anything", "nothing",
+    "the other one", "come on", "never mind",
+}
+
+
+def looks_like_a_topic(topic: str) -> bool:
+    """Is this something that could be looked up? Never raises.
+
+    Two real words, or one long one ("photogrammetry"). A bare marker, a
+    pronoun or a yes/no is not a topic however confidently it was logged.
+    """
+    text = " ".join((topic or "").strip().strip("?.!,").lower().split())
+    if not text or text in _NOT_A_TOPIC:
+        return False
+    words = [w for w in text.split() if len(w) > 3]
+    return len(words) >= 2 or any(len(w) >= 8 for w in words)
+
+
 def log_gap(topic: str, said: str | None = None,
             asked: str | None = None) -> dict | None:
     """Record that she answered without really knowing. Never raises."""
@@ -90,6 +115,9 @@ def log_gap(topic: str, said: str | None = None,
         return None
     topic = (topic or "").strip()
     if not topic:
+        return None
+    if not looks_like_a_topic(topic):
+        log.info("not a topic worth chasing, not logged: %r", topic[:60])
         return None
     limit = int(getattr(config, "UNCERTAINTY_MAX_CHARS", 160))
     if len(topic) > limit:

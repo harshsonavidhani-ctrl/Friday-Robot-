@@ -199,6 +199,15 @@ def mark_resolved(topic: str, fact: str = "", source: str = "idle-study") -> dic
         return None
     try:
         import memory                                    # noqa: PLC0415
+        # ⚠ ONE GAP, ONE CLOSING. Live, 2026-09-20: the same gap was marked
+        # resolved twice, three minutes apart, and the count said she had
+        # closed two. A number that double-counts is the gamified thing the
+        # spec asks this not to be.
+        already = {str(e.get("text", "")).strip().lower()
+                   for e in memory.events_of_task(RESOLVED_TASK, 200)}
+        if topic.strip().lower() in already:
+            log.debug("gap already marked closed: %r", topic[:60])
+            return None
         row = memory.log_event(topic.strip()[:200], task=RESOLVED_TASK,
                                meta={"source": source, "fact": fact[:200]})
         # The one write this module makes itself: do not let its own cache

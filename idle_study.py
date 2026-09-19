@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -130,6 +131,16 @@ def _recent_conversation(history: list[dict[str, Any]], limit: int = 8) -> str:
     return "\n".join(lines[-limit:])
 
 
+# What a fact never opens with. See the guard in study().
+_ABOUT_SEARCHING_RE = re.compile(
+    r"\b(the search|search results?|searching|the transcript|"
+    r"i cannot determine|i could not determine|i can'?t determine|"
+    r"(?:does|did) not (?:resolve|clarify|identify|answer)|"
+    r"(?:doesn'?t|didn'?t) (?:resolve|clarify|identify|answer)|"
+    r"no information|nothing about|unresolved|"
+    r"without more context|i (?:could not|couldn'?t) find)\b",
+    re.IGNORECASE)
+
 _SMALL_WORDS = {
     "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for", "is",
     "was", "are", "were", "her", "his", "its", "it", "she", "he", "they",
@@ -150,7 +161,13 @@ def _about_the_same_thing(topic: str, text: str) -> bool:
             return {w.strip(".,!?;:'\"()").lower() for w in s.split()}
         gap = {w for w in words(topic) if len(w) > 3 and w not in _SMALL_WORDS}
         found = {w for w in words(text) if len(w) > 3}
-        return bool(gap & found)
+        shared = gap & found
+        # ⚠ ONE COMMON WORD IS NOT THE SAME SUBJECT. Live, 2026-09-20 01:58:
+        # the gap "All right" was counted as closed by a look-up about robot
+        # vision, because both contained "right". Two shared words, or one
+        # distinctive one -- and a gap of fewer than two real words cannot
+        # match at all (uncertainty.looks_like_a_topic refuses those now).
+        return len(shared) >= 2 or any(len(w) >= 7 for w in shared)
     except Exception:                                   # noqa: BLE001
         return False
 
@@ -292,6 +309,18 @@ def study(history: list[dict[str, Any]]) -> dict | None:
     if not fact or fact.strip(" .!\"'`").upper() == NOTHING:
         log.info("idle study: nothing worth looking up in the last "
                  "conversation (%s)", NOTHING)
+        return None
+    # ⚠ A SENTENCE ABOUT SEARCHING IS NOT A FACT, and the prompt asking for
+    # one was not enough. Seven of the ten things the quiet look-up saved by
+    # 2026-09-20 were its own commentary: "The search results discuss how
+    # robot vision systems work in general, but this doesn't resolve the
+    # actual unresolved thing", "I cannot determine what 'the other one'
+    # refers to", "The transcript contains fragments that don't form clear
+    # statements". Every one of those is read back later as something she
+    # KNOWS. NOTHING is the right answer there, and this enforces it.
+    if _ABOUT_SEARCHING_RE.search(fact):
+        log.info("idle study: that is a note about searching, not a fact — "
+                 "not saved: %r", fact[:90])
         return None
     if not searched:
         # It answered from training instead of looking. That is exactly the

@@ -268,6 +268,28 @@ def main() -> int:
           "an outcome would make a gap resurface as a lesson that worked")
     check("an empty topic marks nothing",
           growth.mark_resolved("") is None)
+    check("the same gap cannot be closed twice",
+          growth.mark_resolved("her own chassis weight") is None,
+          "a double-counted gap inflates the one number that must be honest")
+
+    print("\nJUNK IS NOT A GAP, AND A SHARED WORD IS NOT A SUBJECT")
+    import uncertainty as unc
+    import idle_study
+    for junk in ("All right", "okay", "right", "the other one", "it"):
+        check(f"not logged as a gap: {junk!r}",
+              unc.log_gap(junk) is None and not unc.looks_like_a_topic(junk),
+              "this is what she logged live on 2026-09-20 01:46")
+    for real in ("her own chassis weight", "how loop closure works",
+                 "photogrammetry"):
+        check(f"still a gap: {real!r}", unc.looks_like_a_topic(real))
+    check("one shared common word does not close a gap",
+          not idle_study._about_the_same_thing(
+              "All right", "robot vision systems work in general"),
+          "this counted as a gap closed, live, at 01:58")
+    check("...but the same subject does",
+          idle_study._about_the_same_thing(
+              "her own chassis weight",
+              "the chassis weight of this robot is about 2 kg"))
 
     passed = sum(_results)
     print(f"\n{passed} passed, {len(_results) - passed} failed")
