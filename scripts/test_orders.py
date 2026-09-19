@@ -41,6 +41,9 @@ KEEP = [
     ("thoda sa aage chalo", "go_forward"),
     ("what time is it", "time"), ("what's the time", "time"),
     ("tell me the time", "time"), ("time?", "time"), ("Friday, time?", "time"),
+    ("what's the weather", "weather"), ("how's the weather", "weather"),
+    ("weather?", "weather"), ("is it raining", "weather"),
+    ("mausam kaisa hai", "weather"),
     ("explore", "explore"), ("start exploring", "explore"),
     ("explore the room", "explore"),
     ("Friday, explore for twenty minutes", "explore"),
@@ -65,6 +68,9 @@ REFUSE = [
     "that's the one on the left",
     "I think we should go right now",
     "we explore the caves later",
+    "the weather is nice in Spain",
+    "we talked about the weather for hours",
+    "whether or not you come",
     "they will explore the island in the next episode",
 ]
 

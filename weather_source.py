@@ -87,7 +87,12 @@ def _parse(payload: dict[str, Any]) -> dict[str, Any]:
         except (KeyError, IndexError, TypeError):
             return ""
 
-    place = text(area, "areaName") or config.APP_WEATHER_PLACE or ""
+    # THE NAME HE ASKED FOR WINS OVER THE SERVICE'S. wttr.in answers a request
+    # for "Chhindwara" with areaName "Gangiwara" -- its nearest weather area,
+    # the right numbers under a name nobody in this house uses. When the town
+    # is configured it is the label; areaName is only for the IP-located case,
+    # where there is no name to prefer.
+    place = config.APP_WEATHER_PLACE or text(area, "areaName") or ""
     return {
         "place": place,
         "condition": text(current, "weatherDesc"),

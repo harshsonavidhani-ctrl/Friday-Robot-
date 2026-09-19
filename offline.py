@@ -292,6 +292,16 @@ _ASK_RULES: list[tuple[str, str, str | None, dict, str]] = [
                    r"screen (band|saaf))\b",              "dismiss_screen",   {},          "Cleared."),
     ("screen",     r"\b(what('s| is) on (the )?screen|screen (pe|par) kya)\b",
                                                           "get_screen",       {},          ""),
+    # THE ASK, NOT THE WORD -- the same rule the `time` row learned the hard
+    # way. A bare `weather` keyword inside a sentence would put a card on the
+    # panel every time a video mentioned the sky. weather_now fetches through
+    # weather_source (wttr.in, no key, ~3 s) and draws the card, so the spoken
+    # answer and the panel are the same reading.
+    ("weather",    r"\b(what('?s| is)? (the )?weather|how('?s| is) the weather|"
+                   r"weather (today|now|outside|report|like)|"
+                   r"is it (going to )?rain(ing)?|mausam kaisa|kaisa mausam|"
+                   r"मौसम कैसा)\b|^\s*(the )?weather[\s?.!]*$",
+                                                          "weather_now",      {},          ""),
 ]
 
 _ASK_COMPILED = [(name, re.compile(pattern, re.IGNORECASE | re.UNICODE),
@@ -731,6 +741,7 @@ def help_text() -> str:
 _SPEAK_RESULT = frozenset({
     "distance", "battery", "status", "map_what", "screen", "alarms",
     "explore_status", "scan", "lidar", "recall", "alarm", "timer", "cancel",
+    "weather",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -750,7 +761,7 @@ _REFLEX_INTENTS = frozenset({
     "go_left", "go_right", "go_forward", "go_backward",
     "speed", "face",
     "alarm", "timer", "cancel", "alarms", "clock", "dismiss", "screen",
-    "battery", "status",
+    "battery", "status", "weather",
 })
 
 

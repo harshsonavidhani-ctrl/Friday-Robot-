@@ -343,7 +343,17 @@ async def api_screen_post(request: web.Request) -> web.Response:
             app_control.launch("timer", timer_id=timer["id"])
             said = f"timer set for {app_control.say_duration(timer['seconds'])}"
         elif action == "launch":
-            said = app_control.launch(str(payload.get("app", "")))
+            app = str(payload.get("app", ""))
+            # ⚠ THE WEATHER BUTTON HAS TO GO AND GET THE WEATHER FIRST.
+            # `launch("weather")` draws the card with nothing in it -- an icon
+            # and a "--" where the temperature goes -- which is what Harsh saw
+            # on 2026-09-19 and reported as the weather screen not showing at
+            # all. set_weather() with no dict fetches through weather_source
+            # (wttr.in, no key) and RAISES if it cannot, so a phone with no
+            # internet gets "no weather to show: ..." in the toast instead of
+            # a card that reads as broken.
+            said = (app_control.set_weather() if app == "weather"
+                    else app_control.launch(app))
         elif action == "dismiss":
             said = app_control.dismiss()
         elif action == "cancel":

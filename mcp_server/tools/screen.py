@@ -97,6 +97,36 @@ def show_weather(place: str, condition: str, temp_c: float | None = None,
 
 
 @tool
+def weather_now() -> str:
+    """Put the real weather on the panel — "what's the weather".
+
+    THE ONE TO USE WHEN HE JUST ASKS. It fetches the sky itself (wttr.in, no
+    key, no credits, about 3 s) and draws the card, so the answer and the
+    panel always agree. Use show_weather instead only when you have looked
+    something up that this cannot give — another city, tomorrow, "will it
+    rain before I get home".
+
+    Say the line this returns out loud; it is what is on the card.
+    """
+    try:
+        said = app_control.set_weather()
+    except app_control.ScheduleError as exc:
+        # No internet, or a service that changed its JSON. Saying so is the
+        # honest answer; a card with nothing in it is not.
+        return str(exc)
+    import weather_source
+    data, _ = weather_source.current()
+    if not data:
+        return said
+    temp = data.get("temp_c")
+    place = data.get("place") or "here"
+    condition = str(data.get("condition") or "").lower()
+    degrees = f"{round(temp)} degrees" if temp is not None else "no reading"
+    return (f"{degrees} in {place}" + (f", {condition}" if condition else "")
+            + " — it's on the screen")
+
+
+@tool
 def list_alarms() -> str:
     """Every alarm and timer still ahead, soonest first.
 

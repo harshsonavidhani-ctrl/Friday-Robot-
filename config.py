@@ -2012,7 +2012,13 @@ APP_WEATHER_FORCE_ICON = "rain"
 # the Pi's public address. That is what keyless geolocation costs. Name a city
 # here and nothing is inferred from the address.
 APP_WEATHER_FETCH = True
-APP_WEATHER_PLACE = None     # e.g. "Chhindwara"; None = let it locate by IP
+# ⚠ NAMED, NOT INFERRED. Left as None this located by IP, and on 2026-09-19
+# two fetches four minutes apart came back "Chhindwara" and then "Connaught
+# Place" -- Delhi, 800 km away -- because the ISP's egress moved. A weather
+# card is only worth having if it is the sky outside THIS window, so the town
+# is written down. Another city is still a fair question: the brain has web
+# search and show_weather draws whatever it found.
+APP_WEATHER_PLACE = "Chhindwara"
 APP_WEATHER_URL = "https://wttr.in/{place}?format=j1"
 APP_WEATHER_USER_AGENT = "friday-robot (weather card)"
 APP_WEATHER_TIMEOUT_S = 12.0
