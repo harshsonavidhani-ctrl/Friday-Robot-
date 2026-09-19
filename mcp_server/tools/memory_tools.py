@@ -158,3 +158,22 @@ def reflect_now() -> str:
     tail = (f" {len(flagged)} instruction(s) need a decision from him."
             if flagged else "")
     return f"{note['summary']}{tail}"
+
+
+@tool
+def how_much_have_you_grown() -> str:
+    """Her own growth numbers — "how much have you learned?", "what level are you?"
+
+    File 09 step 6. Every number is a count of rows that already existed: the
+    corrections she kept, what she remembers, jobs that worked or failed,
+    reflections done, gaps admitted and gaps closed. The level is a rough
+    milestone over those counts, NOT a score she earns for talking.
+
+    Say the summary line; the rest is there if he asks for detail. Never
+    inflate it — the numbers are the point.
+    """
+    import growth                                        # noqa: PLC0415
+    data = growth.report()
+    return json.dumps({"summary": data["summary"], "level": data["level"],
+                       "counts": data["counts"], "next": data["next"]},
+                      indent=2)

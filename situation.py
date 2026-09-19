@@ -125,6 +125,42 @@ def _last_spoke() -> str | None:
     return f"you last spoke {_said_age(since)}"
 
 
+def _reflection() -> str | None:
+    """The one thing she decided to do differently, from her last look back.
+
+    FILE 09 STEP 5: "Fold the latest note into the system prompt context for
+    future replies." This is that fold -- the situation block already rides on
+    every turn after the cached prefix, which is the only place a per-turn
+    fact can go without throwing the prompt cache away.
+
+    ⚠ ONLY `to_adjust`, AND ONLY WHILE IT IS FRESH. The whole note is two
+    paragraphs written to be read on a screen; what belongs in front of a
+    spoken turn is the one line that changes what she does. And it is a NOTE
+    TO HERSELF, worded so it cannot be read out as news -- the "cat" rule in
+    this file's own header.
+    """
+    try:
+        import reflection
+        note = reflection.last()
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not read the last reflection: %s", exc)
+        return None
+    if not note:
+        return None
+    line = str(note.get("to_adjust") or "").strip()
+    if not line:
+        return None
+    age = time.time() - float(note.get("at") or 0)
+    if age < 0 or age > float(getattr(config, "REFLECTION_CONTEXT_FRESH_S",
+                                      86400.0)):
+        return None
+    if len(line) > 200:
+        line = line[:200].rsplit(" ", 1)[0] + "…"
+    # block() punctuates every line itself, so a sentence that already ends
+    # in a full stop comes out with two.
+    return f"looking back {_said_age(age)} you decided: {line.rstrip('.')}"
+
+
 def _exploring() -> str | None:
     """Whether a run is going, just went, or failed -- and how long ago.
 
@@ -248,7 +284,8 @@ def block(eyes: bool = True) -> str:
     """
     try:
         lines = [f"It is {_clock()}."]
-        parts = (_mood(), _last_spoke(), _exploring(), _around_me(),
+        parts = (_mood(), _last_spoke(), _reflection(), _exploring(),
+                 _around_me(),
                  _scene() if eyes else None, _weather(), _studied())
         for fact in parts:
             if fact:

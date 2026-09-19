@@ -20,11 +20,20 @@ without the timestamp that is three Haiku calls for one quiet room.
 `last_reflection_at` is on DISK, not in memory, because the brain restarts far
 more often than four hours (it restarted eight times tonight).
 
-WHAT IT LOOKS AT, and nothing else:
-  * the learned preferences (file 09 step 1), with their dates;
-  * the gaps she logged while answering (step 3).
-Both are already stored; this reads them back and looks for the pattern. It
-has no tools, no web, no camera, and it never speaks.
+WHAT IT LOOKS AT (file 09 step 5), all of it already stored:
+  * the learned preferences (step 1), with their dates;
+  * the gaps she logged while answering (step 3);
+  * a SAMPLE of the recent event log, with outcomes;
+  * the newest things she was told or looked up;
+  * the running totals (step 6, growth.py).
+A sample, not a transcript: the spec asks for a short self-assessment, "not a
+full transcript replay", and a model handed two hundred rows writes about the
+rows. It has no tools, no web, no camera, and it never speaks.
+
+THE NOTE IS BOUNDED AND SO IS ITS HISTORY. The latest note is what the next
+turns see (situation.py folds `to_adjust` into the context), and the last
+REFLECTION_LOG_MAX of them are kept in state/reflection.json so the file
+cannot grow forever -- the spec again: "don't just keep appending forever".
 
 ⚠ IT NEVER DELETES ANYTHING. The spec: "if two conflict, or one looks
 stale/no longer relevant, flag it for the user rather than silently deleting
@@ -103,6 +112,12 @@ def last() -> dict | None:
     return note if isinstance(note, dict) and note.get("summary") else None
 
 
+def log_entries(limit: int = 10) -> list[dict]:
+    """The rolling reflection log, newest last. Bounded on write."""
+    entries = [e for e in (_read().get("log") or []) if isinstance(e, dict)]
+    return entries[-limit:]
+
+
 def flags(unresolved_only: bool = True) -> list[dict]:
     """Preferences she wants a decision on. Never raises."""
     rows = _read().get("flags")
@@ -178,13 +193,21 @@ _SYSTEM = (
     "You are Friday, a home robot, looking back over what you have learned. "
     "Nobody is listening: nothing you write here is spoken aloud, and it is "
     "read later by Harsh on a screen.\n\n"
-    "You are given two lists: the standing instructions he has corrected you "
-    "into, with dates, and the topics you answered without really knowing.\n\n"
+    "You are given his standing instructions to you with their dates, the "
+    "topics you answered without really knowing, a sample of the last few "
+    "things you did and how they went, the newest things you learned, and "
+    "your running totals.\n\n"
     "Reply with ONE JSON object and nothing else:\n"
-    '{"summary": "...", "themes": ["..."], "flags": [{"fact_id": 1, '
-    '"kind": "conflict"|"stale", "why": "..."}]}\n\n'
-    "- summary: two or three plain sentences about what has changed in how "
-    "you behave and what you keep not knowing. Write it to be read, not said.\n"
+    '{"went_well": "...", "to_adjust": "...", "themes": ["..."], '
+    '"flags": [{"fact_id": 1, "kind": "conflict"|"stale", "why": "..."}]}\n\n'
+    "- went_well: one or two plain sentences on what is working — what you "
+    "got right, what you have learned to do differently, what he seems "
+    "happy with.\n"
+    "- to_adjust: one or two plain sentences on what to do differently next "
+    "time. Specific and about YOU, not a wish about him.\n"
+    "⚠ Both are a SELF-ASSESSMENT, not a replay: do not list what happened, "
+    "do not quote the log back, do not count things (the totals are given to "
+    "you). Write them to be read on a screen, not said out loud.\n"
     "- themes: at most three short phrases naming what you are repeatedly "
     "unsure about (\"her own hardware\", \"cricket scores\"). [] if there is "
     "no pattern -- two unrelated gaps are not a theme.\n"
@@ -199,7 +222,36 @@ _SYSTEM = (
 )
 
 
-def _lists(preferences: list[dict], gaps: list[dict]) -> str:
+def _recent_work(limit: int = 12) -> list[dict]:
+    """The last few things she DID, with how they went. Never raises."""
+    try:
+        import memory
+        rows = memory.recent_events(limit=limit * 3)
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not read the recent events: %s", exc)
+        return []
+    # The gaps and the reflections are already in their own sections; showing
+    # them here again would have her reflecting on her own reflecting.
+    skip = {TASK, "uncertain_response", "uncertain_resolved"}
+    return [r for r in rows if r.get("task") not in skip][:limit]
+
+
+def _recent_memories(limit: int = 10) -> list[str]:
+    """The newest things she was told or looked up. Never raises."""
+    try:
+        import memory
+        kind = getattr(config, "LEARNED_PREFERENCE_KIND", "learned_preference")
+        return [f.text for f in memory.all_facts(limit=limit * 3)
+                if f.kind != kind][:limit]
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not read the recent memories: %s", exc)
+        return []
+
+
+def _lists(preferences: list[dict], gaps: list[dict],
+           work: list[dict] | None = None,
+           memories: list[str] | None = None,
+           counts: dict | None = None) -> str:
     lines = ["HIS STANDING INSTRUCTIONS TO YOU:"]
     if preferences:
         for row in preferences:
@@ -216,6 +268,26 @@ def _lists(preferences: list[dict], gaps: list[dict]) -> str:
             lines.append(f"- ({when}) {row.get('text', '')}")
     else:
         lines.append("- (nothing logged)")
+
+    # ⚠ THE LOG IS A SAMPLE, NOT A TRANSCRIPT. The spec asks for a short
+    # self-assessment, "not a full transcript replay" -- and a model handed
+    # two hundred rows writes about the rows.
+    if work:
+        lines.append("")
+        lines.append("THE LAST FEW THINGS YOU DID:")
+        for row in work:
+            outcome = row.get("outcome") or "no outcome recorded"
+            lines.append(f"- {row.get('task') or 'something'}: "
+                         f"{str(row.get('text', ''))[:90]} [{outcome}]")
+    if memories:
+        lines.append("")
+        lines.append("THE NEWEST THINGS YOU LEARNED OR WERE TOLD:")
+        for text in memories:
+            lines.append(f"- {text[:140]}")
+    if counts:
+        lines.append("")
+        lines.append("THE RUNNING TOTALS (file 09 step 6): " + ", ".join(
+            f"{name} {value}" for name, value in counts.items() if value))
     return "\n".join(lines)
 
 
@@ -264,6 +336,15 @@ def run_self_reflection(reason: str = "idle", force: bool = False) -> dict | Non
     preferences = corrections.preferences(
         int(getattr(config, "REFLECTION_MAX_PREFERENCES", 25)))
     gaps = uncertainty.gaps(int(getattr(config, "REFLECTION_MAX_GAPS", 25)))
+    work = _recent_work(int(getattr(config, "REFLECTION_MAX_EVENTS", 12)))
+    memories = _recent_memories(int(getattr(config, "REFLECTION_MAX_MEMORIES",
+                                            10)))
+    try:
+        import growth
+        counts = growth.report()["counts"]
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not read the growth counts: %s", exc)
+        counts = {}
     if not preferences and not gaps:
         # NOTHING TO REFLECT ON IS NOT A FAILURE, and it must not cost money
         # or move the timestamp -- otherwise the first real reflection waits
@@ -279,7 +360,9 @@ def run_self_reflection(reason: str = "idle", force: bool = False) -> dict | Non
             model=getattr(config, "REFLECTION_MODEL", config.MODEL_FAST),
             max_tokens=int(getattr(config, "REFLECTION_MAX_TOKENS", 500)),
             system=_SYSTEM,
-            messages=[{"role": "user", "content": _lists(preferences, gaps)}])
+            messages=[{"role": "user",
+                       "content": _lists(preferences, gaps, work, memories,
+                                         counts)}])
     except Exception as exc:                    # noqa: BLE001
         log.warning("reflection call failed (%s: %s)", type(exc).__name__, exc)
         return None
@@ -287,7 +370,12 @@ def run_self_reflection(reason: str = "idle", force: bool = False) -> dict | Non
     raw = "".join(b.text for b in message.content
                   if getattr(b, "type", None) == "text")
     parsed = _json_object(raw)
-    summary = str(parsed.get("summary") or "").strip()
+    went_well = str(parsed.get("went_well") or "").strip()
+    to_adjust = str(parsed.get("to_adjust") or "").strip()
+    # `summary` stays, as the one plain-language note everything else reads --
+    # the dashboard, the voice read-back and situation.py were built on it.
+    summary = " ".join(x for x in (went_well, to_adjust) if x) or str(
+        parsed.get("summary") or "").strip()
     if not summary:
         log.info("reflection returned nothing usable")
         return None
@@ -332,6 +420,8 @@ def run_self_reflection(reason: str = "idle", force: bool = False) -> dict | Non
 
     note = {
         "summary": summary[:1200],
+        "went_well": went_well[:600],
+        "to_adjust": to_adjust[:600],
         "themes": themes,
         "reason": reason,
         "at": time.time(),
@@ -345,6 +435,13 @@ def run_self_reflection(reason: str = "idle", force: bool = False) -> dict | Non
     data = _read()
     data["last_reflection_at"] = time.time()
     data["note"] = note
+    # THE ROLLING LOG, bounded. Only the small fields: the whole note carries
+    # costs and counts that are already in the events table, and a log that
+    # keeps everything is the thing the spec asks this not to become.
+    entries = [e for e in (data.get("log") or []) if isinstance(e, dict)]
+    entries.append({k: note[k] for k in
+                    ("date", "reason", "went_well", "to_adjust", "themes")})
+    data["log"] = entries[-int(getattr(config, "REFLECTION_LOG_MAX", 20)):]
     kept = [f for f in (data.get("flags") or [])
             if isinstance(f, dict) and not f.get("resolved")
             and f.get("fact_id") not in {n["fact_id"] for n in new_flags}]

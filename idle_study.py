@@ -130,6 +130,31 @@ def _recent_conversation(history: list[dict[str, Any]], limit: int = 8) -> str:
     return "\n".join(lines[-limit:])
 
 
+_SMALL_WORDS = {
+    "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for", "is",
+    "was", "are", "were", "her", "his", "its", "it", "she", "he", "they",
+    "what", "how", "why", "when", "where", "which", "who", "does", "do", "did",
+    "about", "with", "from", "that", "this", "these", "those", "own", "you",
+}
+
+
+def _about_the_same_thing(topic: str, text: str) -> bool:
+    """Do the gap and what was found share a real word? Never raises.
+
+    Deliberately crude and deliberately strict: it is a check against counting
+    a look-up about something else as a gap closed. A real word means one that
+    is not in _SMALL_WORDS and is longer than three letters.
+    """
+    try:
+        def words(s: str) -> set[str]:
+            return {w.strip(".,!?;:'\"()").lower() for w in s.split()}
+        gap = {w for w in words(topic) if len(w) > 3 and w not in _SMALL_WORDS}
+        found = {w for w in words(text) if len(w) > 3}
+        return bool(gap & found)
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
 def _why_not_now() -> str | None:
     global _studied_today
     if not getattr(config, "IDLE_STUDY", False):
@@ -196,10 +221,12 @@ def study(history: list[dict[str, Any]]) -> dict | None:
     # answered, and she knew at the time that she did not really know. Offered,
     # not forced -- the conversation may have moved on to something better.
     gap = ""
+    offered_gap = ""
     try:
         import uncertainty                              # noqa: PLC0415
         topic = uncertainty.next_topic()
         if topic:
+            offered_gap = topic
             gap = (f"Earlier today you answered about \"{topic}\" without "
                    f"really knowing. If that is still the most useful thing "
                    f"to settle, start there.\n\n")
@@ -288,6 +315,19 @@ def study(history: list[dict[str, Any]]) -> dict | None:
     except OSError as exc:
         log.warning("could not write the idle note: %s", exc)
     log.info("idle study learned (%s): %r", query or "no query", stored["text"])
+
+    # FILE 09 STEP 6 COUNTS THE GAPS THAT ACTUALLY CLOSED. Being offered a gap
+    # is not the same as settling it -- the model is told to start there "if
+    # that is still the most useful thing", and it is free to look up
+    # something else entirely. So this only counts when the gap's own words
+    # turn up in what was searched for or in what was saved. Over-claiming
+    # here would inflate a growth score whose whole point is being honest.
+    if offered_gap and _about_the_same_thing(offered_gap, f"{query} {fact}"):
+        try:
+            import growth                               # noqa: PLC0415
+            growth.mark_resolved(offered_gap, stored["text"])
+        except Exception as exc:                        # noqa: BLE001
+            log.debug("could not mark the gap resolved: %s", exc)
     return note
 
 

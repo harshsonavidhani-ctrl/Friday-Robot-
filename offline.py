@@ -297,6 +297,12 @@ _ASK_RULES: list[tuple[str, str, str | None, dict, str]] = [
     # panel every time a video mentioned the sky. weather_now fetches through
     # weather_source (wttr.in, no key, ~3 s) and draws the card, so the spoken
     # answer and the panel are the same reading.
+    # FILE 09 STEP 6. Counts rows in a database she already wrote; no model,
+    # no money, so it is a reflex rather than a brain turn.
+    ("growth",     r"\b(how much have you (learned|grown)|what level are you|"
+                   r"your (level|growth|progress|stats)|how many things "
+                   r"(do you know|have you learned))\b",
+                                                          "how_much_have_you_grown", {},   ""),
     # FILE 09 STEP 4, the read-back only. It reads a file she has already
     # written, so it costs nothing and cannot be made to spend money in a
     # loop; `reflect_now`, which DOES cost a call, is left to the brain and
@@ -757,7 +763,7 @@ def help_text() -> str:
 _SPEAK_RESULT = frozenset({
     "distance", "battery", "status", "map_what", "screen", "alarms",
     "explore_status", "scan", "lidar", "recall", "alarm", "timer", "cancel",
-    "weather", "learned",
+    "weather", "learned", "growth",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -777,7 +783,7 @@ _REFLEX_INTENTS = frozenset({
     "go_left", "go_right", "go_forward", "go_backward",
     "speed", "face",
     "alarm", "timer", "cancel", "alarms", "clock", "dismiss", "screen",
-    "battery", "status", "weather", "learned",
+    "battery", "status", "weather", "learned", "growth",
 })
 
 

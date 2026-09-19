@@ -170,10 +170,13 @@ async def api_state(request: web.Request) -> web.Response:
 def reflection_state() -> dict:
     import reflection
     note = reflection.last() or {}
+    import growth
     return {"note": {k: note.get(k) for k in
-                     ("summary", "themes", "date", "reason", "preferences",
-                      "gaps")} if note else None,
+                     ("summary", "went_well", "to_adjust", "themes", "date",
+                      "reason", "preferences", "gaps")} if note else None,
             "flags": reflection.flags(),
+            "log": reflection.log_entries(8),
+            "growth": growth.report(),
             "waiting": float(reflection._too_soon())}
 
 

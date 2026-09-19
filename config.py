@@ -386,6 +386,14 @@ REFLECTION_MAX_TOKENS = 500
 REFLECTION_MAX_PREFERENCES = 25
 REFLECTION_MAX_GAPS = 25
 REFLECTION_MAX_FLAGS = 12            # the list he is asked to rule on, bounded
+# What step 5 puts in front of it, and how much of it is kept afterwards. A
+# SAMPLE of the log, not the log: "not a full transcript replay".
+REFLECTION_MAX_EVENTS = 12
+REFLECTION_MAX_MEMORIES = 10
+REFLECTION_LOG_MAX = 20              # rolling; the spec: don't append forever
+# How long the latest note rides along in the turn context (situation.py).
+# A day: after that it is about a conversation neither of them remembers.
+REFLECTION_CONTEXT_FRESH_S = 86400.0
 
 # --- Nothing that costs money may run in a loop (file 08 step 10) --------
 # rate_limit.py enforces these. DAILY_SPEND_CAP_USD above is the ceiling --

@@ -210,6 +210,61 @@ def main() -> int:
           reflection.run_self_reflection("test", force=True) is None)
     config.ANTHROPIC_API_KEY = key
 
+    print("\nSTEP 5 — the note is bounded, and it reaches the next turn")
+    config.REFLECTION_LOG_MAX = 3
+    for n in range(5):
+        use('{"went_well": "fine %d", "to_adjust": "adjust %d", '
+            '"themes": [], "flags": []}' % (n, n))
+        reflection.run_self_reflection("test", force=True)
+    entries = reflection.log_entries(50)
+    check("the rolling log is bounded", len(entries) == 3,
+          f"{len(entries)} entries — it would grow forever")
+    check("...and keeps the newest", entries[-1]["to_adjust"] == "adjust 4")
+    note = reflection.last()
+    check("went_well and to_adjust are both kept",
+          note["went_well"] == "fine 4" and note["to_adjust"] == "adjust 4")
+    check("the summary is the two of them in plain language",
+          note["summary"] == "fine 4 adjust 4")
+
+    import situation
+    block = situation.block(eyes=False)
+    check("the latest note rides along on the next turn",
+          "adjust 4" in block, block[:200])
+    old_at = reflection._read()
+    old_at["note"]["at"] = time.time() - 10 * 86400
+    reflection._write(old_at)
+    check("...but a stale one does not",
+          "adjust 4" not in situation.block(eyes=False))
+
+    print("\nSTEP 6 — counts from the rows that already existed")
+    import growth
+    before = growth.report()["counts"]
+    memory.remember("Friday should always say roger.",
+                    kind=config.LEARNED_PREFERENCE_KIND, source="correction")
+    memory.log_event("something she did", task="move", outcome="worked")
+    growth.mark_resolved("her own chassis weight", "it is about 2 kg")
+    after = growth.report()
+    check("a correction is counted",
+          after["counts"]["corrections_learned"]
+          == before["corrections_learned"] + 1)
+    check("a finished job is counted",
+          after["counts"]["tasks_worked"] == before["tasks_worked"] + 1)
+    check("a closed gap is counted",
+          after["counts"]["uncertain_resolved"]
+          == before["uncertain_resolved"] + 1)
+    check("the level is a number and the summary mentions it",
+          isinstance(after["level"], int)
+          and f"Level {after['level']}" in after["summary"], after["summary"])
+    check("repeating one job cannot run the level up",
+          growth.MAX_POINTS.get("tasks_worked", 0) > 0,
+          "activity has to be capped or the score is gamified")
+    check("a resolved gap keeps the original row outcome-free",
+          all(e.get("outcome") is None
+              for e in memory.events_of_task("uncertain_response")),
+          "an outcome would make a gap resurface as a lesson that worked")
+    check("an empty topic marks nothing",
+          growth.mark_resolved("") is None)
+
     passed = sum(_results)
     print(f"\n{passed} passed, {len(_results) - passed} failed")
     print(f"(scratch database: {config.MEMORY_DB})")

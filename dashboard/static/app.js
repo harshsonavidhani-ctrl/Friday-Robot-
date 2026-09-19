@@ -488,10 +488,17 @@ function paintReflection(state) {
   if (!$('reflecttext')) return;
   const note = state.note;
   $('reflectwhen').textContent = note ? (note.date || 'saved') : 'never';
-  $('reflecttext').textContent = note
-    ? (note.summary + (note.themes && note.themes.length
-        ? '  ·  ' + note.themes.join(' · ') : ''))
-    : 'She has not reflected yet.';
+  /* The growth line first: it is true even before she has ever reflected,
+     and it is the one a person actually wants to see (file 09 step 6). */
+  const g = state.growth || {};
+  $('reflecttext').textContent = [
+    g.summary || '',
+    note ? (note.went_well || note.summary || '') : '',
+    note ? (note.to_adjust || '') : '',
+    (note && note.themes && note.themes.length)
+      ? 'themes: ' + note.themes.join(' · ') : '',
+    note ? '' : 'She has not reflected yet.',
+  ].filter(Boolean).join('\n\n');
 
   const box = $('reflectflags');
   box.innerHTML = '';
