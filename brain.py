@@ -221,6 +221,43 @@ _QUESTION_RE = re.compile(
     r"kitna|kitne)\b", re.IGNORECASE)
 
 
+# A REQUEST IS AS MUCH HERS AS A QUESTION, and the window only asked about
+# questions. 2026-09-20 00:00:07, thirty seconds after she had described the
+# room to him: "describe about more about the thing you saw, like the people
+# you saw." -- no question mark, no question word, so the override never ran
+# and she said nothing. The verb is in front, which is the whole signal; a
+# television line about taking the first one does not start with its verb.
+_REQUEST_RE = re.compile(
+    r"^\s*(?:(?:hey\s+)?friday[\s,]*)?(?:so|and|ok|okay|now|just|please)?[\s,]*"
+    r"(?:can you|could you|would you|please)?[\s,]*"
+    r"(?:describe|tell|show|explain|say|speak|look|see|watch|check|find|"
+    r"search|count|read|list|remember|forget|give|bring|take|help|play|"
+    r"open|close|start|stop|come|move|turn|go|listen|repeat|continue|"
+    r"do|make|put|set|send|try|wait|keep|batao|dekho|bolo|karo|suno)\b",
+    re.IGNORECASE)
+
+
+# The verbs that start a goodbye, not an order. "See you next time." is the
+# line a video signs off with -- it is how the clock got read out to a
+# television on 2026-09-19 -- and it starts with `see` like a real request to
+# look does.
+_IDIOM_RE = re.compile(
+    r"^\s*(?:so|and|ok|okay|now|well)?[\s,]*"
+    r"(?:see\s+(?:you|ya)|take\s+care|come\s+on|go\s+on|go\s+ahead|"
+    r"let'?s\s+go|told\s+you|there\s+you\s+go)\b", re.IGNORECASE)
+
+
+def asked_of_her(text: str) -> bool:
+    """Is this a question or a request -- something aimed at somebody?
+
+    Used ONLY inside the conversation window, never on its own.
+    """
+    if _IDIOM_RE.match(text or ""):
+        return False
+    return bool(_QUESTION_RE.search(text or "")
+                or _REQUEST_RE.match(text or ""))
+
+
 def spoke_within(seconds: float) -> bool:
     """Was her own voice in the room in the last `seconds`? Never raises.
 
@@ -684,7 +721,7 @@ class Brain:
         self.last_model = model
         self.last_fast = True
         self.last_response = {**parsed.as_dict(), "reply": reply}
-        if is_ignore(reply) and _QUESTION_RE.search(text) and spoke_within(
+        if is_ignore(reply) and asked_of_her(text) and spoke_within(
                 getattr(config, "BRAIN_CONVERSATION_WINDOW_S", 90.0)):
             # ⚠ A QUESTION, SECONDS AFTER SHE ANSWERED ONE, IS NOT THE
             # TELEVISION. Measured 2026-09-19 23:57, thirty seconds after she
@@ -694,8 +731,8 @@ class Brain:
             # came back IGNORE and she said nothing. Harsh: "the brain is
             # denying some of the ques". Inside the window a question goes to
             # the full turn instead of being dropped; outside it, silence.
-            log.info("IGNORE overridden — a question %s",
-                     "moments after she spoke")
+            log.info("IGNORE overridden — asked of her moments after she "
+                     "spoke: %r", text[:60])
             return None
         if is_ignore(reply):
             # NOT SAID TO HER. Kept out of the history: a video's line and her

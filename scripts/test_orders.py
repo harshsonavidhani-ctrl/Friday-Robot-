@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_orders.py — what may skip the brain, and what may not.
+"""test_orders.py — what may act on what she heard, and what may not.
 
     ./venv/bin/python scripts/test_orders.py
 
@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import brain                                                # noqa: E402
 import offline                                              # noqa: E402
 
 PASS, FAIL = "\033[32mPASS\033[0m", "\033[31mFAIL\033[0m"
@@ -77,6 +78,43 @@ REFUSE = [
 # Stop is never refused, on any path, at any length -- see _ORDERS_ONLY.
 STOPS = ["stop", "Friday stop!", "stop it", "ruko", "stop please"]
 
+# THE OTHER END OF THE SAME JUDGEMENT: once the brain has said "not said to
+# me", brain.asked_of_her decides whether the conversation window overrides
+# it. Every line here was really said in this room on 2026-09-19/20 -- his in
+# ASKED, the television in NOT_ASKED -- and the transcriber mangled his as
+# badly as it mangled the video's, which is the whole difficulty.
+ASKED = [
+    "describe about more about the thing you saw, like the people you saw.",
+    "Tell me, see and tell me what the people are doing.",
+    "So, how do you know me like what do you like what's it?",
+    "what do you see", "show me the map", "friday, look at this",
+    "can you describe the room", "batao kya dikh raha hai",
+    "see what's in front of you",
+]
+NOT_ASKED = [
+    "I'm gonna take the second one, we're gonna... I'm going to take the first one.",
+    "I don't care about these guys, I can't get them.",
+    "We must go to the history of the society.",
+    "you'll be listening fast as the screen will be",
+    "Thank you.", "See you next time.", "See ya.", "Come on.", "Let's go!",
+    "Take care.",
+]
+
+# What the brain returns when it means "this was not for me". The written-out
+# one was SPOKEN out loud on 2026-09-19 23:39 before is_ignore knew it.
+IGNORES = [
+    "IGNORE", "IGNORE.", "ignore",
+    "This sounds like a sentence from a video or conversation I overheard, "
+    "not something said to me — there's no question in it.",
+    "I don't think that was meant for me.",
+    "That was not addressed to me, so I stayed quiet.",
+]
+NOT_IGNORES = [
+    "Tokyo.", "you can ignore that one", "I'm doing well, thanks for asking.",
+    "He said to me that the rain would stop.",
+    "I overheard the news earlier and it said rain.",
+]
+
 
 def main() -> int:
     bad = 0
@@ -100,6 +138,26 @@ def main() -> int:
         ok = offline.is_stop(text)
         bad += not ok
         print(f"  {PASS if ok else FAIL}  {text!r}")
+
+    print("\nwhat the conversation window rescues from silence")
+    for text in ASKED:
+        ok = brain.asked_of_her(text)
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  {text[:62]!r}")
+    for text in NOT_ASKED:
+        ok = not brain.asked_of_her(text)
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  (silent) {text[:52]!r}")
+
+    print("\n\"not said to me\", however the brain phrases it")
+    for text in IGNORES:
+        ok = brain.is_ignore(text)
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  {text[:62]!r}")
+    for text in NOT_IGNORES:
+        ok = not brain.is_ignore(text)
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  (spoken) {text[:52]!r}")
 
     print(f"\n{'all good' if not bad else str(bad) + ' WRONG'}")
     return 1 if bad else 0
