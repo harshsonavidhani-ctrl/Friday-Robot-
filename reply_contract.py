@@ -123,6 +123,9 @@ JSON object and nothing else — no markdown fence, no words before or after it:
 - `uncertain` — the TOPIC you were not confident about in the answer you just
   gave, in a few words ("how loop closure works in her map"), or `null`. Set it
   for a guess, a half-remembered number, a subject you do not really know.
+  **If your own reply says you do not know, cannot remember, are not sure, or
+  would have to ask him — that IS this field.** Write the topic you did not
+  know, not your excuse for not knowing it.
   **This field is never spoken** — it is a private note so the gap can be
   looked up later, and setting it is not a reason to add an apology or a
   disclaimer you would not otherwise have given. Saying plainly that you do not

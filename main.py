@@ -425,7 +425,18 @@ def _keep_correction(said: str, note: str | None,
 
 def _keep_uncertainty(topic: str | None, asked: str, said: str,
                       turn: "stages.Turn") -> None:
-    """File 09 step 3: log a gap, silently. Never raises."""
+    """File 09 step 3: log a gap, silently. Never raises.
+
+    The model's own `uncertain` field first; if it left it empty but the reply
+    says in her own words that she did not know, the topic is taken from the
+    question instead -- see uncertainty.admitted_not_knowing.
+    """
+    try:
+        import uncertainty
+        if not topic:
+            topic = uncertainty.admitted_not_knowing(said, asked)
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("uncertainty backstop skipped: %s", exc)
     if not topic:
         return
     try:

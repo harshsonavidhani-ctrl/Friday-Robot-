@@ -149,6 +149,17 @@ BRAIN_FAST_NEVER = (
     "alarm", "timer", "reminder", "remind", "schedule", "news",
     "here", "there", "behind", "around you", "where are you",
     "what are you doing", "yourself", "your name",
+    # HER OWN BODY. 2026-09-20: "roughly how much does your chassis weigh"
+    # was answered by the fast path with "About two to three kilograms,
+    # depending on the battery — the aluminium frame and motors are pretty
+    # light." Nobody has ever weighed her, there is no spec in the repo, and
+    # `uncertain` stayed null, so the guess was not even logged as one. This
+    # is the "cat" failure with a number instead of an animal: a model with
+    # no access to the robot inventing a fact about the robot.
+    "weigh", "weighs", "weight", "heavy", "how big", "how tall", "how wide",
+    "how long", "size", "dimensions", "chassis", "frame", "body", "made of",
+    "parts", "hardware", "screen", "display", "speaker", "microphone", "mic",
+    "raspberry", "arduino", "servo", "cpu",
     # SEARCH COMMANDS. Harsh, 2026-09-16: "give her the ability to go and
     # search the web for anything when commanded". The fast path has no tools,
     # so "search the web for X" sent there is answered from memory -- the one

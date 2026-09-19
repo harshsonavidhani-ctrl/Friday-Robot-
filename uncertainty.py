@@ -27,6 +27,7 @@ WHAT READS IT BACK:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -35,6 +36,51 @@ import config
 log = logging.getLogger("friday.uncertainty")
 
 TASK = "uncertain_response"
+
+# ⚠ THE MODEL FORGETS TO FILL THE FIELD, and the whole step is that field.
+# Measured 2026-09-20: "roughly how much does your chassis weigh" came back
+# "I don't have a spec sheet in my head for my own weight ... I'd have to ask
+# him." -- a flat admission, exactly what this step exists to catch -- with
+# `uncertain` null. The contract now spells that case out, and this is the
+# backstop for when it is forgotten anyway: her OWN words decide, and the
+# topic is the question she was asked.
+_ADMISSION_RE = re.compile(
+    r"\b(?:i (?:don'?t|do not) (?:know|have|remember)"
+    r"|i'?m not (?:sure|certain)|i am not (?:sure|certain)"
+    r"|no idea|not sure (?:what|how|why|where|when|which)"
+    r"|can'?t (?:remember|recall|tell you)"
+    r"|(?:i'?d|i would) have to (?:ask|look|check|find out)"
+    r"|i (?:have|'ve) never (?:measured|weighed|counted|checked)"
+    r"|nobody (?:has )?told me)\b", re.IGNORECASE)
+
+# What is left of a question once the asking is stripped off the front, so the
+# stored topic reads like a subject ("how much does your chassis weigh") and
+# not like a transcript ("hey friday, roughly how much does your chassis
+# weigh?"). idle_study searches on it later, so it has to stand alone.
+_ASKING_RE = re.compile(
+    r"^\s*(?:(?:hey\s+|ok(?:ay)?\s+)?friday[\s,]*)?"
+    r"(?:so|and|well|um|uh|just|please|roughly|approximately|about)?[\s,]*"
+    r"(?:can you|could you|do you|did you|would you|tell me|"
+    r"i wanted to know|i want to know)?[\s,]*", re.IGNORECASE)
+
+
+def admitted_not_knowing(said: str | None, asked: str | None) -> str | None:
+    """The topic of an answer that says, in her own words, that she does not
+    know it -- or None. Never raises.
+
+    Only an ADMISSION counts. A confident wrong answer is not visible from
+    here and is not this function's job; the model's own `uncertain` field is
+    the only thing that can catch those.
+    """
+    if not said or not asked:
+        return None
+    try:
+        if not _ADMISSION_RE.search(said):
+            return None
+        topic = _ASKING_RE.sub("", asked.strip()).strip(" ?.!,")
+        return topic or None
+    except Exception:                           # noqa: BLE001
+        return None
 
 
 def log_gap(topic: str, said: str | None = None,

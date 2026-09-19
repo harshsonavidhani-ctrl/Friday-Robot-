@@ -107,6 +107,25 @@ def main() -> int:
     old = uncertainty.next_topic(within_s=0.0)
     check("a stale gap is not chased by the idle look-up", old is None)
 
+    print("\nSTEP 3 — and it is caught when the model forgets the field")
+    # 2026-09-20, the whole reason this backstop exists: a flat admission,
+    # with `uncertain` null. Her own words decide; the topic is the question.
+    for said, asked, want in (
+            ("I don't have a spec sheet in my head for my own weight, and "
+             "I'd have to ask him.", "roughly how much does your chassis "
+             "weigh", "how much does your chassis weigh"),
+            ("I'm not sure what that refers to.",
+             "hey friday, what is Hector Me?", "what is Hector Me"),
+            ("I don't know how loop closure works in my map.",
+             "tell me how loop closure works", "how loop closure works"),
+            ("Tokyo.", "what is the capital of Japan", None),
+            ("Four.", "what is two plus two", None),
+            ("He said to me that the rain would stop.",
+             "what did he say", None)):
+        got = uncertainty.admitted_not_knowing(said, asked)
+        check(f"{'caught' if want else 'left alone'}: {asked[:38]!r}",
+              got == want, f"got {got!r}, wanted {want!r}")
+
     passed = sum(_results)
     print(f"\n{passed} passed, {len(_results) - passed} failed")
     return 0 if all(_results) else 1
