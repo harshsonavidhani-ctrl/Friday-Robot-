@@ -430,8 +430,36 @@ class Brain:
 
         model = getattr(config, "BRAIN_FAST_MODEL", config.MODEL_FAST)
         unsure = getattr(config, "BRAIN_FAST_UNSURE", "UNSURE")
+        ignore = getattr(config, "BRAIN_IGNORE", "IGNORE")
         system = (
             f"{self.system}\n\n"
+            # ⚠ THIS PARAGRAPH IS FIRST, AND IT OUTRANKS THE {unsure} RULES
+            # BELOW IT. Measured 2026-09-19: of 92 wakes in two hours, 87 were
+            # a video playing in the room. The old prompt asked the {unsure}
+            # question first, so "come on." -- four words from a television --
+            # came back {unsure}, escalated to the full brain, and was answered
+            # with a photograph and a description of the wall. Whether the
+            # words were hers to answer at all is the FIRST question, not the
+            # last.
+            f"FIRST, BEFORE ANY OTHER RULE: were these words said TO YOU? "
+            f"Your wake word fires on the television in this room dozens of "
+            f"times an hour, so most of what reaches you was not. If this is "
+            f"a line from a video, two people talking to each other, or a "
+            f"fragment that makes no sense as something said to a robot, "
+            f"reply with exactly {ignore} and nothing else. You stay silent, "
+            f"and you do not ask them to repeat it.\n"
+            f"{ignore} OUTRANKS {unsure}: if the words were not said to you "
+            f"it does not matter that answering them would have needed eyes "
+            f"or a sensor. Say {ignore}, never {unsure} — {unsure} hands the "
+            f"television to a slower brain that will answer it.\n"
+            f"Said TO you means an order, a question, or a plain reply to "
+            f"something YOU just said — the notes below say how long ago you "
+            f"last spoke. A short fragment with no addressee — \"come on\", "
+            f"\"thank you\", \"yes, I do\", \"see you next time\" — is the "
+            f"television unless you spoke seconds ago. A joke, an insult, a "
+            f"compliment or small talk clearly aimed at you is yours: answer "
+            f"it. When you cannot tell, say {ignore}: silence costs one "
+            f"repeat, answering the room costs every one of them.\n\n"
             f"You are answering on the FAST PATH: no tools, no sensors and "
             f"no web. Answer only from general knowledge, this conversation, "
             f"and the memory and 'right now' notes attached to the question. "
@@ -451,15 +479,7 @@ class Brain:
             f"a post, what happened recently. The slower brain can search the "
             f"web; you cannot, and a confidently stale answer said out loud is "
             f"the worst outcome here.\n\n"
-            f"If the words were plainly NOT said to you — a line from a video "
-            f"or the TV, people talking to each other, or a fragment that "
-            f"makes no sense as something said to a robot — reply with exactly "
-            f"{getattr(config, 'BRAIN_IGNORE', 'IGNORE')} and nothing else. "
-            f"You stay silent. Do not ask them to repeat it. But anything "
-            f"that reads as said TO you is for you, however odd — a joke, a "
-            f"compliment, an insult, an exclamation, small talk: answer it."
-            f"\n\n"
-            + (f"{unsure} and {getattr(config, 'BRAIN_IGNORE', 'IGNORE')} "
+            + (f"{unsure} and {ignore} "
                f"go in the reply object's `reply` field like any other answer. "
                f"⚠ Every character of `reply` is said out loud: no markdown, no "
                f"emotion names, no stage directions in it — the face goes in "

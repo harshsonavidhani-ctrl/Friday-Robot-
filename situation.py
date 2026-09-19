@@ -46,6 +46,9 @@ MOOD_MAX_AGE_S = 600.0          # 10 min
 RUN_MAX_AGE_S = 60.0            # a live run writes every tick
 EXPLORE_MAX_AGE_S = 6 * 3600.0  # "what did you do today" is still a fair ask
 WEATHER_MAX_AGE_S = 3 * 3600.0
+# Long enough that a bare "thank you" could still be a reply to her. Past it,
+# a fragment with no addressee is the room talking, not a conversation.
+SPOKE_RECENT_S = 120.0
 
 
 def _age(path: Path) -> float | None:
@@ -91,6 +94,35 @@ def _mood() -> str | None:
     except OSError:
         return None
     return f"your face is showing {mood}" if mood else None
+
+
+def _last_spoke() -> str | None:
+    """How long since her own voice was last in the room.
+
+    THE ADDRESSED TEST NEEDS THIS AND HAD NO WAY TO GET IT. "Thank you." and
+    "Yes, I do." are a reply when she has just finished speaking and a
+    television when she has not, and the model cannot tell which from the
+    history: a turn she ignored is never stored, so the last exchange in there
+    may be hours old while the clock says nothing about it. Measured
+    2026-09-19: she answered "Thank you.", "Yes, I do." and "come on." from a
+    video, each one minutes after she had last said a word to anybody.
+
+    `state/speaking.json` is written by tts.speak() wherever it runs -- the
+    exploration narrator and the RL scripts included -- so it is the one
+    honest record of when she last made a sound.
+    """
+    data = _read_json(config.SPEAKING_FILE)
+    if not isinstance(data, dict):
+        return None
+    try:
+        since = time.time() - float(data.get("until") or data.get("at"))
+    except (TypeError, ValueError):
+        return None
+    if since < 0:
+        return None                 # she is still speaking; not a fact yet
+    if since <= SPOKE_RECENT_S:
+        return f"you last spoke {int(since)} seconds ago"
+    return f"you last spoke {_said_age(since)}"
 
 
 def _exploring() -> str | None:
@@ -216,7 +248,7 @@ def block(eyes: bool = True) -> str:
     """
     try:
         lines = [f"It is {_clock()}."]
-        parts = (_mood(), _exploring(), _around_me(),
+        parts = (_mood(), _last_spoke(), _exploring(), _around_me(),
                  _scene() if eyes else None, _weather(), _studied())
         for fact in parts:
             if fact:
