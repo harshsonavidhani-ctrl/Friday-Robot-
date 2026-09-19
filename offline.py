@@ -305,10 +305,18 @@ _ASK_RULES: list[tuple[str, str, str | None, dict, str]] = [
                    r"have you learn(ed|t)|anything (new )?you'?ve learn|"
                    r"kya seekha|seekha kya|your reflection)\b",
                                                           "what_have_you_learned", {},     ""),
+    # ⚠ EVERY WAY HE ACTUALLY ASKS, because the ones it missed went to the
+    # brain and the brain answered from the situation block -- the right
+    # numbers, said out loud, with NO CARD. 2026-09-20 00:47: "I have a
+    # headache, tell me the weather." -> spoken, nothing on the screen.
+    # Harsh: "the weather voice command should show the animation when asked".
     ("weather",    r"\b(what('?s| is)? (the )?weather|how('?s| is) the weather|"
-                   r"weather (today|now|outside|report|like)|"
-                   r"is it (going to )?rain(ing)?|mausam kaisa|kaisa mausam|"
-                   r"मौसम कैसा)\b|^\s*(the )?weather[\s?.!]*$",
+                   r"(tell|show) (me )?(the |you?r )?weather|weather "
+                   r"(animation|card|screen|today|now|outside|report|like)|"
+                   r"is it (going to )?rain(ing)?|how (hot|cold) is it|"
+                   r"(what('?s| is)? the )?temperature (outside|today|now)|"
+                   r"mausam (kaisa|kya|batao|dikhao)|kaisa mausam|"
+                   r"मौसम कैसा|मौसम बताओ)\b|^\s*(the )?weather[\s?.!]*$",
                                                           "weather_now",      {},          ""),
 ]
 

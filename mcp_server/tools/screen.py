@@ -73,7 +73,14 @@ def show_weather(place: str, condition: str, temp_c: float | None = None,
                  high_c: float | None = None, low_c: float | None = None,
                  wind_kph: float | None = None,
                  humidity: float | None = None) -> str:
-    """Show a weather card on the panel.
+    """Show a weather card for somewhere else, or another day.
+
+    ⚠ FOR THE WEATHER HERE AND NOW, CALL weather_now INSTEAD. It fetches the
+    real reading itself and draws the same card. Asked to show the weather on
+    2026-09-20 00:48 this tool was chosen instead and handed "partly cloudy,
+    26" — invented, while the sky outside was patchy rain — and the card said
+    so on the panel. This one draws EXACTLY what you pass it, so a guess here
+    is a guess on the screen.
 
     FRIDAY HAS NO WEATHER SERVICE OF HER OWN. Look the weather up first with
     web search, then call this with what you found — the card draws whatever

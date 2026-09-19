@@ -45,6 +45,13 @@ KEEP = [
     ("what's the weather", "weather"), ("how's the weather", "weather"),
     ("weather?", "weather"), ("is it raining", "weather"),
     ("mausam kaisa hai", "weather"),
+    # Every one of these reached the BRAIN before, which answered from the
+    # situation block and put no card on the screen -- 2026-09-20 00:47.
+    ("I have a headache, tell me the weather.", "weather"),
+    ("tell me the weather", "weather"), ("show me the weather", "weather"),
+    ("friday whats the weather like", "weather"),
+    ("weather animation", "weather"), ("how hot is it", "weather"),
+    ("mausam batao", "weather"),
     ("explore", "explore"), ("start exploring", "explore"),
     ("explore the room", "explore"),
     ("Friday, explore for twenty minutes", "explore"),
@@ -110,11 +117,19 @@ INSTRUCTIONS = [
     "stop calling me that", "answer in one line", "use simple words",
     "call me Harsh", "never say that again", "from now on speak in hindi",
     "friday, talk less", "don't repeat yourself",
+    # The long way round -- how he actually said it, 2026-09-20 00:49, and it
+    # was IGNORED as television.
+    "When I ask you to tell me the weather you should always show the "
+    "animation for a minimum.",
+    "you should always show the card", "I want you to speak slower",
+    "make sure you look before you move", "remember to call me Harsh",
+    "you must not say that", "you need to be quicker",
 ]
 NOT_INSTRUCTIONS = [
     "come on.", "let's go!", "take care.", "see you next time.",
     "go and get it", "call the police", "thank you.", "stop",
     "We must go to the history of the society.", "what do you see",
+    "you should have seen his face", "we should go now",
 ]
 
 # What the brain returns when it means "this was not for me". The written-out

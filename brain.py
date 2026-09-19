@@ -274,6 +274,14 @@ _INSTRUCTION_RE = re.compile(
     r"louder|simpler|simple|in\b|like\b|as\b|with\b|to me\b)"
     r"|call me\b|stop calling me\b|use (?:simple|short|plain|hindi|english)\b"
     r"|(?:always|from now on)\b"
+    # ⚠ AND THE LONG WAY ROUND, which is how he actually says it. 2026-09-20
+    # 00:49: "When I ask you to tell me the weather you should always show
+    # the animation for a minimum." -- a standing instruction in plain words,
+    # IGNORED as not said to her.
+    r"|when (?:i|you)\b[^.?!]{0,70}?\byou (?:should|must|have to|need to)\b"
+    r"|you (?:should|must|have to|need to|shouldn'?t|should not|must not)\s+"
+    r"(?!have seen|have been|have known)\w+"
+    r"|i (?:want|need) you to\b|make sure (?:you|to)\b|remember to\b"
     r")", re.IGNORECASE)
 
 
