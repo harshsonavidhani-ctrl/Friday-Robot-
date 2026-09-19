@@ -1273,6 +1273,10 @@ class Brain:
             say = _spoken_only(sentence)
             if not say:
                 return
+            if _is_meta(say):
+                # Caught as it streams, so it is never spoken at all.
+                log.info("not saying her own notes back: %r", say[:80])
+                return
             spoken.append(say)
             if on_sentence:
                 on_sentence(say)
@@ -1377,6 +1381,33 @@ _FACE_DIRECTIVE = re.compile(
 _CITE_TAG = re.compile(r"[<(]\s*/?\s*cite\b[^>)]*[>)]", re.IGNORECASE)
 
 
+# ⚠ HER NOTES, READ OUT AS IF THEY WERE THE ANSWER. Measured 2026-09-20
+# 04:24, companion mode, "tell me a bit about yourself":
+#   "This is a straightforward question about myself, asked at 4:24 am on a
+#    Sunday when I last spoke 5 minutes ago. The context shows I'm sleepy, my
+#    last exploration failed, and I've been reflecting on being more honest
+#    about uncertainty. This is genuine small talk directed at me — he's
+#    asking me to tell..."
+# Every clause of that is the situation block and the reflection note being
+# narrated back. The contract already says the object comes first and nothing
+# plain before it; this is the guard for when it is ignored, and it is
+# deliberately narrow -- it matches sentences that name the MACHINERY, not
+# sentences that happen to be about her.
+_META_SENTENCE = re.compile(
+    r"\b(the (context|notes?) (show|shows|say|says|tell|tells)"
+    r"|situation block|reply object|memory[_ ]note"
+    r"|this is (a |an |genuine )?[a-z ]{0,24}(question|request|small talk)\b"
+    r"[^.?!]{0,60}\b(about myself|directed at me|asked at|said to me)"
+    r"|he'?s asking me to|he is asking me to"
+    r"|i (last spoke|have been reflecting|'ve been reflecting))\b",
+    re.IGNORECASE)
+
+
+def _is_meta(sentence: str) -> bool:
+    """Is this her narrating the turn rather than answering it?"""
+    return bool(_META_SENTENCE.search(sentence or ""))
+
+
 def _spoken_only(text: str) -> str:
     """The part of a reply that should actually be said out loud.
 
@@ -1392,7 +1423,8 @@ def _spoken_only(text: str) -> str:
     alone.
     """
     kept = [line for line in text.splitlines()
-            if line.strip() and not _FACE_DIRECTIVE.match(line)]
+            if line.strip() and not _FACE_DIRECTIVE.match(line)
+            and not _is_meta(line)]
     cleaned = _CITE_TAG.sub("", "\n".join(kept)).replace("`", "").strip()
     # If that removed everything, the reply WAS only stage directions. Say
     # nothing rather than say "neutral" out loud.

@@ -132,6 +132,28 @@ NOT_INSTRUCTIONS = [
     "you should have seen his face", "we should go now",
 ]
 
+# HER OWN NOTES, READ OUT AS IF THEY WERE THE ANSWER. Measured live
+# 2026-09-20 04:24 on "tell me a bit about yourself" — the situation block
+# and the reflection note narrated back at him, sentence by sentence.
+HER_NOTES = [
+    "This is a straightforward question about myself, asked at 4:24 am on a "
+    "Sunday when I last spoke 5 minutes ago.",
+    "The context shows I'm sleepy, my last exploration failed, and I've been "
+    "reflecting on being more honest about uncertainty.",
+    "This is genuine small talk directed at me — he's asking me to tell him "
+    "about myself.",
+    "The notes say he wants shorter replies.",
+]
+REAL_ANSWERS = [
+    "I'm Friday, a wheeled robot built by Harsh.",
+    "It's 4:24 in the morning.",
+    "Tokyo.",
+    "I have cameras, LiDAR and depth sensors.",
+    "We last spoke about the weather.",
+    "I'm not sure — I'd have to ask Harsh.",
+    "That's a good question about my sensors.",
+]
+
 # What the brain returns when it means "this was not for me". The written-out
 # one was SPOKEN out loud on 2026-09-19 23:39 before is_ignore knew it.
 IGNORES = [
@@ -190,6 +212,16 @@ def main() -> int:
         ok = not brain.is_instruction(text)
         bad += not ok
         print(f"  {PASS if ok else FAIL}  (not one) {text!r}")
+
+    print("\nher own notes are never said out loud")
+    for text in HER_NOTES:
+        ok = brain._is_meta(text)
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  (silent) {text[:56]!r}")
+    for text in REAL_ANSWERS:
+        ok = not brain._is_meta(text)
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  {text[:56]!r}")
 
     print("\n\"not said to me\", however the brain phrases it")
     for text in IGNORES:
