@@ -744,7 +744,36 @@ async def _mcp_session(held: "contextlib.AsyncExitStack", wait_s: float):
     listed = await session.list_tools()
     log.info("connected to %s — %d tools", config.MCP_SERVER_NAME,
              len(listed.tools))
+    _announce_session(len(listed.tools))
     return session
+
+
+_announced = False
+
+
+def _announce_session(tools: int) -> None:
+    """One `session_init` card, the first time the robot is reachable.
+
+    ONCE PER PROCESS, not per turn. An exploration run posts one because it
+    IS one session; a voice loop is hundreds of turns over one connection,
+    and a session card in front of every "hey Friday" would bury the
+    conversation it is supposed to frame. Never raises: a dashboard that is
+    down must not cost a turn.
+    """
+    global _announced
+    if _announced or not getattr(config, "DASHBOARD_TURNS", True):
+        return
+    _announced = True
+    try:
+        import dashboard_log
+        dashboard_log.emit({
+            "type": "session_init",
+            "model": getattr(config, "BRAIN_MODEL", config.MODEL_FAST),
+            "servers": [{"name": config.MCP_SERVER_NAME,
+                         "status": f"connected · {tools} tools"}],
+        })
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not announce the session: %s", exc)
 
 
 async def run(once: bool = False, typed: str | None = None) -> int:
@@ -1332,6 +1361,13 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
     turn = turn or stages.Turn("offline")
     if intent.say:
         voice.say(intent.say)
+    # SET HERE, NOT AFTER THE TOOL LOOP, because the spine-only intents
+    # (sleep, help, dismiss) go to _run_local and return before ever reaching
+    # it -- so their card on the dashboard said "DONE (asleep)" instead of
+    # what she actually said. The speak_result branch below overwrites this
+    # with the richer answer when there is one.
+    turn.spoke(intent.say)
+    turn.answered_by("locally, no model", 0.0)
     outcome = "worked"
     answer = ""
 
@@ -1413,11 +1449,6 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
             spoken = "I got nothing back for that one."
             voice.say(spoken)
         turn.spoke(spoken)
-    else:
-        turn.spoke(intent.say)
-    # The closing card should say which brain answered, and "none" IS the
-    # answer here: a reflex is the local table, no model and no money.
-    turn.answered_by("locally, no model", 0.0)
 
     # THE NARRATOR ATTACHES AFTER THE RUN IS ALREADY GOING, and that ordering
     # is the whole fix. Starting the run from inside the spawned process cost
