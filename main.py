@@ -283,9 +283,16 @@ def _pick_face(question: str, reply: str) -> "str | None":
 
 
 def _ignored(sentence: str) -> bool:
-    """True when the brain said IGNORE: the words were not meant for her."""
-    word = getattr(config, "BRAIN_IGNORE", "IGNORE")
-    return sentence.strip(" .!\"'`\n").upper() == word.upper()
+    """True when the brain said the words were not meant for her.
+
+    ⚠ NOT JUST THE BARE SENTINEL ANY MORE. This is checked per SENTENCE as the
+    answer streams, so a refusal the model wrote out in its own words was
+    spoken one sentence at a time before anything could stop it -- measured
+    2026-09-19 23:39. brain.is_ignore knows all three shapes; there is one
+    definition of this and both paths use it.
+    """
+    import brain as brain_module
+    return brain_module.is_ignore(sentence)
 
 
 async def one_turn(brain_obj, session, voice: Voice, face: Face,

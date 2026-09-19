@@ -193,6 +193,45 @@ def _result_text(result: Any) -> str | list[dict[str, Any]]:
 
 # --- the brain -----------------------------------------------------------
 
+# A refusal the model WROTE OUT instead of returning the sentinel. Measured
+# 2026-09-19 23:39: "We must go to the history of the society." came back as
+# "This sounds like a sentence from a video or conversation I overheard, not
+# something said to me — there's no question, no..." and every word of it was
+# said out loud, because _ignored() only ever matched the bare word IGNORE.
+# Anchored at the START, so a sentence that merely mentions overhearing
+# something later on is not swallowed.
+_REFUSAL_RE = re.compile(
+    r"^\W*(?:this|that|it|i)\b[^.?!]{0,160}?\b(?:"
+    r"not (?:something|anything) (?:said|meant) (?:to|for) me"
+    r"|wasn'?t (?:said|meant) (?:to|for) me"
+    r"|not (?:addressed|directed) (?:to|at) me"
+    r"|not meant for me"
+    r"|don'?t think (?:that|this|it) was (?:said|meant) (?:to|for) me"
+    # ⚠ NO BARE "overheard" ALTERNATIVE. It read "I overheard the news
+    # earlier and it said rain." as a refusal -- a real answer, silenced.
+    # The refusal that was measured says BOTH, and the clauses above catch it.
+    r")", re.IGNORECASE)
+
+
+def is_ignore(text: str) -> bool:
+    """Did the brain mean "this was not said to me", in any wording?
+
+    ONE DEFINITION, used by the fast path and by main.py, because two
+    definitions is how a refusal gets spoken on one path and swallowed on the
+    other. The sentinel is what it is asked for; the other two shapes are what
+    it actually does when it forgets.
+    """
+    word = getattr(config, "BRAIN_IGNORE", "IGNORE")
+    stripped = (text or "").strip(" .!\"'`\n")
+    if stripped.upper() == word.upper():
+        return True
+    # THE SENTINEL INSIDE A SENTENCE IS STILL THE SENTINEL. Upper case only:
+    # "you can ignore that" is an answer, "IGNORE — not said to me" is not.
+    if re.search(rf"\b{re.escape(word)}\b", text or ""):
+        return True
+    return bool(_REFUSAL_RE.search(stripped))
+
+
 class Brain:
     """One conversation with Friday.
 
@@ -399,6 +438,56 @@ class Brain:
                 re.IGNORECASE)
         return bool(_FAST_NEVER_RE.search(text))
 
+    async def _addressed_to_her(self, text: str) -> bool | None:
+        """Was this said TO her? None when the question could not be asked.
+
+        Deliberately its own call, with its own two-word answer, so that a
+        model which cannot see anything cannot be tempted into describing
+        anything. It is asked ONLY on the path that refuses the fast path
+        outright (_might_need_the_robot), which is where a television line
+        containing "go", "see" or "move" used to sail through untested.
+
+        BIASED TOWARDS ANSWERING, on purpose. Everything reaching it already
+        looks like a question about the robot, so a wrong NO is her ignoring
+        a real order, which costs him a repeat and her his trust. A wrong YES
+        costs one answer aimed at a video -- the thing the wake-word retrain
+        is for. Only a clear no is a no.
+        """
+        model = getattr(config, "BRAIN_FAST_MODEL", config.MODEL_FAST)
+        system = (
+            "You are the ear of a home robot called Friday. Decide ONE thing "
+            "about the words below: were they said TO the robot?\n"
+            "Her wake word fires on the television in this room dozens of "
+            "times an hour, so plenty of what reaches you was not said to "
+            "her at all.\n"
+            "Answer NO only when it is clearly not for her: a line from a "
+            "video or a show, two people talking to each other, a fragment "
+            "that makes no sense said to a robot.\n"
+            "Answer YES for anything that could be an order, a question or a "
+            "reply to her — including odd ones, jokes and small talk. If you "
+            "cannot tell, answer YES.\n"
+            "Reply with exactly YES or exactly NO and nothing else."
+        )
+        try:
+            message = await self.client.messages.create(
+                model=model, max_tokens=5,
+                system=[{"type": "text", "text": system}],
+                messages=[{"role": "user", "content": text}],
+            )
+        except Exception as exc:                # noqa: BLE001
+            # Never a reason to fail a turn: the normal path is right behind.
+            log.info("addressed check unavailable (%s: %s)",
+                     type(exc).__name__, exc)
+            return None
+        cost = _cost_usd(model, message.usage)
+        self.last_cost_usd += cost
+        _record_spend(model, message.usage, cost)
+        said = "".join(b.text for b in message.content
+                       if getattr(b, "type", None) == "text").strip().upper()
+        if said.startswith("NO"):
+            return False
+        return True if said.startswith("YES") else None
+
     async def _try_fast(self, text: str,
                         on_sentence: SentenceCallback | None,
                         seen: list[dict[str, Any]] | None = None,
@@ -418,6 +507,24 @@ class Brain:
         if not event and not getattr(config, "BRAIN_FAST_PATH", True):
             return None
         if not event and self._might_need_the_robot(text):
+            # ⚠ THE ADDRESSED TEST USED TO DIE RIGHT HERE. This refusal is a
+            # COST guard -- the fast path has no sensors, so a question about
+            # the robot is a wasted call -- but it also skipped the one cheap
+            # question worth asking of a television. "We must go to the
+            # history of the society." contains `go`, so on 2026-09-19 23:39
+            # it went straight to the brain that HAS the camera and got an
+            # answer out loud. One tiny call now stands in front of that; it
+            # can only say yes or no, so it cannot invent a description the
+            # way an answering fast path once invented a cat.
+            if await self._addressed_to_her(text) is False:
+                word = getattr(config, "BRAIN_IGNORE", "IGNORE")
+                self.last_model = getattr(config, "BRAIN_FAST_MODEL",
+                                          config.MODEL_FAST)
+                self.last_fast = True
+                self.last_response = {"reply": word}
+                log.info("not addressed to her (asked before escalating): %r",
+                         text[:60])
+                return word
             return None
         # A history holding tool_use blocks cannot go to a request with no
         # tools defined -- the API rejects it. Once she has used a tool this
@@ -555,8 +662,7 @@ class Brain:
         self.last_model = model
         self.last_fast = True
         self.last_response = {**parsed.as_dict(), "reply": reply}
-        if reply.strip(" .!\"'`").upper() == getattr(
-                config, "BRAIN_IGNORE", "IGNORE").upper():
+        if is_ignore(reply):
             # NOT SAID TO HER. Kept out of the history: a video's line and her
             # silence are not a conversation she should be carrying forward.
             log.info("fast path: not addressed to her — staying silent "
