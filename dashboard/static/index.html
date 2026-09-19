@@ -246,6 +246,34 @@
       </div>
     </section>
 
+    <section class="panel" id="panel-study">
+      <div class="panelhead">
+        <h2>Study</h2>
+        <span class="badge" id="studydue">nothing due</span>
+      </div>
+      <div class="screen">
+        <!-- File 12 step 1. Everything here comes from study.py's FSRS
+             wiring through the /api/state heartbeat — no second data store
+             and no fetch loop of its own. -->
+        <p class="drivenote" id="studyline">No notes loaded yet.</p>
+        <p class="calnote" id="studynext"></p>
+        <div id="studyhistory" class="studyhistory"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-diary">
+      <div class="panelhead">
+        <h2>Diary</h2>
+        <span class="badge" id="diarycount">0 entries</span>
+      </div>
+      <div class="screen">
+        <!-- File 12 step 2. Her own self-assessment notes (file 09 step 5)
+             rendered as dated entries, newest first. The sentences are the
+             ones she wrote; nothing here re-words them. -->
+        <div id="diary" class="diary"></div>
+      </div>
+    </section>
+
     <section class="panel" id="panel-growth">
       <div class="panelhead">
         <h2>Brain Growth</h2>

@@ -145,6 +145,30 @@ def robot_online() -> bool:
         return False
 
 
+def ui_version() -> str:
+    """A short stamp that changes when the UI files change.
+
+    ⚠ THE PAGE IN HIS HAND IS THE OLD ONE UNTIL IT RELOADS. Harsh, 2026-09-20,
+    still seeing ROBOT OFF after the fix was committed and the service
+    restarted: a dashboard tab holds the JavaScript it loaded when it opened,
+    and nothing on the server can change that. The service worker is
+    network-first so a RELOAD gets the new file — but he has no reason to
+    reload, and no way to know he should. So the page watches this stamp and
+    reloads itself once when it moves.
+
+    Mtimes, not a content hash: it costs three stat() calls on a poll that
+    already happens every four seconds, and an edit that does not change the
+    mtime does not exist.
+    """
+    stamp = 0.0
+    for name in ("app.js", "style.css", "index.html"):
+        try:
+            stamp = max(stamp, (STATIC / name).stat().st_mtime)
+        except OSError:
+            continue
+    return f"{int(stamp)}"
+
+
 async def api_state(request: web.Request) -> web.Response:
     cams: CameraSet = request.app["cams"]
     return web.json_response({
@@ -156,6 +180,7 @@ async def api_state(request: web.Request) -> web.Response:
         "face_running": _face_is_running(),
         "robot_online": robot_online(),
         "screen": screen_state(),
+        "ui": ui_version(),
         # FILE 09 STEP 7: "Reuse the dashboard's existing data-fetching
         # pattern instead of adding a separate one." This is that pattern --
         # one poll, every panel, the way the Screen panel already rides it.
@@ -176,13 +201,24 @@ def brain_growth() -> dict:
             int(getattr(config, "DASHBOARD_PREFERENCES", 8)))
     except Exception:                           # noqa: BLE001
         learned = []
+    import study
+    try:
+        study_panel = study.panel()
+    except Exception:                           # noqa: BLE001
+        study_panel = {}
     return {"growth": growth.report(),
+            "study": study_panel,
             "reflection": {
                 "note": {k: note.get(k) for k in
                          ("summary", "went_well", "to_adjust", "themes",
                           "date", "reason")} if note else None,
                 "flags": reflection.flags(),
-                "log": reflection.log_entries(5),
+                # THE DIARY IS THIS LIST. File 12 step 2 asks for "a date and a
+            # few natural sentences" rather than raw stats — which is exactly
+            # what went_well/to_adjust already are, so the diary needs no
+            # model call and costs nothing to render.
+            "log": reflection.log_entries(
+                int(getattr(config, "DASHBOARD_DIARY_ENTRIES", 20))),
                 "preferences": [{"id": row.get("id"), "text": row.get("text"),
                                  "date": row.get("date")} for row in learned],
                 "waiting": float(reflection._too_soon())}}

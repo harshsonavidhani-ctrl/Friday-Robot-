@@ -398,6 +398,7 @@ REFLECTION_CONTEXT_FRESH_S = 86400.0
 # how long growth.report() may be reused. The dashboard polls /api/state every
 # 4 s and the counts are nine COUNT(*) queries.
 DASHBOARD_PREFERENCES = 8
+DASHBOARD_DIARY_ENTRIES = 20         # file 12 step 2: the scrollable history
 # Voice turns on the dashboard's live log (file 09 step 7, and Harsh:
 # "if i am talking to friday the brain also replies should come in dashboard
 # like what tool call and everything"). The stream carried only
@@ -445,6 +446,7 @@ STUDY_DESIRED_RETENTION = 0.9
 # this and says so; a curve fitted to nine reviews is worse than the defaults.
 STUDY_FSRS_PARAMETERS = None
 STUDY_MIN_REVIEWS_TO_FIT = 400
+STUDY_CACHE_S = 20.0                 # the dashboard polls every 4 s
 GROWTH_CACHE_S = 20.0
 
 # --- Nothing that costs money may run in a loop (file 08 step 10) --------

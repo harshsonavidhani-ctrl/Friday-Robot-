@@ -770,3 +770,20 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
   border-radius:8px;border:1px solid var(--line);
   image-rendering:pixelated;background:#2e3440;
 }
+
+
+/* ---------- study + diary (file 12) ---------- */
+/* One dot per recent answer, newest first: her quiz history at a glance,
+   green for recalled and orange for forgotten. Orange rather than red --
+   forgetting a card is how spaced repetition WORKS, not a failure. */
+.studyhistory{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.qdot{width:11px;height:11px;border-radius:50%;display:inline-block}
+.qdot.right{background:var(--c-text)}
+.qdot.wrong{background:var(--c-call)}
+
+.diary{max-height:320px;overflow-y:auto;padding-right:4px}
+.diaryentry{border-left:2px solid var(--c-session);padding:2px 0 2px 10px;
+            margin-bottom:14px}
+.diaryday{font-size:12px;letter-spacing:.04em;text-transform:uppercase;
+          color:var(--c-session);margin-bottom:4px}
+.diarytext{margin:0 0 6px;color:var(--text);font-size:14px;line-height:1.45}

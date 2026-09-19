@@ -563,6 +563,79 @@ function buildGrowth() {
   $('reflectnow').onclick = () => reflectPost({ action: 'run' });
 }
 
+/* ---------- study + diary (file 12) ----------
+   Both ride the /api/state heartbeat like every other panel. The study
+   numbers are FSRS's own (study.py); the diary entries are the sentences
+   she wrote in her reflections, not a re-wording of them. */
+
+function paintStudy(s) {
+  if (!$('studyline') || !s) return;
+  const st = s.stats || {};
+  const due = st.due_now || 0;
+  $('studydue').textContent = due ? `${due} due` : 'nothing due';
+  const bits = [];
+  if (st.cards) bits.push(`${st.cards} card${st.cards === 1 ? '' : 's'}`);
+  if (st.sources) bits.push(`${st.sources} source${st.sources === 1 ? '' : 's'}`);
+  if (st.reviews) bits.push(`${st.reviews} review${st.reviews === 1 ? '' : 's'}`);
+  if (s.streak) bits.push(`${s.streak}-day streak`);
+  if (st.retention !== null && st.retention !== undefined)
+    bits.push(`${Math.round(st.retention * 100)}% recalled`);
+  $('studyline').textContent = bits.length
+    ? bits.join(' · ') : 'No notes loaded yet.';
+
+  $('studynext').textContent = s.next
+    ? `next: ${s.next.topic} — ${s.next.question} (${s.next.due_in})`
+    : 'no cards yet — add one and it comes back on FSRS\u2019s schedule';
+
+  const box = $('studyhistory');
+  box.innerHTML = '';
+  for (const r of (s.recent || [])) {
+    const dot = document.createElement('span');
+    dot.className = 'qdot ' + (r.right ? 'right' : 'wrong');
+    dot.title = `${r.rating} — ${r.topic || 'no topic'}: ${r.question}`;
+    box.appendChild(dot);
+  }
+}
+
+function paintDiary(entries) {
+  const box = $('diary');
+  if (!box) return;
+  const rows = (entries || []).slice().reverse();      // newest first
+  $('diarycount').textContent =
+    `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}`;
+  box.innerHTML = '';
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'calnote';
+    empty.textContent = 'Nothing written yet. She reflects when a '
+      + 'conversation ends, when she has been idle a while, and once late.';
+    box.appendChild(empty);
+    return;
+  }
+  for (const e of rows) {
+    const entry = document.createElement('div');
+    entry.className = 'diaryentry';
+    const when = document.createElement('div');
+    when.className = 'diaryday';
+    when.textContent = e.date + (e.reason ? ` — ${e.reason}` : '');
+    entry.appendChild(when);
+    for (const line of [e.went_well, e.to_adjust]) {
+      if (!line) continue;
+      const para = document.createElement('p');
+      para.className = 'diarytext';
+      para.textContent = line;
+      entry.appendChild(para);
+    }
+    if (e.themes && e.themes.length) {
+      const themes = document.createElement('p');
+      themes.className = 'calnote';
+      themes.textContent = e.themes.join(' · ');
+      entry.appendChild(themes);
+    }
+    box.appendChild(entry);
+  }
+}
+
 async function screenPost(body) {
   try {
     const r = await fetch('/api/screen', {
@@ -846,10 +919,21 @@ function connect() {
   };
 }
 
+/* The UI the server is serving. If it moves while this page is open, the
+   page in his hand is the OLD one — see server.ui_version(). Reload once,
+   and only once, so a fix he was told about actually reaches him. */
+let uiVersion = null;
+function checkUi(stamp) {
+  if (!stamp) return;
+  if (uiVersion === null) { uiVersion = stamp; return; }
+  if (uiVersion !== stamp) { uiVersion = stamp; location.reload(); }
+}
+
 async function heartbeat() {
   let s;
   try { s = await (await fetch('/api/state')).json(); }
   catch { connected = false; paintDot(); return; }
+  checkUi(s.ui);
   setActive(s.mood);
   paintDot(s.face_running);
   applyCams(s.cameras || {});     // picks up hot-plugs and other viewers
@@ -857,6 +941,8 @@ async function heartbeat() {
   paintScreen(s.screen);          // rides the same beat; no extra request
   growthNow = s.growth || growthNow;
   paintReflection(s.reflection); // ...and so does Brain Growth (step 7)
+  paintStudy(s.study);           // ...and Study and Diary (file 12)
+  paintDiary((s.reflection || {}).log);
   refreshExplore();               // cheap, and the panel must not go stale
   refreshMap();                   // one stat() server-side until the map changes
 }
@@ -919,6 +1005,8 @@ function showPane(id) {
   buildGrowth();
   growthNow = state.growth || null;
   paintReflection(state.reflection);
+  paintStudy(state.study);
+  paintDiary((state.reflection || {}).log);
 
   connect();
   setInterval(heartbeat, 4000);

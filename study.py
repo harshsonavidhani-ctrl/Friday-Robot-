@@ -488,6 +488,99 @@ def _retention() -> float | None:
     return round(1.0 - again / total, 3)
 
 
+def streak() -> int:
+    """Consecutive days ending today (or yesterday) with a review on them.
+
+    Counted from the review log's own timestamps in LOCAL time, because a
+    "day" is the one he lived, not UTC's. Yesterday still counts as alive:
+    a streak should not break at midnight before he has had a chance to
+    study, only once a whole day has been missed.
+    """
+    try:
+        rows = db().execute(
+            "SELECT reviewed_at FROM reviews ORDER BY reviewed_at DESC"
+        ).fetchall()
+    except Exception as exc:                               # noqa: BLE001
+        log.warning("could not read the streak: %s", exc)
+        return 0
+    days = sorted({time.strftime("%Y-%m-%d", time.localtime(r[0]))
+                   for r in rows}, reverse=True)
+    if not days:
+        return 0
+    today = time.strftime("%Y-%m-%d")
+    yesterday = time.strftime("%Y-%m-%d",
+                              time.localtime(time.time() - 86400))
+    if days[0] not in (today, yesterday):
+        return 0
+    run, expect = 0, days[0]
+    for day in days:
+        if day != expect:
+            break
+        run += 1
+        expect = time.strftime(
+            "%Y-%m-%d",
+            time.localtime(time.mktime(time.strptime(day, "%Y-%m-%d")) - 86400))
+    return run
+
+
+def next_due() -> dict | None:
+    """The card that comes up next, due or not. None when there are no cards."""
+    try:
+        row = db().execute(
+            "SELECT id, question, topic, due FROM cards ORDER BY due LIMIT 1"
+        ).fetchone()
+    except Exception as exc:                               # noqa: BLE001
+        log.warning("could not read the next card: %s", exc)
+        return None
+    if row is None:
+        return None
+    wait = max(0.0, float(row["due"]) - time.time())
+    return {"id": row["id"], "question": row["question"],
+            "topic": row["topic"] or "no topic",
+            "due_in": "now" if wait <= 0 else say_interval(wait)}
+
+
+def recent_reviews(limit: int = 12) -> list[dict]:
+    """The last few answers, newest first: right or wrong, and on what.
+
+    "again" is the wrong one. hard/good/easy are all recall that WORKED --
+    the difference between them is effort, not correctness, and showing hard
+    as a failure would make his history read worse than it was.
+    """
+    try:
+        rows = db().execute(
+            "SELECT r.rating, r.reviewed_at, c.topic, c.question "
+            "FROM reviews r LEFT JOIN cards c ON c.id = r.card_id "
+            "ORDER BY r.reviewed_at DESC LIMIT ?", (limit,)).fetchall()
+    except Exception as exc:                               # noqa: BLE001
+        log.warning("could not read the review history: %s", exc)
+        return []
+    return [{"rating": r["rating"], "right": r["rating"] != "again",
+             "topic": r["topic"] or "", "question": r["question"] or "",
+             "at": r["reviewed_at"]} for r in rows]
+
+
+_panel_cache: tuple[float, dict] = (0.0, {})
+
+
+def panel(max_age_s: float | None = None) -> dict:
+    """Everything the dashboard's Study panel shows, in one call.
+
+    Cached like growth.report() for the same reason: the dashboard polls
+    /api/state every 4 s and this is half a dozen queries.
+    """
+    global _panel_cache
+    ttl = float(getattr(config, "STUDY_CACHE_S", 20.0)
+                if max_age_s is None else max_age_s)
+    when, cached = _panel_cache
+    if cached and time.time() - when <= ttl:
+        return cached
+    data = {"stats": stats(), "streak": streak(), "next": next_due(),
+            "recent": recent_reviews(), "at": time.time()}
+    _panel_cache = (time.time(), data)
+    return data
+
+
 def optimise() -> dict:
     """Fit FSRS to HIS history — or say why it would be dishonest to.
 
