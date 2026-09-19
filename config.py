@@ -405,6 +405,24 @@ DASHBOARD_PREFERENCES = 8
 # Fire and forget: dashboard_log posts on its own thread and drops events
 # when the queue is full.
 DASHBOARD_TURNS = True
+
+# --- Companion or professional (file 09 step 8) --------------------------
+# "companion (default — warm, casual, human-like) or professional (crisp,
+# precise, minimal filler, confident — for demos, technical explanations, or
+# formal requests)". The mode rides on the QUESTION, never in the system
+# prompt: personality.md is the cached prefix of every request and changing
+# it per turn would throw that cache away every turn.
+#
+# ⚠ MODE_STRANGER_QUIET_S IS A PROXY FOR A STRANGER, NOT A STRANGER. The spec
+# wants "someone Friday hasn't talked to before asking it to explain itself"
+# to sound professional; she cannot tell who is speaking until face
+# recognition exists, so an explain-yourself question arriving when nobody
+# has heard her voice for this long is treated as one. Replace it with real
+# identity when that module lands.
+MODE_DEFAULT = "companion"
+MODE_FILE = ROOT / "state" / "mode.json"
+MODE_AUTO = True                     # the automatic half; the command always works
+MODE_STRANGER_QUIET_S = 600.0
 GROWTH_CACHE_S = 20.0
 
 # --- Nothing that costs money may run in a loop (file 08 step 10) --------

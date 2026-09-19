@@ -320,6 +320,27 @@ def spoke_within(seconds: float) -> bool:
     return 0 <= time.time() - when <= seconds
 
 
+def _with_mode(asked: str, text: str) -> str:
+    """The turn's voice, appended to the question. Never raises.
+
+    File 09 step 8. On the QUESTION rather than in the system prompt for the
+    same reason as memory and the situation block: personality.md is the
+    cached prefix of every request, and a paragraph that changes per turn
+    would throw that cache away every turn.
+    """
+    try:
+        import mode                             # noqa: PLC0415
+        name, why = mode.for_turn(text)
+        note = mode.instructions(name)
+        if not note:
+            return asked
+        log.info("professional mode this turn (%s)", why)
+        return f"{asked}\n\n{note}"
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not read the mode: %s", exc)
+        return asked
+
+
 def is_ignore(text: str) -> bool:
     """Did the brain mean "this was not said to me", in any wording?
 
@@ -745,6 +766,7 @@ class Brain:
         # handed that line it described a "cat" it had never looked at --
         # see situation.block.
         asked: Any = self._with_situation(self._with_memory(text), eyes=False)
+        asked = _with_mode(asked, text)
         if getattr(config, "BRAIN_STRUCTURED_REPLY", True):
             # The same wire-only reminder as the full turn (see _outgoing):
             # without it the fast path wrote the answer in plain words and then
@@ -1074,7 +1096,8 @@ class Brain:
         # oldest as confident as the newest. _stream_once swaps the enriched
         # copy in at this index for every round of this turn, and the history
         # keeps only what Harsh actually said.
-        asked: Any = self._with_situation(self._with_memory(text))
+        asked: Any = _with_mode(self._with_situation(self._with_memory(text)),
+                                text)
 
         # THE ONE FACT THAT SETTLES IT, on the wire only. The transcript of
         # what he said reads like a fragment however many times it is asked

@@ -518,6 +518,22 @@ def _local_intent(heard: str, strict: bool = False) -> Intent | None:
     if _HELP_RE.search(heard):
         return Intent(name="help", local="help", say=help_text())
 
+    # FILE 09 STEP 8. "Friday, professional mode" / "demo mode off". A file
+    # write, so it needs no tool and no model -- and it must work when the
+    # brain is unreachable, because the moment somebody says "demo mode on"
+    # is the moment a demo is about to start. The words live in mode.py with
+    # the mode they set; this only turns them into an intent.
+    try:
+        import mode as mode_module              # noqa: PLC0415
+        wanted = mode_module.asked_for(heard)
+    except Exception:                           # noqa: BLE001
+        wanted = None
+    if wanted:
+        return Intent(
+            name="mode", local="mode", args={"mode": wanted},
+            say=("Professional mode on." if wanted == "professional"
+                 else "Back to normal."))
+
     # "EXPLORE FOR FIVE MINUTES". The duration is pulled out of the sentence
     # by exploration_mode, which owns that parsing -- a second copy here would
     # be a second thing to keep in step with it. Marked `local` because the
@@ -778,7 +794,7 @@ _STRICT_MAX_WORDS = 5
 # pivot he asked for), or costlier, or both. Everything else is left to the
 # brain, which is better at it and is already paid for.
 _REFLEX_INTENTS = frozenset({
-    "stop", "stop_exploring", "explore", "sleep", "help", "time",
+    "stop", "stop_exploring", "explore", "sleep", "help", "time", "mode",
     "left", "right", "around", "forward", "backward",
     "go_left", "go_right", "go_forward", "go_backward",
     "speed", "face",

@@ -409,7 +409,10 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     if reply.strip():
         if brain_face is None:
             picker.join(timeout=getattr(config, "FACE_AI_WAIT_S", 1.5))
-        mood = chosen[0]
+        # ⚠ RESTRAINED BEFORE IT IS SHOWN, not after: the point of file 09
+        # step 8 is that `love` and `wink` do not appear on the panel while
+        # somebody is being shown around.
+        mood = _restrained(chosen[0], text)
         # No choice in time: "success", as before.
         _show_face(face, mood or "success")
         if mood:
@@ -418,6 +421,17 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     _remember_what_she_said(reply)
     turn.done()
     return reply
+
+
+def _restrained(mood: str | None, said: str = "") -> str | None:
+    """The face this turn's mode allows (file 09 step 8). Never raises."""
+    try:
+        import mode
+        name, _ = mode.for_turn(said)
+        return mode.restrain(mood, name)
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("could not restrain the face: %s", exc)
+        return mood
 
 
 def _keep_correction(said: str, note: str | None,
@@ -576,7 +590,10 @@ async def _scene_turn(brains: "_BrainLoader", voice: "Voice", face: "Face",
         turn.stage("SPEAKING", stages.quote(reply, 120))
         voice.wait_until_quiet()
         response = getattr(brain_obj, "last_response", None) or {}
-        mood = response.get("emotion") or "curious"
+        # A scene remark has nothing said to her, so the mode is whatever is
+        # STICKY -- if he put her in professional mode for a demo, the face
+        # she volunteers during it is restrained too.
+        mood = _restrained(response.get("emotion") or "curious")
         _show_face(face, mood)
         turn.note(f"face from the reply object: {mood}")
         if response.get("memory_note"):
@@ -1343,6 +1360,12 @@ def _run_local(intent, face: Face, turn: "stages.Turn") -> None:
         face.set("sleeping")
         turn.note(f"detector asleep for {granted / 60:.0f} min")
         turn.done("DONE (asleep)")
+        return
+    if intent.local == "mode":
+        import mode
+        now = mode.set_mode(str(intent.args.get("mode", "")), why="he asked")
+        turn.note(f"mode -> {now}")
+        turn.done(f"DONE ({now})")
         return
     turn.done("DONE")
 

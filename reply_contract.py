@@ -80,7 +80,7 @@ Your FINAL message in every turn, after any tools have finished, is exactly one
 JSON object and nothing else — no markdown fence, no words before or after it:
 
 {{"reply": "...", "emotion": "...", "memory_note": null, "correction": null,
- "uncertain": null}}
+ "uncertain": null, "mode": "companion"}}
 
 - `reply` — the words you say out loud, and ONLY those. It is spoken by a speech
   synthesiser the moment you write it, so it comes FIRST, and every rule in
@@ -133,6 +133,11 @@ JSON object and nothing else — no markdown fence, no words before or after it:
   BECAUSE of this field. It is NOT `UNSURE`: that word hands the turn to a
   bigger brain BEFORE you answer, while this is about an answer you did give.
 
+- `mode` — `"companion"` or `"professional"`: the voice you answered in.
+  Companion unless this turn's notes say professional, which is what a demo,
+  a technical question or a formal request gets. It is a record of how you
+  sounded, not a lever — the robot decides the mode and tells you.
+
 Before a tool call you may say one short plain sentence ("Let me look that
 up."). After the tools, write the object straight away: never the answer in
 plain words first and then the object — everything plain is spoken too, so he
@@ -172,13 +177,19 @@ class Reply:
     # File 09 step 3. The topic she was not confident about, logged and never
     # spoken: it feeds the idle look-up (file 08 step 8) and the reflection.
     uncertain: str | None = None
+    # File 09 step 8. Which voice she answered in. ⚠ REPORTING, NOT CONTROL:
+    # mode.py decides and the model is TOLD, so a model that writes the wrong
+    # name here changes nothing but its own log line. Kept because a turn
+    # that sounded wrong is worth being able to look up.
+    mode: str | None = None
     structured: bool = False          # False = came back as plain words
 
     def as_dict(self) -> dict[str, Any]:
         return {"reply": self.reply, "emotion": self.emotion,
                 "memory_note": self.memory_note,
                 "correction": self.correction,
-                "uncertain": self.uncertain}
+                "uncertain": self.uncertain,
+                "mode": self.mode}
 
 
 def _normal(text: str) -> str:
@@ -192,6 +203,14 @@ def _clean_emotion(value: Any) -> str | None:
     name = value.strip().lower()
     # A pipeline-owned name is not the model's to choose (file 08 step 2).
     return name if name in EMOTION_TRIGGERS else None
+
+
+def _clean_mode(value: Any) -> str | None:
+    """Exactly one of the two names, or None. Anything else is noise."""
+    if not isinstance(value, str):
+        return None
+    name = value.strip().lower()
+    return name if name in ("companion", "professional") else None
 
 
 def _clean_note(value: Any) -> str | None:
@@ -498,6 +517,7 @@ class ReplyStream:
                      memory_note=_clean_note(last.get("memory_note")),
                      correction=_clean_note(last.get("correction")),
                      uncertain=_clean_note(last.get("uncertain")),
+                     mode=_clean_mode(last.get("mode")),
                      structured="emotion" in last or "memory_note" in last)
 
 
