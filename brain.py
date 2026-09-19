@@ -230,7 +230,9 @@ _QUESTION_RE = re.compile(
 _REQUEST_RE = re.compile(
     r"^\s*(?:(?:hey\s+)?friday[\s,]*)?(?:so|and|ok|okay|now|just|please)?[\s,]*"
     r"(?:can you|could you|would you|please)?[\s,]*"
-    r"(?:describe|tell|show|explain|say|speak|look|see|watch|check|find|"
+    r"(?:don'?t|do not|never|dont|stop|no more|less|be|talk|answer|reply|"
+    r"call|use|keep it|make it|"
+    r"describe|tell|show|explain|say|speak|look|see|watch|check|find|"
     r"search|count|read|list|remember|forget|give|bring|take|help|play|"
     r"open|close|start|stop|come|move|turn|go|listen|repeat|continue|"
     r"do|make|put|set|send|try|wait|keep|batao|dekho|bolo|karo|suno)\b",
@@ -245,6 +247,44 @@ _IDIOM_RE = re.compile(
     r"^\s*(?:so|and|ok|okay|now|well)?[\s,]*"
     r"(?:see\s+(?:you|ya)|take\s+care|come\s+on|go\s+on|go\s+ahead|"
     r"let'?s\s+go|told\s+you|there\s+you\s+go)\b", re.IGNORECASE)
+
+
+# HOW HE CHANGES THE WAY SHE BEHAVES. Narrow on purpose: the verb has to be
+# about SPEAKING or REMEMBERING, which is what a standing instruction to her
+# is made of. "come on", "let's go", "take care", "go and get it" are
+# imperatives too and none of them is one of these.
+#
+# ⚠ THIS IS NOT A PROMPT RULE, BECAUSE THE PROMPT DID NOT WORK. Told in
+# capitals that an instruction about her behaviour is always hers, Haiku still
+# answered {ignore} to "talk shorter", "speak in hindi from now on" and
+# "don't describe the room every time" -- 2026-09-20, all three, twice. They
+# are two-word fragments and it reads fragments as the television. These are
+# the entire input to File 09's learned preferences, which is why the live
+# facts table had not one preference row in it.
+_INSTRUCTION_RE = re.compile(
+    r"^\s*(?:(?:hey\s+)?friday[\s,]*)?(?:and|so|ok|okay|now|please|just)?[\s,]*"
+    r"(?:"
+    r"(?:don'?t|dont|do not|never|stop|quit|no more)\s+"
+    r"(?:say|saying|speak|speaking|talk|talking|call|calling|describe|"
+    r"describing|explain|explaining|answer|answering|reply|replying|"
+    r"repeat|repeating|tell|telling|mention|mentioning|use|using)\b"
+    r"|(?:talk|speak|answer|reply|respond|explain|describe|say it|"
+    r"keep it|make it|be)\s+"
+    r"(?:more|less|short|shorter|brief|briefer|briefly|slower|faster|quieter|"
+    r"louder|simpler|simple|in\b|like\b|as\b|with\b|to me\b)"
+    r"|call me\b|stop calling me\b|use (?:simple|short|plain|hindi|english)\b"
+    r"|(?:always|from now on)\b"
+    r")", re.IGNORECASE)
+
+
+def is_instruction(text: str) -> bool:
+    """Is this him telling her how to behave, rather than asking anything?
+
+    Addressed to her whether or not she has spoken recently -- unlike
+    asked_of_her(), which only applies inside the conversation window. Nobody
+    tells a television to talk shorter.
+    """
+    return bool(_INSTRUCTION_RE.match(text or ""))
 
 
 def asked_of_her(text: str) -> bool:
@@ -578,6 +618,13 @@ class Brain:
             # answer out loud. One tiny call now stands in front of that; it
             # can only say yes or no, so it cannot invent a description the
             # way an answering fast path once invented a cat.
+            # ⚠ AND AN INSTRUCTION SKIPS THE CHECK ENTIRELY. "don't describe
+            # the room every time" contains `room`, so it lands here rather
+            # than on the fast path, and the yes/no call said NO to it --
+            # 2026-09-20. It is the clearest kind of thing he can say to her.
+            if is_instruction(text):
+                self._assume_addressed = True
+                return None
             if await self._addressed_to_her(text) is False:
                 word = getattr(config, "BRAIN_IGNORE", "IGNORE")
                 self.last_model = getattr(config, "BRAIN_FAST_MODEL",
@@ -628,7 +675,18 @@ class Brain:
             f"television unless you spoke seconds ago. A joke, an insult, a "
             f"compliment or small talk clearly aimed at you is yours: answer "
             f"it. When you cannot tell, say {ignore}: silence costs one "
-            f"repeat, answering the room costs every one of them.\n\n"
+            f"repeat, answering the room costs every one of them.\n"
+            # ⚠ MEASURED 2026-09-20: "talk shorter", "speak in hindi from now
+            # on" and "don't describe the room every time" ALL came back
+            # {ignore}. They are how he changes the way she behaves, they are
+            # the entire input to File 09's learned preferences, and the live
+            # database had not one row in it. A short instruction reads like a
+            # fragment; it is not one.
+            f"⚠ AN INSTRUCTION ABOUT HOW YOU BEHAVE IS ALWAYS YOURS, however "
+            f"short and whoever it sounds like — \"talk shorter\", \"speak in "
+            f"Hindi from now on\", \"stop describing the room\", \"don't call "
+            f"me that\", \"be brief\". Nobody says those to a television. "
+            f"Never {ignore} one.\n\n"
             f"You are answering on the FAST PATH: no tools, no sensors and "
             f"no web. Answer only from general knowledge, this conversation, "
             f"and the memory and 'right now' notes attached to the question. "
@@ -724,6 +782,13 @@ class Brain:
         self.last_model = model
         self.last_fast = True
         self.last_response = {**parsed.as_dict(), "reply": reply}
+        if is_ignore(reply) and is_instruction(text):
+            # No window here. An instruction about how she behaves is his
+            # whenever it arrives, and File 09 cannot learn one it never sees.
+            log.info("IGNORE overridden — that is an instruction to her: %r",
+                     text[:60])
+            self._assume_addressed = True
+            return None
         if is_ignore(reply) and asked_of_her(text) and spoke_within(
                 getattr(config, "BRAIN_CONVERSATION_WINDOW_S", 90.0)):
             # ⚠ A QUESTION, SECONDS AFTER SHE ANSWERED ONE, IS NOT THE

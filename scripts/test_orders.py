@@ -100,6 +100,23 @@ NOT_ASKED = [
     "Take care.",
 ]
 
+# HOW HE CHANGES THE WAY SHE BEHAVES — never dropped, window or no window,
+# because File 09's learned preferences have no other way in. Measured
+# 2026-09-20: all three of the first three came back IGNORE and the live facts
+# table had not one preference row in it.
+INSTRUCTIONS = [
+    "talk shorter", "speak in hindi from now on",
+    "don't describe the room every time", "be more brief",
+    "stop calling me that", "answer in one line", "use simple words",
+    "call me Harsh", "never say that again", "from now on speak in hindi",
+    "friday, talk less", "don't repeat yourself",
+]
+NOT_INSTRUCTIONS = [
+    "come on.", "let's go!", "take care.", "see you next time.",
+    "go and get it", "call the police", "thank you.", "stop",
+    "We must go to the history of the society.", "what do you see",
+]
+
 # What the brain returns when it means "this was not for me". The written-out
 # one was SPOKEN out loud on 2026-09-19 23:39 before is_ignore knew it.
 IGNORES = [
@@ -148,6 +165,16 @@ def main() -> int:
         ok = not brain.asked_of_her(text)
         bad += not ok
         print(f"  {PASS if ok else FAIL}  (silent) {text[:52]!r}")
+
+    print("\ninstructions about her behaviour are never dropped")
+    for text in INSTRUCTIONS:
+        ok = brain.is_instruction(text)
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  {text!r}")
+    for text in NOT_INSTRUCTIONS:
+        ok = not brain.is_instruction(text)
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  (not one) {text!r}")
 
     print("\n\"not said to me\", however the brain phrases it")
     for text in IGNORES:
