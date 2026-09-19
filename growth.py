@@ -194,12 +194,16 @@ def mark_resolved(topic: str, fact: str = "", source: str = "idle-study") -> dic
     resurface as a lesson that worked), so "it got answered" is a new row
     rather than an edit of the old one.
     """
+    global _cache
     if not (topic or "").strip():
         return None
     try:
         import memory                                    # noqa: PLC0415
         row = memory.log_event(topic.strip()[:200], task=RESOLVED_TASK,
                                meta={"source": source, "fact": fact[:200]})
+        # The one write this module makes itself: do not let its own cache
+        # hide it from the panel for the next twenty seconds.
+        _cache = (0.0, {})
         log.info("gap closed: %r", topic[:60])
         return row
     except Exception as exc:                             # noqa: BLE001

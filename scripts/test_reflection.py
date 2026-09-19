@@ -238,12 +238,16 @@ def main() -> int:
 
     print("\nSTEP 6 — counts from the rows that already existed")
     import growth
-    before = growth.report()["counts"]
+    # ⚠ max_age_s=0, ALWAYS, when a test is counting rows. report() is cached
+    # for GROWTH_CACHE_S so the 4 s dashboard heartbeat is not nine COUNT(*)
+    # queries a beat, and a cached `before` compared with a cached `after` is
+    # a test that passes whatever the code does.
+    before = growth.report(max_age_s=0)["counts"]
     memory.remember("Friday should always say roger.",
                     kind=config.LEARNED_PREFERENCE_KIND, source="correction")
     memory.log_event("something she did", task="move", outcome="worked")
     growth.mark_resolved("her own chassis weight", "it is about 2 kg")
-    after = growth.report()
+    after = growth.report(max_age_s=0)
     check("a correction is counted",
           after["counts"]["corrections_learned"]
           == before["corrections_learned"] + 1)
