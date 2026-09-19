@@ -53,7 +53,7 @@ def warn(name: str, detail: str = "") -> None:
 
 
 def source(rel: str) -> str:
-    return (ROOT / rel).read_text()
+    return (ROOT / rel).read_text(encoding="utf-8-sig")
 
 
 def main() -> int:
@@ -70,7 +70,19 @@ def main() -> int:
         if any(p in path.parts for p in ("venv", "tools", "__pycache__")):
             continue
         try:
-            ast.parse(path.read_text())
+            # utf-8-sig, BECAUSE PYTHON ITSELF ACCEPTS A BOM AND THIS GATE DID
+            # NOT. rl/pi_deploy.py, rl/tests/test_creep.py and
+            # rl/tests/test_ld19.py were committed with a UTF-8 BOM on
+            # 2026-09-17 (6f77380). The interpreter strips it, py_compile is
+            # happy and every one of those files imports and runs -- but
+            # read_text() hands the U+FEFF to ast.parse, which calls it an
+            # "invalid non-printable character". So the gate every change has
+            # to pass was failing on three files that work, and CLAUDE.md says
+            # a failing gate means the change does not go live. The files are
+            # the committed exploration stack, which is not to be edited to
+            # make something else work; the reader was the thing that was
+            # wrong.
+            ast.parse(path.read_text(encoding="utf-8-sig"))
         except SyntaxError as exc:
             bad.append(f"{path.relative_to(ROOT)}:{exc.lineno}: {exc.msg}")
     check("every python file parses", not bad, "; ".join(bad[:3]))

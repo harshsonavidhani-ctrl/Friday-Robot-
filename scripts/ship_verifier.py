@@ -72,7 +72,12 @@ def main() -> int:
             for k, v in tv.read_vosk(WAKE / "whisper_heard.tsv").items()}
     vosk.update(tv.read_vosk(WAKE / "vosk_heard.tsv"))
     print(f"{len(vosk)} clips have an independent transcript", flush=True)
-    rows = tv.clip_table(None, "20260911-2350", vosk, set())
+    # ⚠ THE HELD-OUT SESSION IS A MOVING TARGET, so it is named once in
+    # train_verifier (tv.UNSEEN_SINCE) and read from there. Hardcoded here it
+    # was 2026-09-11, which by tonight meant every clip of the television that
+    # has ever woken her counted as "unseen conversation" -- including the
+    # ones the fit had just trained on, which is not a test, it is a mirror.
+    rows = tv.clip_table(None, tv.UNSEEN_SINCE, vosk, set())
     for p in make_synth():
         held = Path(p).stem.startswith(VOICES[0])
         rows.append((p, "other voices", 1, "test" if held else "train"))

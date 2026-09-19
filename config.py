@@ -569,7 +569,7 @@ WAKE_PATIENCE = 1
 # 10/52 vs 9/52 (detector alone 24). A miss costs more than one false wake.
 WAKE_VERIFY = True
 WAKE_VERIFIER_MODEL = ROOT / "assets/models/wake/friday_verifier.npz"
-WAKE_VERIFY_THRESHOLD = 0.35
+WAKE_VERIFY_THRESHOLD = 0.6
 
 # HEARING HIM FROM ACROSS THE ROOM. The misses in his 40 recordings are not
 # scattered -- they are exactly the quiet takes, with clean separation:

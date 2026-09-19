@@ -71,10 +71,18 @@ WAKE_DIR = config.ROOT / "assets/models/wake"
 CACHE = config.ROOT / "state" / "verifier_features.npz"
 AUG_DIR = config.ROOT / "state" / "verifier_aug"
 KEEP_SCORE = 0.2          # features are kept for chunks scoring at least this
-FRIDAY = re.compile(r"\bfri ?day\b")
+# IGNORECASE, OR WHISPER'S LABELS ARE ALL SILENTLY THROWN AWAY. This was
+# written for Vosk, which emits lowercase; Whisper writes "Hey Friday." and
+# every one of its positives failed the match until ship_verifier started
+# lowercasing them by hand. Fixed here so a caller cannot forget.
+FRIDAY = re.compile(r"\bfri ?day\b", re.I)
 # Fires from here on are this room, this hum, and the verifier switched off --
 # see "recent false fires" in clip_table.
 RECENT_FALSE_SINCE = "20260913-064000"
+# The session held out of every fit, so the report can say how the model does
+# on talk it has never heard. 2026-09-19 22:00 on: the same television, the
+# same room, hours after the clips it is trained on.
+UNSEEN_SINCE = "20260919-2200"
 
 
 def _turns_that_acted(log_path: Path | None = None) -> set[str]:
@@ -197,25 +205,56 @@ def clip_table(synth_dir: Path | None, test_since: str, vosk: dict[str, str],
     # no older negative has. A fire is filed as false only if the turn it
     # started did NOTHING -- no tool ran and no brain answered, per the turn
     # log -- an outcome the wake model never saw. Half train, half test.
+    #
+    # ⚠ A TRANSCRIPT OUTRANKS THE TURN LOG. `acted` was the only evidence there
+    # was on 2026-09-13. On 2026-09-19 a video woke her 92 times in two hours
+    # and SHE ANSWERED EVERY ONE, so `acted` marked that whole night as
+    # possibly-real and the fit never saw a single clip of it. A clip only
+    # reaches this line if a recogniser did NOT hear her name in it (the loop
+    # above takes the name-clips as positives), so the transcript settles it
+    # and `acted` is left to decide the unlabelled ones.
     acted = _turns_that_acted()
     recent = [p for p in sorted(fires.glob("fire-*.wav"))
-              if "-".join(p.stem.split("-")[1:3]) >= RECENT_FALSE_SINCE
-              and p.name not in filed and p.name[5:20] not in acted]
+              if RECENT_FALSE_SINCE <= "-".join(p.stem.split("-")[1:3]) < test_since
+              and p.name not in filed
+              and (p.name in vosk or p.name[5:20] not in acted)]
     for n, p in enumerate(recent):
         filed.add(p.name)
         rows.append((str(p), "recent false fires", 0,
                      "test" if n % 2 else "train"))
 
+    # THE CLIPS THE OLD VERIFIER ALREADY TURNED AWAY, TRAINED ON AT LAST. 245
+    # of the 337 fires on 2026-09-19 never became a turn, and none of them has
+    # ever been in a fit -- the rejected pile was read only for name-clips.
+    # They are the same television, and a refit that has not seen them is free
+    # to drift back over them.
+    # ⚠ TRANSCRIPT REQUIRED, NO HEURISTIC. A real "hey Friday" that the
+    # verifier wrongly turned away is in this pile too, and filing one of
+    # those as a negative teaches exactly the mistake this retrain exists to
+    # undo. No text, no row.
+    for n, p in enumerate(sorted(Path(config.WAKE_REJECT_DIR).glob("fire-*.wav"))):
+        if (p.name in filed or p.name not in vosk
+                or "-".join(p.stem.split("-")[1:3]) >= test_since):
+            continue
+        filed.add(p.name)
+        rows.append((str(p), "rejected false fires", 0,
+                     "test" if n % 2 else "train"))
+
     # THE MOST RECENT CONVERSATION, NEVER TRAINED ON. The question that
     # matters at a hackathon is how it does on talk it has never heard, and
     # this is the only honest way to ask it.
-    for p in sorted(fires.glob("fire-*.wav")):
-        stamp = "-".join(p.stem.split("-")[1:3])
-        # `filed` is checked so a clip a recogniser heard her name in is never
-        # ALSO counted as conversation -- it would be a positive and a negative
-        # at once, and the negative is simply wrong.
-        if stamp >= test_since and p.name not in filed:
-            rows.append((str(p), "unseen conversation", 0, "test"))
+    # BOTH PILES. Which pile a fire landed in is the OLD verifier's opinion of
+    # it, not a fact about the audio; testing only on the ones it let through
+    # would score the new model on a set the old one chose.
+    for d in (fires, Path(config.WAKE_REJECT_DIR)):
+        for p in sorted(d.glob("fire-*.wav")):
+            stamp = "-".join(p.stem.split("-")[1:3])
+            # `filed` is checked so a clip a recogniser heard her name in is
+            # never ALSO counted as conversation -- it would be a positive and
+            # a negative at once, and the negative is simply wrong.
+            if stamp >= test_since and p.name not in filed:
+                filed.add(p.name)
+                rows.append((str(p), "unseen conversation", 0, "test"))
 
     # Other voices -- a stand-in for the judges. One whole voice is held out,
     # so the report says how it does on a speaker it has never heard.
@@ -254,7 +293,12 @@ def after_speech(rows, copies: int, seed: int = 5) -> list[tuple[str, str, int, 
     TRAIN-split false fires, so no held-out conversation leaks into the fit.
     """
     rng = np.random.default_rng(seed)
-    talk = [r[0] for r in rows if r[1] == "labelled false fires" and r[3] == "train"]
+    # EVERY KIND OF NEGATIVE IS A PREFIX, not just the 2026-09-10 pile. What
+    # wakes her now is a television in this room, so that is what a positive
+    # has to be heard over.
+    prefix_groups = {"labelled false fires", "recent false fires",
+                     "rejected false fires"}
+    talk = [r[0] for r in rows if r[1] in prefix_groups and r[3] == "train"]
     talk = [a for a in (_read(p) for p in talk) if len(a) >= RATE * 2]
     if not talk:
         return []
@@ -494,7 +538,7 @@ def main() -> int:
                     help="TSV of what Vosk heard in each fire (clip, path, text)")
     ap.add_argument("--after-speech", type=int, default=2,
                     help="copies of every positive with conversation in front")
-    ap.add_argument("--test-since", default="20260911-2350",
+    ap.add_argument("--test-since", default=UNSEEN_SINCE,
                     help="fires at or after this stamp are the unseen conversation")
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--C", type=float, nargs="+", default=[0.001, 0.01])
