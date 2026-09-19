@@ -99,7 +99,17 @@ _RULES: list[tuple[str, str, str | None, dict, str]] = [
                                                                             "duration_seconds": 1.0},              "Going forward."),
     ("left",      r"\b(left|baaye|baayen|बाय|बाएं|बायें)\b",  "turn_degrees", {"degrees": -90},                    "Turning left."),
     ("right",     r"\b(right|daaye|daayen|दाय|दाएं|दायें)\b", "turn_degrees", {"degrees": 90},                     "Turning right."),
-    ("time",      r"\b(time|clock|samay|baje|समय|बजे)\b",     None,        {},                                     ""),
+    # ⚠ THE ASK, NOT THE WORD. This row used to be the bare word `time`
+    # anywhere inside five words, so on 2026-09-19 a video saying "See you
+    # next time." got the clock read out to it -- twice in ten minutes. A
+    # reflex speaks without asking anybody, so it has to be the whole ask:
+    # a question about the time, or the word on its own ("Friday, time?").
+    ("time",      r"\b(what(?:'?s| is)?\s+(?:the\s+)?time|what time|"
+                  r"time (?:is it|now)|tell me the time|the time\b|"
+                  r"kitne baje|kya baje|baje h(?:ai|ain)?|kitna time|"
+                  r"time kya|samay kya|kya samay|कितने बजे|समय क्या)\b"
+                  r"|^\s*(?:the\s+)?(?:time|clock|samay|समय)[\s?.!।]*$",
+                                                          None,        {},                                     ""),
 ]
 
 _COMPILED = [(name, re.compile(pattern, re.IGNORECASE | re.UNICODE),
@@ -108,6 +118,13 @@ _COMPILED = [(name, re.compile(pattern, re.IGNORECASE | re.UNICODE),
 
 # The rows above that turn the wheels. See _STRICT_MAX_WORDS.
 _MOVING_RULES = frozenset({"around", "backward", "forward", "left", "right"})
+
+# The rows that DO something when a brain is there to be asked instead. Each
+# one has to look like an order before it may skip that brain -- see
+# _looks_like_an_order. `stop` is deliberately not here: it is reached through
+# is_stop() on the always-on path, it is never refused, and a television that
+# stops the wheels has done no harm.
+_ORDERS_ONLY = _MOVING_RULES | {"explore"}
 
 
 # --- directions, and how far ------------------------------------------------
@@ -367,6 +384,11 @@ _HINDI_ORDER_RE = re.compile(r"(chal|chalo|jao|mudo|चल|चलो|जाओ|�
 _POLITE_RE = re.compile(
     r"^\s*(?:(?:can|could|will|would)\s+you\s+)?(?:please\s+)?", re.IGNORECASE)
 
+# "Explore the room" is an order with its verb in front, exactly like "go
+# forward"; "we explore the caves later" is a sentence about exploring.
+_EXPLORE_VERB_RE = re.compile(r"(explore|exploring|explorer)",
+                              re.IGNORECASE | re.UNICODE)
+
 
 def _is_imperative(heard: str) -> bool:
     """Does this sentence START with an order -- or, in Hindi, end with one?
@@ -383,7 +405,53 @@ def _is_imperative(heard: str) -> bool:
     first = words[0].strip(".,!?")
     last = words[-1].strip(".,!?।")
     return bool(_GO_RE.fullmatch(first) or _TURN_RE.fullmatch(first)
+                or _EXPLORE_VERB_RE.fullmatch(first)
                 or _HINDI_ORDER_RE.fullmatch(last))
+
+
+# THE WORDS AN ORDER IS ALLOWED TO BE MADE OF. Everything here is the command
+# itself, its amount, or filler that changes nothing: the verb, the direction,
+# a number and its unit, "a bit", "now". What is left over after taking them
+# out is the sentence the words were sitting in -- and a sentence about going
+# right is not an order to go right.
+_ORDER_WORDS_RE = re.compile(
+    r"\b(go|going|move|moving|drive|driving|walk|come|turn|turning|rotate|"
+    r"spin|pivot|face|start|begin|karo|kar|chal|chalo|jao|mudo|"
+    r"forward|forwards|ahead|straight|back|backward|backwards|reverse|"
+    r"left|right|around|round|explore|exploring|exploration|"
+    r"now|just|then|ok|okay|and|to|for|a|an|the|bit|little|lot|slightly|far|"
+    r"minute|minutes|min|mins|"
+    r"degree|degrees|deg|second|seconds|sec|metre|metres|meter|meters|m|cm|"
+    r"centimetre|centimetres|centimeter|centimeters|inch|inches|"
+    r"half|quarter|one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"aage|peeche|baaye|baayen|daaye|daayen|thoda|sa|bahut|"
+    r"आगे|पीछे|बाय|बाएं|बायें|दाय|दाएं|दायें|थोड़ा|बहुत|चल|चलो|जाओ|मुड़|मुडो)\b",
+    re.IGNORECASE | re.UNICODE)
+
+
+def _bare_order(heard: str) -> bool:
+    """Is this the order and nothing else -- "forward", "a bit to the left"?"""
+    rest = _ORDER_WORDS_RE.sub(
+        " ", _POLITE_RE.sub("", _ADDRESS_RE.sub("", heard)))
+    return not re.sub(r"[\d\s.,!?;:\-\u0964]+", " ", rest).strip()
+
+
+def _looks_like_an_order(heard: str) -> bool:
+    """Would a person hearing this say it was an order, not a sentence?
+
+    ⚠ THE LENGTH WAS NEVER THE TEST, AND ON 2026-09-19 IT SHOWED. The wheels
+    and the autonomous run were reflexes as soon as a direction word appeared
+    inside five words, and a video in the room said "F right A, speak Hindi."
+    -- five words -- so she pivoted ninety degrees at a television. The same
+    night "Now go back to it." drove her backwards.
+
+    In STRICT mode -- the path where a brain is available and this runs first
+    -- refusing costs nothing but a round trip to something that understands
+    the sentence, while acting costs a pivot nobody asked for. So the order
+    has to look like one at any length: the verb in front (_is_imperative), or
+    nothing in the sentence but the order itself (_bare_order).
+    """
+    return _is_imperative(heard) or _bare_order(heard)
 
 
 def _clean_tail(text: str) -> str:
@@ -397,7 +465,7 @@ def _clean_tail(text: str) -> str:
     return tail.strip(" .,!?;:-\u0964").strip()
 
 
-def _local_intent(heard: str) -> Intent | None:
+def _local_intent(heard: str, strict: bool = False) -> Intent | None:
     """The two things the spine does itself: stop listening, and say what it
     knows how to do. Checked before every tool rule, because both phrasings
     contain words that a tool rule would otherwise claim."""
@@ -441,6 +509,14 @@ def _local_intent(heard: str) -> Intent | None:
     except Exception:                           # noqa: BLE001
         minutes = None
     if minutes is not None:
+        # ⚠ AN ORDER TO EXPLORE, NOT A SENTENCE CONTAINING THE WORD.
+        # parse_request matches any sentence with "explore" in it, and this
+        # runs before every rule table, so with a brain available a video
+        # saying "we explore the caves later" would send the robot off on a
+        # twenty-minute autonomous run. Strict mode asks for the shape of an
+        # order first; anything else goes to the brain, which can read it.
+        if strict and not _looks_like_an_order(heard):
+            return None
         # THE TOOL CALL IS THE INTENT, and the narrator is a follow-up. This
         # used to be local-only, which pushed start_exploration into a spawned
         # process and put 30 s between "Friday explore" and the wheels moving.
@@ -709,7 +785,7 @@ def _match(text: str, strict: bool) -> Intent | None:
     # that is, because the stop rule matches the word `stop` on its own and
     # would take this one -- halting the wheels, staying wide awake, and doing
     # the exact opposite of what was asked.
-    local = _local_intent(heard)
+    local = _local_intent(heard, strict)
     if local is not None:
         return local
 
@@ -733,8 +809,9 @@ def _match(text: str, strict: bool) -> Intent | None:
         if pattern.search(heard):
             return Intent(name=name, tool=tool, args=dict(args), say=say)
 
-    # Time, which is answered here rather than by a tool.
-    if _COMPILED[-1][1].search(heard):
+    # Time, which is answered here rather than by a tool. Matched on the
+    # address-stripped text, so a bare "Friday, time?" is still the bare ask.
+    if _COMPILED[-1][1].search(_ADDRESS_RE.sub("", heard)):
         return Intent(name="time", say=_time_phrase())
 
     valued = _valued_intent(heard)
@@ -748,6 +825,8 @@ def _match(text: str, strict: bool) -> Intent | None:
         # see _STRICT_MAX_WORDS.
         if words > _STRICT_MAX_WORDS and not _is_imperative(heard):
             return None
+        if strict and not _looks_like_an_order(heard):
+            return None
         return moving
 
     for name, pattern, tool, args, say in _COMPILED:
@@ -755,6 +834,9 @@ def _match(text: str, strict: bool) -> Intent | None:
             if words > _STRICT_MAX_WORDS and (
                     strict or (name in _MOVING_RULES
                                and not _is_imperative(heard))):
+                return None
+            if (strict and name in _ORDERS_ONLY
+                    and not _looks_like_an_order(heard)):
                 return None
             return Intent(name=name, tool=tool, args=dict(args), say=say)
     return None

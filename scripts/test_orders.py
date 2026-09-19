@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""test_orders.py — what may skip the brain, and what may not.
+
+    ./venv/bin/python scripts/test_orders.py
+
+WHY THIS FILE EXISTS. On 2026-09-19 a video playing in the room woke Friday
+337 times in two hours, and the reflex path acted on what it heard: "F right
+A, speak Hindi." pivoted her ninety degrees, "See you next time." got the
+clock read out, "Now go back to it." drove her backwards. None of those is a
+wake-word problem that a threshold can fix -- they are the reflex table
+matching a keyword inside somebody else's sentence.
+
+The rule the fixes put back is offline._looks_like_an_order: in STRICT mode
+(the path taken when a brain IS available) an order has to look like one --
+the verb in front, or nothing in the sentence but the order itself. Refusing
+costs a round trip to something that can read the sentence properly. Acting
+costs a pivot nobody asked for.
+
+Every KEEP line below is a real order Harsh gives. Every REFUSE line is
+something a television actually said in this room, or a sentence built the
+same way.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import offline                                              # noqa: E402
+
+PASS, FAIL = "\033[32mPASS\033[0m", "\033[31mFAIL\033[0m"
+
+KEEP = [
+    ("forward.", "go_forward"), ("back", "go_backward"),
+    ("left", "left"), ("right", "right"),
+    ("Now move forward", "go_forward"), ("Go backwards.", "go_backward"),
+    ("turn left", "left"), ("turn around", "around"),
+    ("go left two meters", "go_left"), ("go forward two seconds", "go_forward"),
+    ("a bit to the right", "right"), ("move back a little", "go_backward"),
+    ("hey friday, turn right", "right"),
+    ("chalo aage", "go_forward"), ("peeche chalo", "go_backward"),
+    ("thoda sa aage chalo", "go_forward"),
+    ("what time is it", "time"), ("what's the time", "time"),
+    ("tell me the time", "time"), ("time?", "time"), ("Friday, time?", "time"),
+    ("explore", "explore"), ("start exploring", "explore"),
+    ("explore the room", "explore"),
+    ("Friday, explore for twenty minutes", "explore"),
+]
+
+REFUSE = [
+    "F right A, speak Hindi.",          # pivoted her 90 degrees, 22:27
+    "Now go back to it.",               # drove her backwards, 22:56
+    "See you next time.",               # read her the clock, 22:50 and 22:55
+    "See you next time!",
+    "come on.",
+    "Let's go!",
+    "Thank you.",
+    "You ready?",
+    "subscribe, can see that they are both also.",
+    "I'm not going to do this. I'm going to take it.",
+    "We are going to talk about the story, but we are going",
+    "I can't wait to see what happens.",
+    "You are not in the same place.",
+    "one more time",
+    "it's time to go",
+    "that's the one on the left",
+    "I think we should go right now",
+    "we explore the caves later",
+    "they will explore the island in the next episode",
+]
+
+# Stop is never refused, on any path, at any length -- see _ORDERS_ONLY.
+STOPS = ["stop", "Friday stop!", "stop it", "ruko", "stop please"]
+
+
+def main() -> int:
+    bad = 0
+    print("orders that must still skip the brain")
+    for text, name in KEEP:
+        intent = offline.understand(text, strict=True)
+        ok = intent is not None and intent.name == name
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  {text!r} -> "
+              f"{intent.name if intent else None} (wanted {name})")
+
+    print("\nsentences that must reach the brain instead")
+    for text in REFUSE:
+        intent = offline.understand(text, strict=True)
+        bad += intent is not None
+        print(f"  {PASS if intent is None else FAIL}  {text!r} -> "
+              f"{intent.name if intent else None}")
+
+    print("\nstop is never refused")
+    for text in STOPS:
+        ok = offline.is_stop(text)
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  {text!r}")
+
+    print(f"\n{'all good' if not bad else str(bad) + ' WRONG'}")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
