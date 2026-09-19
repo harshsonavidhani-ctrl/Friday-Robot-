@@ -114,6 +114,14 @@ BRAIN_FAST_UNSURE = "UNSURE"
 # What either brain replies when the words were NOT said to her (a video, the
 # room talking). main._ignored() never speaks it and the turn ends silently.
 BRAIN_IGNORE = "IGNORE"
+# HOW LONG A CONVERSATION STAYS OPEN. Inside this window, a QUESTION is
+# answered even if the addressed test called it a fragment -- see
+# brain._QUESTION_RE. 2026-09-19 23:57, thirty seconds after she had answered
+# him: "So, how do you know me like what do you like what's it?" was his, the
+# transcriber mangled it, and she said nothing. Harsh: "the brain is denying
+# some of the ques". Only questions, only while her own voice is this recent,
+# and only after the addressed test has already said no.
+BRAIN_CONVERSATION_WINDOW_S = 90.0
 # Words that mean the answer depends on the robot, the room, this house, or an
 # action -- anything the fast model cannot honestly know. A false match costs
 # about 1.9 s of latency; a miss costs a wrong answer spoken out loud with

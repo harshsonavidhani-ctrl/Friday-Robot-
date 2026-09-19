@@ -213,6 +213,28 @@ _REFUSAL_RE = re.compile(
     r")", re.IGNORECASE)
 
 
+# A question she is being asked, however mangled the transcript. Used only
+# WITH the conversation window below, never on its own.
+_QUESTION_RE = re.compile(
+    r"\?|^\s*(?:so[ ,]+)?(?:what|who|whose|where|when|why|how|which|do you|"
+    r"did you|can you|could you|are you|is it|tell me|kya|kaise|kaun|kahan|"
+    r"kitna|kitne)\b", re.IGNORECASE)
+
+
+def spoke_within(seconds: float) -> bool:
+    """Was her own voice in the room in the last `seconds`? Never raises.
+
+    tts.speak() writes state/speaking.json from whatever process makes the
+    sound, so this is the one honest record of when she last said anything.
+    """
+    try:
+        data = json.loads(config.SPEAKING_FILE.read_text())
+        when = float(data.get("until") or data.get("at"))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+    return 0 <= time.time() - when <= seconds
+
+
 def is_ignore(text: str) -> bool:
     """Did the brain mean "this was not said to me", in any wording?
 
@@ -662,6 +684,19 @@ class Brain:
         self.last_model = model
         self.last_fast = True
         self.last_response = {**parsed.as_dict(), "reply": reply}
+        if is_ignore(reply) and _QUESTION_RE.search(text) and spoke_within(
+                getattr(config, "BRAIN_CONVERSATION_WINDOW_S", 90.0)):
+            # ⚠ A QUESTION, SECONDS AFTER SHE ANSWERED ONE, IS NOT THE
+            # TELEVISION. Measured 2026-09-19 23:57, thirty seconds after she
+            # had told him what she knew about him: "So, how do you know me
+            # like what do you like what's it?" -- his own words, mangled by
+            # the transcriber into something that reads like a fragment --
+            # came back IGNORE and she said nothing. Harsh: "the brain is
+            # denying some of the ques". Inside the window a question goes to
+            # the full turn instead of being dropped; outside it, silence.
+            log.info("IGNORE overridden — a question %s",
+                     "moments after she spoke")
+            return None
         if is_ignore(reply):
             # NOT SAID TO HER. Kept out of the history: a video's line and her
             # silence are not a conversation she should be carrying forward.
