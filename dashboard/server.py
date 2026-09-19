@@ -156,7 +156,36 @@ async def api_state(request: web.Request) -> web.Response:
         "face_running": _face_is_running(),
         "robot_online": robot_online(),
         "screen": screen_state(),
+        # FILE 09 STEP 7: "Reuse the dashboard's existing data-fetching
+        # pattern instead of adding a separate one." This is that pattern --
+        # one poll, every panel, the way the Screen panel already rides it.
+        # growth.report() is cached for GROWTH_CACHE_S so a 4 s heartbeat is
+        # not nine COUNT(*) queries a beat.
+        **brain_growth(),
     })
+
+
+def brain_growth() -> dict:
+    """The Brain Growth panel's whole payload: stats, note, preferences."""
+    import growth
+    import reflection
+    note = reflection.last() or {}
+    try:
+        import corrections
+        learned = corrections.preferences(
+            int(getattr(config, "DASHBOARD_PREFERENCES", 8)))
+    except Exception:                           # noqa: BLE001
+        learned = []
+    return {"growth": growth.report(),
+            "reflection": {
+                "note": {k: note.get(k) for k in
+                         ("summary", "went_well", "to_adjust", "themes",
+                          "date", "reason")} if note else None,
+                "flags": reflection.flags(),
+                "log": reflection.log_entries(5),
+                "preferences": [{"id": row.get("id"), "text": row.get("text"),
+                                 "date": row.get("date")} for row in learned],
+                "waiting": float(reflection._too_soon())}}
 
 
 # =========================================================================
@@ -168,16 +197,13 @@ async def api_state(request: web.Request) -> web.Response:
 # drop one is Harsh -- see reflection.resolve().
 
 def reflection_state() -> dict:
-    import reflection
-    note = reflection.last() or {}
-    import growth
-    return {"note": {k: note.get(k) for k in
-                     ("summary", "went_well", "to_adjust", "themes", "date",
-                      "reason", "preferences", "gaps")} if note else None,
-            "flags": reflection.flags(),
-            "log": reflection.log_entries(8),
-            "growth": growth.report(),
-            "waiting": float(reflection._too_soon())}
+    """The same payload the heartbeat carries — ONE shape, not two.
+
+    The POST handler answers with it so a button press repaints from the same
+    fields the next heartbeat will bring, and /api/reflection stays for
+    anything that wants just this panel.
+    """
+    return brain_growth()
 
 
 async def api_reflection_get(request: web.Request) -> web.Response:

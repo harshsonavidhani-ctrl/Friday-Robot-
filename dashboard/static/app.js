@@ -471,6 +471,8 @@ function paintApps() {
    buttons under a flag are the ONLY way a learned preference is deleted --
    reflection FLAGS, Harsh decides. Nothing here is spoken. */
 
+let growthNow = null;           // the last counts the heartbeat brought
+
 async function reflectPost(body) {
   try {
     const r = await fetch('/api/reflection', {
@@ -480,17 +482,18 @@ async function reflectPost(body) {
     if (!r.ok) { toast(await r.text(), true); return; }
     const j = await r.json();
     toast(j.result);
-    paintReflection(j);
+    growthNow = j.growth || growthNow;
+    paintReflection(j.reflection);
   } catch (e) { toast(String(e), true); }
 }
 
 function paintReflection(state) {
-  if (!$('reflecttext')) return;
+  if (!$('reflecttext') || !state) return;
   const note = state.note;
   $('reflectwhen').textContent = note ? (note.date || 'saved') : 'never';
   /* The growth line first: it is true even before she has ever reflected,
      and it is the one a person actually wants to see (file 09 step 6). */
-  const g = state.growth || {};
+  const g = growthNow || {};
   $('reflecttext').textContent = [
     g.summary || '',
     note ? (note.went_well || note.summary || '') : '',
@@ -499,6 +502,26 @@ function paintReflection(state) {
       ? 'themes: ' + note.themes.join(' · ') : '',
     note ? '' : 'She has not reflected yet.',
   ].filter(Boolean).join('\n\n');
+
+  /* What he has actually corrected her into (step 1), newest first. Read
+     only: a preference is removed by ruling on a FLAG, never from a list. */
+  const prefs = $('reflectprefs');
+  if (prefs) {
+    prefs.innerHTML = '';
+    for (const row of (state.preferences || [])) {
+      const line = document.createElement('p');
+      line.className = 'calnote';
+      line.textContent = `${row.date} — ${row.text}`;
+      prefs.appendChild(line);
+    }
+    if (!(state.preferences || []).length) {
+      const line = document.createElement('p');
+      line.className = 'calnote';
+      line.textContent = 'Nothing corrected yet — tell her when she gets '
+        + 'something wrong and it lands here.';
+      prefs.appendChild(line);
+    }
+  }
 
   const box = $('reflectflags');
   box.innerHTML = '';
@@ -524,12 +547,13 @@ function paintReflection(state) {
   }
 }
 
-async function refreshReflection() {
+/* ⚠ NO FETCH OF ITS OWN. Step 7: "Reuse the dashboard's existing
+   data-fetching pattern instead of adding a separate one." /api/state carries
+   `growth` and `reflection` now, and heartbeat() paints this panel the same
+   way it paints Screen. This only wires the button. */
+function buildGrowth() {
   if (!$('reflectnow')) return;
   $('reflectnow').onclick = () => reflectPost({ action: 'run' });
-  try {
-    paintReflection(await (await fetch('/api/reflection')).json());
-  } catch {}
 }
 
 async function screenPost(body) {
@@ -824,6 +848,8 @@ async function heartbeat() {
   applyCams(s.cameras || {});     // picks up hot-plugs and other viewers
   paintRobot(s.robot_online);
   paintScreen(s.screen);          // rides the same beat; no extra request
+  growthNow = s.growth || growthNow;
+  paintReflection(s.reflection); // ...and so does Brain Growth (step 7)
   refreshExplore();               // cheap, and the panel must not go stale
   refreshMap();                   // one stat() server-side until the map changes
 }
@@ -873,7 +899,9 @@ function showPane(id) {
   buildExplore();
   await refreshExplore();
   refreshMap();
-  await refreshReflection();
+  buildGrowth();
+  growthNow = state.growth || null;
+  paintReflection(state.reflection);
 
   connect();
   setInterval(heartbeat, 4000);

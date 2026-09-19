@@ -138,8 +138,23 @@ def _next_step(counts: dict[str, int]) -> str:
     return "keep talking to me and keep correcting me"
 
 
-def report() -> dict[str, Any]:
-    """Every count, the level, and one sentence. Never raises."""
+_cache: tuple[float, dict] = (0.0, {})
+
+
+def report(max_age_s: float | None = None) -> dict[str, Any]:
+    """Every count, the level, and one sentence. Never raises.
+
+    CACHED FOR A FEW SECONDS, because the dashboard rides the /api/state
+    heartbeat (every 4 s) and this is nine COUNT(*) queries. The numbers move
+    at the speed of a conversation; re-counting them nine times a minute is
+    work the Pi has better uses for. Pass max_age_s=0 for a fresh count.
+    """
+    global _cache
+    ttl = float(getattr(config, "GROWTH_CACHE_S", 20.0)
+                if max_age_s is None else max_age_s)
+    when, cached = _cache
+    if cached and time.time() - when <= ttl:
+        return cached
     try:
         counts = _counts()
     except Exception as exc:                             # noqa: BLE001
@@ -151,7 +166,7 @@ def report() -> dict[str, Any]:
         earned = WEIGHTS.get(name, 0.0) * value
         points += min(earned, MAX_POINTS.get(name, earned))
     level = int(points // POINTS_PER_LEVEL) + 1 if points else 0
-    return {"counts": counts,
+    data = {"counts": counts,
             "points": round(points, 1),
             "capped": dict(MAX_POINTS),
             "level": level,
@@ -160,6 +175,8 @@ def report() -> dict[str, Any]:
             "summary": _sentence(counts, level),
             "next": _next_step(counts),
             "at": time.time()}
+    _cache = (time.time(), data)
+    return data
 
 
 def say() -> str:

@@ -394,6 +394,11 @@ REFLECTION_LOG_MAX = 20              # rolling; the spec: don't append forever
 # How long the latest note rides along in the turn context (situation.py).
 # A day: after that it is about a conversation neither of them remembers.
 REFLECTION_CONTEXT_FRESH_S = 86400.0
+# The Brain Growth panel (step 7): how many learned preferences it lists, and
+# how long growth.report() may be reused. The dashboard polls /api/state every
+# 4 s and the counts are nine COUNT(*) queries.
+DASHBOARD_PREFERENCES = 8
+GROWTH_CACHE_S = 20.0
 
 # --- Nothing that costs money may run in a loop (file 08 step 10) --------
 # rate_limit.py enforces these. DAILY_SPEND_CAP_USD above is the ceiling --
