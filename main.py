@@ -471,6 +471,15 @@ def _idle_turn_ended(spoken: str = "") -> None:
         physical_curiosity.turn_ended()
     except Exception as exc:                    # noqa: BLE001
         log.debug("physical curiosity bookkeeping skipped: %s", exc)
+    try:
+        # FILE 09 STEP 4, trigger one of three: "end of a conversation
+        # session". This only marks the clock -- reflection.tick() decides
+        # when the quiet has lasted long enough to count as an ending, and
+        # its own debounce stops the three triggers piling up.
+        import reflection
+        reflection.turn_ended()
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("reflection bookkeeping skipped: %s", exc)
     # THE OFFLINE PATH GETS THE TRIPWIRE TOO. one_turn() handles a turn the
     # brain answered; a turn answered locally -- no internet, over the cap, a
     # reflex command -- never goes through it, and "aise mat bolo" is exactly
@@ -610,6 +619,11 @@ def _idle_curiosity(brains: "_BrainLoader") -> None:
                 if brain_obj is None:
                     return              # no key: nothing to be curious with
             idle_study.start(lambda: list(brain_obj.messages))
+            # FILE 09 STEP 4, triggers two and three: the daily time and
+            # robot idle detection. Same thread pattern, same reason -- the
+            # wake loop is a blocking generator and must not wait on this.
+            import reflection
+            reflection.start()
         except Exception as exc:                # noqa: BLE001
             log.warning("could not start the idle curiosity (%s: %s)",
                         type(exc).__name__, exc)

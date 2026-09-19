@@ -466,6 +466,65 @@ function paintApps() {
     b.classList.toggle('on', b.dataset.app === (screenApp || 'face'));
 }
 
+/* ---------- what she has learned (file 09 step 4) ----------
+   She reflects on her own and writes it down; this reads it back. The two
+   buttons under a flag are the ONLY way a learned preference is deleted --
+   reflection FLAGS, Harsh decides. Nothing here is spoken. */
+
+async function reflectPost(body) {
+  try {
+    const r = await fetch('/api/reflection', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { toast(await r.text(), true); return; }
+    const j = await r.json();
+    toast(j.result);
+    paintReflection(j);
+  } catch (e) { toast(String(e), true); }
+}
+
+function paintReflection(state) {
+  if (!$('reflecttext')) return;
+  const note = state.note;
+  $('reflectwhen').textContent = note ? (note.date || 'saved') : 'never';
+  $('reflecttext').textContent = note
+    ? (note.summary + (note.themes && note.themes.length
+        ? '  ·  ' + note.themes.join(' · ') : ''))
+    : 'She has not reflected yet.';
+
+  const box = $('reflectflags');
+  box.innerHTML = '';
+  for (const flag of (state.flags || [])) {
+    const row = document.createElement('div');
+    row.className = 'calrow';
+    const label = document.createElement('label');
+    label.textContent = flag.text;
+    const field = document.createElement('div');
+    field.className = 'calfield';
+    const why = document.createElement('span');
+    why.className = 'calnote';
+    why.textContent = `${flag.kind}: ${flag.why}`;
+    const keep = document.createElement('button');
+    keep.textContent = 'Keep';
+    keep.onclick = () => reflectPost({ action: 'keep', id: flag.id });
+    const drop = document.createElement('button');
+    drop.textContent = 'Remove';
+    drop.onclick = () => reflectPost({ action: 'remove', id: flag.id });
+    field.append(keep, drop);
+    row.append(label, why, field);
+    box.appendChild(row);
+  }
+}
+
+async function refreshReflection() {
+  if (!$('reflectnow')) return;
+  $('reflectnow').onclick = () => reflectPost({ action: 'run' });
+  try {
+    paintReflection(await (await fetch('/api/reflection')).json());
+  } catch {}
+}
+
 async function screenPost(body) {
   try {
     const r = await fetch('/api/screen', {
@@ -807,6 +866,7 @@ function showPane(id) {
   buildExplore();
   await refreshExplore();
   refreshMap();
+  await refreshReflection();
 
   connect();
   setInterval(heartbeat, 4000);

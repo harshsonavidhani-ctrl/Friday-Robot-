@@ -105,3 +105,56 @@ def memory_status() -> str:
         "recent_activity": memory.recent_events(limit=5),
     }
     return json.dumps(report, indent=2)
+
+
+@tool
+def what_have_you_learned() -> str:
+    """What she has learned lately — her own reflection, read back.
+
+    File 09 step 4. Answers "what have you learned?", "what did you learn
+    today?", "have you noticed anything about yourself?". It READS the last
+    reflection; it does not think a new one. Nothing here is a fresh thought,
+    so say it as what it is: something she noticed earlier.
+
+    Empty when she has not reflected yet — say that plainly rather than
+    inventing something she noticed.
+    """
+    import reflection                                     # noqa: PLC0415
+    note = reflection.last()
+    if not note:
+        return ("nothing yet — she has not reflected since the last restart, "
+                "or there was nothing to reflect on")
+    report = {"when": note.get("date"), "summary": note.get("summary"),
+              "themes": note.get("themes") or [],
+              "waiting_for_harsh": [
+                  {"instruction": f["text"], "why": f["why"], "kind": f["kind"]}
+                  for f in reflection.flags()]}
+    return json.dumps(report, indent=2)
+
+
+@tool
+def reflect_now() -> str:
+    """Look back over what she has learned, now, and save it.
+
+    Use ONLY when he asks her to think about herself -- "reflect", "think
+    about what you've learned", "review your instructions". It runs on its
+    own three times a day; this is the on-demand path, it costs a call, and
+    it is rate limited.
+
+    Returns the summary. It is written down either way: the dashboard shows
+    it, and what_have_you_learned reads it back later.
+    """
+    import rate_limit                                     # noqa: PLC0415
+    import reflection                                     # noqa: PLC0415
+    allowed, why = rate_limit.allow("reflection")
+    if not allowed:
+        return f"not now: {why}"
+    note = reflection.run_self_reflection("he asked", force=True)
+    if note is None:
+        return ("nothing to reflect on yet — no corrections and no gaps have "
+                "been logged")
+    rate_limit.used("reflection")
+    flagged = reflection.flags()
+    tail = (f" {len(flagged)} instruction(s) need a decision from him."
+            if flagged else "")
+    return f"{note['summary']}{tail}"

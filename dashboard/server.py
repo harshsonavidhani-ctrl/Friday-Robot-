@@ -159,6 +159,54 @@ async def api_state(request: web.Request) -> web.Response:
     })
 
 
+# =========================================================================
+# What she has learned (file 09 step 4)
+# =========================================================================
+# READ-ONLY except for two buttons, and they are the whole point: reflection
+# FLAGS a preference it thinks is stale or contradictory and NEVER deletes it.
+# A preference is something Harsh told her to do, so the only thing allowed to
+# drop one is Harsh -- see reflection.resolve().
+
+def reflection_state() -> dict:
+    import reflection
+    note = reflection.last() or {}
+    return {"note": {k: note.get(k) for k in
+                     ("summary", "themes", "date", "reason", "preferences",
+                      "gaps")} if note else None,
+            "flags": reflection.flags(),
+            "waiting": float(reflection._too_soon())}
+
+
+async def api_reflection_get(request: web.Request) -> web.Response:
+    return web.json_response(reflection_state())
+
+
+async def api_reflection_post(request: web.Request) -> web.Response:
+    """run | keep | remove. `remove` is the ONLY path that forgets anything."""
+    import reflection
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    action = str(payload.get("action", "")).strip().lower()
+
+    if action == "run":
+        note = reflection.run_self_reflection("the dashboard asked",
+                                              force=True)
+        said = (note["summary"] if note else
+                "nothing to reflect on yet — no corrections and no gaps")
+    elif action in ("keep", "remove"):
+        flag = reflection.resolve(str(payload.get("id", "")),
+                                  keep=action == "keep")
+        if flag is None:
+            raise web.HTTPBadRequest(text="no such flag")
+        said = ("kept" if action == "keep"
+                else ("removed" if flag.get("forgotten") else "could not remove"))
+    else:
+        raise web.HTTPBadRequest(text="action must be run, keep or remove")
+    return web.json_response({"ok": True, "result": said, **reflection_state()})
+
+
 async def api_emotions(request: web.Request) -> web.Response:
     return web.json_response({
         "emotions": list(face_control.EMOTIONS),
@@ -816,6 +864,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/motor/speed", api_motor_speed)
     app.router.add_get("/api/screen", api_screen_get)
     app.router.add_post("/api/screen", api_screen_post)
+    app.router.add_get("/api/reflection", api_reflection_get)
+    app.router.add_post("/api/reflection", api_reflection_post)
     app.router.add_get("/api/explore", api_explore_get)
     app.router.add_get("/api/map.png", api_map_png)
     app.router.add_get("/api/map", api_map_meta)

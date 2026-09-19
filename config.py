@@ -363,6 +363,30 @@ CORRECTION_PHRASES = (
     r"\bwrong[ ]+(answer|name|one|again)\b",
 )
 
+# --- Self-reflection (file 09 step 4) ------------------------------------
+# Harsh's spec: "One function, run_self_reflection(), called from three
+# places: end of a conversation session, a daily scheduled time, and robot
+# idle detection. Before running, check a last_reflection_at timestamp -- if a
+# reflection already ran within the last few hours, skip."
+#
+# THE MINIMUM GAP IS WHAT MAKES THREE TRIGGERS SAFE. On a normal evening all
+# three come true within minutes of each other -- he stops talking, the robot
+# goes idle, and it is late -- so without it that is three Haiku calls for one
+# quiet room. It is stored on DISK, because the brain restarts far more often
+# than four hours (eight times on 2026-09-19).
+SELF_REFLECTION = True
+REFLECTION_FILE = ROOT / "state" / "reflection.json"
+REFLECTION_MODEL = MODEL_FAST        # reading two short lists; Haiku is plenty
+REFLECTION_MIN_GAP_S = 4 * 3600.0    # "a few hours", the spec's debounce
+REFLECTION_SESSION_END_S = 600.0     # quiet this long = the conversation ended
+REFLECTION_IDLE_S = 1800.0           # ...and this long = the robot is idle
+REFLECTION_DAILY_AT = "23:30"        # local time; "" turns the daily one off
+REFLECTION_POLL_S = 60.0
+REFLECTION_MAX_TOKENS = 500
+REFLECTION_MAX_PREFERENCES = 25
+REFLECTION_MAX_GAPS = 25
+REFLECTION_MAX_FLAGS = 12            # the list he is asked to rule on, bounded
+
 # --- Nothing that costs money may run in a loop (file 08 step 10) --------
 # rate_limit.py enforces these. DAILY_SPEND_CAP_USD above is the ceiling --
 # the wall at the end of the corridor -- and these are the speed limit, so one
@@ -385,6 +409,11 @@ RATE_LIMITS = {
     # physical_curiosity.py) from becoming a robot that paces the room.
     "physical_curiosity": {"min_interval_s": 1800.0, "per_hour": 2,
                            "per_day": 12},
+    # reflect_now: the ON-DEMAND path (file 09 step 4) skips the four-hour
+    # debounce on purpose -- he asked for it -- so the debounce is not its
+    # gate and it needs one of its own. ~$0.004 a call, and "let me think
+    # about that again" is exactly the sort of thought a model has twice.
+    "reflection": {"min_interval_s": 120.0, "per_hour": 6, "per_day": 20},
 }
 
 # --- She goes and looks for herself (file 08 step 9) ---------------------

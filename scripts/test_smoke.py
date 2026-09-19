@@ -187,6 +187,32 @@ def main() -> int:
           "outcome" not in source("uncertainty.py").split(
               "memory.log_event(")[1].split(")")[0],
           "an outcome would make a gap resurface as a lesson that worked")
+    # FILE 09 STEP 4 — three triggers, one debounce, and it may never delete.
+    reflect = source("reflection.py")
+    check("reflection still debounces on a stored timestamp",
+          "last_reflection_at" in reflect and "REFLECTION_MIN_GAP_S" in reflect,
+          "three triggers with no debounce is three Haiku calls a quiet room")
+    check("...and the timestamp still lives on disk",
+          "REFLECTION_FILE" in source("config.py"),
+          "the brain restarts far more often than the gap")
+    # Parsed, not grepped: the module docstring names memory.forget() when it
+    # explains the rule, and a substring count reads that as a second caller.
+    _forgets = []
+    for node in ast.walk(ast.parse(reflect)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for call in ast.walk(node):
+            if (isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "forget"):
+                _forgets.append(node.name)
+    check("reflection still cannot delete a preference by itself",
+          _forgets == ["resolve"],
+          f"forget() is called from {_forgets or 'nowhere'} — the only path "
+          f"that forgets a preference must be the one a button calls, "
+          f"because a model dropping a correction has overruled Harsh")
+    check("the flag list is still bounded",
+          "REFLECTION_MAX_FLAGS" in reflect)
     check("recall_experience still returns only events with an outcome",
           "outcome IS NOT NULL" in mem,
           "a logged guess could be read back to her as experience")

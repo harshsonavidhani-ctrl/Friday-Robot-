@@ -297,6 +297,14 @@ _ASK_RULES: list[tuple[str, str, str | None, dict, str]] = [
     # panel every time a video mentioned the sky. weather_now fetches through
     # weather_source (wttr.in, no key, ~3 s) and draws the card, so the spoken
     # answer and the panel are the same reading.
+    # FILE 09 STEP 4, the read-back only. It reads a file she has already
+    # written, so it costs nothing and cannot be made to spend money in a
+    # loop; `reflect_now`, which DOES cost a call, is left to the brain and
+    # to the dashboard button.
+    ("learned",    r"\b(what (have|did) you learn(ed|t)?|what'?ve you learn|"
+                   r"have you learn(ed|t)|anything (new )?you'?ve learn|"
+                   r"kya seekha|seekha kya|your reflection)\b",
+                                                          "what_have_you_learned", {},     ""),
     ("weather",    r"\b(what('?s| is)? (the )?weather|how('?s| is) the weather|"
                    r"weather (today|now|outside|report|like)|"
                    r"is it (going to )?rain(ing)?|mausam kaisa|kaisa mausam|"
@@ -741,7 +749,7 @@ def help_text() -> str:
 _SPEAK_RESULT = frozenset({
     "distance", "battery", "status", "map_what", "screen", "alarms",
     "explore_status", "scan", "lidar", "recall", "alarm", "timer", "cancel",
-    "weather",
+    "weather", "learned",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -761,7 +769,7 @@ _REFLEX_INTENTS = frozenset({
     "go_left", "go_right", "go_forward", "go_backward",
     "speed", "face",
     "alarm", "timer", "cancel", "alarms", "clock", "dismiss", "screen",
-    "battery", "status", "weather",
+    "battery", "status", "weather", "learned",
 })
 
 
