@@ -399,6 +399,15 @@ REFLECTION_CONTEXT_FRESH_S = 86400.0
 # 4 s and the counts are nine COUNT(*) queries.
 DASHBOARD_PREFERENCES = 8
 DASHBOARD_DIARY_ENTRIES = 20         # file 12 step 2: the scrollable history
+# File 12 step 3 (Memory Lane). A "person" is a capitalised word that is not
+# in people.NOT_PEOPLE and is seen somewhere other than the start of a
+# sentence — a heuristic, because there is no person field and face
+# recognition is deferred. The page lists the FACTS, so a wrong grouping is
+# visible rather than quietly believed.
+PEOPLE_MAX_FACTS = 500
+PEOPLE_MIN_MENTIONS = 1
+PEOPLE_MAX_PAGES = 12
+PEOPLE_CACHE_S = 20.0                # the dashboard polls every 4 s
 # Voice turns on the dashboard's live log (file 09 step 7, and Harsh:
 # "if i am talking to friday the brain also replies should come in dashboard
 # like what tool call and everything"). The stream carried only

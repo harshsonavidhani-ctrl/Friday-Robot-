@@ -787,3 +787,11 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
 .diaryday{font-size:12px;letter-spacing:.04em;text-transform:uppercase;
           color:var(--c-session);margin-bottom:4px}
 .diarytext{margin:0 0 6px;color:var(--text);font-size:14px;line-height:1.45}
+
+.studycard{margin:4px 0 14px}
+.studyq{margin:0 0 8px;color:var(--text);font-size:16px;line-height:1.4}
+.studya{margin:0 0 10px;color:var(--c-text);font-size:15px;line-height:1.45}
+.studygrades{display:flex;gap:6px;flex-wrap:wrap}
+.studygrades button{flex:1 1 auto;min-width:72px}
+
+.lanenames{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}

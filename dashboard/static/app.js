@@ -568,8 +568,55 @@ function buildGrowth() {
    numbers are FSRS's own (study.py); the diary entries are the sentences
    she wrote in her reflections, not a re-wording of them. */
 
+let studyCard = null;           // the card on screen, with its answer
+let studyRevealed = false;      // ...and whether he has asked to see it
+
+async function studyPost(body) {
+  try {
+    const r = await fetch('/api/study', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { toast(await r.text(), true); return; }
+    const j = await r.json();
+    toast(j.result);
+    studyRevealed = false;      // the next card starts face down
+    paintStudy(j.study);
+  } catch (e) { toast(String(e), true); }
+}
+
+function buildStudy() {
+  if (!$('studyshow')) return;
+  $('studyshow').onclick = () => { studyRevealed = true; paintStudy(null); };
+  for (const b of $('studygrades').querySelectorAll('button')) {
+    b.onclick = () => {
+      if (!studyCard) return;
+      studyPost({ action: 'review', card_id: studyCard.id,
+                  rating: b.dataset.rating });
+    };
+  }
+  $('studyadd').onclick = () => {
+    const q = $('studynewq').value.trim(), a = $('studynewa').value.trim();
+    if (!q || !a) { toast('A card needs a question and an answer', true); return; }
+    studyPost({ action: 'add', question: q, answer: a,
+                topic: $('studynewt').value.trim() });
+    $('studynewq').value = ''; $('studynewa').value = ''; 
+  };
+  $('studyload').onclick = () => {
+    const name = $('studyfile').value;
+    if (!name) { toast('Nothing new in notes/', true); return; }
+    studyPost({ action: 'load', name });
+  };
+}
+
+/* `s` null means "repaint what we already have" — used by Show answer, which
+   changes nothing on the robot and must not cost a round trip. */
+let studyLast = null;
 function paintStudy(s) {
-  if (!$('studyline') || !s) return;
+  if (!$('studyline')) return;
+  s = s || studyLast;
+  if (!s) return;
+  studyLast = s;
   const st = s.stats || {};
   const due = st.due_now || 0;
   $('studydue').textContent = due ? `${due} due` : 'nothing due';
@@ -583,9 +630,35 @@ function paintStudy(s) {
   $('studyline').textContent = bits.length
     ? bits.join(' · ') : 'No notes loaded yet.';
 
-  $('studynext').textContent = s.next
-    ? `next: ${s.next.topic} — ${s.next.question} (${s.next.due_in})`
-    : 'no cards yet — add one and it comes back on FSRS\u2019s schedule';
+  /* The session */
+  const card = s.card;
+  studyCard = card;
+  $('studydueline').textContent = card
+    ? (card.is_due ? `due now · ${card.topic}`
+                   : `nothing due — next in ${card.due_in} · ${card.topic}`)
+    : 'no cards yet';
+  $('studyq').textContent = card ? card.question : 'No cards yet.';
+  const answer = $('studya');
+  answer.textContent = card ? card.answer : '';
+  answer.hidden = !(card && studyRevealed);
+  $('studyshow').hidden = !card || studyRevealed;
+  $('studygrades').hidden = !(card && studyRevealed);
+
+  const picker = $('studyfile');
+  if (picker) {
+    const names = s.loadable || [];
+    picker.innerHTML = '';
+    for (const name of names) {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      picker.appendChild(opt);
+    }
+    if (!names.length) {
+      const opt = document.createElement('option');
+      opt.value = ''; opt.textContent = 'nothing new in notes/';
+      picker.appendChild(opt);
+    }
+  }
 
   const box = $('studyhistory');
   box.innerHTML = '';
@@ -633,6 +706,54 @@ function paintDiary(entries) {
       entry.appendChild(themes);
     }
     box.appendChild(entry);
+  }
+}
+
+/* ---------- memory lane (file 12 step 3) ----------
+   Names her memory mentions, and what she remembers about each. All of it
+   arrives on the heartbeat; picking a name is a local repaint, not a
+   request. */
+let lanePages = [];
+let laneOpen = null;
+
+function paintLane(pages) {
+  if (!$('lanenames')) return;
+  lanePages = pages || lanePages || [];
+  $('lanecount').textContent = lanePages.length
+    ? `${lanePages.length} ${lanePages.length === 1 ? 'person' : 'people'}`
+    : 'nobody yet';
+  if (laneOpen && !lanePages.some((p) => p.name === laneOpen)) laneOpen = null;
+  if (!laneOpen && lanePages.length) laneOpen = lanePages[0].name;
+
+  const bar = $('lanenames');
+  bar.innerHTML = '';
+  for (const page of lanePages) {
+    const b = document.createElement('button');
+    b.className = 'seg' + (page.name === laneOpen ? '' : ' off');
+    b.textContent = `${page.name} · ${page.count}`;
+    b.onclick = () => { laneOpen = page.name; paintLane(null); };
+    bar.appendChild(b);
+  }
+
+  const box = $('lanefacts');
+  box.innerHTML = '';
+  const page = lanePages.find((p) => p.name === laneOpen);
+  if (!page) {
+    const empty = document.createElement('p');
+    empty.className = 'calnote';
+    empty.textContent = 'No names have come up in conversation yet.';
+    box.appendChild(empty);
+    return;
+  }
+  const head = document.createElement('div');
+  head.className = 'diaryday';
+  head.textContent = `${page.name} — last mentioned ${page.last_said}`;
+  box.appendChild(head);
+  for (const fact of page.facts) {
+    const line = document.createElement('p');
+    line.className = 'diarytext';
+    line.textContent = fact.text;
+    box.appendChild(line);
   }
 }
 
@@ -943,6 +1064,7 @@ async function heartbeat() {
   paintReflection(s.reflection); // ...and so does Brain Growth (step 7)
   paintStudy(s.study);           // ...and Study and Diary (file 12)
   paintDiary((s.reflection || {}).log);
+  paintLane(s.people);           // ...and Memory Lane
   refreshExplore();               // cheap, and the panel must not go stale
   refreshMap();                   // one stat() server-side until the map changes
 }
@@ -1003,10 +1125,12 @@ function showPane(id) {
   await refreshExplore();
   refreshMap();
   buildGrowth();
+  buildStudy();
   growthNow = state.growth || null;
   paintReflection(state.reflection);
   paintStudy(state.study);
   paintDiary((state.reflection || {}).log);
+  paintLane(state.people);
 
   connect();
   setInterval(heartbeat, 4000);

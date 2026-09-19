@@ -256,8 +256,52 @@
              wiring through the /api/state heartbeat — no second data store
              and no fetch loop of its own. -->
         <p class="drivenote" id="studyline">No notes loaded yet.</p>
-        <p class="calnote" id="studynext"></p>
         <div id="studyhistory" class="studyhistory"></div>
+
+        <!-- The session itself, folded away like Calibration: he opens it
+             when he wants to study, not every time he glances at the panel.
+             Review is FSRS's four grades and nothing else — "I sort of knew
+             it" is `hard`, which is still recall that worked. -->
+        <details class="calib" id="studysession">
+          <summary>
+            <span class="chev" aria-hidden="true"></span>
+            <h2>Study session</h2>
+          </summary>
+          <div class="calib-body">
+            <p class="calnote" id="studydueline"></p>
+            <div class="studycard" id="studycard">
+              <p class="studyq" id="studyq">No cards yet.</p>
+              <p class="studya" id="studya" hidden></p>
+              <button id="studyshow">Show answer</button>
+              <div class="studygrades" id="studygrades" hidden>
+                <button data-rating="again">Again</button>
+                <button data-rating="hard">Hard</button>
+                <button data-rating="good">Good</button>
+                <button data-rating="easy">Easy</button>
+              </div>
+            </div>
+
+            <div class="calrow">
+              <label for="studynewq">New card</label>
+              <div class="calfield">
+                <input type="text" id="studynewq" placeholder="question">
+                <input type="text" id="studynewa" placeholder="answer">
+                <input type="text" id="studynewt" placeholder="topic">
+                <button id="studyadd">Add</button>
+              </div>
+            </div>
+
+            <div class="calrow">
+              <label for="studyfile">Load notes</label>
+              <div class="calfield">
+                <select id="studyfile"></select>
+                <button id="studyload">Load</button>
+              </div>
+            </div>
+            <p class="calnote">Drop PDFs or text files into
+              <code>notes/</code> and they appear here.</p>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -271,6 +315,21 @@
              rendered as dated entries, newest first. The sentences are the
              ones she wrote; nothing here re-words them. -->
         <div id="diary" class="diary"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-lane">
+      <div class="panelhead">
+        <h2>Memory Lane</h2>
+        <span class="badge" id="lanecount">nobody yet</span>
+      </div>
+      <div class="screen">
+        <!-- File 12 step 3. Grouped by a NAME THAT CAME UP IN CONVERSATION,
+             not by a face — face recognition is deferred. The grouping is a
+             heuristic, so each page lists the memories themselves: a wrong
+             grouping is then visible instead of quietly believed. -->
+        <div class="lanenames" id="lanenames"></div>
+        <div id="lanefacts"></div>
       </div>
     </section>
 

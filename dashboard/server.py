@@ -206,8 +206,14 @@ def brain_growth() -> dict:
         study_panel = study.panel()
     except Exception:                           # noqa: BLE001
         study_panel = {}
+    import people
+    try:
+        lane = people.pages()
+    except Exception:                           # noqa: BLE001
+        lane = []
     return {"growth": growth.report(),
             "study": study_panel,
+            "people": lane,
             "reflection": {
                 "note": {k: note.get(k) for k in
                          ("summary", "went_well", "to_adjust", "themes",
@@ -270,6 +276,50 @@ async def api_reflection_post(request: web.Request) -> web.Response:
     else:
         raise web.HTTPBadRequest(text="action must be run, keep or remove")
     return web.json_response({"ok": True, "result": said, **reflection_state()})
+
+
+# =========================================================================
+# Study mode (file 12)
+# =========================================================================
+# The same shape as the Screen panel's endpoint: one POST, a few actions,
+# and the answer carries the whole panel back so the page repaints from the
+# same fields the next heartbeat will bring.
+
+async def api_study_post(request: web.Request) -> web.Response:
+    """review | add | load — the three things a study session does."""
+    import study
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    action = str(payload.get("action", "")).strip().lower()
+    try:
+        if action == "review":
+            out = study.review(int(payload.get("card_id") or 0),
+                               str(payload.get("rating", "")))
+            if out is None:
+                raise web.HTTPBadRequest(text="no such card")
+            said = f"next in {out['interval']}"
+        elif action == "add":
+            row = study.add_card(str(payload.get("question", "")),
+                                 str(payload.get("answer", "")),
+                                 topic=str(payload.get("topic", "")))
+            said = f"card {row['id']} added, due now"
+        elif action == "load":
+            stored = study.load_named(str(payload.get("name", "")))
+            said = (f"{stored['title']}: {stored['chars']} characters in "
+                    f"{stored['chunks']} chunks")
+        else:
+            raise web.HTTPBadRequest(text="action must be review, add or load")
+    except web.HTTPException:
+        raise
+    except ValueError as exc:
+        # A card with no answer, a file that is not in notes/, a bad rating:
+        # his mistake, and the message is written to be shown as it is.
+        raise web.HTTPBadRequest(text=str(exc))
+    study.clear_cache()
+    return web.json_response({"ok": True, "result": said,
+                              "study": study.panel(max_age_s=0)})
 
 
 async def api_emotions(request: web.Request) -> web.Response:
@@ -929,6 +979,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/motor/speed", api_motor_speed)
     app.router.add_get("/api/screen", api_screen_get)
     app.router.add_post("/api/screen", api_screen_post)
+    app.router.add_post("/api/study", api_study_post)
     app.router.add_get("/api/reflection", api_reflection_get)
     app.router.add_post("/api/reflection", api_reflection_post)
     app.router.add_get("/api/explore", api_explore_get)

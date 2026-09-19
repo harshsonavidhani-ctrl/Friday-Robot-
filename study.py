@@ -560,7 +560,69 @@ def recent_reviews(limit: int = 12) -> list[dict]:
              "at": r["reviewed_at"]} for r in rows]
 
 
+def next_card() -> dict | None:
+    """The card to put in front of him now: due first, else the soonest.
+
+    ⚠ IT CARRIES THE ANSWER. The dashboard hides it behind "Show answer"
+    rather than fetching it separately — one round trip, and a study panel
+    that pauses to ask the Pi between the question and the answer is a study
+    panel nobody uses. This is his own material on his own private
+    dashboard; the answer is not a secret from him.
+    """
+    due = due_cards(limit=1)
+    row = due[0] if due else None
+    if row is None:
+        try:
+            found = db().execute(
+                "SELECT * FROM cards ORDER BY due LIMIT 1").fetchone()
+            row = dict(found) if found else None
+        except Exception as exc:                           # noqa: BLE001
+            log.warning("could not read the next card: %s", exc)
+            return None
+    if row is None:
+        return None
+    wait = max(0.0, float(row["due"]) - time.time())
+    return {"id": row["id"], "question": row["question"],
+            "answer": row["answer"], "topic": row["topic"] or "no topic",
+            "due_in": "now" if wait <= 0 else say_interval(wait),
+            "is_due": wait <= 0, "reps": row["reps"], "lapses": row["lapses"]}
+
+
+def loadable() -> list[str]:
+    """Files sitting in the notes folder that are not in the corpus yet."""
+    folder = Path(getattr(config, "STUDY_NOTES_DIR", config.ROOT / "notes"))
+    try:
+        have = {Path(r[0] or "").name
+                for r in db().execute("SELECT path FROM sources")}
+        return sorted(f.name for f in folder.iterdir()
+                      if f.is_file() and f.suffix.lower() in
+                      (".pdf", ".txt", ".md") and f.name not in have)
+    except Exception as exc:                               # noqa: BLE001
+        log.debug("could not list the notes folder: %s", exc)
+        return []
+
+
+def load_named(name: str) -> dict:
+    """Ingest one file from the notes folder, by name. Never a path he typed."""
+    folder = Path(getattr(config, "STUDY_NOTES_DIR", config.ROOT / "notes"))
+    # ⚠ BY NAME, RESOLVED INSIDE THE FOLDER. The dashboard is reachable from
+    # the phone, and "../../etc/passwd" is a name too.
+    target = (folder / Path(name).name).resolve()
+    if folder.resolve() not in target.parents or not target.is_file():
+        raise ValueError(f"{name!r} is not in the notes folder")
+    if target.suffix.lower() == ".pdf":
+        return add_pdf(target)
+    return add_text(target.read_text(errors="replace"), title=target.stem,
+                    path=str(target))
+
+
 _panel_cache: tuple[float, dict] = (0.0, {})
+
+
+def clear_cache() -> None:
+    """Drop the panel cache — after a review, the numbers have moved."""
+    global _panel_cache
+    _panel_cache = (0.0, {})
 
 
 def panel(max_age_s: float | None = None) -> dict:
@@ -576,6 +638,7 @@ def panel(max_age_s: float | None = None) -> dict:
     if cached and time.time() - when <= ttl:
         return cached
     data = {"stats": stats(), "streak": streak(), "next": next_due(),
+            "card": next_card(), "loadable": loadable(),
             "recent": recent_reviews(), "at": time.time()}
     _panel_cache = (time.time(), data)
     return data
