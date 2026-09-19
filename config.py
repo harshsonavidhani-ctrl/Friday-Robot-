@@ -1987,11 +1987,17 @@ APP_CLOCK_24H = False
 APP_LABEL_MAX_CHARS = 28
 
 # How long a weather card stays up before handing the screen back.
-# 0 = the card stays until something takes the screen back. Harsh, 2026-09-12:
-# he wants the raining cloud and the readings up, not gone in half a minute.
-# app_control.py --dismiss puts it away; a safety face or a ringing alarm draws
-# over it; any other expression yields to it.
-APP_WEATHER_HOLD_S = 0.0
+# 0 = it never hands it back. Harsh, 2026-09-12: "he wants the raining cloud
+# and the readings up, not gone in half a minute" -- so it was 0, and with the
+# card finally being triggered by voice and by the dashboard he saw what 0
+# actually means. Harsh, 2026-09-19, after asking her for the weather: "after
+# showing the on screen and teling after it gets stuck in weather animation it
+# should go back to neutral". His live word wins over the old one. 25 s is the
+# middle of the two: the line takes about four seconds to say, the card is
+# there to be looked at afterwards, and then her face comes back on its own.
+# app_control.py --dismiss still puts it away early; a safety face or a ringing
+# alarm draws over it; any other expression yields to it.
+APP_WEATHER_HOLD_S = 25.0
 
 # THE ARTWORK, NOT THE READING. Harsh asked for the cloud-with-rain animation
 # whatever the sky is doing, so this forces the icon and NOTHING else: the
