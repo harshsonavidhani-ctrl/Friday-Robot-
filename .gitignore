@@ -188,3 +188,12 @@ state/rl_autonomy.json
 # permanently dirty. Runtime output, and the jpg is a photo of Harsh's room.
 state/scene.json
 state/scene_latest.jpg
+
+# File 12a: the study corpus is HIS material and his review history — the
+# notes he drops in notes/ are his, and study.db is per-machine state like
+# memory.db. The code that reads them is tracked; the content is not.
+state/study.db
+state/study.db-wal
+state/study.db-shm
+notes/*
+!notes/.gitkeep

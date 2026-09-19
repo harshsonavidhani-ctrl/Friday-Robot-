@@ -423,6 +423,28 @@ MODE_DEFAULT = "companion"
 MODE_FILE = ROOT / "state" / "mode.json"
 MODE_AUTO = True                     # the automatic half; the command always works
 MODE_STRANGER_QUIET_S = 600.0
+
+# --- Study: his notes, his flashcards (file 12a) -------------------------
+# A SEPARATE DATABASE from memory.db, on purpose: the facts table is read
+# back to Friday as things she KNOWS and is re-indexed whenever it changes,
+# while study material is a corpus to search — and a few hundred review rows
+# would swamp both the event log and the growth counts (file 09 step 6).
+STUDY_DB = ROOT / "state" / "study.db"
+STUDY_NOTES_DIR = ROOT / "notes"     # drop PDFs and text files in here
+STUDY_CHUNK_CHARS = 900              # a paragraph or two: what answers a question
+STUDY_CHUNK_OVERLAP = 150            # so a fact across a boundary stays whole
+STUDY_PASSAGES = 4                   # how many go in front of the model
+STUDY_WORD_WEIGHT = 0.7              # words carry meaning, characters forgive typos
+STUDY_MIN_SCORE = 0.05               # below this, say nothing rather than guess
+STUDY_SESSION_CARDS = 20
+# FSRS (py-fsrs, the reference implementation of FSRS-6). 0.9 is the usual
+# desired retention: review when predicted recall drops to 90%.
+STUDY_DESIRED_RETENTION = 0.9
+# ⚠ NONE UNTIL THERE IS SOMETHING TO FIT. Harsh's spec: "don't over-fit
+# per-user until a few hundred reviews exist". study.optimise() refuses below
+# this and says so; a curve fitted to nine reviews is worse than the defaults.
+STUDY_FSRS_PARAMETERS = None
+STUDY_MIN_REVIEWS_TO_FIT = 400
 GROWTH_CACHE_S = 20.0
 
 # --- Nothing that costs money may run in a loop (file 08 step 10) --------

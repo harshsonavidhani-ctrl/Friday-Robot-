@@ -177,3 +177,44 @@ def how_much_have_you_grown() -> str:
     return json.dumps({"summary": data["summary"], "level": data["level"],
                        "counts": data["counts"], "next": data["next"]},
                       indent=2)
+
+
+@tool
+def search_notes(question: str) -> str:
+    """Look in HIS notes — the PDFs and pages he has given her — for an answer.
+
+    File 12a. Use this whenever he asks something that sounds like it comes
+    from his own material: a subject he is studying, a definition, "what did
+    my notes say about X". It searches the study corpus, not the web and not
+    her own memory, and returns the passages themselves with where they came
+    from.
+
+    ⚠ ANSWER FROM WHAT IT RETURNS, and say the source. If it returns nothing,
+    say the notes do not cover it rather than answering from general
+    knowledge — that is the whole point of asking his notes.
+
+    Args:
+        question: what he asked, in his own words.
+    """
+    import study                                          # noqa: PLC0415
+    found = study.search(question)
+    if not found:
+        return ("nothing in his notes covers that — say so, and offer to "
+                "look it up instead")
+    return json.dumps({"passages": [
+        {"from": hit["title"], "page": hit["page"], "text": hit["text"]}
+        for hit in found]}, indent=2)
+
+
+@tool
+def study_status() -> str:
+    """What is in the study corpus, and what is due for review right now.
+
+    File 12a. Answers "how many cards do I have", "anything to review?",
+    "what have I loaded". The due count is the one he acts on.
+    """
+    import study                                          # noqa: PLC0415
+    stats = study.stats()
+    due = [{"id": c["id"], "question": c["question"], "topic": c["topic"]}
+           for c in study.due_cards(limit=5)]
+    return json.dumps({"stats": stats, "due_now": due}, indent=2)
