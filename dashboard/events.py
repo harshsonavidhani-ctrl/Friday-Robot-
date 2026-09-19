@@ -15,13 +15,18 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from pathlib import Path
 from collections import deque
 from typing import Any
+
+import logging
 
 import config
 
 # The card types the front end knows how to render. Anything else is
 # rejected at ingest rather than silently showing up as a blank card.
+log = logging.getLogger("friday.dashboard.events")
+
 EVENT_TYPES = (
     "heard",          # what was said TO her, as the transcriber heard it
     "session_init",   # model + connected MCP servers, at the start of a turn
@@ -34,12 +39,69 @@ EVENT_TYPES = (
 
 
 class EventBus:
-    """Fan-out from one producer to many browsers, plus recent history."""
+    """Fan-out from one producer to many browsers, plus recent history.
+
+    THE HISTORY IS ON DISK AS WELL AS IN MEMORY. Harsh, 2026-09-20: "the logs
+    which comes should remain and not get lost after robot is off or
+    disconnected". It used to live only in this deque, so the log he was
+    reading vanished whenever the DASHBOARD restarted -- and tonight that was
+    a dozen times. The robot going away never mattered (nothing posts, the
+    cards stay); restarting this service did.
+
+    One JSON object per line, appended as it fans out, and the tail read back
+    at start-up. Bounded by rewriting the file down to the last
+    DASHBOARD_HISTORY events once it passes DASHBOARD_EVENT_MAX_BYTES, so it
+    cannot grow forever on an SD card that has already been full once.
+    """
 
     def __init__(self, history: int = config.DASHBOARD_HISTORY) -> None:
         self._history: deque[dict] = deque(maxlen=history)
         self._subscribers: set[asyncio.Queue] = set()
         self._seq = 0
+        self._file = Path(getattr(config, "DASHBOARD_EVENT_FILE",
+                                  config.ROOT / "state" / "dashboard_events.jsonl"))
+        self._load()
+
+    # --- the disk half -----------------------------------------------
+
+    def _load(self) -> None:
+        """Read the tail back. Never raises: a lost log is not a dead server."""
+        try:
+            if not self._file.exists():
+                return
+            lines = self._file.read_text(errors="replace").splitlines()
+        except OSError as exc:
+            log.warning("could not read the event log: %s", exc)
+            return
+        kept = 0
+        for line in lines[-self._history.maxlen:]:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue            # a torn last line must not lose the rest
+            if isinstance(event, dict) and event.get("type") in EVENT_TYPES:
+                self._history.append(event)
+                self._seq = max(self._seq, int(event.get("seq") or 0))
+                kept += 1
+        if kept:
+            log.info("event log: %d card%s restored from disk",
+                     kept, "" if kept == 1 else "s")
+
+    def _persist(self, stored: dict) -> None:
+        """Append one event, and keep the file bounded. Never raises."""
+        try:
+            self._file.parent.mkdir(parents=True, exist_ok=True)
+            with self._file.open("a") as handle:
+                handle.write(json.dumps(stored) + "\n")
+            limit = int(getattr(config, "DASHBOARD_EVENT_MAX_BYTES",
+                                2_000_000))
+            if limit and self._file.stat().st_size > limit:
+                # Rewritten from the deque, which is already the last N.
+                self._file.write_text("".join(
+                    json.dumps(e) + "\n" for e in self._history))
+                log.info("event log trimmed to %d cards", len(self._history))
+        except OSError as exc:
+            log.warning("could not write the event log: %s", exc)
 
     # --- producing ---------------------------------------------------
 
@@ -59,6 +121,7 @@ class EventBus:
         stored["seq"] = self._seq
         stored.setdefault("ts", time.time())
         self._history.append(stored)
+        self._persist(stored)
 
         for queue in list(self._subscribers):
             try:
@@ -69,7 +132,13 @@ class EventBus:
         return stored
 
     def clear(self) -> None:
+        """Both halves. Clearing is something a person asked for."""
         self._history.clear()
+        try:
+            if self._file.exists():
+                self._file.unlink()
+        except OSError as exc:
+            log.warning("could not clear the event log: %s", exc)
 
     # --- consuming ---------------------------------------------------
 

@@ -863,10 +863,20 @@ async function heartbeat() {
 
 /* friday-mcp is a separate service from this one, so the dashboard opens and
    works whether or not the robot is running. Say which half is down rather
-   than letting the drive buttons fail silently. */
+   than letting the drive buttons fail silently.
+
+   ⚠ TWO BEATS BEFORE IT SAYS OFF. Harsh, 2026-09-20: "its showing robot off
+   but robot is on". robot_online() is a bare TCP connect, and friday-mcp
+   takes ~20 s to start accepting them again after a restart — so every
+   restart flashed ROBOT OFF at whoever was holding the phone, and a single
+   dropped poll did the same. The badge now needs two failures in a row, and
+   clears on the first success. */
+let robotMisses = 0;
 function paintRobot(online) {
   const badge = $('robotoff');
-  if (badge) badge.hidden = online !== false;
+  if (!badge) return;
+  if (online === false) robotMisses += 1; else robotMisses = 0;
+  badge.hidden = robotMisses < 2;
 }
 
 /* ---------- panes (phone) ---------- */
@@ -912,6 +922,15 @@ function showPane(id) {
 
   connect();
   setInterval(heartbeat, 4000);
+
+  /* A PHONE THAT WAS ASLEEP SHOWS OLD STATE. Mobile browsers freeze timers
+     in a backgrounded tab, so the first thing he sees on unlocking is
+     whatever was true when he locked it — up to four seconds stale at best,
+     and minutes stale in practice. Beat once, immediately, on coming back. */
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { robotMisses = 0; heartbeat(); }
+  });
+  window.addEventListener('focus', () => heartbeat());
 
   // A manifest shortcut lands on /?pane=... -- honour it, then fall back to
   // whichever pane was last open. Anything else is ignored rather than trusted.

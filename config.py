@@ -1899,6 +1899,13 @@ DASHBOARD_CAM_QUALITY = 6        # ffmpeg -q:v, only used if a re-encode is
 
 # How many recent events a newly-connected browser is replayed.
 DASHBOARD_HISTORY = 300
+# ...and the same history on disk, so it survives THIS service restarting.
+# Harsh, 2026-09-20: "the logs which comes should remain and not get lost
+# after robot is off or disconnected". One JSON object per line; the file is
+# rewritten down to the last DASHBOARD_HISTORY events when it passes the
+# size limit, because this SD card has been full before.
+DASHBOARD_EVENT_FILE = ROOT / "state" / "dashboard_events.jsonl"
+DASHBOARD_EVENT_MAX_BYTES = 2_000_000
 
 # How long the dashboard waits on an MCP tool call before giving up. Generous
 # because a move tool blocks for the whole duration of the move.
