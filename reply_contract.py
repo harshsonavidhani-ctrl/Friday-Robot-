@@ -70,6 +70,12 @@ assert set(EMOTION_TRIGGERS) | set(PIPELINE_OWNED) == set(EMOTIONS), \
     "reply_contract's emotion table has drifted from face_control.EMOTIONS"
 assert not set(EMOTION_TRIGGERS) & set(PIPELINE_OWNED)
 
+# File 12 step 1. Five, and no more: a list long enough to be interesting is
+# a list nobody can act on, and every extra name is another way for the model
+# to disagree with itself about the same sentence.
+USER_MOODS = ("neutral", "happy", "tired", "frustrated", "stressed")
+
+
 _TABLE = "\n".join(f"  - `{name}` — {why}"
                    for name, why in EMOTION_TRIGGERS.items())
 
@@ -80,7 +86,7 @@ Your FINAL message in every turn, after any tools have finished, is exactly one
 JSON object and nothing else — no markdown fence, no words before or after it:
 
 {{"reply": "...", "emotion": "...", "memory_note": null, "correction": null,
- "uncertain": null, "mode": "companion"}}
+ "uncertain": null, "user_mood": null, "mode": "companion"}}
 
 - `reply` — the words you say out loud, and ONLY those. It is spoken by a speech
   synthesiser the moment you write it, so it comes FIRST, and every rule in
@@ -133,6 +139,15 @@ JSON object and nothing else — no markdown fence, no words before or after it:
   BECAUSE of this field. It is NOT `UNSURE`: that word hands the turn to a
   bigger brain BEFORE you answer, while this is about an answer you did give.
 
+- `user_mood` — how HE sounds in what he just said: one of
+  `{", ".join(f"`{m}`" for m in USER_MOODS)}`, or `null` when nothing in the
+  words points either way. From the WORDS ONLY — you cannot hear tone, and a
+  short sentence is not a mood. When it is not `neutral` or `null`, let it
+  change HOW you answer, not what you answer: frustrated or stressed means
+  shorter and gentler and no jokes; tired means fewer words and no new
+  subjects. Never name it out loud — "you sound frustrated" is the most
+  annoying sentence a robot can say.
+
 - `mode` — `"companion"` or `"professional"`: the voice you answered in.
   Companion unless this turn's notes say professional, which is what a demo,
   a technical question or a formal request gets. It is a record of how you
@@ -177,6 +192,9 @@ class Reply:
     # File 09 step 3. The topic she was not confident about, logged and never
     # spoken: it feeds the idle look-up (file 08 step 8) and the reflection.
     uncertain: str | None = None
+    # File 12 step 1. How HE sounded, from the words alone — no tone model
+    # and no extra call, the same Haiku turn that was already running.
+    user_mood: str | None = None
     # File 09 step 8. Which voice she answered in. ⚠ REPORTING, NOT CONTROL:
     # mode.py decides and the model is TOLD, so a model that writes the wrong
     # name here changes nothing but its own log line. Kept because a turn
@@ -189,6 +207,7 @@ class Reply:
                 "memory_note": self.memory_note,
                 "correction": self.correction,
                 "uncertain": self.uncertain,
+                "user_mood": self.user_mood,
                 "mode": self.mode}
 
 
@@ -203,6 +222,13 @@ def _clean_emotion(value: Any) -> str | None:
     name = value.strip().lower()
     # A pipeline-owned name is not the model's to choose (file 08 step 2).
     return name if name in EMOTION_TRIGGERS else None
+
+
+def _clean_mood(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    name = value.strip().lower()
+    return name if name in USER_MOODS else None
 
 
 def _clean_mode(value: Any) -> str | None:
@@ -517,6 +543,7 @@ class ReplyStream:
                      memory_note=_clean_note(last.get("memory_note")),
                      correction=_clean_note(last.get("correction")),
                      uncertain=_clean_note(last.get("uncertain")),
+                     user_mood=_clean_mood(last.get("user_mood")),
                      mode=_clean_mode(last.get("mode")),
                      structured="emotion" in last or "memory_note" in last)
 

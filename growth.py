@@ -97,10 +97,34 @@ def _counts() -> dict[str, int]:
             "SELECT COUNT(*) FROM events WHERE task='uncertain_response'"),
         "uncertain_resolved": one(
             "SELECT COUNT(*) FROM events WHERE task=?", RESOLVED_TASK),
+        # FILE 12 STEP 1. Not a score and not weighted — it is in the counts
+        # so the PATTERN is visible ("he has been tired every evening this
+        # week"), which is the whole reason the field is stored at all.
+        "moods_logged": one(
+            "SELECT COUNT(*) FROM events WHERE task='user_mood'"),
         "looked_up_herself": one(
             "SELECT COUNT(*) FROM facts WHERE source=?",
             getattr(config, "IDLE_STUDY_SOURCE", "idle-study")),
     }
+
+
+def moods(days: int = 14) -> list[dict]:
+    """How he has sounded lately, most common first. Never raises.
+
+    File 12 step 1: "so patterns over time are visible". A count per mood
+    over a fortnight is the smallest thing that shows one.
+    """
+    try:
+        import memory                                    # noqa: PLC0415
+        since = time.time() - days * 86400
+        rows = memory.db().execute(
+            "SELECT text, COUNT(*) FROM events WHERE task='user_mood' "
+            "AND created_at >= ? GROUP BY text ORDER BY 2 DESC", (since,)
+        ).fetchall()
+        return [{"mood": r[0], "count": int(r[1])} for r in rows]
+    except Exception as exc:                             # noqa: BLE001
+        log.debug("could not read the moods: %s", exc)
+        return []
 
 
 def _sentence(counts: dict[str, int], level: int) -> str:
@@ -167,6 +191,7 @@ def report(max_age_s: float | None = None) -> dict[str, Any]:
         points += min(earned, MAX_POINTS.get(name, earned))
     level = int(points // POINTS_PER_LEVEL) + 1 if points else 0
     data = {"counts": counts,
+            "moods": moods(),
             "points": round(points, 1),
             "capped": dict(MAX_POINTS),
             "level": level,

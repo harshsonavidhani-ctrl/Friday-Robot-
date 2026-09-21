@@ -392,6 +392,12 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
     # spoken: the reply above already went out without hedging.
     _keep_uncertainty(response.get("uncertain"), text, reply, turn)
 
+    # FILE 12 STEP 1. How he sounded, logged the way a gap is: its own event
+    # task, no outcome, so it can never resurface as "how similar things went
+    # before" and never becomes a fact she believes. The POINT is the pattern
+    # over weeks, which is why it is stored at all and not just acted on.
+    _keep_user_mood(response.get("user_mood"), text, turn)
+
     # THE FACE IS CHOSEN BY THE AI, on a thread, while she speaks. Harsh: "face
     # also ai driven". A thread, not a task: run()'s wake loop is a blocking
     # generator, so an asyncio task would starve (see brain.warm_in_background).
@@ -444,6 +450,20 @@ def _keep_correction(said: str, note: str | None,
             turn.note(f"learned preference: {stored['text'][:80]!r}")
     except Exception as exc:                    # noqa: BLE001
         log.debug("correction capture skipped: %s", exc)
+
+
+def _keep_user_mood(mood: str | None, said: str,
+                    turn: "stages.Turn") -> None:
+    """File 12 step 1: keep how he sounded. Never raises, never speaks."""
+    if not mood or mood == "neutral":
+        return                          # neutral is the absence of a signal
+    try:
+        import memory
+        memory.log_event(mood, task="user_mood",
+                         meta={"said": said[:200]})
+        turn.note(f"he sounded {mood}")
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("user mood not logged: %s", exc)
 
 
 def _keep_uncertainty(topic: str | None, asked: str, said: str,

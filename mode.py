@@ -84,6 +84,32 @@ def state() -> dict[str, Any]:
             "since": 0.0, "why": "never set"}
 
 
+def quiet() -> bool:
+    """File 12 step 2: has he asked her to keep it to the screen?
+
+    Stored beside the companion/professional mode because it is the same
+    kind of thing — a standing choice about HOW she answers, set by voice or
+    from the dashboard, that has to survive a restart.
+    """
+    return bool(state().get("quiet"))
+
+
+def set_quiet(on: bool, why: str = "he asked") -> bool:
+    """Turn quiet mode on or off. Returns what is now in force."""
+    data = state()
+    data["quiet"] = bool(on)
+    data["quiet_why"] = why
+    data["quiet_since"] = time.time()
+    try:
+        path = _file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+        log.info("quiet mode -> %s (%s)", "on" if on else "off", why)
+    except OSError as exc:
+        log.warning("could not save quiet mode: %s", exc)
+    return bool(on)
+
+
 def set_mode(name: str, why: str = "he asked") -> str:
     """Set the sticky mode. Returns the mode actually in force."""
     name = (name or "").strip().lower()
@@ -92,8 +118,12 @@ def set_mode(name: str, why: str = "he asked") -> str:
     try:
         path = _file()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"mode": name, "since": time.time(),
-                                    "why": why}))
+        # KEEP WHAT IS ALREADY THERE. quiet mode lives in this file too, and
+        # writing a fresh object would turn it off every time he switched
+        # between companion and professional.
+        data = state()
+        data.update({"mode": name, "since": time.time(), "why": why})
+        path.write_text(json.dumps(data))
         log.info("mode -> %s (%s)", name, why)
     except OSError as exc:
         log.warning("could not save the mode: %s", exc)
@@ -115,6 +145,31 @@ _PROFESSIONAL_OFF = re.compile(
     r"|\b(demo|professional|formal)\s+mode\s+off\b"
     r"|\b(stop|end|exit|leave)\s+(the\s+)?(demo|professional|formal)\b"
     r"|\bbe\s+(casual|normal|yourself)\b", re.IGNORECASE)
+
+
+_QUIET_ON = re.compile(
+    r"\b(quiet mode|be quiet|stay quiet|don'?t speak|do not speak|"
+    r"no talking|silent mode|shush|mute yourself)\b", re.IGNORECASE)
+_QUIET_OFF = re.compile(
+    r"\b(quiet mode off|you can (talk|speak)( again)?|speak again|"
+    r"talk again|unmute|stop being quiet|out loud again)\b", re.IGNORECASE)
+
+
+def quiet_asked_for(text: str) -> bool | None:
+    """True/False when this sentence is about quiet mode, else None.
+
+    OFF FIRST, for the same reason as the demo mode above: "quiet mode off"
+    contains "quiet mode".
+    """
+    text = text or ""
+    try:
+        if _QUIET_OFF.search(text):
+            return False
+        if _QUIET_ON.search(text):
+            return True
+    except Exception:                           # noqa: BLE001
+        return None
+    return None
 
 
 def asked_for(text: str) -> str | None:

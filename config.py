@@ -434,6 +434,23 @@ MODE_FILE = ROOT / "state" / "mode.json"
 MODE_AUTO = True                     # the automatic half; the command always works
 MODE_STRANGER_QUIET_S = 600.0
 
+# --- May she speak up right now? (file 12 step 2) ------------------------
+# ONE GATE for everything that acts without being asked. The spec: never
+# while he is speaking; only when an idle timeout HAS passed AND there is
+# something worth surfacing; and the face instead of the voice when the room
+# is loud or quiet mode is on.
+INITIATIVE = True
+INITIATIVE_IDLE_S = 45.0             # quiet this long before she may start something
+INITIATIVE_AFTER_HER_VOICE_S = 3.0   # ...and not on top of her own sentence
+# The detector's own loudness reading. 6000 is about a television at
+# conversation volume in this room; below it a spoken remark is audible.
+INITIATIVE_LOUD_RMS = 6000.0
+LISTENING_FILE = ROOT / "state" / "listening.json"
+# ⚠ A STALENESS LIMIT, because a turn that dies between the mark and the
+# clear would otherwise silence every proactive path FOREVER.
+LISTENING_STALE_S = 60.0
+WAKE_HEARTBEAT_STALE_S = 120.0
+
 # --- Study: his notes, his flashcards (file 12a) -------------------------
 # A SEPARATE DATABASE from memory.db, on purpose: the facts table is read
 # back to Friday as things she KNOWS and is re-indexed whenever it changes,
@@ -687,6 +704,11 @@ WAKE_PATIENCE = 1
 # (detector alone 14), close 15/20 at 0.35 vs 14/20 at 0.4, today's false wakes
 # 10/52 vs 9/52 (detector alone 24). A miss costs more than one false wake.
 WAKE_VERIFY = True
+# The heartbeat numbers, mirrored to a file every WAKE_HEARTBEAT_S. The log
+# line has always had them; this is for the things outside that process —
+# file 12 step 2 reads the room's loudness from here to decide whether to
+# answer on the face instead of out loud.
+WAKE_HEARTBEAT_FILE = ROOT / "state" / "wake_alive.json"
 WAKE_VERIFIER_MODEL = ROOT / "assets/models/wake/friday_verifier.npz"
 WAKE_VERIFY_THRESHOLD = 0.6
 

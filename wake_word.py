@@ -90,6 +90,27 @@ def _skip_verifier_training_import() -> None:
     sys.modules[name] = stand_in
 
 
+
+def _write_heartbeat(**fields) -> None:
+    """Mirror the heartbeat into a file, for anything outside this process.
+
+    The log line has always carried these numbers and only a person reading
+    the log could use them. FILE 12 STEP 2 needs one of them — the room's
+    loudness — to decide whether to answer on the face instead of out loud,
+    and initiative.py is not in this process's import graph. Never raises:
+    a heartbeat that cannot be written must not stop the detector.
+    """
+    import json as _json                                 # noqa: PLC0415
+    try:
+        path = Path(getattr(config, "WAKE_HEARTBEAT_FILE",
+                            config.ROOT / "state" / "wake_alive.json"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fields["at"] = time.time()
+        path.write_text(_json.dumps(fields))
+    except Exception as exc:                             # noqa: BLE001
+        log.debug("could not write the wake heartbeat: %s", exc)
+
+
 class WakeSource:
     """Something that yields once per wake."""
 
@@ -421,6 +442,13 @@ class OpenWakeWord(WakeSource):
                          self._paused.is_set(), asleep, scored,
                          self.last_score, self.last_rms,
                          getattr(self._sub, "dropped", -1), self.rejected)
+                _write_heartbeat(paused=self._paused.is_set(),
+                                 asleep=asleep, scored=scored,
+                                 last_score=self.last_score,
+                                 rms=self.last_rms,
+                                 peak_rms=self._peak_rms_since_report,
+                                 rejected=self.rejected)
+                self._peak_rms_since_report = 0.0
                 last_beat = now_f
                 scored = 0
 
