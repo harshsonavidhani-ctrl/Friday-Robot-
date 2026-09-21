@@ -1975,7 +1975,23 @@ DASHBOARD_MOTOR_STEPS = (0.3, 0.6, 1.0)
 CALIBRATION_FILE = ROOT / "state" / "calibration.json"
 CALIBRATION_DEFAULTS = {
     "move_speed": 150,           # 0-255, default straight-line speed
-    "turn_speed": 130,           # 0-255, default pivot speed
+    # ⚠ 130 COULD NOT TURN THIS CHASSIS, and the symptom did not look like a
+    # power problem -- it looked like flaky software. MEASURED 2026-09-21 by
+    # correlating LiDAR sweeps either side of a commanded pivot:
+    #
+    #     turn_speed 130 (pwm 117):  26 deg right, 38 deg left in 1.0 s
+    #     turn_speed 170 (pwm 153):  71 deg right, 71 deg left
+    #     turn_speed 210 (pwm 189): 104 deg right, 88 deg left
+    #
+    # At 130 the angle did not scale with duration at all -- 0.5 s gave 20-29
+    # deg and 1.2 s gave 25 deg -- because pwm 117 sits barely above stiction
+    # for four wheels scrubbing sideways, so each pivot was a coin toss
+    # between moving and buzzing. That is the "22% of turns execute as stops"
+    # in [[friday-drivetrain-execution-floors]], seen from the other end.
+    # At 170 it became a rate (75 deg/s) AND symmetric, which is what lets
+    # turn_degrees() be honest. The ceiling is MOTOR_MAX_DUTY*255 = 217, so
+    # this is well inside it and needs no change there.
+    "turn_speed": 170,           # 0-255, default pivot speed
     "forward_cm_per_s": 0.0,     # measured; 0 = not calibrated yet
     "turn_deg_per_s": 0.0,       # measured; 0 = not calibrated yet
     # Lives HERE, in the file, rather than in a module global -- it used to be
