@@ -277,3 +277,152 @@ A new way of making noise that bypasses `tts.speak()` re-opens that hole.
   change it.
 - `mcp_server/safety.py`, `reflex.py`, `devguard.py` and this file are in
   devguard's PROTECTED list: Friday cannot edit them through `dev_task`.
+
+---
+
+# PART 5 — What file 14 added (2026-09-21)
+
+File 14 is NAVIGATION: return-to-home and target navigation. It is **additive
+only**. New files: `path_planner.py`, `nav_follower.py`, `nav_state_machine.py`,
+`landmarks.py`, `mcp_server/tools/nav_tools.py`, `dashboard/nav_view.py`, and
+their tests. The only pre-existing files it touched are the dashboard's
+(`dashboard/server.py` one GET route, `static/index.html`, `app.js`,
+`style.css`), because step 11 says extend the dashboard rather than build a
+second one.
+
+## What it wired in
+
+**One engine, four entry points.** `NavController._drive_to(goal, label, mode)`
+is the whole of navigation. RETURN_TO_HOME and TARGET_NAV are the same code
+and differ only in what triggers entry and what happens on arrival — if you
+find yourself writing a second copy of it for a third destination, you have
+taken a wrong turn.
+
+    relocalise ──> path_planner ──> nav_follower ──> arrival
+     (refuses)     despeckle          look-ahead      held, not
+                   inflate            heading error   sampled
+                   A* + gradient      ONE guarded
+                   smooth             move per tick
+
+- `path_planner.py` — steps 1-3. `preprocess()` despeckles (isolated 1-2 cell
+  specks become free; inflating one makes a 60 cm disc of phantom wall out of
+  25 cm² of nothing) then calls `slam/plan.py::passable_mask` for the
+  inflation, which is NOT reimplemented. `astar()` is 8-connected with an
+  octile heuristic and a soft clearance gradient near walls — a preference,
+  never a veto, so a tight doorway is still taken when it is the only way.
+  `smooth()` shortcuts the staircase by line of sight. Its LOS check enforces
+  the diagonal gate as well as sampling, because a 45° segment rounds onto
+  cells along its own diagonal and never onto the two it squeezes between.
+- `nav_follower.py` — steps 4-5. Pure-pursuit geometry; the actuation is
+  pivot-then-step because the guarded interface has no arc primitive. Every
+  tick re-measures the pose from the scan matcher — there are no encoders, so
+  a tick costs a LiDAR sweep and runs at about 1 Hz, not 20. `RateModel`
+  learns cm/s and deg/s from measured pose because calibration reads 0.
+  Arrival needs tolerance AND dwell AND no commanded motion, and relaxes to
+  `GOTO_ARRIVE_M` after 25 s rather than hunting.
+- `nav_state_machine.py` — steps 6, 9, 10. The six states, the home timer,
+  the re-plan loop, `RuntimeObstacles`, and pause/resume.
+- `landmarks.py` — step 7. `AreaWatch` reports a CONTIGUOUS new region ≥ 4 m²;
+  scattered edge-trimming that adds up to the same area is not a room.
+- `mcp_server/tools/nav_tools.py` — step 8. `navigate_to`, `return_home`,
+  `nav_status`. `go_to` is untouched and still the older, longer-serving path.
+- `dashboard/nav_view.py` + `GET /api/nav` — step 11, read-only, no POST.
+
+**Return-to-Home.** `HomeTimer` counts wall clock, not ticks, because a run
+stalled against a wall is the one that most needs it to fire. Home is a row in
+the `places` table called "home" — an ordinary landmark, so `list_places` and
+`go_to` already see it. Set it with `remember_place("home")`.
+
+**Target Navigation.** The brain parses the voice command into a name and an
+optional action, calls `navigate_to`, and PERFORMS THE ACTION ITSELF on the
+result's `action_pending`. The server cannot call the brain, and a tool that
+spoke would bypass `reply_contract` and the face arbiter.
+
+**Landmark labeling.** `LandmarkNamer.consider(grid, pose)` asks only when
+somewhere big and new has appeared and she is not already inside a known
+place. `ask` is INJECTED — no `ask`, no question and nothing saved. An answer
+that is not a name ("no", "I don't know", a sentence) saves nothing, and a
+name that already exists is confirmed before it is moved, because
+`places.remember_here` moves silently by design.
+
+**Pause/resume.** A target-nav command mid-exploration calls
+`pause_exploration()` → snapshot + `stop_exploration()`, then
+`resume_exploration()` → `start_exploration(minutes=what was left)`.
+⚠ THE FRONTIER LIST IS NOT RESTORED AND MUST NOT BE. It is a pure function of
+the occupancy grid and the pose (`slam/frontier.py::find`), and the grid
+persists — so resume recomputes it, which is also more correct, since a
+frontier snapshotted before the interruption may have been explored during it.
+What is genuinely lost is the committed target and the blacklist; they are
+captured as a hint that nothing yet consumes, and that is recorded rather than
+hidden. Resuming with under `RESUME_MIN_MINUTES` left goes home instead.
+
+⚠ `registry.tool` RETURNS THE PLAIN FUNCTION and registers a separate async
+`invoke`. `autonomy.stop_exploration()` is callable directly and has no
+`__wrapped__` — reaching for one raised straight into an `except` and reported
+"could not stop exploration" while the run kept driving. A pause that does not
+pause leaves two things steering the same robot.
+
+## Running the tests
+
+    ./venv/bin/python scripts/test_path_planner.py       # steps 1-3
+    ./venv/bin/python scripts/test_nav_follower.py       # steps 4-5
+    ./venv/bin/python scripts/test_nav_home.py           # steps 6-11
+    ./venv/bin/python scripts/test_file14_acceptance.py  # step 13, end to end
+
+No hardware, no motors. ⚠ ALL OF THEM MUST STAY SIDE-EFFECT FREE: places go to
+a temporary sqlite file and `NAV_LOG` to a temporary directory. The suite
+originally wrote forty imaginary journeys into `state/nav_log.jsonl`, and the
+dashboard showed them as real history.
+
+## The hard rules this phase adds
+
+- **The exploration/mapping/pose-tracking files are a READ-ONLY dependency of
+  this module.** `slam/`, `rl/`, `exploration_mode.py` and
+  `mcp_server/tools/explore.py` are never modified to make navigation work —
+  no exceptions, and no "just this accessor". Everything in file 14 calls
+  them. Nothing in file 14 changes them. This is the same rule as PART 4's
+  "call it, don't change it", restated because navigation is the module most
+  tempted to break it.
+- **Everything here stays inside the project folder.** No systemd unit, no
+  system service, nothing in `/etc/`. Navigation never has a reason to go near
+  dbus or NetworkManager, and PART 1 applies to it exactly as written.
+- **No autonomous decision in this module bypasses the safety layer.**
+  Re-planning, landmark selection and target navigation all move the robot the
+  same way everything else does: `movement.move()` → `safety.guarded_move()`,
+  which runs `embodiment.check`, the forward clearance check, the 100 ms
+  re-check while moving and the duration cap. `nav_follower.py` does not
+  import `motor.py` and does not call `hardware.motors()`, and
+  `scripts/test_nav_follower.py` asserts that with `ast` rather than trusting
+  it. **A follower that owns the wheels is a fast path, and there must never
+  be one.**
+- **Nothing in this module loops without a throttle.** Landmark-naming prompts
+  need a big new contiguous area AND a pose outside every known place before
+  they ask, the same shape of gate file 08 put on the scene bridge. A block is
+  rechecked on a timer before anything re-plans, so a person walking past
+  cannot cause a replanning storm. Re-planning is capped at `max_attempts`.
+- **FAILSAFE halts and waits for a human.** It calls `halt()`, it does not
+  retry beyond the replanning budget, and it surfaces to the dashboard. There
+  is no autonomous recovery after FAILSAFE — that is what the state is for.
+
+## Things that will bite you in this module
+
+- **There are two maps and they are different frames.** `state/map.npz` is the
+  scan-matched survey and is the frame every landmark, `go_to`, `navigate_to`
+  and return-to-home works in. `state/rl_map.npz` is the RL stack's
+  dead-reckoned map and is what the dashboard's Map **picture** shows. On
+  2026-09-21 the survey covered 7.5 × 8.1 m and the RL map claimed 24 × 24 m
+  for the same flat, with 81.5% of its "walls" being single-cell specks.
+  Drawing one's coordinates on the other's picture is wrong and looks right.
+- **A stored pose is never trusted.** The map persists across runs; her
+  position in it does not. Every navigation run relocalises first
+  (`places_tools._placed_mapper()`) and refuses if the scan match fails.
+- **`state/calibration.json` still reads 0.** `move_distance()` and
+  `turn_degrees()` refuse while it does, which is why `go_to` cannot currently
+  drive a leg and why `nav_follower.py` commands in seconds and learns the
+  rates from measured pose. Calibrating unblocks the distance tools too.
+- **The microphone belongs to one process.** `main.py`/`wake_word.py` hold the
+  `stt.AudioStream`; nothing under `mcp_server/` opens it — but exploration
+  runs inside the MCP server. `landmarks.py` therefore takes an INJECTED
+  `ask()` and never speaks or listens itself.
+- **`navigate_to` does not fuzzy-match and must not learn to.** A near-miss
+  string match sends the robot several metres to somewhere nobody asked for.

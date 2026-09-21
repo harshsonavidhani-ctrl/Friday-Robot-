@@ -343,6 +343,73 @@ async function explorePost(body) {
 
 /* ---------- map (read-only: dashboard/map_view.py) ---------- */
 
+
+/* File 14 step 11 — Navigation panel. READ-ONLY: this only ever GETs.
+   The plan is drawn in the SURVEY map's frame, which is a different map from
+   the picture in the Map panel, so it is drawn separately and labelled. */
+async function refreshNav() {
+  if (!$('navnow')) return;
+  let n;
+  try { n = await (await fetch('/api/nav')).json(); } catch { return; }
+  if (!n || !n.ok) { $('navnow').textContent = 'unavailable'; return; }
+
+  const svg = $('navplan');
+  const f = n.frame || {};
+  if (!f.ok) {
+    svg.innerHTML = '';
+    $('navframe').textContent = f.why || 'No survey map yet.';
+  } else {
+    const parts = [];
+    for (const m of n.landmarks) {
+      if (m.u == null || !m.on_map) continue;
+      const cx = (m.u * 100).toFixed(2), cy = (m.v * 100).toFixed(2);
+      const rr = Math.max(1.5, (m.radius_m / Math.max(f.size_m[0], 0.1)) * 100);
+      const cls = m.is_home ? ' home' : '';
+      parts.push(`<circle class="ring${cls}" cx="${cx}" cy="${cy}" r="${rr.toFixed(2)}"/>`);
+      parts.push(`<circle class="lm${cls}" cx="${cx}" cy="${cy}" r="1.6"/>`);
+      parts.push(`<text x="${(+cx + 2.4).toFixed(2)}" y="${(+cy + 1.6).toFixed(2)}">${esc(m.name)}</text>`);
+    }
+    svg.innerHTML = parts.join('') ||
+      '<text x="6" y="52">nothing named on this map yet</text>';
+    $('navframe').textContent =
+      `survey map ${f.size_m[0]} × ${f.size_m[1]} m · known ${f.known_m2} m² · ` +
+      `${f.sweeps} sweeps · blue home, orange landmark · ` +
+      `this is state/map.npz, not the Map panel's picture`;
+  }
+
+  $('navplaces').innerHTML = n.landmarks.length
+    ? n.landmarks.map(m => `<span class="${m.is_home ? 'home' : ''}">${esc(m.name)}` +
+        (m.from_home != null && !m.is_home ? ` · ${m.from_home} m from home` : '') +
+        (m.visits ? ` · ${m.visits}×` : '') + '</span>').join('')
+    : '<span>no places named yet</span>';
+
+  const last = n.last_return;
+  $('navrth').textContent = last
+    ? `Last return home: ${last.arrived ? 'arrived' : 'did not arrive'} ` +
+      `${ago(last.at)} · ${last.seconds}s · ${last.attempts} attempt(s)` +
+      (last.arrived ? '' : ` · ${last.why || ''}`)
+    : 'No return home yet.';
+
+  const rows = n.attempts || [];
+  $('navlog').innerHTML = rows.length
+    ? rows.map(a => `<div><span>${esc(a.destination)}</span>` +
+        `<span class="${a.arrived ? 'ok' : 'bad'}">` +
+        `${a.arrived ? 'arrived' : esc(a.state)} · ${a.seconds}s · ${ago(a.at)}</span></div>`).join('')
+    : '<div><span>no navigation attempts logged yet</span><span></span></div>';
+
+  const live = rows[0];
+  $('navnow').textContent = live ? (live.arrived ? 'arrived' : live.state) : 'idle';
+}
+
+function ago(when) {
+  if (!when) return '';
+  const s = Math.max(0, Math.round(Date.now() / 1000 - when));
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+
 let mapVersion = null;
 async function refreshMap() {
   if (!$('mapimg')) return;
@@ -1067,6 +1134,7 @@ async function heartbeat() {
   paintLane(s.people);           // ...and Memory Lane
   refreshExplore();               // cheap, and the panel must not go stale
   refreshMap();                   // one stat() server-side until the map changes
+  refreshNav();                   // landmarks + the attempt log, one read
 }
 
 /* friday-mcp is a separate service from this one, so the dashboard opens and
@@ -1124,6 +1192,7 @@ function showPane(id) {
   buildExplore();
   await refreshExplore();
   refreshMap();
+  refreshNav();
   buildGrowth();
   buildStudy();
   growthNow = state.growth || null;

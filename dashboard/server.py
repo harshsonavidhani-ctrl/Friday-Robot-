@@ -805,6 +805,23 @@ async def api_explore_get(request: web.Request) -> web.Response:
     return web.json_response(_explore_state())
 
 
+async def api_nav(request: web.Request) -> web.Response:
+    """File 14 step 11: landmarks, navigation attempts, return-home status.
+
+    READ-ONLY and GET-only, deliberately: there is no matching POST anywhere
+    in this file for navigation. Everything else on this dashboard that moves
+    the robot needs a deliberate press and says so; starting an autonomous
+    drive across the flat from a phone in a pocket is not a thing worth being
+    one tap away.
+    """
+    from dashboard import nav_view
+    try:
+        return web.json_response(nav_view.current())
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("nav panel: %s", exc)
+        return web.json_response({"ok": False, "why": str(exc)})
+
+
 async def api_explore_post(request: web.Request) -> web.Response:
     """Start or stop a run. Two actions, both of them one systemctl call."""
     try:
@@ -983,6 +1000,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/reflection", api_reflection_get)
     app.router.add_post("/api/reflection", api_reflection_post)
     app.router.add_get("/api/explore", api_explore_get)
+    app.router.add_get("/api/nav", api_nav)
     app.router.add_get("/api/map.png", api_map_png)
     app.router.add_get("/api/map", api_map_meta)
     app.router.add_post("/api/explore", api_explore_post)

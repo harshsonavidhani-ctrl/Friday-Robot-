@@ -246,6 +246,25 @@
       </div>
     </section>
 
+    <section class="panel" id="panel-nav">
+      <div class="panelhead">
+        <h2>Navigation</h2>
+        <span class="badge" id="navnow">idle</span>
+      </div>
+      <div class="screen">
+        <!-- File 14 step 11. READ-ONLY: there is no POST behind this panel.
+             The plan below is drawn in the SURVEY map's frame (state/map.npz),
+             which is NOT the frame of the picture in the Map panel — those are
+             two different maps. See dashboard/nav_view.py. -->
+        <svg id="navplan" class="navplan" viewBox="0 0 100 100"
+             preserveAspectRatio="xMidYMid meet" aria-label="Known landmarks"></svg>
+        <p class="drivenote" id="navframe">No survey map yet.</p>
+        <div id="navplaces" class="navplaces"></div>
+        <p class="drivenote" id="navrth">No return home yet.</p>
+        <div id="navlog" class="navlog"></div>
+      </div>
+    </section>
+
     <section class="panel" id="panel-study">
       <div class="panelhead">
         <h2>Study</h2>

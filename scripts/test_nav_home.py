@@ -1,0 +1,899 @@
+#!/usr/bin/env python3
+"""Test nav_state_machine.py and landmarks.py — file 14 steps 6-7.
+
+    scripts/test_nav_home.py
+
+No hardware, no motors, and NO WRITES TO THE REAL DATABASE. `slam/places.py`
+talks to `memory.db()`, which is Friday's live memory — three processes have
+it open and it holds things she was actually told. So the place-store tests
+run against a temporary sqlite file swapped in for the duration, and the swap
+is undone in a finally block. A test that names "the kitchen" in the real
+database would still be there tomorrow, and `go_to` would believe it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import math
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import config                                           # noqa: E402
+import landmarks                                        # noqa: E402
+import nav_state_machine as nsm                         # noqa: E402
+from slam.grid import OccupancyGrid                     # noqa: E402
+
+PASS, FAIL = "  ok  ", " FAIL "
+_failures = 0
+
+# ⚠ THE ATTEMPT LOG IS REAL AND THE DASHBOARD READS IT. `_drive_to` appends a
+# row to `state/nav_log.jsonl` on every attempt, so the simulated drives below
+# were writing fake navigation history onto Harsh's Navigation panel — forty
+# rows of "returned home, failsafe" for journeys that never happened. Anything
+# in this file that drives must write somewhere else, so the redirect is done
+# once, here, for the whole run rather than per test.
+_LOG_DIR = tempfile.TemporaryDirectory()
+nsm.NAV_LOG = Path(_LOG_DIR.name) / "nav_log.jsonl"
+
+
+def check(label: str, ok: bool, detail: str = "") -> None:
+    global _failures
+    if not ok:
+        _failures += 1
+    print(f"[{PASS if ok else FAIL}] {label}{'  — ' + detail if detail else ''}")
+
+
+class TempPlaces:
+    """Point memory.db() at a throwaway file, and put it back afterwards."""
+
+    def __enter__(self):
+        import memory
+        self.memory = memory
+        self.dir = tempfile.TemporaryDirectory()
+        self.saved_path = config.MEMORY_DB if hasattr(config, "MEMORY_DB") else None
+        memory.close()
+        self.patched = Path(self.dir.name) / "test_memory.db"
+        self._orig = memory.db
+        conn = {}
+
+        def db():
+            import sqlite3
+            if "c" not in conn:
+                c = sqlite3.connect(self.patched, check_same_thread=False)
+                c.row_factory = sqlite3.Row
+                c.execute("""CREATE TABLE IF NOT EXISTS places (
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                    x REAL NOT NULL, y REAL NOT NULL,
+                    radius_m REAL NOT NULL DEFAULT 0.75,
+                    kind TEXT NOT NULL DEFAULT 'place', note TEXT,
+                    created_at REAL NOT NULL, last_seen REAL,
+                    visits INTEGER NOT NULL DEFAULT 0)""")
+                c.commit()
+                conn["c"] = c
+            return conn["c"]
+
+        memory.db = db
+        return self
+
+    def __exit__(self, *exc):
+        self.memory.db = self._orig
+        self.dir.cleanup()
+        return False
+
+
+def _grid(shape=(120, 120), free=False) -> OccupancyGrid:
+    g = OccupancyGrid(0.05)
+    g.logodds = np.zeros(shape, np.float32)      # all unknown
+    g.origin = np.zeros(2, np.float64)
+    g._empty = False
+    if free:
+        g.logodds[:] = -1.0
+    return g
+
+
+# --------------------------------------------------------------------------
+# step 6
+# --------------------------------------------------------------------------
+
+def test_timer() -> None:
+    print("\n— the home timer —")
+    t = nsm.HomeTimer(minutes=10.0)
+    check("it does not run until started", not t.running)
+    check("an unstarted timer never expires", not t.expired(now=1e9))
+    check("remaining is infinite before it starts",
+          t.remaining_s(now=0.0) == float("inf"))
+
+    t.start(now=0.0)
+    check("it runs once started", t.running)
+    check("not expired at nine minutes", not t.expired(now=9 * 60))
+    check("remaining counts down",
+          abs(t.remaining_s(now=9 * 60) - 60.0) < 1e-9,
+          f"{t.remaining_s(now=9 * 60):.1f} s")
+    check("expired at ten", t.expired(now=10 * 60))
+    check("remaining floors at zero", t.remaining_s(now=99 * 60) == 0.0)
+    t.stop()
+    check("stopping it stops it", not t.running and not t.expired(now=1e9))
+
+    check("the duration is configurable",
+          nsm.HomeTimer(minutes=2.0).minutes == 2.0)
+
+
+def test_state_transitions() -> None:
+    print("\n— the state machine —")
+    r = nsm.NavController(robot=object(), minutes=5.0)
+    check("it starts idle", r.state is nsm.NavState.IDLE)
+    check("idle does not transition on its own",
+          r.tick(now=1e9) is nsm.NavState.IDLE)
+
+    r.exploring(now=0.0)
+    check("exploring starts the clock", r.state is nsm.NavState.EXPLORING
+          and r.timer.running)
+    check("it stays exploring before the timer fires",
+          r.tick(now=60.0) is nsm.NavState.EXPLORING)
+    check("EXPLORING -> RETURN_TO_HOME on expiry",
+          r.tick(now=5 * 60) is nsm.NavState.RETURN_TO_HOME)
+    check("and it does not bounce back",
+          r.tick(now=5 * 60 + 1) is nsm.NavState.RETURN_TO_HOME)
+    check("the state serialises for telemetry",
+          nsm.NavState.RETURN_TO_HOME.value == "return_to_home")
+    check("status reports the remaining time",
+          r.status(now=0.0)["minutes"] == 5.0)
+
+
+def test_home_is_a_place() -> None:
+    print("\n— where home is —")
+    with TempPlaces():
+        from slam import places
+        check("no home before one is set", nsm.home_place() is None)
+        check("distance_home is None with no home",
+              nsm.distance_home((1.0, 1.0)) is None)
+
+        nsm.set_home((1.5, 2.0, 0.0), note="by the door")
+        row = nsm.home_place()
+        check("home is stored", row is not None and row["name"] == "home")
+        check("in the places table every other tool already reads",
+              any(p["name"] == "home" for p in places.all()))
+        check("distance_home measures from it",
+              abs(nsm.distance_home((1.5, 5.0)) - 3.0) < 1e-6,
+              f"{nsm.distance_home((1.5, 5.0)):.2f} m")
+        check("it is marked as a home, not a generic place",
+              row.get("kind") == "home", str(row.get("kind")))
+
+
+def test_run_refuses_rather_than_guessing() -> None:
+    print("\n— it refuses rather than driving to a stale coordinate —")
+    with TempPlaces():
+        r = nsm.NavController(robot=object())
+        report = asyncio.run(r.go_home(mapper=object()))
+        check("no home stored: it says so and does not move",
+              not report.arrived and "do not know where home is" in report.why,
+              report.why)
+        check("and the state says failed", report.state is nsm.NavState.FAILSAFE)
+
+        nsm.set_home((1.0, 1.0, 0.0))
+
+        class Untrusted:
+            grid = _grid(free=True)
+            pose = (0.2, 0.2, 0.0)
+
+        # A mapper is passed in, so relocalisation is the caller's promise —
+        # but an unreachable goal must still be refused, not approximated.
+        walled = _grid()                        # all unknown: nothing plannable
+        blocked = Untrusted()
+        blocked.grid = walled
+        report2 = asyncio.run(nsm.NavController(robot=object()).go_home(mapper=blocked))
+        check("an unmapped room is refused, not approximated",
+              not report2.arrived
+              and "nowhere on my map I can plan" in report2.why,
+              report2.why)
+        check("it reports the grid it planned on",
+              "plannable_cells" in report2.grid)
+
+
+def test_run_plans_and_follows() -> None:
+    print("\n— a real return, on a simulated chassis —")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_nav_follower import FakeMapper, FakeRobot, FakeWorld
+
+    with TempPlaces():
+        nsm.set_home((2.0, 2.0, 0.0))
+        world = FakeWorld(pose=(0.5, 2.0, 0.0))
+        mapper = FakeMapper(world)
+        mapper.grid = _grid(free=True)          # a wide open, fully mapped room
+
+        # dwell_s=0: the real monitor wants a second of WALL CLOCK inside
+        # tolerance, and this simulation runs eighty ticks in milliseconds.
+        # The dwell rule itself is tested against injected clocks in
+        # test_nav_follower.py; what is under test here is the plumbing.
+        import nav_follower
+        r = nsm.NavController(robot=FakeRobot(world))
+        report = asyncio.run(r.go_home(
+            mapper=mapper, max_ticks=80,
+            arrival=nav_follower.ArrivalMonitor((2.0, 2.0), cell_m=0.05,
+                                                dwell_s=0.0, min_samples=2)))
+        check("it planned a route", report.waypoints >= 2,
+              f"{report.waypoints} waypoints, {report.planned_m:.2f} m")
+        check("it arrived", report.arrived, report.why)
+        check("the state machine ends in ARRIVED",
+              report.state is nsm.NavState.ARRIVED)
+        check("and it is really near home",
+              math.hypot(world.x - 2.0, world.y - 2.0) < 0.5,
+              f"{math.hypot(world.x - 2.0, world.y - 2.0):.2f} m away")
+        check("the follow report is carried through",
+              "ticks" in report.follow and report.follow["ticks"] > 0)
+
+
+# --------------------------------------------------------------------------
+# step 7
+# --------------------------------------------------------------------------
+
+def test_area_watch() -> None:
+    print("\n— noticing somewhere new —")
+    g = _grid()
+    watch = landmarks.AreaWatch(min_area_m2=1.0)
+    g.logodds[10:30, 10:30] = -1.0               # 1 m x 1 m known at the start
+    check("the first look is the baseline, not a discovery",
+          watch.update(g) is None)
+
+    g.logodds[40:80, 40:80] = -1.0               # 2 m x 2 m = 4 m^2, new
+    found = watch.update(g)
+    check("a big new contiguous area is a discovery", found is not None)
+    check("its area is right", found and abs(found.area_m2 - 4.0) < 0.05,
+          f"{found.area_m2:.2f} m²" if found else "")
+    check("its centroid is in the middle of it",
+          found and abs(found.centroid[0] - 3.0) < 0.1
+          and abs(found.centroid[1] - 3.0) < 0.1,
+          str(found.centroid) if found else "")
+    check("the radius covers roughly what was found",
+          found and landmarks.MIN_RADIUS_M <= found.radius_m <= landmarks.MAX_RADIUS_M,
+          f"{found.radius_m:.2f} m" if found else "")
+    check("nothing new the second time", watch.update(g) is None)
+
+    g.logodds[0:3, 0:3] = -1.0                   # a few cells of edge trimming
+    check("edge trimming is not a discovery", watch.update(g) is None)
+
+    # Scattered specks that ADD UP to the threshold are still not a region.
+    scatter = _grid()
+    w2 = landmarks.AreaWatch(min_area_m2=1.0)
+    scatter.logodds[5, 5] = -1.0
+    w2.update(scatter)
+    for i in range(30):
+        scatter.logodds[i * 3, 60] = -1.0
+    check("a scatter of cells is not a room", w2.update(scatter) is None)
+
+
+def test_area_watch_survives_map_growth() -> None:
+    """The grid reallocates as it grows; 'new' must not mean 'reindexed'."""
+    print("\n— when the map grows underneath it —")
+    g = _grid((60, 60))
+    g.logodds[10:50, 10:50] = -1.0
+    watch = landmarks.AreaWatch(min_area_m2=1.0)
+    watch.update(g)
+
+    bigger = _grid((100, 100))
+    bigger.origin = np.array([-1.0, -1.0])       # grown down and left
+    shift = int(round(1.0 / bigger.cell))
+    bigger.logodds[10 + shift:50 + shift, 10 + shift:50 + shift] = -1.0
+    check("the same free space after a grow is not a discovery",
+          watch.update(bigger) is None)
+
+
+def test_inside_known_place() -> None:
+    print("\n— not naming the same room twice —")
+    with TempPlaces():
+        from slam import places
+        places.remember_here("the kitchen", (2.0, 2.0, 0.0), radius_m=1.0)
+        check("standing in it counts as inside",
+              landmarks.inside_known_place((2.3, 2.1)) is not None)
+        check("just outside the radius still counts, by the margin",
+              landmarks.inside_known_place((3.2, 2.0)) is not None)
+        check("well away does not",
+              landmarks.inside_known_place((8.0, 8.0)) is None)
+
+
+def test_naming_flow() -> None:
+    print("\n— asking, and only saving a real answer —")
+    with TempPlaces():
+        asked: list[str] = []
+
+        def ask(q):
+            asked.append(q)
+            return "the workshop"
+
+        namer = landmarks.LandmarkNamer(ask=ask, min_area_m2=1.0)
+        g = _grid()
+        g.logodds[10:20, 10:20] = -1.0
+        asyncio.run(namer.consider(g, (0.75, 0.75, 0.0)))     # baseline
+        g.logodds[40:80, 40:80] = -1.0
+        result = asyncio.run(namer.consider(g, (3.0, 3.0, 0.0)))
+
+        check("it asked", result.asked and asked, str(asked[:1]))
+        check("the question says how big the area is",
+              "square metres" in asked[0], asked[0])
+        check("it saved the answer", result.saved, result.why)
+        check("under the name given", result.name == "the workshop",
+              result.name)
+        check("with a map session id",
+              result.place.get("map_session_id", "").startswith("map-"),
+              str(result.place))
+        check("and a radius that came from the area",
+              result.place["radius_m"] > 0)
+
+        from slam import places
+        row = places.find("the workshop")
+        check("it is in the places table go_to reads", row is not None)
+        check("the session id round-trips out of the note",
+              landmarks.session_of(row) == result.place["map_session_id"],
+              str(landmarks.session_of(row)))
+
+
+def test_no_answer_saves_nothing() -> None:
+    print("\n— a name she did not hear is not a name —")
+    with TempPlaces():
+        g = _grid()
+        for answer in ("", None, "   ", "no", "I don't know", 42):
+            namer = landmarks.LandmarkNamer(ask=lambda q, a=answer: a,
+                                            min_area_m2=1.0)
+            grid = _grid()
+            grid.logodds[5:15, 5:15] = -1.0
+            asyncio.run(namer.consider(grid, (0.5, 0.5, 0.0)))
+            grid.logodds[40:80, 40:80] = -1.0
+            res = asyncio.run(namer.consider(grid, (3.0, 3.0, 0.0)))
+            check(f"{answer!r} saves nothing", not res.saved, res.why)
+
+        from slam import places
+        check("nothing at all was written", not places.all(),
+              f"{len(places.all())} rows")
+
+
+def test_no_ask_means_no_save() -> None:
+    print("\n— the process that cannot listen —")
+    with TempPlaces():
+        namer = landmarks.LandmarkNamer(ask=None, min_area_m2=1.0)
+        g = _grid()
+        g.logodds[5:15, 5:15] = -1.0
+        asyncio.run(namer.consider(g, (0.5, 0.5, 0.0)))
+        g.logodds[40:80, 40:80] = -1.0
+        res = asyncio.run(namer.consider(g, (3.0, 3.0, 0.0)))
+        check("it notices but does not invent a name", not res.saved)
+        check("and says why", "nothing here can ask" in res.why, res.why)
+        check("it did not pretend to ask", not res.asked)
+
+
+def test_overwrite_needs_confirmation() -> None:
+    print("\n— it will not silently move a place you named —")
+    with TempPlaces():
+        from slam import places
+        places.remember_here("the study", (9.0, 9.0, 0.0), radius_m=0.75)
+
+        found = landmarks.Discovery(4.0, (3.0, 3.0), 1600, 1.1)
+        namer = landmarks.LandmarkNamer(ask=lambda q: "the study",
+                                        confirm=lambda q: "no",
+                                        min_area_m2=1.0)
+        res = asyncio.run(namer.save("the study", (3.0, 3.0, 0.0), found))
+        check("a refused confirmation leaves it alone", not res.saved, res.why)
+        moved = places.find("the study")
+        check("the original is untouched",
+              abs(moved["x"] - 9.0) < 1e-9 and abs(moved["y"] - 9.0) < 1e-9,
+              f"({moved['x']}, {moved['y']})")
+
+        yes = landmarks.LandmarkNamer(ask=lambda q: "the study",
+                                      confirm=lambda q: "yes please",
+                                      min_area_m2=1.0)
+        res2 = asyncio.run(yes.save("the study", (3.0, 3.0, 0.0), found))
+        check("an agreed confirmation moves it", res2.saved, res2.why)
+        check("and reports what it moved", res2.overwrote.get("moved_m", 0) > 8,
+              str(res2.overwrote))
+        now = places.find("the study")
+        check("the row really moved", abs(now["x"] - 3.0) < 1e-9)
+
+        silent = landmarks.LandmarkNamer(ask=None, min_area_m2=1.0)
+        res3 = asyncio.run(silent.save("the study", (5.0, 5.0, 0.0), found))
+        check("with nothing to confirm with, it does not overwrite",
+              not res3.saved, res3.why)
+
+
+def test_yes_and_name_parsing() -> None:
+    print("\n— hearing the answer correctly —")
+    for text in ("yes", "Yes please", "yeah", "go ahead", "sure", "ok"):
+        check(f"{text!r} is yes", landmarks._is_yes(text))
+    for text in ("no", "No, leave it", "don't", "maybe", "", "what?",
+                 "the kitchen"):
+        check(f"{text!r} is not yes", not landmarks._is_yes(text))
+
+    for raw, want in (("the kitchen", "the kitchen"),
+                      ("Call it the hallway", "the hallway"),
+                      ("it's the back bedroom", "the back bedroom"),
+                      ("  The  Study  ", "the study"),
+                      ("let's call this the landing", "the landing")):
+        got = landmarks._clean(raw)
+        check(f"{raw!r} -> {want!r}", got == want, got)
+    for raw in ("no", "I don't know", "",
+                "well I suppose you could call it something like the kitchen"):
+        check(f"{raw!r} is not a name", landmarks._clean(raw) == "")
+
+
+def test_map_session_rotates_when_the_map_is_rebuilt() -> None:
+    print("\n— which map a landmark belongs to —")
+    saved = landmarks._SESSION_FILE
+    with tempfile.TemporaryDirectory() as tmp:
+        landmarks._SESSION_FILE = Path(tmp) / "map_session.json"
+        try:
+            class G:
+                scans = 100
+            first = landmarks.map_session_id(G())
+            check("an id is minted", first.startswith("map-"), first)
+            check("the same map keeps it", landmarks.map_session_id(G()) == first)
+
+            class Grown:
+                scans = 400
+            check("a map that grew keeps it",
+                  landmarks.map_session_id(Grown()) == first)
+
+            time.sleep(1.05)          # the id is second-resolution
+            class Rebuilt:
+                scans = 3
+            check("a rebuilt map gets a new one",
+                  landmarks.map_session_id(Rebuilt()) != first)
+        finally:
+            landmarks._SESSION_FILE = saved
+
+
+
+# --------------------------------------------------------------------------
+# steps 8-9
+# --------------------------------------------------------------------------
+
+def test_resolve_never_guesses() -> None:
+    print("\n— it will not drive on a near miss —")
+    with TempPlaces():
+        from slam import places
+        places.remember_here("the kitchen", (2.0, 2.0, 0.0))
+        places.remember_here("the back bedroom", (5.0, 5.0, 0.0))
+
+        for asked in ("the kitchen", "kitchen", "The Kitchen", "  kitchen  "):
+            row, why = nsm.resolve_landmark(asked)
+            check(f"{asked!r} resolves exactly", row is not None
+                  and row["name"] == "the kitchen", why)
+
+        row, why = nsm.resolve_landmark("bedroom")
+        check("a substring does NOT resolve", row is None, str(row))
+        check("but it is offered back as a question",
+              "did you mean" in why.lower() and "the back bedroom" in why, why)
+
+        row, why = nsm.resolve_landmark("the garage")
+        check("an unknown name is refused", row is None)
+        check("and she says what she does know",
+              "the kitchen" in why and "the back bedroom" in why, why)
+
+        row, why = nsm.resolve_landmark("")
+        check("an empty name is refused", row is None, why)
+
+
+def test_target_nav_refuses_unknown() -> None:
+    print("\n— TARGET_NAV with a name she does not know —")
+    with TempPlaces():
+        from slam import places
+        places.remember_here("the kitchen", (2.0, 2.0, 0.0))
+        c = nsm.NavController(robot=object())
+        report = asyncio.run(c.go_to_landmark("the cellar", action="say hello"))
+        check("it does not drive", not report.arrived)
+        check("it ends in FAILSAFE", report.state is nsm.NavState.FAILSAFE)
+        check("the destination is echoed back", report.destination == "the cellar")
+        check("and the queued action is not lost",
+              report.action == "say hello", report.action)
+
+
+def test_both_modes_share_one_engine() -> None:
+    print("\n— RETURN_TO_HOME and TARGET_NAV are the same engine —")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_nav_follower import FakeMapper, FakeRobot, FakeWorld
+    import nav_follower
+
+    with TempPlaces():
+        from slam import places
+        nsm.set_home((2.0, 2.0, 0.0))
+        places.remember_here("the kitchen", (2.0, 2.0, 0.0))
+
+        def drive(which, name=None):
+            world = FakeWorld(pose=(0.5, 2.0, 0.0))
+            mapper = FakeMapper(world)
+            mapper.grid = _grid(free=True)
+            c = nsm.NavController(robot=FakeRobot(world))
+            arrival = nav_follower.ArrivalMonitor((2.0, 2.0), cell_m=0.05,
+                                                  dwell_s=0.0, min_samples=2)
+            if which == "home":
+                rep = asyncio.run(c.go_home(mapper=mapper, max_ticks=80,
+                                            arrival=arrival))
+            else:
+                rep = asyncio.run(c.go_to_landmark(
+                    name, action="say what you see", mapper=mapper,
+                    max_ticks=80, arrival=arrival))
+            return rep, world
+
+        home_rep, home_world = drive("home")
+        targ_rep, targ_world = drive("target", "the kitchen")
+
+        check("returning home arrives", home_rep.arrived, home_rep.why)
+        check("target nav arrives", targ_rep.arrived, targ_rep.why)
+        check("they report different states on the way in",
+              home_rep.destination == "home"
+              and targ_rep.destination == "the kitchen")
+        check("both end in ARRIVED",
+              home_rep.state is nsm.NavState.ARRIVED
+              and targ_rep.state is nsm.NavState.ARRIVED)
+        check("both got to the same place, because it is the same engine",
+              abs(home_world.x - targ_world.x) < 0.4,
+              f"{home_world.x:.2f} vs {targ_world.x:.2f}")
+        check("the action rides along with target nav only",
+              targ_rep.action == "say what you see" and home_rep.action == "")
+
+
+def test_action_is_returned_not_performed() -> None:
+    print("\n— the action comes back, it is not performed here —")
+    src = (Path(__file__).resolve().parent.parent
+           / "mcp_server" / "tools" / "nav_tools.py").read_text()
+    import ast
+    tree = ast.parse(src)
+    refs = {ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    check("the nav tool never speaks", not any(
+        r.startswith("tts.") or r.endswith(".speak") for r in refs), str(
+            sorted(r for r in refs if "speak" in r or "tts" in r)))
+    check("and never sets the face", not any("set_face" in r for r in refs))
+    check("it hands the action back as action_pending",
+          "action_pending" in src)
+
+
+def test_replan_only_when_replanning_can_help() -> None:
+    print("\n— re-planning, and when not to —")
+    check("a human stop is final", nsm._is_final("stop was called"))
+    check("a refusal is final", nsm._is_final("refused: no fresh observation"))
+    check("a dead drivetrain is final",
+          nsm._is_final("the last 3 moves delivered under 25% ... not driving"))
+    check("an unmatched pose is final",
+          nsm._is_final("I do not know where I am"))
+    check("a budget is final", nsm._is_final("time budget"))
+    check("running out of path is NOT final",
+          not nsm._is_final("in tolerance, but still correcting"))
+    check("no route is NOT final", not nsm._is_final("nothing passable connects"))
+
+
+def test_replan_loop_retries_and_gives_up() -> None:
+    print("\n— the re-plan loop —")
+    with TempPlaces():
+        nsm.set_home((1.0, 1.0, 0.0))
+
+        class Blocked:
+            grid = _grid()                 # all unknown: never plannable
+            pose = (0.2, 0.2, 0.0)
+
+        c = nsm.NavController(robot=object())
+        rep = asyncio.run(c.go_home(mapper=Blocked(), max_attempts=3))
+        check("it tried more than once", rep.attempts == 3, str(rep.attempts))
+        check("and counted the re-plans", rep.replans == 2, str(rep.replans))
+        check("then gave up in FAILSAFE", rep.state is nsm.NavState.FAILSAFE)
+        check("saying what is actually wrong",
+              "nowhere on my map I can plan" in rep.why, rep.why)
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_nav_follower import FakeMapper, FakeRobot, FakeWorld
+        world = FakeWorld(pose=(0.5, 2.0, 0.0))
+        mapper = FakeMapper(world)
+        mapper.grid = _grid(free=True)
+        nsm.set_home((2.0, 2.0, 0.0))
+        stopper = FakeRobot(world, stop_after=1)
+        rep2 = asyncio.run(nsm.NavController(robot=stopper).go_home(
+            mapper=mapper, max_ticks=30))
+        check("a human stop is never retried", rep2.attempts == 1,
+              f"{rep2.attempts} attempts — a stop was retried")
+        check("and it ends in FAILSAFE", rep2.state is nsm.NavState.FAILSAFE)
+
+
+def test_snapshot_is_honest_about_what_it_keeps() -> None:
+    print("\n— pausing exploration —")
+    snap = nsm.ExplorationSnapshot.capture(remaining_minutes=7.5)
+    check("it captures whatever telemetry is on disk", snap.taken_at > 0)
+    check("it keeps the time left", snap.remaining_minutes == 7.5)
+    d = snap.as_dict()
+    check("and says plainly that frontiers are recomputed, not restored",
+          "recomputed from the saved map" in d["note"], d["note"])
+    check("the in-progress target is carried as a hint",
+          "target_xy" in d)
+
+    c = nsm.NavController(robot=object())
+    check("resuming with nothing paused says so",
+          c.resume_exploration()["resumed"] is False)
+
+
+def test_tools_are_registered() -> None:
+    print("\n— the MCP tools —")
+    from mcp_server import registry
+    registry.load_tool_modules()
+    names = {name for _, name, _ in registry.REGISTRY}
+    for wanted in ("navigate_to", "return_home", "nav_status"):
+        check(f"{wanted} is registered", wanted in names)
+    check("go_to is untouched and still registered", "go_to" in names)
+    check("nothing registered twice",
+          len(names) == len({n for _, n, _ in registry.REGISTRY}))
+
+    descriptions = {name: desc for _, name, desc in registry.REGISTRY}
+    check("navigate_to tells the model it does not guess at names",
+          "guess" in descriptions["navigate_to"].lower(),
+          descriptions["navigate_to"][:80])
+
+
+
+# --------------------------------------------------------------------------
+# steps 10-11
+# --------------------------------------------------------------------------
+
+class BlockingRobot:
+    """A fake robot that refuses to drive, and may or may not clear."""
+
+    def __init__(self, world, clears_after: int | None = None) -> None:
+        self.world = world
+        self.clears_after = clears_after
+        self.checks = 0
+        self.halted = False
+        self.sweeps = 0
+
+    async def sweep(self):
+        self.sweeps += 1
+        return {0: 1500}
+
+    async def observe(self):
+        pass
+
+    async def drive_seconds(self, direction, seconds):
+        return ("REFUSED: something is 150 mm ahead, inside the 200 mm "
+                "stop distance (tof)")
+
+    async def clearance(self):
+        self.checks += 1
+        if self.clears_after is not None and self.checks >= self.clears_after:
+            return 1800.0, False
+        return 150.0, True
+
+    async def halt(self):
+        self.halted = True
+        return "stopped"
+
+    def say(self, text):
+        pass
+
+    def stopped(self):
+        return False
+
+
+def test_runtime_obstacles_stay_out_of_the_map() -> None:
+    print("\n— the runtime obstacle layer —")
+    o = nsm.RuntimeObstacles(ttl_s=10.0)
+    check("it starts empty", len(o) == 0 and o.points(now=0.0).shape == (0, 2))
+    o.add((1.0, 2.0), now=0.0)
+    o.add((3.0, 4.0), now=0.0)
+    check("points come back as world metres", o.points(now=1.0).shape == (2, 2))
+    check("they expire", o.points(now=99.0).shape == (0, 2))
+
+    src = (Path(__file__).resolve().parent.parent / "nav_state_machine.py").read_text()
+    import ast
+    refs = {ast.unparse(n) for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Attribute)}
+    check("nothing here ever saves a grid",
+          not any(r.endswith(".save") for r in refs),
+          str(sorted(r for r in refs if "save" in r)))
+
+    # And it must actually change what the planner may use.
+    import path_planner
+    g = _grid(free=True)
+    clear = path_planner.preprocess(g)
+    with_block = path_planner.preprocess(g, extra_blocked=np.array([[3.0, 3.0]]))
+    check("a runtime obstacle removes plannable cells",
+          with_block.plannable_cells < clear.plannable_cells,
+          f"{clear.plannable_cells} -> {with_block.plannable_cells}")
+
+
+def test_block_classification() -> None:
+    print("\n— what kind of stop was that —")
+    for why in ("refused: something is 150 mm ahead, inside the 200 mm stop distance (tof)",
+                "refused: something is 180 mm away — inside the 250 mm bump guard (LiDAR)",
+                "refused: no range sensor can see ahead — refusing to drive forward blind",
+                "refused: no fresh observation"):
+        check(f"{why[:40]}… is a block", nsm.is_block(why))
+    for why in ("stop was called", "time budget",
+                "refused: cannot do distances yet — forward_cm_per_s is 0",
+                "the last 3 moves delivered under 25% — not driving"):
+        check(f"{why[:40]}… is not a block", not nsm.is_block(why))
+
+
+def test_obstacle_position() -> None:
+    print("\n— where the blocking thing is —")
+    x, y = nsm.obstacle_ahead((0.0, 0.0, 0.0), 400.0)
+    check("it is ahead along the heading", abs(x - 0.4) < 1e-9 and abs(y) < 1e-9,
+          f"({x:.2f}, {y:.2f})")
+    x, y = nsm.obstacle_ahead((1.0, 1.0, math.pi / 2), 500.0)
+    check("it follows the heading round",
+          abs(x - 1.0) < 1e-9 and abs(y - 1.5) < 1e-9, f"({x:.2f}, {y:.2f})")
+    x, y = nsm.obstacle_ahead((0.0, 0.0, 0.0), None)
+    check("an unreadable clearance still places it at arm's length",
+          x >= config.NAV_ROBOT_RADIUS_M, f"{x:.2f}")
+
+
+def test_goal_cell_occupied() -> None:
+    print("\n— a goal she cannot stand on —")
+    import path_planner
+    g = _grid(free=True)
+    g.logodds[40:44, 40:44] = 3.0                # a block at (2, 2)
+    prep = path_planner.preprocess(g)
+    cell, moved = nsm.snap_goal(prep, (42, 42))
+    check("the goal moves to the nearest place she fits",
+          cell is not None and moved > 0, f"moved {moved:.2f} m")
+    check("and not far", moved <= nsm.GOAL_SNAP_M, f"{moved:.2f} m")
+    check("the snapped cell is plannable", prep.plannable[cell])
+
+    ok_cell, zero = nsm.snap_goal(prep, (10, 10))
+    check("a reachable goal is not moved at all",
+          ok_cell == (10, 10) and zero == 0.0)
+
+    sealed = path_planner.preprocess(_grid())    # all unknown
+    none_cell, far = nsm.snap_goal(sealed, (10, 10))
+    check("nowhere to stand at all is refused, not approximated",
+          none_cell is None)
+
+
+def test_transient_block_does_not_storm() -> None:
+    print("\n— someone walks past —")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_nav_follower import FakeMapper, FakeWorld
+
+    saved = nsm.BLOCK_RECHECK_S
+    nsm.BLOCK_RECHECK_S = 0.0                    # do not really sleep
+    try:
+        with TempPlaces():
+            nsm.set_home((2.0, 2.0, 0.0))
+            world = FakeWorld(pose=(0.5, 2.0, 0.0))
+            mapper = FakeMapper(world)
+            mapper.grid = _grid(free=True)
+            robot = BlockingRobot(world, clears_after=1)
+            c = nsm.NavController(robot=robot)
+            rep = asyncio.run(c.go_home(mapper=mapper, max_ticks=6,
+                                        max_attempts=2))
+            check("it rechecked before replanning", robot.checks > 0,
+                  f"{robot.checks} rechecks")
+            check("it saw a block", rep.blocks_seen > 0, str(rep.blocks_seen))
+            check("but recorded no obstacle, because it walked away",
+                  rep.blocks_confirmed == 0 and len(c.obstacles) == 0,
+                  f"{rep.blocks_confirmed} confirmed")
+    finally:
+        nsm.BLOCK_RECHECK_S = saved
+
+
+def test_persistent_block_is_remembered_and_planned_around() -> None:
+    print("\n— something that is really there —")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_nav_follower import FakeMapper, FakeWorld
+
+    saved = nsm.BLOCK_RECHECK_S
+    nsm.BLOCK_RECHECK_S = 0.0
+    try:
+        with TempPlaces():
+            nsm.set_home((2.0, 2.0, 0.0))
+            world = FakeWorld(pose=(0.5, 2.0, 0.0))
+            mapper = FakeMapper(world)
+            mapper.grid = _grid(free=True)
+            robot = BlockingRobot(world)          # never clears
+            c = nsm.NavController(robot=robot)
+            rep = asyncio.run(c.go_home(mapper=mapper, max_ticks=6,
+                                        max_attempts=3))
+            check("the block was confirmed", rep.blocks_confirmed > 0,
+                  str(rep.blocks_confirmed))
+            check("and went into the runtime layer", len(c.obstacles) > 0,
+                  str(c.obstacles.as_dict()))
+            check("the report carries it", rep.obstacles.get("count", 0) > 0)
+            check("it ends in FAILSAFE, not trying forever",
+                  rep.state is nsm.NavState.FAILSAFE)
+            check("FAILSAFE halted the wheels", robot.halted)
+            check("and it did not exceed the replanning budget",
+                  rep.attempts <= 3, str(rep.attempts))
+    finally:
+        nsm.BLOCK_RECHECK_S = saved
+
+
+def test_nav_log_round_trip() -> None:
+    print("\n— the attempt log —")
+    saved = nsm.NAV_LOG
+    with tempfile.TemporaryDirectory() as tmp:
+        nsm.NAV_LOG = Path(tmp) / "nav_log.jsonl"
+        try:
+            rep = nsm.ReturnReport(state=nsm.NavState.ARRIVED, arrived=True,
+                                   destination="the kitchen", seconds=12.5,
+                                   attempts=1, at=time.time())
+            nsm._log_attempt(rep)
+            rows = nsm.recent_attempts()
+            check("one row written", len(rows) == 1, str(rows))
+            check("with the destination", rows[0]["destination"] == "the kitchen")
+            check("the outcome", rows[0]["arrived"] is True)
+            check("and how long it took", rows[0]["seconds"] == 12.5)
+
+            nsm.NAV_LOG.write_text('{"broken": ')       # a torn line
+            check("a torn line does not break the reader",
+                  nsm.recent_attempts() == [])
+        finally:
+            nsm.NAV_LOG = saved
+
+
+def test_dashboard_panel_is_read_only() -> None:
+    print("\n— the dashboard panel —")
+    from dashboard import nav_view
+    data = nav_view.current()
+    check("it returns something", data.get("ok") is True)
+    check("it says which frame the landmarks are in",
+          "survey map" in data["note"] and "Map panel" in data["note"],
+          data["note"])
+    check("the states are listed for the UI",
+          "return_to_home" in data["states"] and "failsafe" in data["states"])
+    for mark in data["landmarks"]:
+        if "u" in mark:
+            check(f"{mark['name']} has a position on the plan",
+                  0.0 <= mark["u"] <= 1.0 or not mark["on_map"],
+                  f"u={mark['u']} v={mark['v']}")
+
+    src = (Path(__file__).resolve().parent.parent
+           / "dashboard" / "nav_view.py").read_text()
+    import ast
+    refs = {ast.unparse(n) for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Attribute)}
+    check("the view never writes",
+          not any(r.endswith((".save", ".write_text", ".remember_here"))
+                  for r in refs), str(sorted(refs))[:120])
+
+    server = (Path(__file__).resolve().parent.parent
+              / "dashboard" / "server.py").read_text()
+    check("the route is registered", '"/api/nav", api_nav' in server)
+    check("and there is no POST behind it",
+          'add_post("/api/nav"' not in server)
+
+
+def main() -> int:
+    print("nav_state_machine.py + landmarks.py + nav_tools.py — file 14 steps 6-11")
+    test_timer()
+    test_state_transitions()
+    test_home_is_a_place()
+    test_run_refuses_rather_than_guessing()
+    test_run_plans_and_follows()
+    test_area_watch()
+    test_area_watch_survives_map_growth()
+    test_inside_known_place()
+    test_naming_flow()
+    test_no_answer_saves_nothing()
+    test_no_ask_means_no_save()
+    test_overwrite_needs_confirmation()
+    test_yes_and_name_parsing()
+    test_map_session_rotates_when_the_map_is_rebuilt()
+    test_resolve_never_guesses()
+    test_target_nav_refuses_unknown()
+    test_both_modes_share_one_engine()
+    test_action_is_returned_not_performed()
+    test_replan_only_when_replanning_can_help()
+    test_replan_loop_retries_and_gives_up()
+    test_snapshot_is_honest_about_what_it_keeps()
+    test_tools_are_registered()
+    test_runtime_obstacles_stay_out_of_the_map()
+    test_block_classification()
+    test_obstacle_position()
+    test_goal_cell_occupied()
+    test_transient_block_does_not_storm()
+    test_persistent_block_is_remembered_and_planned_around()
+    test_nav_log_round_trip()
+    test_dashboard_panel_is_read_only()
+    print(f"\n{'ALL PASSED' if not _failures else f'{_failures} FAILED'}")
+    return 1 if _failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
