@@ -197,3 +197,11 @@ state/study.db-wal
 state/study.db-shm
 notes/*
 !notes/.gitkeep
+
+# File 14 navigation runtime state. Per-device and regenerated: the mode file
+# defaults to off when absent, the armed return is consumed when it fires, and
+# the attempt log is a rolling record of what this robot actually did.
+state/nav_mode.json
+state/nav_round_trip.json
+state/nav_log.jsonl
+state/map_session.json

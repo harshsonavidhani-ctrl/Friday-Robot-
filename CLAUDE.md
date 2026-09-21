@@ -325,8 +325,12 @@ taken a wrong turn.
 - `landmarks.py` — step 7. `AreaWatch` reports a CONTIGUOUS new region ≥ 4 m²;
   scattered edge-trimming that adds up to the same area is not a room.
 - `mcp_server/tools/nav_tools.py` — step 8. `navigate_to`, `return_home`,
-  `nav_status`. `go_to` is untouched and still the older, longer-serving path.
-- `dashboard/nav_view.py` + `GET /api/nav` — step 11, read-only, no POST.
+  `nav_status`, plus the round-trip three: `set_round_trip`,
+  `explore_and_return`, `come_back`. `go_to` is untouched and still the older,
+  longer-serving path.
+- `dashboard/nav_view.py` + `GET /api/nav` (read) and `POST /api/nav`
+  (round-trip toggle, go, come back, stop) — step 11, plus the dashboard
+  trigger Harsh asked for afterwards.
 
 **Return-to-Home.** `HomeTimer` counts wall clock, not ticks, because a run
 stalled against a wall is the one that most needs it to fire. Home is a row in
@@ -337,6 +341,39 @@ the `places` table called "home" — an ordinary landmark, so `list_places` and
 optional action, calls `navigate_to`, and PERFORMS THE ACTION ITSELF on the
 result's `action_pending`. The server cannot call the brain, and a tool that
 spoke would bypass `reply_contract` and the face arbiter.
+
+**Round trip — "go and come back" (2026-09-21, after step 14).** Harsh:
+"friday go explore the home it explores and like come to the position where it
+started and like then i commanded it go to the kitchen then it should go to the
+kitchen and return to where it started."
+
+⚠ "WHERE IT STARTED" IS NOT HOME. `home` is a place somebody deliberately
+named and it stays put for weeks. The start of a round trip is wherever she
+happened to be standing when the command arrived, and it is valid for that one
+errand only — so it is captured per run from a RELOCALISED pose and never
+written to the `places` table.
+
+Two shapes, because the outbound legs are different:
+
+  * TARGET NAV is driven here, in one call, so the return happens inline —
+    `go_to_landmark(..., return_to_start=True)`, then `_return_to_start`.
+  * EXPLORATION is a SEPARATE PROCESS holding the hardware lease, so the
+    return is ARMED (`arm_return_to_start` writes `state/nav_round_trip.json`)
+    and a watcher task in the MCP server fires it when `autonomy._running()`
+    goes False. If the server restarts mid-run the task dies and the arming
+    survives on disk — `nav_status` reports it and `come_back()` fires it by
+    hand. That is a visible loose end rather than a silent one.
+
+The mode is persisted in `state/nav_mode.json` so the voice toggle and the
+dashboard checkbox are the same switch. `return_to_start=None` means "whatever
+the mode says".
+
+⚠ COMING BACK IS A SECOND DRIVE WITH ITS OWN REPORT, and that matters for what
+she says afterwards: "I got to the kitchen but could not get back" is true and
+useful, and merging the two legs into one result would report the whole errand
+as a failure and lose the part that worked. An arrival monitor passed by a
+caller is rebuilt for the start pose — reusing the outbound one would declare
+her "back" the moment she reached the kitchen.
 
 **Landmark labeling.** `LandmarkNamer.consider(grid, pose)` asks only when
 somewhere big and new has appeared and she is not already inside a known
@@ -426,3 +463,9 @@ dashboard showed them as real history.
   `ask()` and never speaks or listens itself.
 - **`navigate_to` does not fuzzy-match and must not learn to.** A near-miss
   string match sends the robot several metres to somewhere nobody asked for.
+- **The Navigation panel has a POST now.** It was read-only until Harsh asked
+  for the dashboard to trigger target nav too. The reason it was read-only has
+  not gone away, so the POST answers it the way the Explore button does:
+  everything goes out through the MCP server and its safety interrupt, never
+  the motors, and the destination must be a place she already knows. Keep it
+  that way.

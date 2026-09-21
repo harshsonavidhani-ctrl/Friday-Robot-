@@ -1,11 +1,16 @@
 """Navigation, assembled for the dashboard. READ-ONLY.
 
-File 14 step 11. Nothing here writes: places are read through `slam/places.py`,
-the attempt log is read through `nav_state_machine.recent_attempts()`, and the
-map is opened only to learn its bounds. No route in this module starts a drive,
-and there is deliberately no POST — every prior dashboard rule about this
-holds, and navigation is the last thing that should be startable by a stray
-tap on a phone in someone's pocket.
+File 14 step 11. THIS MODULE still writes nothing: places are read through
+`slam/places.py`, the attempt log through `nav_state_machine.recent_attempts()`,
+and the map is opened only to learn its bounds.
+
+The PANEL is no longer read-only, though, and the change was deliberate: Harsh
+asked for target navigation "via voice triggered and the dashboard triggered"
+(2026-09-21), so `server.py` grew a `POST /api/nav`. The concern that kept it
+read-only — an autonomous drive being one stray tap away — is answered where
+the Explore button answers it: every action goes out through the MCP server
+and its safety interrupt, never the motors, and the destination must be a
+place she already knows.
 
 ⚠ THE MARKERS ARE NOT DRAWN OVER THE MAP PICTURE, AND THAT IS A CORRECTNESS
 DECISION RATHER THAN A SHORTCUT. The Map panel shows `state/rl_map.npz` -- the
@@ -105,6 +110,8 @@ def current() -> dict:
         "attempts": attempts,
         "last_return": home_runs[0] if home_runs else None,
         "states": [s.value for s in nsm.NavState],
+        "round_trip": nsm.round_trip_enabled(),
+        "waiting_to_come_back": nsm.pending_return(),
         "note": ("landmarks are in the survey map's frame (state/map.npz), "
                  "which is NOT the frame of the picture in the Map panel"),
     }

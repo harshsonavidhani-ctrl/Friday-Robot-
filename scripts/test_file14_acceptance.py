@@ -42,11 +42,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config                                           # noqa: E402
 import nav_follower                                     # noqa: E402
 import nav_state_machine as nsm                         # noqa: E402
+import math                                             # noqa: E402
 from test_nav_follower import FakeMapper, FakeRobot, FakeWorld   # noqa: E402
 from test_nav_home import BlockingRobot, TempPlaces, _grid       # noqa: E402
 
 _LOG_DIR = tempfile.TemporaryDirectory()
 nsm.NAV_LOG = Path(_LOG_DIR.name) / "nav_log.jsonl"
+nsm.NAV_MODE_FILE = Path(_LOG_DIR.name) / "nav_mode.json"
+nsm.PENDING_FILE = Path(_LOG_DIR.name) / "nav_round_trip.json"
 
 PASS, FAIL = "  ok  ", " FAIL "
 _failures = 0
@@ -391,6 +394,53 @@ def eight_dashboard_live() -> None:
     _items.append(("Dashboard panels live", bool(ok)))
 
 
+def nine_round_trip() -> None:
+    item(9, 'Round trip: "go to the kitchen" → goes → comes back to the start')
+    import nav_follower
+    from mcp_server.tools import autonomy
+
+    with TempPlaces():
+        from slam import places
+        places.remember_here("the kitchen", (2.5, 2.0, 0.0))
+        start = (0.5, 2.0, 0.0)
+        world = FakeWorld(pose=start)
+        mapper = FakeMapper(world)
+        mapper.grid = _grid((160, 160), free=True)
+        c = nsm.NavController(robot=FakeRobot(world))
+
+        report = asyncio.run(c.go_to_landmark(
+            "the kitchen", action="say you are there", mapper=mapper,
+            return_to_start=True, max_ticks=200,
+            arrival=_arrival((2.5, 2.0))))
+        check("she reached the kitchen", report.arrived, report.why)
+        check("the action still came back for the brain",
+              report.action == "say you are there")
+        check("she came back to the spot she set off from",
+              report.returned_to_start,
+              str(report.inbound.get("why", ""))[:70])
+        back = math.hypot(world.x - start[0], world.y - start[1])
+        check("and is really there", back < 0.5, f"{back:.2f} m from the start")
+        check("both legs are in the log",
+              len([r for r in nsm.recent_attempts()
+                   if r["destination"] in ("the kitchen",
+                                           "where I set off from")]) >= 2)
+
+        # And the armed form, which is what "explore and come back" uses.
+        nsm.arm_return_to_start(start, why="exploration")
+        check("an exploration return can be armed",
+              nsm.pending_return() is not None)
+        world2 = FakeWorld(pose=(2.5, 2.0, 0.0))
+        mapper2 = FakeMapper(world2)
+        mapper2.grid = _grid((160, 160), free=True)
+        c2 = nsm.NavController(robot=FakeRobot(world2))
+        armed = asyncio.run(c2.return_to_armed_start(
+            mapper=mapper2, max_ticks=200, arrival=_arrival(start[:2])))
+        check("and firing it brings her back", armed.arrived, armed.why)
+        check("the arming is consumed", nsm.pending_return() is None)
+        _items.append(("Round trip there and back",
+                       report.returned_to_start and armed.arrived))
+
+
 def main() -> int:
     print("FILE 14 — STEP 13 ACCEPTANCE RUN")
     print("=" * 64)
@@ -402,6 +452,7 @@ def main() -> int:
     six_failsafe()
     seven_exploration_untouched()
     eight_dashboard_live()
+    nine_round_trip()
 
     print("\n" + "=" * 64)
     for name, ok in _items:

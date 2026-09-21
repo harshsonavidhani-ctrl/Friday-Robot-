@@ -822,6 +822,59 @@ async def api_nav(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "why": str(exc)})
 
 
+async def api_nav_post(request: web.Request) -> web.Response:
+    """File 14 — send her somewhere, or set round-trip mode, from the phone.
+
+    ⚠ THIS PANEL WAS READ-ONLY UNTIL HARSH ASKED FOR IT (2026-09-21: "via
+    voice triggered and the dashboard triggered"). The reason it was read-only
+    was that an autonomous drive across the flat should not be one stray tap
+    away in a pocket. That concern does not go away because a button exists,
+    so it is answered the way the Explore button already answers it:
+
+      * EVERYTHING GOES THROUGH THE MCP SERVER, never the motors. The same
+        clearance interrupt, duration cap and look-before-you-move gate apply
+        to a tap as to a spoken command — `dashboard/robot.py` exists for
+        exactly this reason.
+      * The destination must be a place she already knows. The dashboard
+        cannot invent a coordinate and send her to it.
+      * `stop` is always available and is never gated.
+    """
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+
+    action = str(payload.get("action", "")).strip().lower()
+
+    if action == "round_trip":
+        import nav_state_machine as nsm
+        state = nsm.set_round_trip(bool(payload.get("on")))
+        return web.json_response({"ok": bool(state.get("saved")), **state})
+
+    tools = {"go": "navigate_to", "home": "return_home",
+             "come_back": "come_back", "stop": "stop"}
+    if action not in tools:
+        raise web.HTTPBadRequest(
+            text=f"action must be one of: round_trip, {', '.join(tools)}")
+
+    arguments: dict = {}
+    if action == "go":
+        name = str(payload.get("landmark", "")).strip()
+        if not name:
+            raise web.HTTPBadRequest(text="which place?")
+        arguments["landmark_name"] = name
+        if "return_to_start" in payload:
+            arguments["return_to_start"] = bool(payload["return_to_start"])
+
+    try:
+        said = await robot.call(tools[action], arguments,
+                                timeout=config.GOTO_BUDGET_S + 60.0)
+    except robot.RobotUnavailable as exc:
+        return web.json_response(
+            {"ok": False, "why": f"her body is not answering ({exc})"})
+    return web.json_response({"ok": True, "result": said})
+
+
 async def api_explore_post(request: web.Request) -> web.Response:
     """Start or stop a run. Two actions, both of them one systemctl call."""
     try:
@@ -1001,6 +1054,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/reflection", api_reflection_post)
     app.router.add_get("/api/explore", api_explore_get)
     app.router.add_get("/api/nav", api_nav)
+    app.router.add_post("/api/nav", api_nav_post)
     app.router.add_get("/api/map.png", api_map_png)
     app.router.add_get("/api/map", api_map_meta)
     app.router.add_post("/api/explore", api_explore_post)

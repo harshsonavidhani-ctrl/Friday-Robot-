@@ -813,3 +813,19 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
               border-bottom: 1px solid #161b22; padding-bottom: 2px; }
 .navlog .ok { color: #7bd88f; }
 .navlog .bad { color: #ff8a7a; }
+
+/* The Navigation panel's controls (file 14, added when Harsh asked for the
+   dashboard to trigger target nav as well as the voice). */
+.navcontrols { display: flex; align-items: center; gap: 12px;
+               flex-wrap: wrap; margin: 8px 0 4px; }
+.navtoggle { display: flex; align-items: center; gap: 7px; font-size: 13px;
+             color: #c8d2dc; }
+.navbtn { background: #161b22; color: #c8d2dc; border: 1px solid #2b3a46;
+          border-radius: 999px; padding: 4px 12px; font-size: 12px;
+          cursor: pointer; }
+.navbtn:hover { border-color: #ff6a00; color: #ffb27a; }
+.navbtn[disabled] { opacity: .5; cursor: default; }
+.navplaces span { display: inline-flex; align-items: center; gap: 7px; }
+.navgo { background: none; border: none; color: #ff8a3d; cursor: pointer;
+         font-size: 12px; padding: 0 0 0 2px; }
+.navgo:hover { text-decoration: underline; }

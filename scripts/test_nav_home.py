@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import math
 import sys
+import json
 import tempfile
 import time
 from pathlib import Path
@@ -854,9 +855,231 @@ def test_dashboard_panel_is_read_only() -> None:
 
     server = (Path(__file__).resolve().parent.parent
               / "dashboard" / "server.py").read_text()
-    check("the route is registered", '"/api/nav", api_nav' in server)
-    check("and there is no POST behind it",
-          'add_post("/api/nav"' not in server)
+    check("the GET route is registered", '"/api/nav", api_nav)' in server)
+    # ⚠ THIS PANEL USED TO HAVE NO POST, and the test asserted that. Harsh
+    # asked for the dashboard to trigger target navigation too, so it has one
+    # now — but the reason for the old rule has not gone away, so what is
+    # checked is the thing that actually keeps it safe: the POST goes through
+    # the MCP server, never the motors.
+    check("the POST route exists now Harsh asked for it",
+          'add_post("/api/nav"' in server)
+    import ast
+    post = server[server.index("async def api_nav_post"):
+                  server.index("async def api_explore_post")]
+    check("it never opens the motors itself",
+          "hardware.motors" not in post and "Motors(" not in post)
+    check("every action goes out through the MCP server",
+          "robot.call(" in post, "")
+    check("and it will not invent a destination",
+          "landmark_name" in post and "which place?" in post)
+
+
+
+# --------------------------------------------------------------------------
+# round trip — "go to the kitchen and come back to where you started"
+# --------------------------------------------------------------------------
+
+def test_round_trip_mode_persists() -> None:
+    print("\n— the round-trip mode flag —")
+    saved = nsm.NAV_MODE_FILE
+    with tempfile.TemporaryDirectory() as tmp:
+        nsm.NAV_MODE_FILE = Path(tmp) / "nav_mode.json"
+        try:
+            check("off by default", not nsm.round_trip_enabled())
+            check("turning it on saves", nsm.set_round_trip(True)["saved"])
+            check("and it reads back", nsm.round_trip_enabled())
+            check("turning it off saves", nsm.set_round_trip(False)["saved"])
+            check("and it reads back off", not nsm.round_trip_enabled())
+            nsm.NAV_MODE_FILE.write_text("{ broken")
+            check("a corrupt file reads as off, not as a crash",
+                  not nsm.round_trip_enabled())
+        finally:
+            nsm.NAV_MODE_FILE = saved
+
+
+def test_round_trip_goes_and_comes_back() -> None:
+    print("\n— she goes to the kitchen and comes back —")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_nav_follower import FakeMapper, FakeRobot, FakeWorld
+    import nav_follower
+
+    with TempPlaces():
+        from slam import places
+        places.remember_here("the kitchen", (2.5, 2.0, 0.0))
+        start = (0.5, 2.0, 0.0)
+        world = FakeWorld(pose=start)
+        mapper = FakeMapper(world)
+        mapper.grid = _grid((160, 160), free=True)
+        c = nsm.NavController(robot=FakeRobot(world))
+
+        report = asyncio.run(c.go_to_landmark(
+            "the kitchen", mapper=mapper, return_to_start=True,
+            max_ticks=200,
+            arrival=nav_follower.ArrivalMonitor((2.5, 2.0), cell_m=0.05,
+                                                dwell_s=0.0, min_samples=2)))
+        check("she got to the kitchen", report.arrived, report.why)
+        check("the trip was a round trip", report.round_trip)
+        check("the start pose was captured before setting off",
+              report.start_pose
+              and abs(report.start_pose[0] - start[0]) < 0.2,
+              str(report.start_pose))
+        check("she came back", report.returned_to_start,
+              str(report.inbound.get("why", ""))[:90])
+        check("and is really back where she began",
+              math.hypot(world.x - start[0], world.y - start[1]) < 0.5,
+              f"{math.hypot(world.x - start[0], world.y - start[1]):.2f} m "
+              "from the start")
+        check("the way back is reported separately from the way out",
+              "why" in report.inbound and report.inbound["destination"]
+              == "where I set off from", str(report.inbound)[:80])
+
+
+def test_round_trip_off_means_stay() -> None:
+    print("\n— with the mode off she stays put —")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_nav_follower import FakeMapper, FakeRobot, FakeWorld
+    import nav_follower
+
+    with TempPlaces():
+        from slam import places
+        places.remember_here("the kitchen", (2.5, 2.0, 0.0))
+        world = FakeWorld(pose=(0.5, 2.0, 0.0))
+        mapper = FakeMapper(world)
+        mapper.grid = _grid((160, 160), free=True)
+        c = nsm.NavController(robot=FakeRobot(world))
+        report = asyncio.run(c.go_to_landmark(
+            "the kitchen", mapper=mapper, return_to_start=False,
+            max_ticks=200,
+            arrival=nav_follower.ArrivalMonitor((2.5, 2.0), cell_m=0.05,
+                                                dwell_s=0.0, min_samples=2)))
+        check("she arrived", report.arrived, report.why)
+        check("it was not a round trip", not report.round_trip)
+        check("she stayed at the kitchen",
+              abs(world.x - 2.5) < 0.5,
+              f"x={world.x:.2f} (kitchen is 2.5)")
+
+
+def test_getting_there_survives_failing_to_come_back() -> None:
+    """Arriving is what he asked for. Not getting back does not undo it.
+
+    The outbound leg is driven normally and the inbound one is then given a
+    robot that refuses everything. Trying to make ONE simulated chassis
+    succeed and then fail at a chosen moment meant guessing where in the
+    approach the refusal would land, which tested the guess rather than the
+    guarantee.
+    """
+    print("\n— she got there but could not get back —")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_nav_follower import FakeMapper, FakeRobot, FakeWorld
+    import nav_follower
+
+    with TempPlaces():
+        from slam import places
+        places.remember_here("the kitchen", (2.5, 2.0, 0.0))
+        start_pose = (0.5, 2.0, 0.0)
+        world = FakeWorld(pose=start_pose)
+        mapper = FakeMapper(world)
+        mapper.grid = _grid((160, 160), free=True)
+
+        c = nsm.NavController(robot=FakeRobot(world))
+        report = asyncio.run(c.go_to_landmark(
+            "the kitchen", mapper=mapper, return_to_start=False,
+            max_ticks=200,
+            arrival=nav_follower.ArrivalMonitor((2.5, 2.0), cell_m=0.05,
+                                                dwell_s=0.0, min_samples=2)))
+        check("the outbound leg arrived", report.arrived, report.why)
+
+        # Now the way back, with a chassis that has stopped answering.
+        c.robot = FakeRobot(world, refuse=True)
+        asyncio.run(c._return_to_start(mapper, start_pose, report,
+                                       max_ticks=20))
+        check("the outbound leg is STILL reported as arrived", report.arrived,
+              "coming back failing must not un-arrive her at the kitchen")
+        check("but coming back is reported as failed",
+              not report.returned_to_start)
+        check("and the sentence says both",
+              "could not get back" in report.why, report.why[-80:])
+        check("the inbound leg has its own report",
+              report.inbound.get("destination") == "where I set off from",
+              str(report.inbound.get("why", ""))[:60])
+
+
+def test_armed_return_for_exploration() -> None:
+    print("\n— the return armed before an exploration run —")
+    saved = nsm.PENDING_FILE
+    with tempfile.TemporaryDirectory() as tmp:
+        nsm.PENDING_FILE = Path(tmp) / "nav_round_trip.json"
+        try:
+            check("nothing armed to begin with", nsm.pending_return() is None)
+            armed = nsm.arm_return_to_start((1.5, 2.5, 0.3), why="exploration")
+            check("arming writes it down", armed["armed"])
+            row = nsm.pending_return()
+            check("and it reads back", row and abs(row["x"] - 1.5) < 1e-9)
+            check("with why it was armed", row["why"] == "exploration")
+
+            nsm.clear_pending()
+            check("clearing clears it", nsm.pending_return() is None)
+
+            # A stale one must never fire — it is a pose from another session.
+            nsm.arm_return_to_start((9.0, 9.0, 0.0))
+            stale = json.loads(nsm.PENDING_FILE.read_text())
+            stale["at"] = time.time() - nsm.PENDING_TTL_S - 10
+            nsm.PENDING_FILE.write_text(json.dumps(stale))
+            check("a stale armed return is dropped, not driven to",
+                  nsm.pending_return() is None)
+        finally:
+            nsm.PENDING_FILE = saved
+
+
+def test_armed_return_drives_back() -> None:
+    print("\n— and firing it brings her back —")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_nav_follower import FakeMapper, FakeRobot, FakeWorld
+    import nav_follower
+
+    saved = nsm.PENDING_FILE
+    with tempfile.TemporaryDirectory() as tmp:
+        nsm.PENDING_FILE = Path(tmp) / "nav_round_trip.json"
+        try:
+            with TempPlaces():
+                # She "explored" away from her start and is now at (2.5, 2.0).
+                nsm.arm_return_to_start((0.5, 2.0, 0.0), why="exploration")
+                world = FakeWorld(pose=(2.5, 2.0, 0.0))
+                mapper = FakeMapper(world)
+                mapper.grid = _grid((160, 160), free=True)
+                c = nsm.NavController(robot=FakeRobot(world))
+                report = asyncio.run(c.return_to_armed_start(
+                    mapper=mapper, max_ticks=200,
+                    arrival=nav_follower.ArrivalMonitor(
+                        (0.5, 2.0), cell_m=0.05, dwell_s=0.0, min_samples=2)))
+                check("she drove back", report.arrived, report.why)
+                check("to the armed spot",
+                      math.hypot(world.x - 0.5, world.y - 2.0) < 0.5,
+                      f"{math.hypot(world.x - 0.5, world.y - 2.0):.2f} m away")
+                check("the arming is consumed so it cannot fire twice",
+                      nsm.pending_return() is None)
+                check("nothing armed means nothing happens",
+                      not asyncio.run(
+                          c.return_to_armed_start(mapper=mapper)).arrived)
+        finally:
+            nsm.PENDING_FILE = saved
+
+
+def test_round_trip_tools_registered() -> None:
+    print("\n— the round-trip tools —")
+    from mcp_server import registry
+    registry.load_tool_modules()
+    entries = {name: desc for _, name, desc in registry.REGISTRY}
+    for wanted in ("set_round_trip", "explore_and_return", "come_back"):
+        check(f"{wanted} is registered", wanted in entries)
+    check("explore_and_return tells the model when to use it",
+          "come back" in entries["explore_and_return"].lower())
+    # The docstring wraps, so "round trip" can arrive as "round\ntrip".
+    flat = " ".join(entries["set_round_trip"].lower().split())
+    check("set_round_trip lists the words Harsh actually says",
+          all(w in flat for w in ("come back", "there and back", "round trip")))
+    check("navigate_to now takes return_to_start",
+          "return_to_start" in entries["navigate_to"])
 
 
 def main() -> int:
@@ -891,6 +1114,13 @@ def main() -> int:
     test_persistent_block_is_remembered_and_planned_around()
     test_nav_log_round_trip()
     test_dashboard_panel_is_read_only()
+    test_round_trip_mode_persists()
+    test_round_trip_goes_and_comes_back()
+    test_round_trip_off_means_stay()
+    test_getting_there_survives_failing_to_come_back()
+    test_armed_return_for_exploration()
+    test_armed_return_drives_back()
+    test_round_trip_tools_registered()
     print(f"\n{'ALL PASSED' if not _failures else f'{_failures} FAILED'}")
     return 1 if _failures else 0
 

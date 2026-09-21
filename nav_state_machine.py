@@ -76,6 +76,54 @@ RETURN_AFTER_MIN = 20.0
 # expired and the right next move is to go home, not to explore for no time.
 RESUME_MIN_MINUTES = 0.5
 
+# --- round trip: go and do the thing, then come back here ------------------
+#
+# Harsh, 2026-09-21: "friday go explore the home it explores and like come to
+# the position where it started and like then i commanded it go to the kitchen
+# then it should go to the kitchen and return to where it started".
+#
+# ⚠ "WHERE IT STARTED" IS NOT HOME, and conflating the two would be the easy
+# mistake. `home` is a place somebody deliberately named and it stays put for
+# weeks. The start of a round trip is wherever she happened to be standing
+# when the command arrived -- the middle of the hall, next to his chair -- and
+# it is valid for exactly that one errand. So it is captured per run, in the
+# map's frame, from a RELOCALISED pose, and it is never written to the places
+# table where it would pollute the names she knows.
+NAV_MODE_FILE = config.ROOT / "state" / "nav_mode.json"
+
+# Coming back is a second drive with its own budget, not a continuation of the
+# first. Half the outbound budget: the way back is over ground she has just
+# driven, so if it needs more than that something has changed and stopping to
+# say so beats grinding.
+RETURN_BUDGET_FRACTION = 0.5
+
+# She must actually have gone somewhere before coming back is meaningful.
+# Under this and the round trip is skipped -- the errand ended where it began.
+ROUND_TRIP_MIN_M = 0.40
+
+
+def round_trip_enabled() -> bool:
+    """Is round-trip mode on? Persisted, so voice and dashboard agree."""
+    try:
+        return bool(json.loads(NAV_MODE_FILE.read_text()).get("round_trip"))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def set_round_trip(on: bool) -> dict:
+    """Turn round-trip mode on or off. Survives a restart."""
+    state = {"round_trip": bool(on), "changed_at": time.time()}
+    try:
+        NAV_MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = NAV_MODE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state))
+        tmp.replace(NAV_MODE_FILE)
+    except OSError as exc:                           # noqa: BLE001
+        log.warning("could not write %s: %s", NAV_MODE_FILE, exc)
+        return {"round_trip": bool(on), "saved": False, "why": str(exc)}
+    log.info("round trip mode %s", "ON" if on else "off")
+    return {"round_trip": bool(on), "saved": True}
+
 
 class NavState(str, Enum):
     """Where the navigation half of the robot currently thinks it is.
@@ -93,6 +141,7 @@ class NavState(str, Enum):
     RETURN_TO_HOME = "return_to_home"
     TARGET_NAV = "target_nav"
     BLOCKED_REPLANNING = "blocked_replanning"
+    RETURNING_TO_START = "returning_to_start"
     ARRIVED = "arrived"
     FAILSAFE = "failsafe"
 
@@ -177,6 +226,10 @@ class ReturnReport:
     goal_moved_m: float = 0.0
     seconds: float = 0.0
     at: float = 0.0
+    round_trip: bool = False
+    returned_to_start: bool = False
+    start_pose: list[float] = field(default_factory=list)
+    inbound: dict = field(default_factory=dict)
     blocks_seen: int = 0
     blocks_confirmed: int = 0
     obstacles: dict = field(default_factory=dict)
@@ -356,11 +409,17 @@ class NavController:
         return report
 
     async def go_to_landmark(self, name: str, action: str = "",
-                             mapper=None, **kw) -> ReturnReport:
+                             mapper=None, return_to_start: bool | None = None,
+                             **kw) -> ReturnReport:
         """TARGET_NAV: drive to a landmark she already knows by name.
 
         The landmark must be one she KNOWS. No fuzzy match, no nearest guess:
         see `resolve_landmark`.
+
+        `return_to_start` makes it a ROUND TRIP: remember where she is
+        standing now, drive there, and come back to this spot afterwards.
+        None means "whatever the mode says" (`round_trip_enabled()`), so the
+        dashboard toggle and a spoken "and come back" reach the same place.
         """
         row, why = resolve_landmark(name)
         if row is None:
@@ -368,13 +427,105 @@ class NavController:
                                   why=why, action=action)
             self.state = report.state
             return report
+
+        if mapper is None:
+            mapper, whynot = await relocalise()
+            if mapper is None:
+                report = ReturnReport(state=NavState.FAILSAFE,
+                                      destination=row["name"], action=action,
+                                      why=f"I am not setting off: {whynot}")
+                self.state = report.state
+                return report
+
+        # ⚠ CAPTURED BEFORE THE FIRST WHEEL TURNS, from the relocalised pose.
+        # Read it back afterwards and it is wherever she ENDED, which is the
+        # one place she does not need directions to.
+        start = tuple(float(v) for v in mapper.pose)
+
         report = await self._drive_to((row["x"], row["y"]), row["name"],
                                       NavState.TARGET_NAV, mapper, **kw)
         report.action = action
         if report.arrived:
             from slam import places
             places.visited(row["name"])
+
+        wants = (round_trip_enabled() if return_to_start is None
+                 else bool(return_to_start))
+        report.round_trip = wants
+        report.start_pose = [round(v, 3) for v in start]
+        if wants and report.arrived:
+            await self._return_to_start(mapper, start, report, **kw)
         return report
+
+    async def return_to_armed_start(self, mapper=None, **kw) -> ReturnReport:
+        """Drive back to a start pose armed earlier by something else.
+
+        This is the second half of "go and explore, then come back": the
+        exploration run is a separate process, so the leg that started the
+        errand and the leg that finishes it do not share memory. The pose was
+        written down by `arm_return_to_start`; this picks it up, and CLEARS IT
+        FIRST so that a failure cannot leave it armed to fire again later at a
+        pose that is by then even staler.
+        """
+        row = pending_return()
+        if row is None:
+            report = ReturnReport(state=self.state,
+                                  why="nothing is waiting to be returned from")
+            return report
+        clear_pending()
+        report = await self._drive_to((row["x"], row["y"]),
+                                      "where I set off from",
+                                      NavState.RETURNING_TO_START, mapper, **kw)
+        report.round_trip = True
+        report.returned_to_start = report.arrived
+        report.start_pose = [round(row["x"], 3), round(row["y"], 3)]
+        return report
+
+    async def _return_to_start(self, mapper, start, report: ReturnReport,
+                               **kw) -> None:
+        """The way back. A second drive, with its own budget and its own state.
+
+        Deliberately runs AFTER the outbound leg is reported as arrived rather
+        than being folded into it, because the two have different meanings.
+        "I got to the kitchen but could not get back" is a true and useful
+        sentence, and a single merged result could not say it -- it would
+        report the whole errand as a failure and lose the fact that the thing
+        he asked for actually happened.
+        """
+        went = math.hypot(mapper.pose[0] - start[0], mapper.pose[1] - start[1])
+        if went < ROUND_TRIP_MIN_M:
+            report.returned_to_start = True
+            report.inbound = {"skipped": f"only went {went:.2f} m — already here"}
+            return
+
+        budget = kw.pop("budget_m", config.GOTO_BUDGET_M) * RETURN_BUDGET_FRACTION
+        kw.pop("budget_s", None)
+
+        # ⚠ THE OUTBOUND ARRIVAL MONITOR IS FOR THE OUTBOUND GOAL. Passing it
+        # through would have the way back declaring "arrived" the moment she
+        # is near the KITCHEN, which is where she already is -- so she would
+        # report coming home without moving. Its SETTINGS are worth keeping
+        # (a caller who loosened the dwell meant it for both legs); its goal
+        # is not.
+        outbound = kw.pop("arrival", None)
+        if outbound is not None:
+            kw["arrival"] = nav_follower.ArrivalMonitor(
+                start[:2], cell_m=mapper.grid.cell,
+                tolerance_m=outbound.tolerance, loose_m=outbound.loose,
+                dwell_s=outbound.dwell_s, min_samples=outbound.min_samples,
+                settle_extra_s=outbound.settle_extra_s)
+        back = await self._drive_to(start[:2], "where I set off from",
+                                    NavState.RETURNING_TO_START, mapper,
+                                    budget_m=max(budget, 1.0), **kw)
+        report.returned_to_start = back.arrived
+        report.inbound = back.as_dict()
+        # The ERRAND's state is what the caller asked about. Coming back
+        # failing does not un-arrive her at the kitchen.
+        self.state = (NavState.ARRIVED if back.arrived
+                      else NavState.FAILSAFE)
+        if not back.arrived:
+            report.why = (f"{report.why} — but I could not get back to where "
+                          f"I set off from: {back.why}")
 
     async def _drive_to(self, goal_xy, label: str, mode: NavState,
                         mapper=None, max_attempts: int = 3,
@@ -696,6 +847,57 @@ _FINAL_REASONS = ("stop was called", "refused:", "not driving",
 def _is_final(why: str) -> bool:
     low = (why or "").lower()
     return any(reason in low for reason in _FINAL_REASONS)
+
+
+# A round trip whose outbound leg is ANOTHER PROCESS -- an exploration run --
+# cannot be held in memory, because the thing that has to fire the return is
+# not the thing that started it and may not even be the same process by then.
+# So the start pose is written down, and anything that notices exploration has
+# finished can pick it up. It is cleared the moment it is acted on; a stale
+# one would send her "back" to a room she left yesterday.
+PENDING_FILE = config.ROOT / "state" / "nav_round_trip.json"
+
+# How long a pending return stays valid. Past this the pose it holds is a
+# coordinate from a map session that may not exist any more, and driving to it
+# would be the confident-wrong-address failure this whole module avoids.
+PENDING_TTL_S = 6 * 3600.0
+
+
+def arm_return_to_start(pose, why: str = "exploration") -> dict:
+    """Write down where she set off from, for something else to act on later."""
+    row = {"x": float(pose[0]), "y": float(pose[1]),
+           "theta": float(pose[2]) if len(pose) > 2 else 0.0,
+           "at": time.time(), "why": why}
+    try:
+        PENDING_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PENDING_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(row))
+        tmp.replace(PENDING_FILE)
+    except OSError as exc:                           # noqa: BLE001
+        log.warning("could not arm the return: %s", exc)
+        return {"armed": False, "why": str(exc)}
+    log.info("armed a return to (%.2f, %.2f) after %s", row["x"], row["y"], why)
+    return {"armed": True, **row}
+
+
+def pending_return() -> dict | None:
+    """The armed return, if there is one and it is still fresh."""
+    try:
+        row = json.loads(PENDING_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+    if time.time() - float(row.get("at", 0)) > PENDING_TTL_S:
+        log.warning("a pending return was too old to trust; dropping it")
+        clear_pending()
+        return None
+    return row
+
+
+def clear_pending() -> None:
+    try:
+        PENDING_FILE.unlink()
+    except OSError:
+        pass
 
 
 NAV_LOG = config.ROOT / "state" / "nav_log.jsonl"

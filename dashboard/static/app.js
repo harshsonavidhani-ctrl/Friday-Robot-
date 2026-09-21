@@ -380,8 +380,18 @@ async function refreshNav() {
   $('navplaces').innerHTML = n.landmarks.length
     ? n.landmarks.map(m => `<span class="${m.is_home ? 'home' : ''}">${esc(m.name)}` +
         (m.from_home != null && !m.is_home ? ` · ${m.from_home} m from home` : '') +
-        (m.visits ? ` · ${m.visits}×` : '') + '</span>').join('')
+        (m.visits ? ` · ${m.visits}×` : '') +
+        `<button class="navgo" data-go="${esc(m.name)}">go</button></span>`).join('')
     : '<span>no places named yet</span>';
+  for (const b of $('navplaces').querySelectorAll('.navgo')) {
+    b.onclick = () => navSend({ action: 'go', landmark: b.dataset.go },
+                              `sending her to ${b.dataset.go}…`);
+  }
+  if ($('navroundtrip')) $('navroundtrip').checked = !!n.round_trip;
+  const pending = n.waiting_to_come_back;
+  $('navcomeback').hidden = !pending;
+  if (pending) $('navcomeback').textContent =
+    `Come back now (noted ${pending.x.toFixed(1)}, ${pending.y.toFixed(1)})`;
 
   const last = n.last_return;
   $('navrth').textContent = last
@@ -399,6 +409,33 @@ async function refreshNav() {
 
   const live = rows[0];
   $('navnow').textContent = live ? (live.arrived ? 'arrived' : live.state) : 'idle';
+}
+
+/* One POST for every navigation action. It goes to the MCP server, never to
+   the motors, so a tap gets the same clearance interrupt a spoken command
+   does — see api_nav_post. Buttons are disabled while she drives so a second
+   tap cannot queue a second errand. */
+async function navSend(body, saying) {
+  const note = $('navsaid');
+  if (note) note.textContent = saying || 'asking her…';
+  for (const b of document.querySelectorAll('#panel-nav button, #navroundtrip'))
+    b.disabled = true;
+  try {
+    const r = await fetch('/api/nav', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const out = await r.json();
+    if (note) note.textContent = out.ok
+      ? String(out.result || 'done').split('\n')[0].slice(0, 160)
+      : (out.why || 'she did not answer');
+  } catch (e) {
+    if (note) note.textContent = 'the dashboard could not reach her';
+  } finally {
+    for (const b of document.querySelectorAll('#panel-nav button, #navroundtrip'))
+      b.disabled = false;
+    refreshNav();
+  }
 }
 
 function ago(when) {
@@ -1135,6 +1172,12 @@ async function heartbeat() {
   refreshExplore();               // cheap, and the panel must not go stale
   refreshMap();                   // one stat() server-side until the map changes
   refreshNav();                   // landmarks + the attempt log, one read
+  if ($('navroundtrip')) $('navroundtrip').onchange = (e) =>
+    navSend({ action: 'round_trip', on: e.target.checked },
+            e.target.checked ? 'she will come back afterwards…'
+                             : 'she will stay where she is sent…');
+  if ($('navcomeback')) $('navcomeback').onclick = () =>
+    navSend({ action: 'come_back' }, 'bringing her back…');
 }
 
 /* friday-mcp is a separate service from this one, so the dashboard opens and
