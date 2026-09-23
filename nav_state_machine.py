@@ -427,7 +427,7 @@ class NavController:
             said = autonomy.start_exploration(minutes=minutes)
         except Exception as exc:                 # noqa: BLE001
             said = f"could not restart: {exc}"
-        if "FAILED" in (said or "").upper() or "could not" in (said or "").lower():
+        if start_failed(said):
             # EXPLORING -> FAILSAFE. Nothing is moving, so there is nothing
             # to halt; what matters is the record, so "try again" can restart
             # the run with the time it still had.
@@ -1007,6 +1007,23 @@ class NavController:
             if not blocked:
                 return False, clearance
         return True, clearance
+
+
+def start_failed(said: str) -> bool:
+    """Did `start_exploration` refuse? It answers in JSON, not words.
+
+    `{"started": false, "why": "I am already exploring..."}` contains neither
+    "FAILED" nor "could not", so checking the words alone read a refusal as a
+    run that had started -- and navigation then believed it was exploring.
+    """
+    text = (said or "").strip()
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and "started" in data:
+            return not data["started"]
+    except ValueError:
+        pass
+    return "FAILED" in text.upper() or "could not" in text.lower()
 
 
 def _stopped_ok(said: str) -> bool:

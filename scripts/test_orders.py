@@ -68,6 +68,18 @@ KEEP = [
     ("go to the garage", "nav_go"),     # unknown: the TOOL refuses plainly
 ]
 
+OFFLINE_NAV = [
+    ("Friday, go to the kitchen", "nav_go"),
+    ("go to the desk and come back", "nav_go"),
+    ("go home", "nav_home"), ("ghar chalo", "nav_home"),
+    ("come back", "nav_come_back"), ("wapas aao", "nav_come_back"),
+    ("try again", "try_again"), ("phir se try karo", "try_again"),
+    ("explore for 2 minutes and come back", "explore_return"),
+    ("remember this as home", "remember_place"),
+    ("yeh jagah kitchen hai", "remember_place"),
+    ("stop", "stop"), ("go to sleep", "sleep"),
+]
+
 REFUSE = [
     "F right A, speak Hindi.",          # pivoted her 90 degrees, 22:27
     "Now go back to it.",               # drove her backwards, 22:56
@@ -193,6 +205,17 @@ def main() -> int:
     print("orders that must still skip the brain")
     for text, name in KEEP:
         intent = offline.understand(text, strict=True)
+        ok = intent is not None and intent.name == name
+        bad += not ok
+        print(f"  {PASS if ok else FAIL}  {text!r} -> "
+              f"{intent.name if intent else None} (wanted {name})")
+
+    # WITH NO INTERNET main.py takes the loose branch (strict=False). File 14
+    # navigation has to work there exactly as it does online -- Harsh,
+    # 2026-09-23: "it will be all offline".
+    print("\nnavigation with no internet at all (the loose branch)")
+    for text, name in OFFLINE_NAV:
+        intent = offline.understand(text)
         ok = intent is not None and intent.name == name
         bad += not ok
         print(f"  {PASS if ok else FAIL}  {text!r} -> "

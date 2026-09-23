@@ -1527,6 +1527,34 @@ def test_bundle_keeps_data_with_its_map() -> None:
     check("the REAL map was never written", before == after)
 
 
+def test_refused_restart_is_not_a_run() -> None:
+    print("\n— a refused exploration restart is not a run —")
+    check("JSON started:false is a failure",
+          nsm.start_failed('{"started": false, "why": "I am already '
+                           'exploring. Say stop to end it."}'))
+    check("JSON started:true is not",
+          not nsm.start_failed('{"started": true, "minutes": 5}'))
+    check("the old wording still counts",
+          nsm.start_failed("FAILED to start") and nsm.start_failed(
+              "could not restart: boom"))
+    from mcp_server.tools import autonomy
+    real = autonomy.start_exploration
+    autonomy.start_exploration = lambda minutes=None, thinking=None: (
+        '{"started": false, "why": "systemctl refused"}')
+    try:
+        c = nsm.NavController(voice=_quiet_voice())
+        c.snapshot = nsm.ExplorationSnapshot(remaining_minutes=5.0)
+        out = c.resume_exploration()
+        check("resume says it did not resume",
+              out["resumed"] is False and c.state is nsm.NavState.FAILSAFE,
+              str(out))
+        check("and leaves a record so \"try again\" can restart it",
+              (nsm.failsafe_record() or {}).get("mode") == "exploring")
+    finally:
+        autonomy.start_exploration = real
+        nsm.clear_failsafe()
+
+
 def test_offline_tools_registered() -> None:
     print("\n— the offline navigation tools —")
     from mcp_server import registry
@@ -1585,6 +1613,7 @@ def main() -> int:
     test_try_again_resumes_exploration()
     test_frontier_watch_debounces()
     test_bundle_keeps_data_with_its_map()
+    test_refused_restart_is_not_a_run()
     test_offline_tools_registered()
     print(f"\n{'ALL PASSED' if not _failures else f'{_failures} FAILED'}")
     return 1 if _failures else 0

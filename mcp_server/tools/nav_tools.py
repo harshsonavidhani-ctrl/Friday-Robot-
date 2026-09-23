@@ -230,7 +230,10 @@ async def explore_and_return(minutes: float | None = None,
 
     from mcp_server.tools import autonomy
     said = autonomy.start_exploration(minutes=minutes, thinking=thinking)
-    if "FAILED" in said.upper() or "could not" in said.lower():
+    if nsm.start_failed(said):
+        # Nothing set off, so there is nothing to come back from: arming a
+        # return (and a watcher) here would send her "back" after somebody
+        # else's run ended.
         nsm.clear_pending()
         return said
     _note_run_clock(minutes)
