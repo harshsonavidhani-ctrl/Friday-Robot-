@@ -141,6 +141,7 @@ async def remember_place(name: str, note: str = "") -> str:
         return f"I did not save that: {why}"
 
     row = places.remember_here(name, mapper.pose, note=note or None)
+    _bundle(f"place saved: {row['name']}")
     return (f"Saved “{row['name']}” at x={row['x']:.2f} y={row['y']:.2f} "
             f"on my map. Say “go to {row['name']}” and I will drive there.")
 
@@ -162,8 +163,20 @@ def list_places() -> str:
 @tool
 def forget_place(name: str) -> str:
     """Forget a place I have remembered."""
-    return (f"Forgotten “{name}”." if places.forget(name)
-            else f"I do not know anywhere called “{name}”.")
+    if not places.forget(name):
+        return f"I do not know anywhere called “{name}”."
+    _bundle(f"place forgotten: {name}")
+    return f"Forgotten “{name}”."
+
+
+def _bundle(reason: str) -> None:
+    """Keep the places saved together with their map (nav_bundle.py). Never
+    raises: a failed backup must not turn a saved place into an error."""
+    try:
+        import nav_bundle
+        nav_bundle.save_quietly(reason)
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("could not refresh the navigation bundle: %s", exc)
 
 
 @tool

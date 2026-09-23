@@ -416,6 +416,15 @@ async function refreshNav() {
     `Last early return: frontiers ran out ${ago(early.at)} ` +
     `(${early.reads} readings in a row)`;
 
+  // Everything navigation knows, saved permanently WITH the map it belongs to.
+  const b = n.bundle || {};
+  $('navbundle').textContent = b.saved
+    ? `Saved with the map ${ago(b.at)}: ${b.places.length} place(s)` +
+      (b.places.length ? ` (${b.places.join(', ')})` : '') +
+      ` · ${b.trips_logged} trip(s) · ${b.history} earlier version(s) kept` +
+      (b.same_map_as_live ? '' : ' · ⚠ the live map has changed since')
+    : 'Not yet saved with the map.';
+
   // Stuck and blocked are different problems, so the log names which.
   const trouble = a => {
     const bits = [];

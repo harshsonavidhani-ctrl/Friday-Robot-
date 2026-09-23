@@ -75,6 +75,20 @@ import path_planner
 
 log = logging.getLogger("friday.nav_state")
 
+
+def _bundle(reason: str) -> None:
+    """Keep navigation's data saved together with its map (nav_bundle.py).
+
+    Harsh, 2026-09-23: "save all the data there only". Called wherever
+    navigation data changes. It never raises: a backup that failed must not
+    become a journey that failed.
+    """
+    try:
+        import nav_bundle
+        nav_bundle.save_quietly(reason)
+    except Exception as exc:                      # noqa: BLE001
+        log.warning("could not refresh the navigation bundle: %s", exc)
+
 # The place row that means home. Lower case because `places.remember_here`
 # normalises names that way, so "Home" and "home" are the same row.
 HOME_PLACE_NAME = "home"
@@ -136,6 +150,7 @@ def set_round_trip(on: bool) -> dict:
         log.warning("could not write %s: %s", NAV_MODE_FILE, exc)
         return {"round_trip": bool(on), "saved": False, "why": str(exc)}
     log.info("round trip mode %s", "ON" if on else "off")
+    _bundle(f"round trip {'on' if on else 'off'}")
     return {"round_trip": bool(on), "saved": True}
 
 
@@ -212,7 +227,9 @@ def set_home(pose, note: str | None = None) -> dict:
     the wrong address and nothing about the run looks wrong.
     """
     from slam import places
-    return places.remember_here(HOME_PLACE_NAME, pose, kind="home", note=note)
+    row = places.remember_here(HOME_PLACE_NAME, pose, kind="home", note=note)
+    _bundle("home saved")
+    return row
 
 
 async def relocalise():
@@ -1201,6 +1218,7 @@ def write_failsafe(row: dict) -> None:
         tmp.replace(FAILSAFE_FILE)
     except OSError as exc:                       # noqa: BLE001
         log.warning("could not write the failsafe record: %s", exc)
+    _bundle(f"stopped for help ({row.get('mode')})")
 
 
 def failsafe_record() -> dict | None:
@@ -1219,7 +1237,8 @@ def clear_failsafe() -> None:
     try:
         FAILSAFE_FILE.unlink()
     except OSError:
-        pass
+        return                       # nothing was waiting; nothing changed
+    _bundle("no longer waiting for help")
 
 
 # --- step 16: exploration that has run out of places to go -----------------
@@ -1310,6 +1329,7 @@ def note_early_return(watch: FrontierWatch) -> dict:
         tmp.replace(EARLY_RETURN_FILE)
     except OSError as exc:                       # noqa: BLE001
         log.warning("could not note the early return: %s", exc)
+    _bundle("exploration ran out of frontiers")
     return row
 
 
@@ -1348,6 +1368,7 @@ def arm_return_to_start(pose, why: str = "exploration") -> dict:
         log.warning("could not arm the return: %s", exc)
         return {"armed": False, "why": str(exc)}
     log.info("armed a return to (%.2f, %.2f) after %s", row["x"], row["y"], why)
+    _bundle(f"come-back spot noted ({why})")
     return {"armed": True, **row}
 
 
@@ -1368,7 +1389,8 @@ def clear_pending() -> None:
     try:
         PENDING_FILE.unlink()
     except OSError:
-        pass
+        return
+    _bundle("come-back spot used")
 
 
 NAV_LOG = config.ROOT / "state" / "nav_log.jsonl"
@@ -1407,6 +1429,8 @@ def _log_attempt(report: "ReturnReport") -> None:
             tmp.replace(NAV_LOG)
     except OSError as exc:                       # noqa: BLE001
         log.warning("could not write %s: %s", NAV_LOG, exc)
+    _bundle(f"trip to {report.destination}: "
+            f"{'arrived' if report.arrived else report.state.value}")
 
 
 def recent_attempts(limit: int = 20) -> list[dict]:

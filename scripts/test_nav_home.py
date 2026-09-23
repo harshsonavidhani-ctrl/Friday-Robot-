@@ -1442,6 +1442,91 @@ def test_frontier_watch_debounces() -> None:
     tmp.cleanup()
 
 
+def test_bundle_keeps_data_with_its_map() -> None:
+    print("\n— navigation data saved WITH its map (nav_bundle) —")
+    import hashlib
+    import shutil
+    import nav_bundle
+
+    real_map = config.SLAM_MAP_FILE
+    before = hashlib.sha256(real_map.read_bytes()).hexdigest() \
+        if real_map.exists() else None
+    tmp = tempfile.TemporaryDirectory()
+    live = Path(tmp.name) / "map.npz"          # a stand-in live map
+    if real_map.exists():
+        shutil.copy2(real_map, live)
+    else:
+        live.write_bytes(b"not really a map")
+    config.SLAM_MAP_FILE = live
+    # Its own state directory: the suite-wide one already holds a bundle with
+    # every earlier test's places in its history.
+    saved_paths = {k: getattr(nsm, k) for k in
+                   ("NAV_LOG", "FAILSAFE_FILE", "EARLY_RETURN_FILE",
+                    "PENDING_FILE", "NAV_MODE_FILE")}
+    for k, path in saved_paths.items():
+        setattr(nsm, k, Path(tmp.name) / "state" / path.name)
+    try:
+        with TempPlaces():
+            folder = nav_bundle.bundle_dir()
+            check("the bundle follows the redirected state dir, never the "
+                  "real one", str(folder).startswith(str(nsm.NAV_LOG.parent)),
+                  str(folder))
+            nsm.set_home((1.0, 1.0, 0.0))
+            m = nav_bundle.manifest()
+            check("saving home saved the bundle", m is not None
+                  and m["places"] == ["home"], str(m and m["places"]))
+            check("the map inside it IS the map the places belong to",
+                  (folder / "map.npz").read_bytes() == live.read_bytes()
+                  and json.loads((folder / "places.json").read_text())
+                  ["map_sha256"] == m["map_sha256"])
+
+            nsm.write_failsafe({"mode": "target_nav", "label": "home",
+                                "goal_xy": [1, 1], "why": "t",
+                                "at": time.time()})
+            check("a FAILSAFE record is saved with it",
+                  (folder / "nav_failsafe.json").exists())
+            nsm.clear_failsafe()
+            check("and cleared from it once no longer waiting",
+                  not (folder / "nav_failsafe.json").exists())
+            check("records and trips alone do not pile up history",
+                  not (folder / "history").exists()
+                  or not any((folder / "history").iterdir()))
+
+            from slam import places
+            places.remember_here("the kitchen", (2.0, 0.5, 0.0))
+            nav_bundle.save("place saved: the kitchen")
+            hist = sorted((folder / "history").iterdir())
+            check("a new place archives the old pair first",
+                  len(hist) == 1 and json.loads(
+                      (hist[0] / "places.json").read_text())["places"][0]
+                  ["name"] == "home", str([h.name for h in hist]))
+            check("and the bundle now holds both places",
+                  nav_bundle.manifest()["places"] == ["home", "the kitchen"])
+
+            live.write_bytes(live.read_bytes() + b"-changed")
+            st = nav_bundle.status()
+            check("a changed live map is noticed", not st["same_map_as_live"])
+            said = nav_bundle.restore()
+            check("restore refuses to put places onto a different map",
+                  "--force" in said, said)
+            changed = live.read_bytes()
+            said = nav_bundle.restore(force=True)
+            check("with --force it puts the bundle's map back",
+                  live.read_bytes() == (folder / "map.npz").read_bytes(), said)
+            kept = [h for h in (folder / "history").iterdir()
+                    if h.name.endswith("live-before-restore")]
+            check("after archiving the live map it replaced",
+                  kept and (kept[0] / "map.npz").read_bytes() == changed)
+    finally:
+        config.SLAM_MAP_FILE = real_map
+        for k, path in saved_paths.items():
+            setattr(nsm, k, path)
+        tmp.cleanup()
+    after = hashlib.sha256(real_map.read_bytes()).hexdigest() \
+        if real_map.exists() else None
+    check("the REAL map was never written", before == after)
+
+
 def test_offline_tools_registered() -> None:
     print("\n— the offline navigation tools —")
     from mcp_server import registry
@@ -1499,6 +1584,7 @@ def main() -> int:
     test_try_again_relocalises_resets_and_resumes()
     test_try_again_resumes_exploration()
     test_frontier_watch_debounces()
+    test_bundle_keeps_data_with_its_map()
     test_offline_tools_registered()
     print(f"\n{'ALL PASSED' if not _failures else f'{_failures} FAILED'}")
     return 1 if _failures else 0

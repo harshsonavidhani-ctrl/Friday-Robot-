@@ -567,3 +567,18 @@ permanent map and vault; navigation reads the survey map.
     ./venv/bin/python scripts/test_nav_home.py           # stuck, try again, FrontierWatch
     ./venv/bin/python scripts/test_file14_acceptance.py  # 13 journeys, end to end
     ./venv/bin/python scripts/test_orders.py             # the offline phrases
+
+**Navigation's data lives WITH its map (`nav_bundle.py`, 2026-09-23).** Harsh:
+"it should use the old map saved one, it should also save all the data there
+only". `state/map-permanent/navigation/` holds a copy of `state/map.npz` plus
+places.json (home, the kitchen, ... in that map's coordinates), the trip log,
+the come-back spot, the FAILSAFE record, the round-trip mode and the early
+return, with a manifest. `nsm._bundle()` refreshes it wherever any of those
+change (a trip, a place saved or forgotten, home, a record written or
+cleared); `remember_place`, `forget_place` and `landmarks.py` call it too.
+Whenever the MAP or the PLACES change, the previous pair is copied to
+`history/` first, and history is never deleted. It never writes the live map;
+`python3 nav_bundle.py restore --force` is the only thing that can, and it
+archives the live one first. The folder follows `nsm.NAV_LOG`, so the test
+suites bundle into their temp dirs. `python3 nav_bundle.py status` says what
+is saved and whether it is still the map navigation is using.

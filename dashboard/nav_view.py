@@ -56,6 +56,14 @@ def _bounds() -> dict:
                 "file": "state/map.npz"}
 
 
+def _bundle_status() -> dict:
+    try:
+        import nav_bundle
+        return nav_bundle.status()
+    except Exception as exc:                     # noqa: BLE001
+        return {"saved": False, "why": str(exc)}
+
+
 def _places() -> list[dict]:
     try:
         from slam import places
@@ -117,6 +125,9 @@ def current() -> dict:
         # Step 16: the last time exploration ran out of frontiers and she
         # came back early rather than waiting for the timer.
         "early_return": nsm.last_early_return(),
+        # Everything above, kept permanently together with the map it belongs
+        # to (nav_bundle.py, 2026-09-23).
+        "bundle": _bundle_status(),
         "note": ("landmarks are in the survey map's frame (state/map.npz), "
                  "which is NOT the frame of the picture in the Map panel"),
     }

@@ -349,6 +349,11 @@ class LandmarkNamer:
         row = places.remember_here(name, pose, radius_m=found.radius_m,
                                    note=stamp_note(session, None))
         result.saved = True
+        try:                                  # kept together with its map
+            import nav_bundle
+            nav_bundle.save_quietly(f"area named: {row['name']}")
+        except Exception as exc:              # noqa: BLE001
+            log.warning("could not refresh the navigation bundle: %s", exc)
         result.place = {"name": row["name"], "x": round(row["x"], 2),
                         "y": round(row["y"], 2),
                         "radius_m": round(float(row.get("radius_m") or 0.0), 2),
