@@ -1,0 +1,1280 @@
+01:02:51 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+01:02:51 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+01:02:51 INFO    friday.localnav: LiDAR chassis self-mask: 71-79, 88-99, 221-237, 319-334 (raw bearings, pre-offset); mounting offset -51.8 deg
+01:02:51 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+01:02:51 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+01:02:52 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+01:02:52 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+01:02:52 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+01:02:52 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+01:02:54 INFO    pi_deploy: Motors: FRIDAY-MOTORS 1 on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+01:02:54 INFO    pi_deploy: Firmware watchdog armed at 500 ms (control period 100 ms)
+01:02:54 WARNING pi_deploy: Stiction floor 80 => slowest achievable wheel speed ~0.15 m/s (policy range is -0.15..0.50 m/s).
+01:02:54 WARNING pi_deploy: MOTORS ARE LIVE (max_duty=0.85). Wheels can turn.
+01:02:54 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+01:02:54 INFO    pi_deploy: Exploration map ignores 14 blind beam(s) (chassis): [np.int32(3), np.int32(4), np.int32(5), np.int32(7), np.int32(8), np.int32(9), np.int32(33), np.int32(34), np.int32(35), np.int32(36), np.int32(53), np.int32(54), np.int32(55), np.int32(56)]
+01:02:54 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+01:02:54 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port, --motor. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+01:02:54 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
+01:02:54 INFO    pi_deploy: Reflex thread running at 30 Hz
+01:03:12 INFO    friday.vision: Object detection ON: ssd_mobilenet_v1_10.onnx at 320x320, ~1.0 Hz on 2 threads
+01:03:12 INFO    friday.tts: output volume: sink 0.95, Speaker 85%
+01:03:12 INFO    friday.tts: loading Piper voice en_US-hfc_female-medium.onnx (takes ~10s)
+01:03:17 INFO    friday.tts: Piper voice ready
+01:03:17 INFO    pi_deploy: World map restored from rl_map.npz: 159.9 m^2 known, 7055 sweeps, 18.5 m^2 previously driven
+01:03:21 INFO    pi_deploy: Relocalisation: score 0.303 (min 0.15), sharpness 3.55 (min 1.40), moved 0.02 m / 0 deg from the saved pose -- ACCEPTED
+01:03:21 INFO    pi_deploy: Frontier planner running every 2.0 s (heading bias only, capped at 55% of omega_max)
+01:03:21 INFO    pi_deploy: Control loop starting at 10 Hz. Ctrl+C to stop.
+01:03:21 INFO    pi_deploy: t=    5 | lidar 0.43 | tof 0.33 | vis 0.00 | pol(+0.26,-0.59) -> out(+0.10,-0.59) | tof_slow     | 38.6 ms
+01:03:23 INFO    pi_deploy: t=   10 | lidar 0.22 | tof 0.55 | vis 0.00 | pol(+0.17,-0.39) -> out(+0.17,-0.39) | ok           | 145.2 ms
+01:03:23 INFO    pi_deploy: t=   15 | lidar 0.37 | tof 0.63 | vis 0.00 | pol(+0.22,+0.80) -> out(+0.22,+0.80) | navigator    | 27.8 ms
+01:03:24 INFO    pi_deploy: t=   20 | lidar 0.38 | tof 0.33 | vis 0.00 | pol(+0.01,+1.36) -> out(+0.01,+1.36) | tof_slow     | 5.7 ms
+01:03:24 INFO    pi_deploy: t=   25 | lidar 0.43 | tof 0.53 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.15,+1.60) | navigator    | 33.7 ms
+01:03:24 WARNING pi_deploy: CAPABILITY MISMATCH: the policy asked to reverse at -0.069 m/s, below the 0.149 m/s stiction floor. Note v_min -0.150 m/s IS executable, so this is a PARTIAL mismatch -- only reverses slower than the floor are being substituted with a pivot (CAPABILITY_ADAPTER in telemetry; raw policy output preserved). The margin is 0.001 m/s, which is thin enough that measurement error in wheel_speed_max could close it. --no-reverse-fallback shows the raw behaviour.
+01:03:25 INFO    pi_deploy: t=   30 | lidar 0.55 | tof 0.41 | vis 0.00 | pol(-0.15,+0.96) -> out(-0.15,+0.96) | governor     | 24.5 ms
+01:03:25 INFO    pi_deploy: t=   35 | lidar 0.50 | tof 0.35 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 7.1 ms
+01:03:26 INFO    pi_deploy: t=   40 | lidar 0.48 | tof 0.76 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 9.0 ms
+01:03:26 INFO    pi_deploy: t=   45 | lidar 0.50 | tof 0.32 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 5.6 ms
+01:03:27 INFO    pi_deploy: t=   50 | lidar 0.53 | tof 0.77 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 5.8 ms
+01:03:27 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.6 metres ahead. I am changing my route.
+01:03:27 INFO    pi_deploy: t=   55 | lidar 0.54 | tof 0.81 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 9.1 ms
+01:03:28 INFO    pi_deploy: t=   60 | lidar 0.57 | tof 0.74 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 13.3 ms
+01:03:28 INFO    pi_deploy: t=   65 | lidar 0.60 | tof 0.92 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 65.4 ms
+01:03:29 INFO    pi_deploy: t=   70 | lidar 0.62 | tof 0.92 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 19.6 ms
+01:03:30 INFO    pi_deploy: t=   75 | lidar 0.67 | tof 0.93 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 25.6 ms
+01:03:30 INFO    pi_deploy: t=   80 | lidar 0.70 | tof 0.98 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 48.6 ms
+01:03:31 INFO    pi_deploy: t=   85 | lidar 0.72 | tof 1.02 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 18.3 ms
+01:03:31 INFO    pi_deploy: t=   90 | lidar 0.70 | tof 1.04 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 4.0 ms
+01:03:32 INFO    pi_deploy: t=   95 | lidar 0.70 | tof 0.91 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 4.0 ms
+01:03:32 INFO    pi_deploy: t=  100 | lidar 0.75 | tof 1.08 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 25.3 ms
+01:03:33 INFO    pi_deploy: t=  105 | lidar 0.54 | tof 1.18 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 10.2 ms
+01:03:33 INFO    pi_deploy: t=  110 | lidar 0.50 | tof 1.24 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 22.6 ms
+01:03:34 INFO    pi_deploy: t=  115 | lidar 0.48 | tof 1.24 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 6.4 ms
+01:03:34 INFO    pi_deploy: t=  120 | lidar 0.46 | tof 3.49 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 4.0 ms
+01:03:35 INFO    pi_deploy: t=  125 | lidar 0.46 | tof 4.00 | vis 0.00 | pol(-0.15,+1.59) -> out(-0.15,+0.48) | governor     | 5.0 ms
+01:03:35 INFO    pi_deploy: t=  130 | lidar 0.46 | tof 4.00 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.01,+0.00) | navigator    | 14.8 ms
+01:03:36 INFO    pi_deploy: t=  135 | lidar 0.53 | tof 0.70 | vis 0.00 | pol(-0.15,+1.22) -> out(-0.15,+1.20) | governor     | 4.9 ms
+01:03:36 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:03:36 INFO    pi_deploy: t=  140 | lidar 0.64 | tof 0.38 | vis 0.00 | pol(-0.15,+0.48) -> out(-0.15,+0.48) | governor     | 16.8 ms
+01:03:37 INFO    pi_deploy: t=  145 | lidar 0.53 | tof 0.40 | vis 0.00 | pol(-0.15,-0.40) -> out(-0.15,-0.40) | governor     | 103.6 ms
+01:03:37 INFO    pi_deploy: t=  150 | lidar 0.46 | tof 0.35 | vis 0.00 | pol(-0.15,-0.46) -> out(-0.15,-0.46) | governor     | 51.3 ms
+01:03:38 INFO    pi_deploy: t=  155 | lidar 0.45 | tof 0.38 | vis 0.00 | pol(-0.15,-0.32) -> out(-0.15,-0.32) | governor     | 25.0 ms
+01:03:39 INFO    pi_deploy: t=  160 | lidar 0.46 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 61.1 ms
+01:03:39 INFO    pi_deploy: t=  165 | lidar 0.60 | tof 0.34 | vis 0.00 | pol(+0.17,-1.23) -> out(+0.13,-1.23) | tof_slow     | 43.8 ms
+01:03:40 INFO    pi_deploy: t=  170 | lidar 0.62 | tof 4.00 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.08,+0.16) | navigator    | 17.5 ms
+01:03:40 INFO    pi_deploy: t=  175 | lidar 0.60 | tof 1.26 | vis 0.00 | pol(+0.31,+0.16) -> out(+0.16,+0.16) | navigator    | 7.6 ms
+01:03:41 INFO    pi_deploy: t=  180 | lidar 0.50 | tof 1.12 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.22,+0.16) | navigator    | 7.7 ms
+01:03:41 INFO    pi_deploy: t=  185 | lidar 0.50 | tof 0.91 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.21,-0.24) | navigator    | 22.2 ms
+01:03:42 INFO    pi_deploy: t=  190 | lidar 0.55 | tof 0.68 | vis 0.00 | pol(+0.31,+1.60) -> out(+0.31,+1.04) | navigator    | 8.6 ms
+01:03:42 INFO    pi_deploy: t=  195 | lidar 0.48 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 6.2 ms
+01:03:43 INFO    pi_deploy: t=  200 | lidar 0.41 | tof 4.00 | vis 0.00 | pol(+0.33,+0.16) -> out(+0.09,+0.16) | navigator    | 29.6 ms
+01:03:43 INFO    pi_deploy: t=  205 | lidar 0.38 | tof 0.33 | vis 0.00 | pol(+0.01,-1.31) -> out(+0.00,-1.31) | governor     | 10.6 ms
+01:03:44 INFO    pi_deploy: t=  210 | lidar 0.34 | tof 0.33 | vis 0.00 | pol(+0.01,-1.18) -> out(+0.00,-1.18) | governor     | 32.7 ms
+01:03:44 INFO    pi_deploy: t=  215 | lidar 0.25 | tof 0.38 | vis 0.00 | pol(+0.15,-1.28) -> out(+0.00,-1.60) | recovery     | 9.1 ms
+01:03:45 INFO    pi_deploy: t=  220 | lidar 0.22 | tof 0.92 | vis 0.00 | pol(+0.37,-0.80) -> out(+0.00,-0.80) | governor     | 11.4 ms
+01:03:45 INFO    pi_deploy: t=  225 | lidar 0.22 | tof 0.94 | vis 0.00 | pol(+0.38,-0.48) -> out(+0.24,-0.48) | navigator    | 12.1 ms
+01:03:45 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.7 metres ahead. I am changing my route.
+01:03:46 INFO    pi_deploy: t=  230 | lidar 0.33 | tof 0.77 | vis 0.00 | pol(+0.50,-1.44) -> out(+0.46,-0.90) | navigator    | 39.7 ms
+01:03:46 INFO    pi_deploy: t=  235 | lidar 0.58 | tof 0.36 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 56.8 ms
+01:03:47 INFO    pi_deploy: t=  240 | lidar 0.32 | tof 0.35 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 45.5 ms
+01:03:47 INFO    pi_deploy: t=  245 | lidar 0.28 | tof 1.39 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.23) | navigator    | 22.9 ms
+01:03:48 INFO    pi_deploy: t=  250 | lidar 0.55 | tof 1.44 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.50,+0.16) | navigator    | 110.0 ms
+01:03:49 INFO    pi_deploy: t=  255 | lidar 0.49 | tof 1.14 | vis 0.00 | pol(+0.37,+0.16) -> out(+0.16,+0.16) | navigator    | 12.5 ms
+01:03:49 INFO    pi_deploy: t=  260 | lidar 0.44 | tof 0.34 | vis 0.00 | pol(+0.17,-0.97) -> out(+0.14,-0.24) | tof_slow     | 5.9 ms
+01:03:50 INFO    pi_deploy: t=  265 | lidar 0.40 | tof 0.33 | vis 0.00 | pol(+0.09,-0.97) -> out(+0.09,-0.62) | tof_slow     | 15.3 ms
+01:03:50 INFO    pi_deploy: t=  270 | lidar 0.50 | tof 0.43 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,+0.00) | governor     | 6.5 ms
+01:03:51 INFO    pi_deploy: t=  275 | lidar 0.57 | tof 4.00 | vis 0.00 | pol(+0.20,-1.60) -> out(+0.00,-1.60) | governor     | 13.7 ms
+01:03:51 INFO    pi_deploy: t=  280 | lidar 0.43 | tof 0.25 | vis 0.00 | pol(+0.09,-0.55) -> out(+0.02,-0.55) | planner      | 42.9 ms
+01:03:52 INFO    pi_deploy: t=  285 | lidar 0.33 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 12.2 ms
+01:03:52 INFO    pi_deploy: t=  290 | lidar 0.26 | tof 4.00 | vis 0.00 | pol(+0.18,-0.32) -> out(+0.08,-0.40) | navigator    | 12.6 ms
+01:03:53 INFO    pi_deploy: t=  295 | lidar 0.22 | tof 0.28 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.01,-1.60) | tof_slow     | 104.9 ms
+01:03:53 INFO    pi_deploy: t=  300 | lidar 0.25 | tof 0.36 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,-1.58) | governor     | 8.9 ms
+01:03:54 INFO    pi_deploy: t=  305 | lidar 0.40 | tof 1.14 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.22,-0.16) | navigator    | 23.2 ms
+01:03:54 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.7 metres ahead. I am changing my route.
+01:03:54 INFO    pi_deploy: t=  310 | lidar 0.55 | tof 0.77 | vis 0.00 | pol(+0.20,-0.32) -> out(+0.20,-0.32) | navigator    | 18.3 ms
+01:03:55 INFO    pi_deploy: t=  315 | lidar 0.68 | tof 0.73 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.96) | reverse_lifted | 54.1 ms
+01:03:55 INFO    pi_deploy: t=  320 | lidar 0.69 | tof 0.56 | vis 0.00 | pol(-0.15,-0.97) -> out(-0.15,-0.97) | reverse_lifted | 4.1 ms
+01:03:56 INFO    pi_deploy: t=  325 | lidar 0.63 | tof 0.39 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.96) | ok           | 32.7 ms
+01:03:56 INFO    pi_deploy: t=  330 | lidar 0.47 | tof 0.68 | vis 0.00 | pol(-0.15,+0.19) -> out(-0.15,-0.15) | planner      | 8.6 ms
+01:03:57 INFO    pi_deploy: t=  335 | lidar 0.35 | tof 0.77 | vis 0.00 | pol(+0.50,+0.96) -> out(+0.13,+0.96) | navigator    | 38.7 ms
+01:03:58 INFO    pi_deploy: t=  340 | lidar 0.30 | tof 1.05 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.22,+0.16) | navigator    | 44.5 ms
+01:03:58 INFO    pi_deploy: t=  345 | lidar 0.49 | tof 0.87 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.50,+0.16) | navigator    | 62.4 ms
+01:03:59 INFO    pi_deploy: t=  350 | lidar 0.71 | tof 0.61 | vis 0.00 | pol(+0.50,+1.12) -> out(+0.00,+1.12) | governor     | 18.3 ms
+01:03:59 INFO    pi_deploy: t=  355 | lidar 0.70 | tof 0.34 | vis 0.00 | pol(+0.17,+0.45) -> out(+0.14,+0.45) | planner      | 12.2 ms
+01:04:00 INFO    pi_deploy: t=  360 | lidar 0.71 | tof 0.40 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-0.80) | navigator    | 9.6 ms
+01:04:00 INFO    pi_deploy: t=  365 | lidar 0.59 | tof 0.32 | vis 0.00 | pol(+0.17,+0.37) -> out(+0.08,+0.37) | planner      | 9.3 ms
+01:04:01 INFO    pi_deploy: t=  370 | lidar 0.55 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 21.4 ms
+01:04:01 INFO    pi_deploy: t=  375 | lidar 0.76 | tof 0.39 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 9.3 ms
+01:04:02 INFO    pi_deploy: t=  380 | lidar 0.76 | tof 0.40 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.15,-0.40) | navigator    | 13.8 ms
+01:04:02 INFO    pi_deploy: t=  385 | lidar 0.66 | tof 0.31 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.09,+1.35) | tof_slow     | 13.7 ms
+01:04:03 INFO    pi_deploy: t=  390 | lidar 0.69 | tof 0.40 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 14.8 ms
+01:04:03 INFO    pi_deploy: t=  395 | lidar 0.58 | tof 0.35 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 33.9 ms
+01:04:03 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:04:04 INFO    pi_deploy: t=  400 | lidar 0.50 | tof 0.43 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,+0.00) | governor     | 32.7 ms
+01:04:05 INFO    pi_deploy: t=  405 | lidar 0.61 | tof 0.33 | vis 0.00 | pol(+0.01,+1.35) -> out(+0.00,+1.35) | governor     | 49.1 ms
+01:04:06 INFO    pi_deploy: t=  410 | lidar 0.42 | tof 1.39 | vis 0.00 | pol(+0.20,-0.32) -> out(+0.20,-0.32) | navigator    | 72.4 ms
+01:04:06 INFO    pi_deploy: t=  415 | lidar 0.46 | tof 1.32 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.00,+0.16) | governor     | 47.9 ms
+01:04:07 INFO    pi_deploy: t=  420 | lidar 0.40 | tof 0.88 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.08,-0.16) | navigator    | 51.6 ms
+01:04:08 INFO    pi_deploy: t=  425 | lidar 0.43 | tof 0.80 | vis 0.00 | pol(-0.15,+0.64) -> out(-0.15,+0.64) | planner      | 85.9 ms
+01:04:08 INFO    pi_deploy: t=  430 | lidar 0.35 | tof 0.81 | vis 0.00 | pol(-0.15,-0.52) -> out(-0.15,-0.52) | governor     | 31.2 ms
+01:04:08 INFO    pi_deploy: t=  435 | lidar 0.33 | tof 0.92 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.24,-0.48) | navigator    | 7.6 ms
+01:04:09 INFO    pi_deploy: t=  440 | lidar 0.42 | tof 1.15 | vis 0.00 | pol(+0.33,+0.32) -> out(+0.28,-0.40) | navigator    | 7.7 ms
+01:04:09 INFO    pi_deploy: t=  445 | lidar 0.49 | tof 3.21 | vis 0.00 | pol(+0.33,+0.64) -> out(+0.00,+0.64) | governor     | 29.8 ms
+01:04:10 INFO    pi_deploy: t=  450 | lidar 0.33 | tof 2.55 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.08,+0.16) | navigator    | 28.1 ms
+01:04:11 INFO    pi_deploy: t=  455 | lidar 0.34 | tof 0.94 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.22,+0.16) | navigator    | 26.4 ms
+01:04:11 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:04:11 INFO    pi_deploy: t=  460 | lidar 0.43 | tof 0.34 | vis 0.00 | pol(+0.17,+1.36) -> out(+0.08,+0.41) | governor     | 25.9 ms
+01:04:12 INFO    pi_deploy: t=  465 | lidar 0.48 | tof 0.42 | vis 0.00 | pol(+0.26,+1.16) -> out(+0.08,+1.16) | planner      | 41.0 ms
+01:04:12 INFO    pi_deploy: t=  470 | lidar 0.22 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.09,+0.35) | navigator    | 45.5 ms
+01:04:13 INFO    pi_deploy: t=  475 | lidar 0.46 | tof 0.60 | vis 0.00 | pol(+0.20,-1.60) -> out(+0.00,-1.60) | governor     | 42.0 ms
+01:04:13 INFO    pi_deploy: t=  480 | lidar 0.22 | tof 0.43 | vis 0.00 | pol(+0.01,+1.00) -> out(+0.00,+0.00) | governor     | 25.0 ms
+01:04:14 INFO    pi_deploy: t=  485 | lidar 0.43 | tof 0.48 | vis 0.00 | pol(+0.20,-1.60) -> out(+0.00,+0.00) | governor     | 110.1 ms
+01:04:15 INFO    pi_deploy: t=  490 | lidar 0.24 | tof 2.52 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 133.2 ms
+01:04:15 INFO    pi_deploy: t=  495 | lidar 0.38 | tof 2.43 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.22,-0.16) | navigator    | 15.8 ms
+01:04:16 INFO    pi_deploy: t=  500 | lidar 0.57 | tof 2.04 | vis 0.00 | pol(+0.22,-0.32) -> out(+0.22,-0.32) | navigator    | 7.7 ms
+01:04:16 INFO    pi_deploy: t=  505 | lidar 0.66 | tof 1.00 | vis 0.00 | pol(+0.30,-1.60) -> out(+0.08,-1.60) | navigator    | 11.7 ms
+01:04:17 INFO    pi_deploy: t=  510 | lidar 0.61 | tof 0.94 | vis 0.00 | pol(+0.20,-0.16) -> out(+0.20,-0.16) | navigator    | 27.8 ms
+01:04:17 INFO    pi_deploy: t=  515 | lidar 0.67 | tof 0.64 | vis 0.00 | pol(+0.20,+1.60) -> out(+0.14,-0.80) | navigator    | 9.2 ms
+01:04:18 INFO    pi_deploy: t=  520 | lidar 0.69 | tof 0.45 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.24) | navigator    | 100.6 ms
+01:04:18 INFO    pi_deploy: t=  525 | lidar 0.52 | tof 4.00 | vis 0.00 | pol(-0.15,+0.97) -> out(-0.15,+0.00) | reverse_lifted | 10.2 ms
+01:04:19 INFO    pi_deploy: t=  530 | lidar 0.53 | tof 4.00 | vis 0.00 | pol(-0.15,+0.96) -> out(-0.15,+0.96) | ok           | 7.0 ms
+01:04:19 INFO    pi_deploy: t=  535 | lidar 0.66 | tof 4.00 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 4.0 ms
+01:04:20 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.5 metres ahead. I am changing my route.
+01:04:20 INFO    pi_deploy: t=  540 | lidar 0.63 | tof 0.52 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 8.4 ms
+01:04:20 INFO    pi_deploy: t=  545 | lidar 0.31 | tof 0.65 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 28.7 ms
+01:04:21 INFO    pi_deploy: t=  550 | lidar 0.30 | tof 0.73 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 15.5 ms
+01:04:22 INFO    pi_deploy: t=  555 | lidar 0.27 | tof 0.74 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 25.8 ms
+01:04:22 INFO    pi_deploy: t=  560 | lidar 0.31 | tof 0.32 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 82.0 ms
+01:04:23 INFO    pi_deploy: t=  565 | lidar 0.32 | tof 0.74 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 14.6 ms
+01:04:23 INFO    pi_deploy: t=  570 | lidar 0.33 | tof 0.74 | vis 0.00 | pol(-0.15,+0.02) -> out(+0.00,+0.00) | governor     | 4.1 ms
+01:04:24 INFO    pi_deploy: t=  575 | lidar 0.31 | tof 0.79 | vis 0.00 | pol(-0.15,+0.02) -> out(+0.00,+0.02) | governor     | 22.1 ms
+01:04:24 INFO    pi_deploy: t=  580 | lidar 0.31 | tof 0.33 | vis 0.00 | pol(-0.15,+0.17) -> out(+0.00,+0.17) | governor     | 6.2 ms
+01:04:25 INFO    pi_deploy: t=  585 | lidar 0.31 | tof 0.75 | vis 0.00 | pol(-0.15,-0.07) -> out(+0.00,+0.00) | governor     | 14.6 ms
+01:04:25 INFO    pi_deploy: t=  590 | lidar 0.32 | tof 0.73 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,+0.00) | recovery     | 12.0 ms
+01:04:26 INFO    pi_deploy: t=  595 | lidar 0.27 | tof 0.74 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,+1.60) | recovery     | 25.8 ms
+01:04:26 INFO    pi_deploy: t=  600 | lidar 0.32 | tof 1.67 | vis 0.00 | pol(-0.15,-0.27) -> out(+0.00,-0.27) | governor     | 23.4 ms
+01:04:27 INFO    pi_deploy: t=  605 | lidar 0.50 | tof 1.72 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.94) | ok           | 7.4 ms
+01:04:27 INFO    pi_deploy: t=  610 | lidar 0.60 | tof 1.71 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.96) | reverse_lifted | 7.0 ms
+01:04:28 INFO    pi_deploy: t=  615 | lidar 0.66 | tof 1.71 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.96) | reverse_lifted | 7.1 ms
+01:04:28 INFO    pi_deploy: t=  620 | lidar 0.66 | tof 1.70 | vis 0.00 | pol(-0.15,-0.79) -> out(-0.15,-0.79) | planner      | 11.7 ms
+01:04:29 INFO    friday.voice: SAY [new_frontier] I found an unexplored area 1 metre to the north. I will investigate it.
+01:04:29 INFO    pi_deploy: t=  625 | lidar 0.65 | tof 1.71 | vis 0.00 | pol(-0.15,-0.58) -> out(-0.15,-0.58) | planner      | 28.9 ms
+01:04:29 INFO    pi_deploy: t=  630 | lidar 0.66 | tof 1.71 | vis 0.00 | pol(-0.15,-0.42) -> out(-0.15,-0.42) | governor     | 56.9 ms
+01:04:30 INFO    pi_deploy: t=  635 | lidar 0.60 | tof 1.70 | vis 0.00 | pol(-0.15,-0.37) -> out(-0.15,-0.37) | governor     | 40.2 ms
+01:04:30 INFO    pi_deploy: t=  640 | lidar 0.49 | tof 1.83 | vis 0.00 | pol(-0.15,-0.34) -> out(-0.15,-0.34) | governor     | 44.7 ms
+01:04:31 INFO    pi_deploy: t=  645 | lidar 0.38 | tof 1.22 | vis 0.00 | pol(-0.15,-0.30) -> out(-0.15,-0.30) | governor     | 26.3 ms
+01:04:31 INFO    pi_deploy: t=  650 | lidar 0.25 | tof 2.13 | vis 0.00 | pol(-0.15,-0.15) -> out(+0.00,-0.15) | governor     | 51.5 ms
+01:04:32 INFO    pi_deploy: t=  655 | lidar 0.27 | tof 2.23 | vis 0.00 | pol(-0.15,-0.16) -> out(+0.00,-0.16) | governor     | 3.8 ms
+01:04:32 INFO    pi_deploy: t=  660 | lidar 0.28 | tof 2.17 | vis 0.00 | pol(-0.15,-0.09) -> out(+0.00,-0.09) | governor     | 6.2 ms
+01:04:33 INFO    pi_deploy: t=  665 | lidar 0.28 | tof 1.47 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 16.8 ms
+01:04:33 INFO    pi_deploy: t=  670 | lidar 0.28 | tof 0.99 | vis 0.00 | pol(+0.30,+0.80) -> out(+0.09,-0.32) | navigator    | 22.1 ms
+01:04:34 INFO    pi_deploy: t=  675 | lidar 0.38 | tof 1.00 | vis 0.00 | pol(+0.30,+0.80) -> out(+0.30,+0.80) | navigator    | 14.0 ms
+01:04:34 INFO    pi_deploy: t=  680 | lidar 0.54 | tof 0.89 | vis 0.00 | pol(+0.30,+0.96) -> out(+0.02,+0.96) | governor     | 21.6 ms
+01:04:35 INFO    pi_deploy: t=  685 | lidar 0.63 | tof 1.60 | vis 0.00 | pol(+0.20,+0.32) -> out(+0.20,+0.40) | navigator    | 10.6 ms
+01:04:35 INFO    pi_deploy: t=  690 | lidar 0.80 | tof 0.75 | vis 0.00 | pol(+0.30,+0.64) -> out(+0.30,+0.64) | navigator    | 14.2 ms
+01:04:36 INFO    pi_deploy: t=  695 | lidar 0.70 | tof 0.33 | vis 0.00 | pol(+0.50,-1.57) -> out(+0.13,+0.80) | tof_slow     | 16.7 ms
+01:04:36 INFO    pi_deploy: t=  700 | lidar 0.68 | tof 0.40 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.20) | navigator    | 19.9 ms
+01:04:37 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.2 metres ahead. I am changing my route.
+01:04:37 INFO    pi_deploy: t=  705 | lidar 0.57 | tof 0.31 | vis 0.00 | pol(+0.50,+0.06) -> out(+0.09,+1.14) | tof_slow     | 162.8 ms
+01:04:37 INFO    pi_deploy: t=  710 | lidar 0.50 | tof 0.36 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.08,-0.32) | navigator    | 31.6 ms
+01:04:38 INFO    pi_deploy: t=  715 | lidar 0.45 | tof 0.31 | vis 0.00 | pol(+0.50,+0.06) -> out(+0.09,+0.06) | governor     | 109.0 ms
+01:04:39 INFO    pi_deploy: t=  720 | lidar 0.38 | tof 0.24 | vis 0.00 | pol(+0.50,-0.50) -> out(+0.00,-0.50) | governor     | 13.1 ms
+01:04:39 INFO    pi_deploy: t=  725 | lidar 0.34 | tof 0.22 | vis 0.00 | pol(+0.50,-0.37) -> out(+0.00,-0.37) | REFLEX_STOP  | 66.3 ms
+01:04:40 INFO    pi_deploy: t=  730 | lidar 0.34 | tof 0.09 | vis 0.00 | pol(+0.50,-0.22) -> out(+0.00,+0.00) | REFLEX_STOP  | 60.4 ms
+01:04:40 INFO    pi_deploy: t=  735 | lidar 0.35 | tof 0.09 | vis 0.00 | pol(+0.50,-0.23) -> out(+0.00,+0.00) | REFLEX_STOP  | 20.7 ms
+01:04:41 INFO    pi_deploy: t=  740 | lidar 0.38 | tof 0.09 | vis 0.00 | pol(+0.50,-0.23) -> out(+0.00,+0.00) | REFLEX_STOP  | 75.5 ms
+01:04:41 INFO    pi_deploy: t=  745 | lidar 0.33 | tof 0.09 | vis 0.00 | pol(+0.42,-1.19) -> out(+0.00,+0.00) | REFLEX_STOP  | 14.1 ms
+01:04:42 INFO    pi_deploy: t=  750 | lidar 0.37 | tof 0.09 | vis 0.00 | pol(+0.42,-1.19) -> out(+0.00,+0.00) | REFLEX_STOP  | 8.9 ms
+01:04:42 INFO    pi_deploy: t=  755 | lidar 0.36 | tof 0.09 | vis 0.00 | pol(+0.42,-1.20) -> out(+0.00,+0.00) | REFLEX_STOP  | 8.8 ms
+01:04:43 INFO    pi_deploy: t=  760 | lidar 0.34 | tof 0.09 | vis 0.00 | pol(+0.42,-1.19) -> out(+0.00,+0.00) | REFLEX_STOP  | 5.6 ms
+01:04:44 INFO    pi_deploy: t=  765 | lidar 0.37 | tof 0.09 | vis 0.00 | pol(+0.34,-1.20) -> out(+0.00,+0.00) | REFLEX_STOP  | 9.1 ms
+01:04:44 INFO    pi_deploy: t=  770 | lidar 0.37 | tof 0.09 | vis 0.00 | pol(+0.26,-1.20) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.5 ms
+01:04:45 INFO    pi_deploy: t=  775 | lidar 0.34 | tof 0.09 | vis 0.00 | pol(+0.01,-1.21) -> out(+0.00,+0.00) | REFLEX_STOP  | 13.5 ms
+01:04:45 INFO    pi_deploy: t=  780 | lidar 0.35 | tof 0.09 | vis 0.00 | pol(+0.01,-1.22) -> out(+0.00,+0.00) | REFLEX_STOP  | 5.7 ms
+01:04:45 INFO    pi_deploy: t=  785 | lidar 0.34 | tof 0.09 | vis 0.00 | pol(+0.01,-0.61) -> out(+0.00,+0.00) | REFLEX_STOP  | 9.9 ms
+01:04:46 INFO    pi_deploy: t=  790 | lidar 0.37 | tof 0.09 | vis 0.00 | pol(+0.50,-1.21) -> out(+0.00,+0.00) | REFLEX_STOP  | 11.0 ms
+01:04:46 INFO    pi_deploy: t=  795 | lidar 0.37 | tof 0.09 | vis 0.00 | pol(+0.50,-0.63) -> out(+0.00,+0.00) | REFLEX_STOP  | 5.7 ms
+01:04:47 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:04:47 INFO    pi_deploy: t=  800 | lidar 0.38 | tof 0.09 | vis 0.00 | pol(+0.50,-1.22) -> out(-0.15,+0.00) | REFLEX_STOP  | 32.7 ms
+01:04:48 INFO    pi_deploy: t=  805 | lidar 0.38 | tof 0.11 | vis 0.00 | pol(+0.50,-0.66) -> out(-0.15,+0.00) | REFLEX_STOP  | 25.1 ms
+01:04:48 INFO    pi_deploy: t=  810 | lidar 0.42 | tof 0.12 | vis 0.00 | pol(+0.42,-1.03) -> out(-0.15,+0.00) | REFLEX_STOP  | 63.1 ms
+01:04:49 INFO    pi_deploy: t=  815 | lidar 0.41 | tof 0.14 | vis 0.00 | pol(+0.42,-0.67) -> out(+0.00,-0.67) | REFLEX_STOP  | 55.2 ms
+01:04:49 INFO    pi_deploy: t=  820 | lidar 0.39 | tof 0.14 | vis 0.00 | pol(+0.34,-0.68) -> out(+0.00,-0.68) | REFLEX_STOP  | 33.9 ms
+01:04:50 INFO    pi_deploy: t=  825 | lidar 0.40 | tof 0.12 | vis 0.00 | pol(+0.26,-1.56) -> out(+0.00,-1.56) | REFLEX_STOP  | 44.1 ms
+01:04:50 INFO    pi_deploy: t=  830 | lidar 0.40 | tof 0.12 | vis 0.00 | pol(+0.34,-1.57) -> out(+0.00,-1.57) | REFLEX_STOP  | 17.6 ms
+01:04:51 INFO    pi_deploy: t=  835 | lidar 0.39 | tof 0.12 | vis 0.00 | pol(+0.01,-1.57) -> out(+0.00,-1.57) | REFLEX_STOP  | 10.3 ms
+01:04:51 INFO    pi_deploy: t=  840 | lidar 0.38 | tof 0.11 | vis 0.00 | pol(+0.01,-1.31) -> out(+0.00,+0.00) | REFLEX_STOP  | 69.1 ms
+01:04:52 INFO    pi_deploy: t=  845 | lidar 0.38 | tof 0.27 | vis 0.00 | pol(+0.50,-1.57) -> out(-0.08,-0.38) | recovery     | 23.0 ms
+01:04:52 INFO    pi_deploy: t=  850 | lidar 0.40 | tof 0.28 | vis 0.00 | pol(+0.50,-0.07) -> out(-0.15,-0.80) | recovery     | 17.7 ms
+01:04:53 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:04:53 INFO    pi_deploy: t=  855 | lidar 0.41 | tof 0.16 | vis 0.00 | pol(+0.50,-0.94) -> out(-0.15,-0.80) | REFLEX_STOP  | 17.5 ms
+01:04:54 INFO    pi_deploy: t=  860 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,-0.82) -> out(-0.15,-0.80) | REFLEX_STOP  | 128.6 ms
+01:04:54 INFO    pi_deploy: t=  865 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,-0.62) -> out(+0.00,-0.62) | REFLEX_STOP  | 58.4 ms
+01:04:55 INFO    pi_deploy: t=  870 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,-0.34) -> out(+0.00,-0.34) | REFLEX_STOP  | 52.9 ms
+01:04:56 INFO    pi_deploy: t=  875 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,-0.09) -> out(+0.00,-0.09) | REFLEX_STOP  | 61.2 ms
+01:04:56 INFO    pi_deploy: t=  880 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,-0.08) -> out(+0.00,-0.08) | REFLEX_STOP  | 8.5 ms
+01:04:57 INFO    pi_deploy: t=  885 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,+0.05) -> out(+0.00,+0.05) | REFLEX_STOP  | 25.6 ms
+01:04:57 INFO    pi_deploy: t=  890 | lidar 0.40 | tof 0.15 | vis 0.00 | pol(+0.50,+0.04) -> out(+0.00,+0.04) | REFLEX_STOP  | 5.8 ms
+01:04:57 INFO    pi_deploy: t=  895 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,+0.06) -> out(-0.15,-0.80) | REFLEX_STOP  | 5.8 ms
+01:04:58 INFO    pi_deploy: t=  900 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,-0.06) -> out(-0.15,-0.80) | REFLEX_STOP  | 7.9 ms
+01:04:58 INFO    pi_deploy: t=  905 | lidar 0.41 | tof 0.14 | vis 0.00 | pol(+0.50,-0.07) -> out(-0.15,-0.80) | REFLEX_STOP  | 26.4 ms
+01:04:59 INFO    pi_deploy: t=  910 | lidar 0.41 | tof 0.14 | vis 0.00 | pol(+0.50,-0.06) -> out(-0.15,-0.80) | REFLEX_STOP  | 8.7 ms
+01:04:59 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:04:59 INFO    pi_deploy: t=  915 | lidar 0.42 | tof 0.29 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | governor     | 17.6 ms
+01:05:00 INFO    pi_deploy: t=  920 | lidar 0.42 | tof 0.14 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 22.5 ms
+01:05:00 INFO    pi_deploy: t=  925 | lidar 0.42 | tof 0.15 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.00,-0.06) | REFLEX_STOP  | 23.6 ms
+01:05:01 INFO    pi_deploy: t=  930 | lidar 0.43 | tof 0.16 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 47.7 ms
+01:05:02 INFO    pi_deploy: t=  935 | lidar 0.42 | tof 0.15 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.00,-0.06) | REFLEX_STOP  | 28.6 ms
+01:05:02 INFO    pi_deploy: t=  940 | lidar 0.43 | tof 0.15 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 15.9 ms
+01:05:03 INFO    pi_deploy: t=  945 | lidar 0.43 | tof 0.15 | vis 0.00 | pol(+0.50,-0.07) -> out(-0.15,-0.80) | REFLEX_STOP  | 18.6 ms
+01:05:03 INFO    pi_deploy: t=  950 | lidar 0.42 | tof 0.15 | vis 0.00 | pol(+0.50,+0.82) -> out(-0.15,-0.80) | REFLEX_STOP  | 28.3 ms
+01:05:04 INFO    pi_deploy: t=  955 | lidar 0.43 | tof 0.16 | vis 0.00 | pol(+0.42,-1.59) -> out(-0.15,-0.80) | REFLEX_STOP  | 5.9 ms
+01:05:04 INFO    pi_deploy: t=  960 | lidar 0.43 | tof 0.15 | vis 0.00 | pol(+0.42,-1.59) -> out(-0.15,-0.80) | REFLEX_STOP  | 5.8 ms
+01:05:04 INFO    pi_deploy: t=  965 | lidar 0.43 | tof 0.15 | vis 0.00 | pol(+0.42,-1.55) -> out(-0.15,-0.80) | REFLEX_STOP  | 8.7 ms
+01:05:05 INFO    pi_deploy: t=  970 | lidar 0.44 | tof 0.15 | vis 0.00 | pol(+0.34,-1.53) -> out(+0.00,-1.53) | REFLEX_STOP  | 14.9 ms
+01:05:05 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:05:06 INFO    pi_deploy: t=  975 | lidar 0.43 | tof 0.16 | vis 0.00 | pol(+0.50,+0.07) -> out(+0.00,+0.07) | REFLEX_STOP  | 53.4 ms
+01:05:06 INFO    pi_deploy: t=  980 | lidar 0.42 | tof 0.15 | vis 0.00 | pol(+0.50,+0.05) -> out(+0.00,+0.05) | REFLEX_STOP  | 24.4 ms
+01:05:07 INFO    pi_deploy: t=  985 | lidar 0.41 | tof 0.14 | vis 0.00 | pol(+0.50,+0.05) -> out(+0.00,+0.05) | REFLEX_STOP  | 33.1 ms
+01:05:07 INFO    pi_deploy: t=  990 | lidar 0.42 | tof 0.14 | vis 0.00 | pol(+0.50,+0.06) -> out(+0.00,+0.06) | REFLEX_STOP  | 32.0 ms
+01:05:08 INFO    pi_deploy: t=  995 | lidar 0.42 | tof 0.23 | vis 0.00 | pol(+0.50,-0.05) -> out(+0.00,-0.05) | REFLEX_STOP  | 58.6 ms
+01:05:08 INFO    pi_deploy: t= 1000 | lidar 0.42 | tof 0.24 | vis 0.00 | pol(+0.50,-0.05) -> out(-0.08,-0.40) | recovery     | 9.2 ms
+01:05:08 INFO    pi_deploy: t= 1005 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,-0.06) -> out(-0.15,-0.80) | REFLEX_STOP  | 11.8 ms
+01:05:09 INFO    pi_deploy: t= 1010 | lidar 0.41 | tof 0.14 | vis 0.00 | pol(+0.50,+0.02) -> out(-0.15,-0.80) | REFLEX_STOP  | 5.7 ms
+01:05:10 INFO    pi_deploy: t= 1015 | lidar 0.41 | tof 0.23 | vis 0.00 | pol(+0.50,+0.31) -> out(-0.15,-0.80) | REFLEX_STOP  | 8.8 ms
+01:05:10 INFO    pi_deploy: t= 1020 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,+0.37) -> out(+0.00,+0.37) | REFLEX_STOP  | 6.0 ms
+01:05:10 INFO    pi_deploy: t= 1025 | lidar 0.41 | tof 0.21 | vis 0.00 | pol(+0.50,+0.23) -> out(+0.00,+0.23) | REFLEX_STOP  | 20.8 ms
+01:05:11 INFO    pi_deploy: t= 1030 | lidar 0.41 | tof 0.15 | vis 0.00 | pol(+0.50,+0.10) -> out(+0.00,+0.10) | REFLEX_STOP  | 7.7 ms
+01:05:11 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:05:11 INFO    pi_deploy: t= 1035 | lidar 0.40 | tof 0.14 | vis 0.00 | pol(+0.50,-0.95) -> out(+0.00,-0.95) | REFLEX_STOP  | 15.5 ms
+01:05:12 INFO    pi_deploy: t= 1040 | lidar 0.40 | tof 0.13 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.00,-0.06) | REFLEX_STOP  | 20.0 ms
+01:05:13 INFO    pi_deploy: t= 1045 | lidar 0.41 | tof 0.13 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 29.9 ms
+01:05:13 INFO    pi_deploy: t= 1050 | lidar 0.40 | tof 0.14 | vis 0.00 | pol(+0.50,-0.07) -> out(-0.15,-0.80) | REFLEX_STOP  | 16.3 ms
+01:05:14 INFO    pi_deploy: t= 1055 | lidar 0.40 | tof 0.13 | vis 0.00 | pol(+0.50,-0.06) -> out(-0.15,-0.80) | REFLEX_STOP  | 26.7 ms
+01:05:14 INFO    pi_deploy: t= 1060 | lidar 0.40 | tof 0.13 | vis 0.00 | pol(+0.50,-0.06) -> out(-0.15,-0.80) | REFLEX_STOP  | 23.5 ms
+01:05:15 INFO    pi_deploy: t= 1065 | lidar 0.40 | tof 0.13 | vis 0.00 | pol(+0.50,+0.05) -> out(-0.15,-0.80) | REFLEX_STOP  | 32.0 ms
+01:05:15 INFO    pi_deploy: t= 1070 | lidar 0.41 | tof 0.13 | vis 0.00 | pol(+0.42,-1.58) -> out(-0.15,-0.80) | REFLEX_STOP  | 29.2 ms
+01:05:16 INFO    pi_deploy: t= 1075 | lidar 0.41 | tof 0.14 | vis 0.00 | pol(+0.34,-0.92) -> out(+0.00,-0.92) | REFLEX_STOP  | 10.4 ms
+01:05:16 INFO    pi_deploy: t= 1080 | lidar 0.41 | tof 0.14 | vis 0.00 | pol(+0.50,+0.81) -> out(+0.00,+0.81) | REFLEX_STOP  | 24.7 ms
+01:05:17 INFO    pi_deploy: t= 1085 | lidar 0.40 | tof 0.14 | vis 0.00 | pol(+0.50,+0.39) -> out(+0.00,+0.39) | REFLEX_STOP  | 17.5 ms
+01:05:17 INFO    pi_deploy: t= 1090 | lidar 0.40 | tof 0.13 | vis 0.00 | pol(+0.50,+0.26) -> out(+0.00,+0.26) | REFLEX_STOP  | 24.8 ms
+01:05:17 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:05:18 INFO    pi_deploy: t= 1095 | lidar 0.40 | tof 0.13 | vis 0.00 | pol(+0.50,+0.13) -> out(+0.00,+0.13) | REFLEX_STOP  | 18.8 ms
+01:05:18 INFO    pi_deploy: t= 1100 | lidar 0.39 | tof 0.12 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.00,-0.48) | REFLEX_STOP  | 23.5 ms
+01:05:19 INFO    pi_deploy: t= 1105 | lidar 0.39 | tof 0.14 | vis 0.00 | pol(+0.50,+0.05) -> out(-0.15,-0.80) | REFLEX_STOP  | 106.6 ms
+01:05:19 INFO    pi_deploy: t= 1110 | lidar 0.47 | tof 0.16 | vis 0.00 | pol(+0.50,+0.06) -> out(-0.15,-0.80) | REFLEX_STOP  | 37.7 ms
+01:05:20 INFO    pi_deploy: t= 1115 | lidar 0.23 | tof 0.16 | vis 0.00 | pol(+0.50,-0.05) -> out(-0.15,-0.80) | REFLEX_STOP  | 53.3 ms
+01:05:20 INFO    pi_deploy: t= 1120 | lidar 0.48 | tof 0.16 | vis 0.00 | pol(+0.50,+0.05) -> out(-0.15,-0.80) | REFLEX_STOP  | 132.6 ms
+01:05:21 INFO    pi_deploy: t= 1125 | lidar 0.49 | tof 0.16 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.00,-0.06) | REFLEX_STOP  | 27.2 ms
+01:05:21 INFO    pi_deploy: t= 1130 | lidar 0.49 | tof 0.16 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 11.3 ms
+01:05:22 INFO    pi_deploy: t= 1135 | lidar 0.49 | tof 0.16 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.00,-0.06) | REFLEX_STOP  | 5.8 ms
+01:05:22 INFO    pi_deploy: t= 1140 | lidar 0.49 | tof 0.17 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.00,-0.06) | REFLEX_STOP  | 8.7 ms
+01:05:23 INFO    pi_deploy: t= 1145 | lidar 0.49 | tof 0.16 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 15.3 ms
+01:05:23 INFO    pi_deploy: t= 1150 | lidar 0.49 | tof 0.16 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.00,-0.06) | REFLEX_STOP  | 5.4 ms
+01:05:24 INFO    pi_deploy: t= 1155 | lidar 0.49 | tof 0.16 | vis 0.00 | pol(+0.50,-0.06) -> out(-0.15,-0.80) | REFLEX_STOP  | 47.1 ms
+01:05:24 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:05:24 INFO    pi_deploy: t= 1160 | lidar 0.45 | tof 0.16 | vis 0.00 | pol(+0.50,-0.06) -> out(-0.15,-0.80) | REFLEX_STOP  | 18.1 ms
+01:05:25 INFO    pi_deploy: t= 1165 | lidar 0.33 | tof 0.16 | vis 0.00 | pol(+0.50,-0.58) -> out(-0.15,-0.80) | REFLEX_STOP  | 28.4 ms
+01:05:25 INFO    pi_deploy: t= 1170 | lidar 0.27 | tof 4.00 | vis 0.00 | pol(+0.42,-1.59) -> out(-0.15,-0.42) | recovery     | 8.8 ms
+01:05:26 INFO    pi_deploy: t= 1175 | lidar 0.23 | tof 0.04 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 21.7 ms
+01:05:27 INFO    pi_deploy: t= 1180 | lidar 0.24 | tof 0.04 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.2 ms
+01:05:27 INFO    pi_deploy: t= 1185 | lidar 0.26 | tof 0.04 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 12.3 ms
+01:05:28 INFO    pi_deploy: t= 1190 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 14.4 ms
+01:05:28 INFO    pi_deploy: t= 1195 | lidar 0.35 | tof 0.10 | vis 0.00 | pol(+0.01,-0.72) -> out(+0.00,+0.00) | REFLEX_STOP  | 18.8 ms
+01:05:29 INFO    pi_deploy: t= 1200 | lidar 0.23 | tof 0.41 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+0.00) | governor     | 7.1 ms
+01:05:29 INFO    pi_deploy: t= 1205 | lidar 0.31 | tof 0.25 | vis 0.00 | pol(+0.01,-1.59) -> out(-0.08,-1.19) | recovery     | 5.6 ms
+01:05:30 INFO    pi_deploy: t= 1210 | lidar 0.22 | tof 0.19 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.80) | REFLEX_STOP  | 11.7 ms
+01:05:30 INFO    pi_deploy: t= 1215 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,-0.97) -> out(+0.00,+0.00) | REFLEX_STOP  | 13.2 ms
+01:05:31 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:05:31 INFO    pi_deploy: t= 1220 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.80) | REFLEX_STOP  | 21.3 ms
+01:05:31 INFO    pi_deploy: t= 1225 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.80) | REFLEX_STOP  | 37.0 ms
+01:05:32 INFO    pi_deploy: t= 1230 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.00) | REFLEX_STOP  | 81.6 ms
+01:05:32 INFO    pi_deploy: t= 1235 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.00) | REFLEX_STOP  | 18.2 ms
+01:05:33 INFO    pi_deploy: t= 1240 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | REFLEX_STOP  | 38.1 ms
+01:05:33 INFO    pi_deploy: t= 1245 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | REFLEX_STOP  | 4.7 ms
+01:05:34 INFO    pi_deploy: t= 1250 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,+0.00) | REFLEX_STOP  | 13.4 ms
+01:05:34 INFO    pi_deploy: t= 1255 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | REFLEX_STOP  | 9.3 ms
+01:05:35 INFO    pi_deploy: t= 1260 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.00) | REFLEX_STOP  | 8.5 ms
+01:05:35 INFO    pi_deploy: t= 1265 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.00) | REFLEX_STOP  | 13.7 ms
+01:05:36 INFO    pi_deploy: t= 1270 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.00) | REFLEX_STOP  | 3.9 ms
+01:05:36 INFO    pi_deploy: t= 1275 | lidar 0.25 | tof 0.15 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,-0.80) | REFLEX_STOP  | 3.8 ms
+01:05:37 INFO    pi_deploy: t= 1280 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.6 ms
+01:05:37 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:05:37 INFO    pi_deploy: t= 1285 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.00) | REFLEX_STOP  | 27.9 ms
+01:05:38 INFO    pi_deploy: t= 1290 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.00) | REFLEX_STOP  | 19.3 ms
+01:05:38 INFO    pi_deploy: t= 1295 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | REFLEX_STOP  | 18.2 ms
+01:05:39 INFO    pi_deploy: t= 1300 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.17,+0.74) -> out(+0.00,+0.00) | REFLEX_STOP  | 48.9 ms
+01:05:39 INFO    pi_deploy: t= 1305 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.09,+0.75) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.2 ms
+01:05:40 INFO    pi_deploy: t= 1310 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.01,+1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 5.7 ms
+01:05:40 INFO    pi_deploy: t= 1315 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.01,+1.59) -> out(-0.15,+0.00) | REFLEX_STOP  | 7.7 ms
+01:05:41 INFO    pi_deploy: t= 1320 | lidar 0.22 | tof 0.31 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-0.80) | rear_blocked | 5.5 ms
+01:05:41 INFO    pi_deploy: t= 1325 | lidar 0.31 | tof 0.40 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,-0.80) | rear_blocked | 19.2 ms
+01:05:42 INFO    pi_deploy: t= 1330 | lidar 0.27 | tof 0.25 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,-0.80) | rear_blocked | 7.8 ms
+01:05:42 INFO    pi_deploy: t= 1335 | lidar 0.24 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 16.6 ms
+01:05:43 INFO    pi_deploy: t= 1340 | lidar 0.73 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 24.8 ms
+01:05:43 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:05:43 INFO    pi_deploy: t= 1345 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.59) | REFLEX_STOP  | 137.7 ms
+01:05:44 INFO    pi_deploy: t= 1350 | lidar 0.24 | tof 0.15 | vis 0.00 | pol(+0.01,-1.23) -> out(+0.00,-1.23) | REFLEX_STOP  | 25.5 ms
+01:05:45 INFO    pi_deploy: t= 1355 | lidar 0.79 | tof 0.15 | vis 0.00 | pol(+0.01,-0.71) -> out(+0.00,-0.71) | REFLEX_STOP  | 93.2 ms
+01:05:45 INFO    pi_deploy: t= 1360 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.01,-0.70) -> out(+0.00,-0.70) | REFLEX_STOP  | 30.1 ms
+01:05:46 INFO    pi_deploy: t= 1365 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.01,-0.09) -> out(+0.00,-0.09) | REFLEX_STOP  | 28.6 ms
+01:05:46 INFO    pi_deploy: t= 1370 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.01,-0.96) -> out(+0.00,-0.96) | REFLEX_STOP  | 10.4 ms
+01:05:47 INFO    pi_deploy: t= 1375 | lidar 0.23 | tof 0.15 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,-1.60) | REFLEX_STOP  | 5.8 ms
+01:05:47 INFO    pi_deploy: t= 1380 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.59) | REFLEX_STOP  | 5.5 ms
+01:05:48 INFO    pi_deploy: t= 1385 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.01,-0.97) -> out(+0.00,+0.00) | REFLEX_STOP  | 32.2 ms
+01:05:48 INFO    pi_deploy: t= 1390 | lidar 0.23 | tof 0.15 | vis 0.00 | pol(-0.15,-0.85) -> out(-0.15,-0.85) | REFLEX_STOP  | 6.7 ms
+01:05:49 INFO    pi_deploy: t= 1395 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,-0.59) -> out(-0.15,+0.00) | REFLEX_STOP  | 7.0 ms
+01:05:49 INFO    pi_deploy: t= 1400 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,-0.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 3.8 ms
+01:05:49 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:05:50 INFO    pi_deploy: t= 1405 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,+0.44) -> out(+0.00,+0.00) | REFLEX_STOP  | 8.6 ms
+01:05:50 INFO    pi_deploy: t= 1410 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,+0.14) -> out(+0.00,+0.00) | REFLEX_STOP  | 22.2 ms
+01:05:51 INFO    pi_deploy: t= 1415 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,+0.14) -> out(+0.00,+0.00) | REFLEX_STOP  | 12.8 ms
+01:05:51 INFO    pi_deploy: t= 1420 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(-0.15,+0.12) -> out(-0.15,+0.12) | REFLEX_STOP  | 95.6 ms
+01:05:52 INFO    pi_deploy: t= 1425 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.17,-0.27) -> out(+0.00,-0.27) | REFLEX_STOP  | 25.1 ms
+01:05:52 INFO    pi_deploy: t= 1430 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.17,-0.65) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.9 ms
+01:05:53 INFO    pi_deploy: t= 1435 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.09,+0.53) -> out(+0.00,+0.53) | REFLEX_STOP  | 6.0 ms
+01:05:53 INFO    pi_deploy: t= 1440 | lidar 0.26 | tof 0.23 | vis 0.00 | pol(+0.50,+0.39) -> out(+0.00,+0.80) | REFLEX_STOP  | 9.7 ms
+01:05:54 INFO    pi_deploy: t= 1445 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.50,+0.06) -> out(+0.00,+0.80) | rear_blocked | 6.4 ms
+01:05:54 INFO    pi_deploy: t= 1450 | lidar 0.42 | tof 0.48 | vis 0.00 | pol(+0.33,-1.60) -> out(-0.15,+0.80) | recovery     | 11.0 ms
+01:05:55 INFO    pi_deploy: t= 1455 | lidar 0.80 | tof 0.33 | vis 0.00 | pol(+0.50,+0.04) -> out(+0.09,+0.04) | planner      | 10.7 ms
+01:05:55 INFO    pi_deploy: t= 1460 | lidar 0.77 | tof 0.69 | vis 0.00 | pol(+0.50,-1.12) -> out(+0.34,-1.12) | navigator    | 7.2 ms
+01:05:55 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:05:56 INFO    pi_deploy: t= 1465 | lidar 0.67 | tof 0.38 | vis 0.00 | pol(+0.38,-0.64) -> out(+0.38,-1.12) | navigator    | 47.3 ms
+01:05:56 INFO    pi_deploy: t= 1470 | lidar 0.54 | tof 0.41 | vis 0.00 | pol(+0.18,+1.60) -> out(+0.18,-1.22) | navigator    | 29.4 ms
+01:05:57 INFO    pi_deploy: t= 1475 | lidar 0.49 | tof 1.30 | vis 0.00 | pol(+0.38,+0.32) -> out(+0.16,+0.32) | navigator    | 26.5 ms
+01:05:57 INFO    pi_deploy: t= 1480 | lidar 0.58 | tof 1.11 | vis 0.00 | pol(+0.50,+0.96) -> out(+0.50,+0.96) | navigator    | 159.8 ms
+01:05:58 INFO    pi_deploy: t= 1485 | lidar 0.76 | tof 4.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.38,+0.64) | navigator    | 61.5 ms
+01:05:58 INFO    pi_deploy: t= 1490 | lidar 0.86 | tof 0.96 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 10.1 ms
+01:05:59 INFO    pi_deploy: t= 1495 | lidar 0.74 | tof 0.85 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 19.2 ms
+01:05:59 INFO    pi_deploy: t= 1500 | lidar 0.63 | tof 0.90 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.08,+1.19) | navigator    | 7.0 ms
+01:06:00 INFO    pi_deploy: t= 1505 | lidar 0.50 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.79) | navigator    | 27.7 ms
+01:06:00 INFO    pi_deploy: t= 1510 | lidar 0.54 | tof 1.20 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.12,+0.77) | navigator    | 26.9 ms
+01:06:01 INFO    pi_deploy: t= 1515 | lidar 0.60 | tof 0.33 | vis 0.00 | pol(+0.01,+0.83) -> out(+0.01,+0.83) | planner      | 9.0 ms
+01:06:01 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:06:01 INFO    pi_deploy: t= 1520 | lidar 0.63 | tof 0.38 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.08,-0.41) | navigator    | 51.4 ms
+01:06:02 INFO    pi_deploy: t= 1525 | lidar 0.71 | tof 0.34 | vis 0.00 | pol(+0.01,+0.89) -> out(+0.01,+0.00) | planner      | 24.8 ms
+01:06:02 INFO    pi_deploy: t= 1530 | lidar 0.86 | tof 0.70 | vis 0.00 | pol(+0.30,-1.60) -> out(+0.08,-0.40) | navigator    | 15.1 ms
+01:06:03 INFO    pi_deploy: t= 1535 | lidar 0.85 | tof 0.56 | vis 0.00 | pol(+0.27,-1.60) -> out(+0.27,-1.60) | navigator    | 33.3 ms
+01:06:04 INFO    pi_deploy: t= 1540 | lidar 0.72 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.09,+1.07) | navigator    | 38.0 ms
+01:06:04 INFO    pi_deploy: t= 1545 | lidar 0.73 | tof 0.28 | vis 0.00 | pol(+0.01,+1.17) -> out(+0.01,+0.00) | planner      | 50.3 ms
+01:06:04 INFO    pi_deploy: t= 1550 | lidar 0.64 | tof 0.29 | vis 0.00 | pol(+0.01,+0.72) -> out(+0.00,+0.72) | governor     | 11.8 ms
+01:06:05 INFO    pi_deploy: t= 1555 | lidar 0.64 | tof 4.00 | vis 0.00 | pol(+0.20,-0.48) -> out(+0.20,-0.82) | navigator    | 10.1 ms
+01:06:05 INFO    pi_deploy: t= 1560 | lidar 0.51 | tof 0.30 | vis 0.00 | pol(+0.01,+0.99) -> out(+0.00,+0.00) | recovery     | 8.9 ms
+01:06:06 INFO    pi_deploy: t= 1565 | lidar 0.47 | tof 0.28 | vis 0.00 | pol(+0.01,+1.49) -> out(+0.00,-1.60) | recovery     | 11.0 ms
+01:06:06 INFO    pi_deploy: t= 1570 | lidar 0.35 | tof 0.36 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 12.1 ms
+01:06:07 INFO    pi_deploy: t= 1575 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.37,-0.16) -> out(+0.08,-0.16) | governor     | 15.6 ms
+01:06:08 INFO    pi_deploy: t= 1580 | lidar 0.33 | tof 1.23 | vis 0.00 | pol(+0.38,+0.32) -> out(+0.38,+0.32) | navigator    | 11.4 ms
+01:06:08 INFO    pi_deploy: t= 1585 | lidar 0.51 | tof 1.04 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.50,+0.64) | navigator    | 11.5 ms
+01:06:09 INFO    pi_deploy: t= 1590 | lidar 0.71 | tof 0.90 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.50,+0.48) | navigator    | 15.5 ms
+01:06:09 INFO    pi_deploy: t= 1595 | lidar 0.84 | tof 0.35 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.15,+1.60) | navigator    | 15.0 ms
+01:06:10 INFO    friday.voice: SAY [coverage] I have now mapped 37 square metres.
+01:06:10 INFO    pi_deploy: t= 1600 | lidar 0.66 | tof 0.58 | vis 0.00 | pol(+0.18,+1.60) -> out(+0.08,+1.60) | governor     | 19.1 ms
+01:06:10 INFO    pi_deploy: t= 1605 | lidar 0.58 | tof 4.00 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.17,-0.16) | navigator    | 43.5 ms
+01:06:11 INFO    pi_deploy: t= 1610 | lidar 0.65 | tof 1.26 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.22,-0.16) | navigator    | 33.7 ms
+01:06:11 INFO    pi_deploy: t= 1615 | lidar 0.78 | tof 0.90 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.01,-1.60) | tof_slow     | 92.8 ms
+01:06:12 INFO    pi_deploy: t= 1620 | lidar 0.80 | tof 1.06 | vis 0.00 | pol(+0.30,+0.00) -> out(+0.10,-1.18) | navigator    | 27.1 ms
+01:06:12 INFO    pi_deploy: t= 1625 | lidar 0.74 | tof 4.00 | vis 0.00 | pol(+0.30,+0.00) -> out(+0.30,+0.00) | navigator    | 10.9 ms
+01:06:13 INFO    pi_deploy: t= 1630 | lidar 0.78 | tof 4.00 | vis 0.00 | pol(+0.30,+0.00) -> out(+0.30,+0.00) | navigator    | 27.0 ms
+01:06:13 INFO    pi_deploy: t= 1635 | lidar 0.85 | tof 4.00 | vis 0.00 | pol(-0.15,-0.97) -> out(-0.15,-0.97) | reverse_lifted | 3.9 ms
+01:06:14 INFO    pi_deploy: t= 1640 | lidar 0.81 | tof 0.92 | vis 0.00 | pol(+0.30,+0.32) -> out(+0.25,+0.32) | navigator    | 10.6 ms
+01:06:14 INFO    pi_deploy: t= 1645 | lidar 0.85 | tof 0.86 | vis 0.00 | pol(-0.15,-0.89) -> out(-0.15,-0.89) | planner      | 4.2 ms
+01:06:15 INFO    pi_deploy: t= 1650 | lidar 0.82 | tof 0.82 | vis 0.00 | pol(-0.15,-0.65) -> out(-0.15,-0.65) | planner      | 20.8 ms
+01:06:15 INFO    pi_deploy: t= 1655 | lidar 0.75 | tof 0.69 | vis 0.00 | pol(-0.15,-0.46) -> out(-0.15,-0.46) | planner      | 4.5 ms
+01:06:16 INFO    pi_deploy: t= 1660 | lidar 0.67 | tof 0.76 | vis 0.00 | pol(-0.15,-0.39) -> out(-0.15,-0.39) | planner      | 4.2 ms
+01:06:16 INFO    pi_deploy: t= 1665 | lidar 0.51 | tof 0.77 | vis 0.00 | pol(-0.15,-0.34) -> out(-0.15,-0.34) | planner      | 21.2 ms
+01:06:16 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:06:17 INFO    pi_deploy: t= 1670 | lidar 0.35 | tof 1.07 | vis 0.00 | pol(-0.15,-0.31) -> out(+0.00,-0.31) | governor     | 12.5 ms
+01:06:17 INFO    pi_deploy: t= 1675 | lidar 0.22 | tof 1.28 | vis 0.00 | pol(-0.15,-0.17) -> out(+0.00,-0.17) | governor     | 10.7 ms
+01:06:18 INFO    pi_deploy: t= 1680 | lidar 0.22 | tof 1.22 | vis 0.00 | pol(-0.15,-0.18) -> out(+0.00,-0.18) | governor     | 80.9 ms
+01:06:18 INFO    pi_deploy: t= 1685 | lidar 0.22 | tof 1.17 | vis 0.00 | pol(-0.15,+0.96) -> out(+0.00,+0.96) | governor     | 20.1 ms
+01:06:19 INFO    pi_deploy: t= 1690 | lidar 0.22 | tof 1.33 | vis 0.00 | pol(-0.15,+0.60) -> out(+0.00,+0.60) | governor     | 4.0 ms
+01:06:19 INFO    pi_deploy: t= 1695 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(-0.15,+0.32) -> out(+0.00,+0.32) | governor     | 3.8 ms
+01:06:20 INFO    pi_deploy: t= 1700 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(-0.15,+0.03) -> out(+0.00,+0.03) | governor     | 8.5 ms
+01:06:20 INFO    pi_deploy: t= 1705 | lidar 0.23 | tof 0.32 | vis 0.00 | pol(+0.17,-0.28) -> out(+0.11,-0.28) | planner      | 20.9 ms
+01:06:21 INFO    pi_deploy: t= 1710 | lidar 0.25 | tof 4.00 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.22,+0.16) | navigator    | 30.6 ms
+01:06:21 INFO    pi_deploy: t= 1715 | lidar 0.32 | tof 4.00 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.22,+0.16) | navigator    | 7.0 ms
+01:06:22 INFO    pi_deploy: t= 1720 | lidar 0.42 | tof 4.00 | vis 0.00 | pol(+0.37,+0.32) -> out(+0.37,+0.32) | navigator    | 15.8 ms
+01:06:22 INFO    pi_deploy: t= 1725 | lidar 0.54 | tof 4.00 | vis 0.00 | pol(+0.38,+0.32) -> out(+0.38,+0.32) | navigator    | 16.0 ms
+01:06:23 INFO    pi_deploy: t= 1730 | lidar 0.64 | tof 1.20 | vis 0.00 | pol(+0.50,+0.80) -> out(+0.42,+0.80) | navigator    | 10.5 ms
+01:06:23 INFO    pi_deploy: t= 1735 | lidar 0.75 | tof 1.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.50,+0.64) | navigator    | 19.6 ms
+01:06:24 INFO    pi_deploy: t= 1740 | lidar 0.86 | tof 0.88 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.39,+0.16) | navigator    | 11.8 ms
+01:06:24 INFO    pi_deploy: t= 1745 | lidar 0.79 | tof 0.75 | vis 0.00 | pol(+0.20,+1.60) -> out(+0.16,+0.87) | navigator    | 18.1 ms
+01:06:25 INFO    friday.voice: SAY [coverage] I have now mapped 61 square metres.
+01:06:25 INFO    pi_deploy: t= 1750 | lidar 0.65 | tof 0.85 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 72.2 ms
+01:06:25 INFO    pi_deploy: t= 1755 | lidar 0.51 | tof 1.13 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.22,-0.16) | navigator    | 44.8 ms
+01:06:26 INFO    pi_deploy: t= 1760 | lidar 0.65 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-0.57) | navigator    | 23.7 ms
+01:06:26 INFO    pi_deploy: t= 1765 | lidar 0.85 | tof 0.36 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-0.85) | navigator    | 10.7 ms
+01:06:27 INFO    pi_deploy: t= 1770 | lidar 0.75 | tof 0.85 | vis 0.00 | pol(+0.30,-0.32) -> out(+0.23,-1.20) | navigator    | 10.3 ms
+01:06:27 INFO    pi_deploy: t= 1775 | lidar 0.66 | tof 1.03 | vis 0.00 | pol(+0.30,+0.16) -> out(+0.24,+0.16) | navigator    | 7.4 ms
+01:06:28 INFO    pi_deploy: t= 1780 | lidar 0.73 | tof 0.95 | vis 0.00 | pol(+0.30,+0.16) -> out(+0.30,+0.16) | navigator    | 8.5 ms
+01:06:28 INFO    pi_deploy: t= 1785 | lidar 0.85 | tof 0.85 | vis 0.00 | pol(-0.15,-0.97) -> out(-0.15,-0.24) | reverse_lifted | 8.0 ms
+01:06:29 INFO    pi_deploy: t= 1790 | lidar 0.83 | tof 0.71 | vis 0.00 | pol(-0.15,-0.97) -> out(-0.15,-0.80) | reverse_lifted | 5.4 ms
+01:06:30 INFO    pi_deploy: t= 1795 | lidar 0.87 | tof 0.65 | vis 0.00 | pol(-0.15,-0.72) -> out(-0.15,-0.72) | planner      | 7.5 ms
+01:06:30 INFO    pi_deploy: t= 1800 | lidar 0.83 | tof 0.60 | vis 0.00 | pol(-0.15,-0.52) -> out(-0.15,-0.52) | planner      | 4.5 ms
+01:06:31 INFO    pi_deploy: t= 1805 | lidar 0.74 | tof 0.34 | vis 0.00 | pol(-0.15,-0.39) -> out(-0.15,-0.39) | planner      | 4.0 ms
+01:06:31 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:06:31 INFO    pi_deploy: t= 1810 | lidar 0.61 | tof 0.82 | vis 0.00 | pol(-0.15,-0.35) -> out(-0.15,-0.35) | planner      | 12.0 ms
+01:06:32 INFO    pi_deploy: t= 1815 | lidar 0.38 | tof 1.00 | vis 0.00 | pol(-0.15,-0.32) -> out(-0.15,-0.32) | governor     | 18.6 ms
+01:06:32 INFO    pi_deploy: t= 1820 | lidar 0.22 | tof 1.19 | vis 0.00 | pol(-0.15,-0.17) -> out(+0.00,-0.17) | governor     | 14.8 ms
+01:06:33 INFO    pi_deploy: t= 1825 | lidar 0.22 | tof 1.18 | vis 0.00 | pol(-0.15,-0.17) -> out(+0.00,-0.17) | governor     | 95.6 ms
+01:06:33 INFO    pi_deploy: t= 1830 | lidar 0.22 | tof 1.18 | vis 0.00 | pol(-0.15,+0.96) -> out(+0.00,+0.96) | governor     | 9.2 ms
+01:06:34 INFO    pi_deploy: t= 1835 | lidar 0.22 | tof 1.23 | vis 0.00 | pol(-0.15,+0.60) -> out(+0.00,+0.60) | governor     | 5.6 ms
+01:06:34 INFO    pi_deploy: t= 1840 | lidar 0.22 | tof 1.38 | vis 0.00 | pol(-0.15,+0.38) -> out(+0.00,+0.38) | governor     | 5.5 ms
+01:06:35 INFO    pi_deploy: t= 1845 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.09) -> out(+0.00,+0.09) | governor     | 4.1 ms
+01:06:35 INFO    pi_deploy: t= 1850 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.09) -> out(+0.00,+0.09) | governor     | 4.0 ms
+01:06:36 INFO    pi_deploy: t= 1855 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.08) | governor     | 24.0 ms
+01:06:36 INFO    pi_deploy: t= 1860 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,-0.05) -> out(+0.00,-0.05) | governor     | 18.9 ms
+01:06:37 INFO    pi_deploy: t= 1865 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.22) -> out(+0.00,-1.60) | recovery     | 13.9 ms
+01:06:37 INFO    pi_deploy: t= 1870 | lidar 0.22 | tof 1.23 | vis 0.00 | pol(-0.15,+0.80) -> out(+0.00,-1.60) | recovery     | 5.4 ms
+01:06:38 INFO    pi_deploy: t= 1875 | lidar 0.22 | tof 1.26 | vis 0.00 | pol(-0.15,+0.96) -> out(+0.00,+0.96) | governor     | 4.5 ms
+01:06:38 INFO    pi_deploy: t= 1880 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.57) -> out(+0.00,+0.57) | governor     | 4.5 ms
+01:06:39 INFO    pi_deploy: t= 1885 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.27) -> out(+0.00,+0.27) | governor     | 17.7 ms
+01:06:39 INFO    friday.voice: SAY [coverage] I have now mapped 73 square metres.
+01:06:39 INFO    pi_deploy: t= 1890 | lidar 0.22 | tof 0.32 | vis 0.00 | pol(-0.15,+0.14) -> out(+0.00,+0.14) | governor     | 23.8 ms
+01:06:40 INFO    pi_deploy: t= 1895 | lidar 0.22 | tof 0.78 | vis 0.00 | pol(-0.15,+0.14) -> out(+0.00,+0.14) | governor     | 27.7 ms
+01:06:40 INFO    pi_deploy: t= 1900 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(-0.15,+0.00) -> out(+0.00,+0.00) | governor     | 24.2 ms
+01:06:41 INFO    pi_deploy: t= 1905 | lidar 0.22 | tof 0.36 | vis 0.00 | pol(-0.15,+0.14) -> out(+0.00,-0.80) | rear_blocked | 12.4 ms
+01:06:41 INFO    pi_deploy: t= 1910 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.55) -> out(+0.00,-0.80) | rear_blocked | 4.2 ms
+01:06:42 INFO    pi_deploy: t= 1915 | lidar 0.22 | tof 1.35 | vis 0.00 | pol(-0.15,+0.96) -> out(+0.00,+0.00) | governor     | 6.6 ms
+01:06:42 INFO    pi_deploy: t= 1920 | lidar 0.22 | tof 1.89 | vis 0.00 | pol(-0.15,+0.73) -> out(+0.00,+0.73) | governor     | 4.4 ms
+01:06:43 INFO    pi_deploy: t= 1925 | lidar 0.22 | tof 0.76 | vis 0.00 | pol(-0.15,+0.30) -> out(+0.00,+0.30) | governor     | 7.3 ms
+01:06:43 INFO    pi_deploy: t= 1930 | lidar 0.22 | tof 0.33 | vis 0.00 | pol(-0.15,+0.16) -> out(+0.00,+0.16) | governor     | 6.0 ms
+01:06:44 INFO    pi_deploy: t= 1935 | lidar 0.22 | tof 0.32 | vis 0.00 | pol(-0.15,+0.16) -> out(+0.00,+0.16) | governor     | 4.4 ms
+01:06:44 INFO    pi_deploy: t= 1940 | lidar 0.22 | tof 0.34 | vis 0.00 | pol(-0.15,+0.02) -> out(+0.00,+0.02) | governor     | 4.2 ms
+01:06:45 INFO    friday.voice: SAY [timeout] That area is taking too long to reach. Selecting a new target.
+01:06:45 INFO    pi_deploy: t= 1945 | lidar 0.22 | tof 0.40 | vis 0.00 | pol(-0.15,+0.02) -> out(+0.00,+0.00) | rear_blocked | 19.0 ms
+01:06:45 INFO    pi_deploy: t= 1950 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.80) | rear_blocked | 18.4 ms
+01:06:46 INFO    pi_deploy: t= 1955 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,-0.80) | rear_blocked | 29.7 ms
+01:06:47 INFO    pi_deploy: t= 1960 | lidar 0.22 | tof 1.28 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,-0.80) | rear_blocked | 47.6 ms
+01:06:47 INFO    pi_deploy: t= 1965 | lidar 0.22 | tof 1.23 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,-0.80) | rear_blocked | 78.7 ms
+01:06:48 INFO    pi_deploy: t= 1970 | lidar 0.22 | tof 1.14 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.08) | governor     | 9.3 ms
+01:06:48 INFO    pi_deploy: t= 1975 | lidar 0.22 | tof 1.14 | vis 0.00 | pol(+0.01,+1.59) -> out(+0.00,+1.59) | governor     | 7.1 ms
+01:06:49 INFO    pi_deploy: t= 1980 | lidar 0.22 | tof 1.20 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.17,+0.56) | navigator    | 10.4 ms
+01:06:49 INFO    pi_deploy: t= 1985 | lidar 0.22 | tof 1.65 | vis 0.00 | pol(-0.15,+0.97) -> out(+0.00,+0.97) | governor     | 8.3 ms
+01:06:50 INFO    pi_deploy: t= 1990 | lidar 0.29 | tof 0.45 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 6.4 ms
+01:06:50 INFO    pi_deploy: t= 1995 | lidar 0.31 | tof 0.27 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 14.5 ms
+01:06:51 INFO    pi_deploy: t= 2000 | lidar 0.28 | tof 0.28 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.80) | rear_blocked | 7.1 ms
+01:06:51 INFO    pi_deploy: t= 2005 | lidar 0.24 | tof 0.34 | vis 0.00 | pol(-0.15,-0.02) -> out(+0.00,-0.80) | rear_blocked | 8.3 ms
+01:06:52 INFO    pi_deploy: t= 2010 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(-0.15,+0.39) -> out(+0.00,-0.80) | rear_blocked | 3.9 ms
+01:06:52 INFO    pi_deploy: t= 2015 | lidar 0.22 | tof 1.51 | vis 0.00 | pol(+0.22,+0.32) -> out(+0.00,-0.80) | rear_blocked | 7.2 ms
+01:06:52 INFO    friday.voice: SAY [coverage] I have now mapped 86 square metres.
+01:06:53 INFO    pi_deploy: t= 2020 | lidar 0.23 | tof 1.19 | vis 0.00 | pol(+0.22,+0.48) -> out(+0.17,+0.07) | navigator    | 70.5 ms
+01:06:53 INFO    pi_deploy: t= 2025 | lidar 0.35 | tof 1.08 | vis 0.00 | pol(+0.30,+0.80) -> out(+0.30,+0.80) | navigator    | 99.9 ms
+01:06:54 INFO    pi_deploy: t= 2030 | lidar 0.62 | tof 0.98 | vis 0.00 | pol(+0.50,+1.60) -> out(+0.50,+1.60) | navigator    | 109.3 ms
+01:06:54 INFO    pi_deploy: t= 2035 | lidar 0.85 | tof 0.63 | vis 0.00 | pol(+0.34,+1.60) -> out(+0.34,+1.60) | navigator    | 27.3 ms
+01:06:55 INFO    pi_deploy: t= 2040 | lidar 0.73 | tof 0.55 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 8.0 ms
+01:06:55 INFO    pi_deploy: t= 2045 | lidar 0.58 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.40) | navigator    | 11.5 ms
+01:06:56 INFO    pi_deploy: t= 2050 | lidar 0.60 | tof 1.20 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.22,+0.16) | navigator    | 13.2 ms
+01:06:56 INFO    pi_deploy: t= 2055 | lidar 0.63 | tof 1.04 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.17,+0.54) | navigator    | 7.2 ms
+01:06:57 INFO    pi_deploy: t= 2060 | lidar 0.57 | tof 0.35 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.08,+0.43) | navigator    | 9.9 ms
+01:06:57 INFO    pi_deploy: t= 2065 | lidar 0.57 | tof 0.84 | vis 0.00 | pol(-0.15,+1.03) -> out(-0.15,-0.77) | planner      | 9.4 ms
+01:06:58 INFO    pi_deploy: t= 2070 | lidar 0.68 | tof 0.78 | vis 0.00 | pol(+0.30,-0.48) -> out(+0.25,-0.48) | navigator    | 8.6 ms
+01:06:58 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:06:58 INFO    pi_deploy: t= 2075 | lidar 0.80 | tof 0.65 | vis 0.00 | pol(+0.50,-1.60) -> out(+0.50,-1.52) | navigator    | 20.4 ms
+01:06:59 INFO    pi_deploy: t= 2080 | lidar 0.69 | tof 0.29 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.07,-0.59) | tof_slow     | 44.0 ms
+01:06:59 INFO    pi_deploy: t= 2085 | lidar 0.52 | tof 0.54 | vis 0.00 | pol(+0.31,+1.60) -> out(+0.23,+1.00) | navigator    | 29.9 ms
+01:07:00 INFO    pi_deploy: t= 2090 | lidar 0.44 | tof 0.42 | vis 0.00 | pol(+0.19,+1.60) -> out(+0.19,+0.53) | navigator    | 71.9 ms
+01:07:01 INFO    pi_deploy: t= 2095 | lidar 0.38 | tof 0.29 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | governor     | 72.2 ms
+01:07:01 INFO    pi_deploy: t= 2100 | lidar 0.40 | tof 0.25 | vis 0.00 | pol(+0.50,-0.60) -> out(+0.02,-0.60) | governor     | 33.1 ms
+01:07:02 INFO    pi_deploy: t= 2105 | lidar 0.33 | tof 0.26 | vis 0.00 | pol(+0.50,-0.35) -> out(+0.03,-0.35) | planner      | 19.1 ms
+01:07:02 INFO    pi_deploy: t= 2110 | lidar 0.29 | tof 0.31 | vis 0.00 | pol(+0.50,-0.20) -> out(+0.09,-0.20) | planner      | 5.6 ms
+01:07:03 INFO    pi_deploy: t= 2115 | lidar 0.29 | tof 0.29 | vis 0.00 | pol(+0.50,+0.31) -> out(+0.06,+0.21) | planner      | 10.4 ms
+01:07:03 INFO    pi_deploy: t= 2120 | lidar 0.25 | tof 0.25 | vis 0.00 | pol(+0.50,+0.12) -> out(+0.00,+0.12) | governor     | 8.6 ms
+01:07:04 INFO    pi_deploy: t= 2125 | lidar 0.27 | tof 0.18 | vis 0.00 | pol(+0.50,+0.12) -> out(+0.00,+0.12) | REFLEX_STOP  | 60.3 ms
+01:07:04 INFO    pi_deploy: t= 2130 | lidar 0.26 | tof 0.18 | vis 0.00 | pol(+0.50,-0.01) -> out(+0.00,-0.01) | REFLEX_STOP  | 13.8 ms
+01:07:05 INFO    pi_deploy: t= 2135 | lidar 0.27 | tof 0.18 | vis 0.00 | pol(+0.50,-0.39) -> out(+0.00,-0.39) | REFLEX_STOP  | 11.5 ms
+01:07:05 INFO    pi_deploy: t= 2140 | lidar 0.26 | tof 0.19 | vis 0.00 | pol(+0.50,-0.25) -> out(+0.00,-0.25) | REFLEX_STOP  | 10.8 ms
+01:07:06 INFO    pi_deploy: t= 2145 | lidar 0.26 | tof 0.19 | vis 0.00 | pol(+0.50,-0.11) -> out(+0.00,-0.11) | REFLEX_STOP  | 9.9 ms
+01:07:06 INFO    pi_deploy: t= 2150 | lidar 0.26 | tof 0.19 | vis 0.00 | pol(+0.50,-0.12) -> out(+0.00,-0.12) | REFLEX_STOP  | 5.6 ms
+01:07:07 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:07:07 INFO    pi_deploy: t= 2155 | lidar 0.26 | tof 0.19 | vis 0.00 | pol(+0.50,+0.02) -> out(+0.00,+0.02) | REFLEX_STOP  | 27.2 ms
+01:07:07 INFO    pi_deploy: t= 2160 | lidar 0.26 | tof 0.19 | vis 0.00 | pol(+0.50,+0.02) -> out(+0.00,+0.02) | REFLEX_STOP  | 42.7 ms
+01:07:08 INFO    pi_deploy: t= 2165 | lidar 0.26 | tof 0.19 | vis 0.00 | pol(+0.50,+0.29) -> out(+0.00,-1.60) | REFLEX_STOP  | 26.8 ms
+01:07:08 INFO    pi_deploy: t= 2170 | lidar 0.25 | tof 0.17 | vis 0.00 | pol(+0.50,-0.95) -> out(+0.00,-0.95) | REFLEX_STOP  | 45.0 ms
+01:07:09 INFO    pi_deploy: t= 2175 | lidar 0.23 | tof 0.19 | vis 0.00 | pol(+0.42,-1.59) -> out(+0.00,-1.59) | REFLEX_STOP  | 7.2 ms
+01:07:09 INFO    pi_deploy: t= 2180 | lidar 0.24 | tof 0.18 | vis 0.00 | pol(+0.26,-1.55) -> out(+0.00,-1.55) | REFLEX_STOP  | 5.6 ms
+01:07:10 INFO    pi_deploy: t= 2185 | lidar 0.24 | tof 0.18 | vis 0.00 | pol(+0.09,-0.75) -> out(+0.00,-0.75) | REFLEX_STOP  | 12.8 ms
+01:07:10 INFO    pi_deploy: t= 2190 | lidar 0.23 | tof 0.21 | vis 0.00 | pol(+0.09,-0.48) -> out(+0.00,-0.48) | REFLEX_STOP  | 5.6 ms
+01:07:11 INFO    pi_deploy: t= 2195 | lidar 0.24 | tof 0.20 | vis 0.00 | pol(+0.09,-0.34) -> out(+0.00,-0.34) | REFLEX_STOP  | 18.9 ms
+01:07:11 INFO    pi_deploy: t= 2200 | lidar 0.24 | tof 0.21 | vis 0.00 | pol(+0.17,-0.50) -> out(+0.00,-0.80) | REFLEX_STOP  | 8.3 ms
+01:07:12 INFO    pi_deploy: t= 2205 | lidar 0.24 | tof 0.18 | vis 0.00 | pol(+0.17,-0.38) -> out(+0.00,-0.80) | REFLEX_STOP  | 5.9 ms
+01:07:12 INFO    pi_deploy: t= 2210 | lidar 0.24 | tof 0.22 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-0.80) | REFLEX_STOP  | 5.7 ms
+01:07:13 INFO    pi_deploy: t= 2215 | lidar 0.24 | tof 0.19 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,-1.60) | REFLEX_STOP  | 12.0 ms
+01:07:13 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:07:13 INFO    pi_deploy: t= 2220 | lidar 0.24 | tof 0.22 | vis 0.00 | pol(+0.01,-1.34) -> out(+0.00,-1.34) | REFLEX_STOP  | 16.1 ms
+01:07:14 INFO    pi_deploy: t= 2225 | lidar 0.24 | tof 0.22 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.96) | REFLEX_STOP  | 28.3 ms
+01:07:15 INFO    pi_deploy: t= 2230 | lidar 0.23 | tof 0.33 | vis 0.00 | pol(+0.01,-0.59) -> out(+0.00,-0.59) | governor     | 53.5 ms
+01:07:15 INFO    pi_deploy: t= 2235 | lidar 0.22 | tof 0.33 | vis 0.00 | pol(+0.09,-0.31) -> out(+0.00,-0.31) | governor     | 38.6 ms
+01:07:16 INFO    pi_deploy: t= 2240 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(+0.01,-0.18) -> out(+0.00,-0.18) | governor     | 4.8 ms
+01:07:16 INFO    pi_deploy: t= 2245 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.80) | rear_blocked | 4.1 ms
+01:07:17 INFO    pi_deploy: t= 2250 | lidar 0.22 | tof 0.38 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,-0.80) | rear_blocked | 4.2 ms
+01:07:17 INFO    pi_deploy: t= 2255 | lidar 0.22 | tof 0.36 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,-0.80) | rear_blocked | 4.2 ms
+01:07:18 INFO    pi_deploy: t= 2260 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(-0.15,-1.60) -> out(+0.00,-0.80) | rear_blocked | 7.9 ms
+01:07:18 INFO    pi_deploy: t= 2265 | lidar 0.22 | tof 0.31 | vis 0.00 | pol(-0.15,-1.59) -> out(+0.00,-0.80) | rear_blocked | 15.7 ms
+01:07:19 INFO    pi_deploy: t= 2270 | lidar 0.22 | tof 1.41 | vis 0.00 | pol(+0.01,-1.26) -> out(+0.00,-1.26) | governor     | 12.0 ms
+01:07:19 INFO    pi_deploy: t= 2275 | lidar 0.22 | tof 1.44 | vis 0.00 | pol(+0.50,-0.17) -> out(+0.00,-0.17) | governor     | 7.0 ms
+01:07:19 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.6 metres ahead. I am changing my route.
+01:07:20 INFO    pi_deploy: t= 2280 | lidar 0.22 | tof 1.50 | vis 0.00 | pol(+0.50,+0.74) -> out(+0.00,+0.74) | governor     | 44.4 ms
+01:07:20 INFO    pi_deploy: t= 2285 | lidar 0.22 | tof 1.45 | vis 0.00 | pol(+0.17,+0.46) -> out(+0.00,+0.46) | governor     | 153.0 ms
+01:07:21 INFO    pi_deploy: t= 2290 | lidar 0.22 | tof 1.42 | vis 0.00 | pol(+0.18,+0.20) -> out(+0.00,+0.20) | governor     | 79.0 ms
+01:07:21 INFO    pi_deploy: t= 2295 | lidar 0.22 | tof 1.37 | vis 0.00 | pol(+0.09,-0.84) -> out(+0.00,-0.84) | governor     | 165.4 ms
+01:07:22 INFO    pi_deploy: t= 2300 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.80) | rear_blocked | 21.4 ms
+01:07:22 INFO    pi_deploy: t= 2305 | lidar 0.27 | tof 0.30 | vis 0.00 | pol(-0.15,-0.84) -> out(+0.00,-0.80) | rear_blocked | 11.4 ms
+01:07:23 INFO    pi_deploy: t= 2310 | lidar 0.32 | tof 0.14 | vis 0.00 | pol(+0.01,+1.59) -> out(-0.15,-0.80) | REFLEX_STOP  | 24.1 ms
+01:07:23 INFO    pi_deploy: t= 2315 | lidar 0.32 | tof 0.14 | vis 0.00 | pol(+0.01,+1.60) -> out(-0.15,-0.80) | REFLEX_STOP  | 7.8 ms
+01:07:24 INFO    pi_deploy: t= 2320 | lidar 0.32 | tof 0.17 | vis 0.00 | pol(+0.01,+1.58) -> out(+0.00,+1.58) | REFLEX_STOP  | 9.3 ms
+01:07:24 INFO    pi_deploy: t= 2325 | lidar 0.32 | tof 0.17 | vis 0.00 | pol(+0.01,+1.59) -> out(+0.00,+1.59) | REFLEX_STOP  | 7.5 ms
+01:07:25 INFO    pi_deploy: t= 2330 | lidar 0.32 | tof 0.18 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 9.1 ms
+01:07:26 INFO    pi_deploy: t= 2335 | lidar 0.32 | tof 0.18 | vis 0.00 | pol(+0.01,+0.97) -> out(+0.00,+0.97) | REFLEX_STOP  | 7.1 ms
+01:07:26 INFO    pi_deploy: t= 2340 | lidar 0.30 | tof 0.18 | vis 0.00 | pol(+0.01,+0.72) -> out(+0.00,+0.72) | REFLEX_STOP  | 8.2 ms
+01:07:27 INFO    pi_deploy: t= 2345 | lidar 0.22 | tof 0.16 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 9.2 ms
+01:07:27 INFO    pi_deploy: t= 2350 | lidar 0.23 | tof 0.18 | vis 0.00 | pol(+0.50,+1.59) -> out(+0.00,+1.59) | REFLEX_STOP  | 4.6 ms
+01:07:28 INFO    pi_deploy: t= 2355 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.26,+1.56) -> out(+0.00,+1.56) | REFLEX_STOP  | 15.7 ms
+01:07:28 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:07:28 INFO    pi_deploy: t= 2360 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.17,+1.34) -> out(+0.00,+1.34) | REFLEX_STOP  | 13.2 ms
+01:07:29 INFO    pi_deploy: t= 2365 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.01,+0.85) -> out(+0.00,+0.00) | REFLEX_STOP  | 66.6 ms
+01:07:29 INFO    pi_deploy: t= 2370 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.00,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 113.2 ms
+01:07:30 INFO    pi_deploy: t= 2375 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.01,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 23.1 ms
+01:07:30 INFO    pi_deploy: t= 2380 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.01,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 9.3 ms
+01:07:31 INFO    pi_deploy: t= 2385 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.00,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 27.2 ms
+01:07:31 INFO    pi_deploy: t= 2390 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.01,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.9 ms
+01:07:32 INFO    pi_deploy: t= 2395 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.00,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 7.0 ms
+01:07:32 INFO    pi_deploy: t= 2400 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.01,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 4.7 ms
+01:07:33 INFO    pi_deploy: t= 2405 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.01,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 4.7 ms
+01:07:33 INFO    pi_deploy: t= 2410 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.01,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 5.7 ms
+01:07:34 INFO    pi_deploy: t= 2415 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.50,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 4.5 ms
+01:07:34 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:07:34 INFO    pi_deploy: t= 2420 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.50,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 55.8 ms
+01:07:35 INFO    pi_deploy: t= 2425 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.42,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 32.6 ms
+01:07:35 INFO    pi_deploy: t= 2430 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.50,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 50.9 ms
+01:07:36 INFO    pi_deploy: t= 2435 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.42,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 49.0 ms
+01:07:36 INFO    pi_deploy: t= 2440 | lidar 0.28 | tof 0.12 | vis 0.00 | pol(+0.50,+1.07) -> out(+0.00,+0.00) | REFLEX_STOP  | 12.3 ms
+01:07:37 INFO    pi_deploy: t= 2445 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.50,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 46.1 ms
+01:07:37 INFO    pi_deploy: t= 2450 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.34,+0.73) -> out(+0.00,+0.00) | REFLEX_STOP  | 4.6 ms
+01:07:38 INFO    pi_deploy: t= 2455 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.17,+1.07) -> out(+0.00,+0.00) | REFLEX_STOP  | 4.7 ms
+01:07:38 INFO    pi_deploy: t= 2460 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.01,+0.85) -> out(+0.00,+0.00) | REFLEX_STOP  | 8.5 ms
+01:07:39 INFO    pi_deploy: t= 2465 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(+0.00,+0.86) -> out(+0.00,+0.00) | REFLEX_STOP  | 23.5 ms
+01:07:39 INFO    pi_deploy: t= 2470 | lidar 0.24 | tof 0.12 | vis 0.00 | pol(+0.01,+0.84) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.3 ms
+01:07:40 INFO    pi_deploy: t= 2475 | lidar 0.25 | tof 0.12 | vis 0.00 | pol(+0.01,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.3 ms
+01:07:40 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:07:40 INFO    pi_deploy: t= 2480 | lidar 0.27 | tof 0.12 | vis 0.00 | pol(+0.50,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 14.4 ms
+01:07:41 INFO    pi_deploy: t= 2485 | lidar 0.27 | tof 0.12 | vis 0.00 | pol(+0.50,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 26.0 ms
+01:07:41 INFO    pi_deploy: t= 2490 | lidar 0.29 | tof 0.12 | vis 0.00 | pol(+0.34,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 75.5 ms
+01:07:42 INFO    pi_deploy: t= 2495 | lidar 0.32 | tof 0.12 | vis 0.00 | pol(+0.50,+1.07) -> out(+0.00,+0.00) | REFLEX_STOP  | 17.1 ms
+01:07:42 INFO    pi_deploy: t= 2500 | lidar 0.29 | tof 0.12 | vis 0.00 | pol(+0.50,+1.09) -> out(+0.00,+0.00) | REFLEX_STOP  | 7.6 ms
+01:07:43 INFO    pi_deploy: t= 2505 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.34,+1.10) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.4 ms
+01:07:43 INFO    pi_deploy: t= 2510 | lidar 0.41 | tof 0.12 | vis 0.00 | pol(+0.50,+1.59) -> out(-0.15,+0.00) | REFLEX_STOP  | 5.7 ms
+01:07:44 INFO    pi_deploy: t= 2515 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.17,+1.34) -> out(+0.00,+0.80) | REFLEX_STOP  | 6.0 ms
+01:07:44 INFO    pi_deploy: t= 2520 | lidar 0.23 | tof 0.15 | vis 0.00 | pol(+0.01,+1.34) -> out(-0.15,+0.80) | REFLEX_STOP  | 5.8 ms
+01:07:45 INFO    pi_deploy: t= 2525 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.50,-0.08) -> out(-0.15,+0.80) | REFLEX_STOP  | 81.0 ms
+01:07:45 INFO    pi_deploy: t= 2530 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.00,-0.06) | REFLEX_STOP  | 15.2 ms
+01:07:46 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:07:46 INFO    pi_deploy: t= 2535 | lidar 0.23 | tof 0.15 | vis 0.00 | pol(+0.42,-0.68) -> out(+0.00,-0.68) | REFLEX_STOP  | 13.9 ms
+01:07:47 INFO    pi_deploy: t= 2540 | lidar 0.25 | tof 0.15 | vis 0.00 | pol(+0.50,-1.53) -> out(+0.00,-1.53) | REFLEX_STOP  | 28.5 ms
+01:07:47 INFO    pi_deploy: t= 2545 | lidar 0.27 | tof 0.15 | vis 0.00 | pol(+0.50,-0.87) -> out(+0.00,-0.87) | REFLEX_STOP  | 50.2 ms
+01:07:48 INFO    pi_deploy: t= 2550 | lidar 0.24 | tof 0.15 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,-0.59) | REFLEX_STOP  | 32.4 ms
+01:07:48 INFO    pi_deploy: t= 2555 | lidar 0.26 | tof 0.15 | vis 0.00 | pol(+0.50,-0.58) -> out(+0.00,-0.58) | REFLEX_STOP  | 67.2 ms
+01:07:49 INFO    pi_deploy: t= 2560 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.50,-0.51) -> out(+0.00,+0.80) | REFLEX_STOP  | 9.3 ms
+01:07:49 INFO    pi_deploy: t= 2565 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.50,-1.57) -> out(-0.15,+0.80) | REFLEX_STOP  | 11.9 ms
+01:07:50 INFO    pi_deploy: t= 2570 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.50,-1.00) -> out(-0.15,+0.80) | REFLEX_STOP  | 6.1 ms
+01:07:50 INFO    pi_deploy: t= 2575 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.50,-1.01) -> out(-0.15,+0.80) | REFLEX_STOP  | 10.4 ms
+01:07:51 INFO    pi_deploy: t= 2580 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.50,-1.13) -> out(+0.00,+0.80) | REFLEX_STOP  | 6.0 ms
+01:07:51 INFO    pi_deploy: t= 2585 | lidar 1.08 | tof 0.15 | vis 0.00 | pol(+0.50,-0.91) -> out(+0.00,-0.91) | REFLEX_STOP  | 14.8 ms
+01:07:52 INFO    pi_deploy: t= 2590 | lidar 1.06 | tof 0.15 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,-0.59) | REFLEX_STOP  | 24.3 ms
+01:07:52 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:07:52 INFO    pi_deploy: t= 2595 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,-0.59) | REFLEX_STOP  | 37.4 ms
+01:07:53 INFO    pi_deploy: t= 2600 | lidar 0.23 | tof 0.15 | vis 0.00 | pol(+0.50,-0.90) -> out(+0.00,-0.90) | REFLEX_STOP  | 45.6 ms
+01:07:53 INFO    pi_deploy: t= 2605 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.17,-0.60) -> out(+0.00,-0.60) | REFLEX_STOP  | 81.2 ms
+01:07:54 INFO    pi_deploy: t= 2610 | lidar 0.24 | tof 0.15 | vis 0.00 | pol(+0.26,-0.33) -> out(+0.00,-0.33) | REFLEX_STOP  | 54.2 ms
+01:07:54 INFO    pi_deploy: t= 2615 | lidar 0.24 | tof 0.40 | vis 0.00 | pol(+0.50,+0.90) -> out(+0.00,+0.80) | rear_blocked | 75.2 ms
+01:07:55 INFO    pi_deploy: t= 2620 | lidar 0.25 | tof 4.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.00,+0.80) | rear_blocked | 26.7 ms
+01:07:55 INFO    pi_deploy: t= 2625 | lidar 0.34 | tof 0.36 | vis 0.00 | pol(+0.16,+1.60) -> out(+0.00,+0.80) | rear_blocked | 17.9 ms
+01:07:56 INFO    pi_deploy: t= 2630 | lidar 0.73 | tof 4.00 | vis 0.00 | pol(+0.50,-0.64) -> out(-0.15,+0.80) | recovery     | 11.9 ms
+01:07:56 INFO    pi_deploy: t= 2635 | lidar 0.78 | tof 4.00 | vis 0.00 | pol(+0.50,-0.96) -> out(+0.01,+0.00) | navigator    | 17.1 ms
+01:07:57 INFO    pi_deploy: t= 2640 | lidar 0.73 | tof 4.00 | vis 0.00 | pol(+0.50,-0.64) -> out(+0.41,-0.64) | navigator    | 9.9 ms
+01:07:57 INFO    pi_deploy: t= 2645 | lidar 0.66 | tof 4.00 | vis 0.00 | pol(+0.42,-0.48) -> out(+0.42,-0.48) | navigator    | 13.4 ms
+01:07:58 INFO    pi_deploy: t= 2650 | lidar 0.90 | tof 4.00 | vis 0.00 | pol(+0.42,-0.32) -> out(+0.31,-0.32) | navigator    | 7.1 ms
+01:07:58 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:07:58 INFO    pi_deploy: t= 2655 | lidar 0.98 | tof 0.36 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-0.56) | navigator    | 29.1 ms
+01:07:59 INFO    pi_deploy: t= 2660 | lidar 1.01 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.46,+0.00) | navigator    | 39.3 ms
+01:07:59 INFO    pi_deploy: t= 2665 | lidar 0.95 | tof 4.00 | vis 0.00 | pol(+0.42,+0.00) -> out(+0.42,+0.00) | navigator    | 82.4 ms
+01:08:00 INFO    pi_deploy: t= 2670 | lidar 1.13 | tof 1.31 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.50,+0.00) | navigator    | 70.1 ms
+01:08:00 INFO    pi_deploy: t= 2675 | lidar 1.19 | tof 0.90 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.22,+0.00) | navigator    | 17.8 ms
+01:08:01 INFO    pi_deploy: t= 2680 | lidar 0.89 | tof 0.64 | vis 0.00 | pol(+0.33,-1.60) -> out(+0.33,-1.52) | navigator    | 35.6 ms
+01:08:01 INFO    pi_deploy: t= 2685 | lidar 0.66 | tof 0.48 | vis 0.00 | pol(+0.22,+1.60) -> out(+0.14,-1.25) | navigator    | 21.3 ms
+01:08:02 INFO    pi_deploy: t= 2690 | lidar 0.62 | tof 0.32 | vis 0.00 | pol(+0.50,-0.35) -> out(+0.11,+0.81) | planner      | 7.2 ms
+01:08:02 INFO    pi_deploy: t= 2695 | lidar 0.60 | tof 0.39 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.15,+1.20) | navigator    | 6.2 ms
+01:08:03 INFO    pi_deploy: t= 2700 | lidar 0.55 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.16,+0.16) | navigator    | 9.8 ms
+01:08:03 INFO    pi_deploy: t= 2705 | lidar 0.52 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 23.2 ms
+01:08:04 INFO    pi_deploy: t= 2710 | lidar 0.58 | tof 1.24 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.22,+0.16) | navigator    | 10.1 ms
+01:08:04 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:08:04 INFO    pi_deploy: t= 2715 | lidar 0.62 | tof 1.10 | vis 0.00 | pol(-0.15,-0.54) -> out(-0.15,-0.29) | planner      | 13.5 ms
+01:08:05 INFO    pi_deploy: t= 2720 | lidar 0.52 | tof 0.94 | vis 0.00 | pol(-0.15,-0.40) -> out(-0.15,-0.40) | planner      | 48.3 ms
+01:08:05 INFO    pi_deploy: t= 2725 | lidar 0.40 | tof 0.34 | vis 0.00 | pol(-0.15,-0.33) -> out(-0.15,-0.33) | governor     | 20.4 ms
+01:08:06 INFO    pi_deploy: t= 2730 | lidar 0.27 | tof 1.13 | vis 0.00 | pol(-0.15,-0.28) -> out(-0.15,-0.28) | planner      | 34.8 ms
+01:08:07 INFO    pi_deploy: t= 2735 | lidar 0.36 | tof 1.47 | vis 0.00 | pol(-0.15,-0.23) -> out(-0.15,-0.23) | governor     | 10.9 ms
+01:08:07 INFO    pi_deploy: t= 2740 | lidar 0.48 | tof 1.63 | vis 0.00 | pol(-0.15,-0.19) -> out(-0.15,-0.19) | planner      | 8.9 ms
+01:08:08 INFO    pi_deploy: t= 2745 | lidar 0.60 | tof 0.37 | vis 0.00 | pol(-0.15,-0.16) -> out(-0.15,-0.16) | planner      | 11.1 ms
+01:08:08 INFO    pi_deploy: t= 2750 | lidar 0.72 | tof 0.36 | vis 0.00 | pol(-0.15,-0.13) -> out(-0.15,-0.13) | planner      | 12.9 ms
+01:08:09 INFO    pi_deploy: t= 2755 | lidar 0.88 | tof 0.33 | vis 0.00 | pol(-0.15,-0.10) -> out(-0.15,-0.10) | planner      | 11.4 ms
+01:08:09 INFO    pi_deploy: t= 2760 | lidar 1.04 | tof 0.87 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | planner      | 121.7 ms
+01:08:10 INFO    pi_deploy: t= 2765 | lidar 1.12 | tof 0.93 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 8.7 ms
+01:08:10 INFO    friday.voice: SAY [timeout] That area is taking too long to reach. Selecting a new target.
+01:08:10 INFO    pi_deploy: t= 2770 | lidar 1.15 | tof 1.09 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 19.7 ms
+01:08:11 INFO    pi_deploy: t= 2775 | lidar 1.21 | tof 0.39 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 11.8 ms
+01:08:11 INFO    pi_deploy: t= 2780 | lidar 1.29 | tof 1.45 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 19.5 ms
+01:08:12 INFO    pi_deploy: t= 2785 | lidar 1.35 | tof 1.68 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 141.0 ms
+01:08:12 INFO    pi_deploy: t= 2790 | lidar 1.45 | tof 1.77 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 40.6 ms
+01:08:13 INFO    pi_deploy: t= 2795 | lidar 1.51 | tof 1.89 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 12.5 ms
+01:08:13 INFO    pi_deploy: t= 2800 | lidar 1.56 | tof 4.00 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 4.3 ms
+01:08:14 INFO    pi_deploy: t= 2805 | lidar 1.61 | tof 4.00 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 9.8 ms
+01:08:14 INFO    pi_deploy: t= 2810 | lidar 1.65 | tof 4.00 | vis 0.00 | pol(-0.15,-0.07) -> out(-0.15,-0.07) | ok           | 6.9 ms
+01:08:15 INFO    pi_deploy: t= 2815 | lidar 1.68 | tof 4.00 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 5.3 ms
+01:08:15 INFO    pi_deploy: t= 2820 | lidar 1.70 | tof 0.34 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 106.9 ms
+01:08:16 INFO    pi_deploy: t= 2825 | lidar 1.70 | tof 4.00 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 14.0 ms
+01:08:16 INFO    pi_deploy: t= 2830 | lidar 1.47 | tof 4.00 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 7.0 ms
+01:08:17 INFO    pi_deploy: t= 2835 | lidar 1.23 | tof 4.00 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 4.6 ms
+01:08:17 INFO    friday.voice: SAY [new_frontier] I found an unexplored area 4 metres to the north. I will investigate it.
+01:08:17 INFO    pi_deploy: t= 2840 | lidar 1.01 | tof 4.00 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 31.9 ms
+01:08:18 INFO    pi_deploy: t= 2845 | lidar 0.78 | tof 4.00 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | governor     | 9.3 ms
+01:08:18 INFO    pi_deploy: t= 2850 | lidar 0.51 | tof 3.85 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 15.2 ms
+01:08:19 INFO    pi_deploy: t= 2855 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,-0.97) -> out(+0.00,-0.97) | governor     | 6.7 ms
+01:08:20 INFO    pi_deploy: t= 2860 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,-0.57) -> out(+0.00,-0.57) | governor     | 34.5 ms
+01:08:20 INFO    pi_deploy: t= 2865 | lidar 0.22 | tof 1.38 | vis 0.00 | pol(-0.15,-0.43) -> out(+0.00,-0.43) | governor     | 11.5 ms
+01:08:21 INFO    pi_deploy: t= 2870 | lidar 0.22 | tof 1.34 | vis 0.00 | pol(-0.15,-0.16) -> out(+0.00,-0.16) | governor     | 6.2 ms
+01:08:21 INFO    pi_deploy: t= 2875 | lidar 0.22 | tof 1.32 | vis 0.00 | pol(-0.15,-0.16) -> out(+0.00,-0.16) | governor     | 6.6 ms
+01:08:22 INFO    pi_deploy: t= 2880 | lidar 0.22 | tof 1.35 | vis 0.00 | pol(-0.15,+0.61) -> out(+0.00,+0.61) | governor     | 7.4 ms
+01:08:22 INFO    pi_deploy: t= 2885 | lidar 0.22 | tof 0.32 | vis 0.00 | pol(-0.15,+0.17) -> out(+0.00,+0.17) | governor     | 5.6 ms
+01:08:23 INFO    pi_deploy: t= 2890 | lidar 0.22 | tof 1.60 | vis 0.00 | pol(-0.15,+0.17) -> out(+0.00,+0.17) | governor     | 17.9 ms
+01:08:23 INFO    pi_deploy: t= 2895 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.04) -> out(-0.15,+0.04) | governor     | 21.2 ms
+01:08:24 INFO    pi_deploy: t= 2900 | lidar 0.33 | tof 4.00 | vis 0.00 | pol(-0.15,+0.02) -> out(-0.15,+0.02) | planner      | 4.8 ms
+01:08:24 INFO    pi_deploy: t= 2905 | lidar 0.33 | tof 0.31 | vis 0.00 | pol(-0.15,+0.02) -> out(-0.15,+0.02) | planner      | 19.0 ms
+01:08:25 INFO    pi_deploy: t= 2910 | lidar 0.33 | tof 4.00 | vis 0.00 | pol(-0.15,+0.01) -> out(-0.15,+0.01) | planner      | 8.6 ms
+01:08:25 INFO    pi_deploy: t= 2915 | lidar 0.33 | tof 0.31 | vis 0.00 | pol(-0.15,+1.59) -> out(-0.15,+1.21) | ok           | 4.3 ms
+01:08:26 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:08:26 INFO    pi_deploy: t= 2920 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.19,+0.62) | navigator    | 15.9 ms
+01:08:26 INFO    pi_deploy: t= 2925 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.50,-0.48) | navigator    | 80.5 ms
+01:08:27 INFO    pi_deploy: t= 2930 | lidar 0.49 | tof 4.00 | vis 0.00 | pol(+0.42,-0.32) -> out(+0.42,-0.32) | navigator    | 14.6 ms
+01:08:28 INFO    pi_deploy: t= 2935 | lidar 0.82 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.16) | navigator    | 106.2 ms
+01:08:28 INFO    pi_deploy: t= 2940 | lidar 1.33 | tof 0.36 | vis 0.00 | pol(+0.16,-1.60) -> out(+0.16,-0.56) | navigator    | 35.8 ms
+01:08:29 INFO    pi_deploy: t= 2945 | lidar 1.66 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.16) | navigator    | 17.9 ms
+01:08:29 INFO    pi_deploy: t= 2950 | lidar 1.62 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.16) | navigator    | 13.0 ms
+01:08:30 INFO    pi_deploy: t= 2955 | lidar 1.57 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.50,+0.00) | navigator    | 9.5 ms
+01:08:30 INFO    pi_deploy: t= 2960 | lidar 1.53 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.50,+0.00) | navigator    | 9.0 ms
+01:08:31 INFO    pi_deploy: t= 2965 | lidar 1.50 | tof 0.32 | vis 0.00 | pol(+0.50,+0.07) -> out(+0.12,+0.07) | tof_slow     | 5.8 ms
+01:08:31 INFO    pi_deploy: t= 2970 | lidar 1.48 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.44,+0.00) | navigator    | 11.6 ms
+01:08:32 INFO    pi_deploy: t= 2975 | lidar 1.45 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.50,+0.00) | navigator    | 12.0 ms
+01:08:32 INFO    pi_deploy: t= 2980 | lidar 1.49 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.50,+0.00) | navigator    | 9.1 ms
+01:08:33 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:08:33 INFO    pi_deploy: t= 2985 | lidar 1.37 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.00,+0.00) | governor     | 31.8 ms
+01:08:33 INFO    pi_deploy: t= 2990 | lidar 1.13 | tof 2.46 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.39,+0.00) | navigator    | 102.2 ms
+01:08:34 INFO    pi_deploy: t= 2995 | lidar 1.12 | tof 2.06 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.39,+0.16) | navigator    | 20.2 ms
+01:08:34 INFO    pi_deploy: t= 3000 | lidar 1.33 | tof 1.68 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.41,-0.16) | navigator    | 44.1 ms
+01:08:35 INFO    pi_deploy: t= 3005 | lidar 1.55 | tof 1.37 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.16) | navigator    | 57.1 ms
+01:08:35 INFO    pi_deploy: t= 3010 | lidar 1.35 | tof 1.07 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.16) | navigator    | 23.6 ms
+01:08:36 INFO    pi_deploy: t= 3015 | lidar 1.02 | tof 0.76 | vis 0.00 | pol(+0.50,+0.96) -> out(+0.32,-0.16) | navigator    | 11.3 ms
+01:08:36 INFO    pi_deploy: t= 3020 | lidar 0.72 | tof 0.48 | vis 0.00 | pol(+0.22,-1.60) -> out(+0.00,-1.60) | governor     | 7.2 ms
+01:08:37 INFO    pi_deploy: t= 3025 | lidar 0.65 | tof 0.38 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.08,-1.60) | governor     | 20.1 ms
+01:08:37 INFO    pi_deploy: t= 3030 | lidar 0.53 | tof 0.28 | vis 0.00 | pol(+0.50,+0.02) -> out(+0.06,-0.00) | planner      | 11.3 ms
+01:08:38 INFO    pi_deploy: t= 3035 | lidar 0.48 | tof 0.35 | vis 0.00 | pol(+0.50,+0.23) -> out(+0.15,+0.40) | planner      | 16.6 ms
+01:08:38 INFO    pi_deploy: t= 3040 | lidar 0.45 | tof 0.32 | vis 0.00 | pol(+0.50,+0.18) -> out(+0.12,+0.18) | planner      | 8.7 ms
+01:08:39 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:08:39 INFO    pi_deploy: t= 3045 | lidar 0.39 | tof 0.23 | vis 0.00 | pol(+0.50,-0.08) -> out(+0.00,-0.08) | REFLEX_STOP  | 26.5 ms
+01:08:39 INFO    pi_deploy: t= 3050 | lidar 0.25 | tof 0.19 | vis 0.00 | pol(+0.50,-0.58) -> out(+0.00,-0.58) | REFLEX_STOP  | 27.8 ms
+01:08:40 INFO    pi_deploy: t= 3055 | lidar 0.40 | tof 0.19 | vis 0.00 | pol(+0.50,-0.41) -> out(+0.00,-0.41) | REFLEX_STOP  | 34.5 ms
+01:08:41 INFO    pi_deploy: t= 3060 | lidar 0.40 | tof 0.19 | vis 0.00 | pol(+0.50,-0.27) -> out(+0.00,-0.27) | REFLEX_STOP  | 55.9 ms
+01:08:41 INFO    pi_deploy: t= 3065 | lidar 0.35 | tof 0.20 | vis 0.00 | pol(+0.42,-0.86) -> out(+0.00,-0.86) | REFLEX_STOP  | 107.1 ms
+01:08:42 INFO    pi_deploy: t= 3070 | lidar 0.34 | tof 0.22 | vis 0.00 | pol(+0.42,-0.71) -> out(+0.00,-0.71) | REFLEX_STOP  | 7.3 ms
+01:08:42 INFO    pi_deploy: t= 3075 | lidar 0.40 | tof 0.23 | vis 0.00 | pol(+0.01,-0.71) -> out(+0.00,-0.71) | REFLEX_STOP  | 9.0 ms
+01:08:43 INFO    pi_deploy: t= 3080 | lidar 0.25 | tof 0.22 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.59) | REFLEX_STOP  | 5.7 ms
+01:08:43 INFO    pi_deploy: t= 3085 | lidar 0.39 | tof 0.20 | vis 0.00 | pol(+0.50,-1.35) -> out(+0.00,-1.35) | REFLEX_STOP  | 5.6 ms
+01:08:44 INFO    pi_deploy: t= 3090 | lidar 0.37 | tof 0.17 | vis 0.00 | pol(+0.50,-1.00) -> out(+0.00,-1.60) | REFLEX_STOP  | 7.2 ms
+01:08:44 INFO    pi_deploy: t= 3095 | lidar 0.37 | tof 0.19 | vis 0.00 | pol(+0.50,-0.39) -> out(+0.00,-0.39) | REFLEX_STOP  | 70.3 ms
+01:08:45 INFO    pi_deploy: t= 3100 | lidar 0.38 | tof 0.23 | vis 0.00 | pol(+0.50,-0.96) -> out(+0.00,-0.96) | REFLEX_STOP  | 8.4 ms
+01:08:45 INFO    pi_deploy: t= 3105 | lidar 0.38 | tof 0.23 | vis 0.00 | pol(+0.42,-0.71) -> out(+0.00,-0.71) | REFLEX_STOP  | 14.4 ms
+01:08:46 INFO    pi_deploy: t= 3110 | lidar 0.38 | tof 0.23 | vis 0.00 | pol(+0.42,-1.59) -> out(+0.00,-1.59) | REFLEX_STOP  | 5.7 ms
+01:08:46 INFO    pi_deploy: t= 3115 | lidar 0.34 | tof 0.23 | vis 0.00 | pol(+0.42,-1.58) -> out(+0.00,-1.58) | REFLEX_STOP  | 10.9 ms
+01:08:47 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:08:47 INFO    pi_deploy: t= 3120 | lidar 0.38 | tof 0.23 | vis 0.00 | pol(+0.42,-1.57) -> out(+0.00,-1.57) | REFLEX_STOP  | 11.2 ms
+01:08:47 INFO    pi_deploy: t= 3125 | lidar 0.37 | tof 0.20 | vis 0.00 | pol(+0.50,-0.58) -> out(-0.15,-0.80) | REFLEX_STOP  | 134.9 ms
+01:08:48 INFO    pi_deploy: t= 3130 | lidar 0.35 | tof 0.18 | vis 0.00 | pol(+0.50,-0.45) -> out(-0.15,-0.80) | REFLEX_STOP  | 65.7 ms
+01:08:49 INFO    pi_deploy: t= 3135 | lidar 0.37 | tof 0.18 | vis 0.00 | pol(+0.50,-0.15) -> out(-0.15,-0.80) | REFLEX_STOP  | 81.9 ms
+01:08:49 INFO    pi_deploy: t= 3140 | lidar 0.37 | tof 0.18 | vis 0.00 | pol(+0.50,-0.74) -> out(+0.00,-0.74) | REFLEX_STOP  | 12.0 ms
+01:08:50 INFO    pi_deploy: t= 3145 | lidar 0.37 | tof 0.20 | vis 0.00 | pol(+0.42,-0.69) -> out(+0.00,-0.69) | REFLEX_STOP  | 24.5 ms
+01:08:50 INFO    pi_deploy: t= 3150 | lidar 0.37 | tof 0.18 | vis 0.00 | pol(+0.50,-1.56) -> out(+0.00,-1.56) | REFLEX_STOP  | 8.9 ms
+01:08:51 INFO    pi_deploy: t= 3155 | lidar 0.36 | tof 0.18 | vis 0.00 | pol(+0.42,-1.57) -> out(+0.00,-1.57) | REFLEX_STOP  | 7.4 ms
+01:08:51 INFO    pi_deploy: t= 3160 | lidar 0.36 | tof 0.21 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,-1.55) | REFLEX_STOP  | 6.2 ms
+01:08:52 INFO    pi_deploy: t= 3165 | lidar 0.35 | tof 0.19 | vis 0.00 | pol(+0.50,-1.37) -> out(+0.00,-1.37) | REFLEX_STOP  | 6.9 ms
+01:08:52 INFO    pi_deploy: t= 3170 | lidar 0.34 | tof 0.25 | vis 0.00 | pol(+0.42,-1.57) -> out(+0.00,-0.80) | rear_blocked | 23.6 ms
+01:08:53 INFO    pi_deploy: t= 3175 | lidar 0.32 | tof 0.22 | vis 0.00 | pol(+0.50,-0.67) -> out(+0.00,-0.80) | REFLEX_STOP  | 5.7 ms
+01:08:53 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:08:53 INFO    pi_deploy: t= 3180 | lidar 0.29 | tof 0.35 | vis 0.00 | pol(+0.42,-1.58) -> out(+0.00,-0.80) | rear_blocked | 56.3 ms
+01:08:54 INFO    pi_deploy: t= 3185 | lidar 0.26 | tof 0.41 | vis 0.00 | pol(+0.15,-1.12) -> out(+0.00,-0.80) | rear_blocked | 106.5 ms
+01:08:54 INFO    pi_deploy: t= 3190 | lidar 0.23 | tof 0.40 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,-0.80) | rear_blocked | 34.3 ms
+01:08:55 INFO    pi_deploy: t= 3195 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.38,-0.32) -> out(+0.24,-0.32) | navigator    | 61.6 ms
+01:08:56 INFO    pi_deploy: t= 3200 | lidar 0.29 | tof 4.00 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.38,-0.16) | navigator    | 53.6 ms
+01:08:56 INFO    pi_deploy: t= 3205 | lidar 0.49 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.50,-0.32) | navigator    | 22.3 ms
+01:08:56 INFO    pi_deploy: t= 3210 | lidar 0.70 | tof 1.11 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.16) | navigator    | 11.8 ms
+01:08:57 INFO    pi_deploy: t= 3215 | lidar 0.92 | tof 0.73 | vis 0.00 | pol(+0.50,-0.96) -> out(+0.24,-0.96) | navigator    | 9.0 ms
+01:08:57 INFO    pi_deploy: t= 3220 | lidar 0.78 | tof 0.49 | vis 0.00 | pol(+0.22,-1.60) -> out(+0.00,+0.00) | governor     | 6.9 ms
+01:08:58 INFO    pi_deploy: t= 3225 | lidar 0.57 | tof 0.32 | vis 0.00 | pol(+0.50,-0.33) -> out(+0.00,-0.33) | governor     | 10.0 ms
+01:08:58 INFO    pi_deploy: t= 3230 | lidar 0.50 | tof 0.32 | vis 0.00 | pol(+0.50,-0.31) -> out(+0.08,-0.31) | governor     | 14.4 ms
+01:08:59 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:08:59 INFO    pi_deploy: t= 3235 | lidar 0.25 | tof 0.29 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.07,-0.07) | governor     | 55.9 ms
+01:09:00 INFO    pi_deploy: t= 3240 | lidar 0.47 | tof 4.00 | vis 0.00 | pol(+0.33,-0.16) -> out(+0.07,-0.16) | governor     | 66.4 ms
+01:09:00 INFO    pi_deploy: t= 3245 | lidar 0.37 | tof 4.00 | vis 0.00 | pol(+0.50,-0.04) -> out(+0.00,-0.04) | governor     | 96.5 ms
+01:09:01 INFO    pi_deploy: t= 3250 | lidar 0.40 | tof 0.27 | vis 0.00 | pol(+0.50,-0.04) -> out(+0.00,-0.04) | governor     | 57.0 ms
+01:09:01 INFO    pi_deploy: t= 3255 | lidar 0.40 | tof 0.27 | vis 0.00 | pol(+0.50,-0.04) -> out(+0.00,-0.04) | governor     | 29.3 ms
+01:09:02 INFO    pi_deploy: t= 3260 | lidar 0.40 | tof 0.25 | vis 0.00 | pol(+0.50,+0.10) -> out(+0.00,+0.10) | governor     | 56.7 ms
+01:09:02 INFO    pi_deploy: t= 3265 | lidar 0.40 | tof 0.25 | vis 0.00 | pol(+0.42,-1.31) -> out(+0.00,-1.31) | governor     | 28.6 ms
+01:09:03 INFO    pi_deploy: t= 3270 | lidar 0.36 | tof 4.00 | vis 0.00 | pol(+0.31,+0.00) -> out(+0.08,-0.44) | navigator    | 11.3 ms
+01:09:03 INFO    pi_deploy: t= 3275 | lidar 0.29 | tof 4.00 | vis 0.00 | pol(+0.25,+0.00) -> out(+0.24,+0.00) | navigator    | 9.8 ms
+01:09:04 INFO    pi_deploy: t= 3280 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.42,-0.67) -> out(+0.16,-0.80) | planner      | 13.3 ms
+01:09:04 INFO    pi_deploy: t= 3285 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.42,-1.12) -> out(+0.32,-1.12) | navigator    | 17.7 ms
+01:09:05 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:09:05 INFO    pi_deploy: t= 3290 | lidar 0.30 | tof 4.00 | vis 0.00 | pol(+0.42,-1.12) -> out(+0.23,-1.12) | navigator    | 22.9 ms
+01:09:05 INFO    pi_deploy: t= 3295 | lidar 0.58 | tof 4.00 | vis 0.00 | pol(+0.50,-1.44) -> out(+0.50,-1.44) | navigator    | 72.6 ms
+01:09:06 INFO    pi_deploy: t= 3300 | lidar 0.90 | tof 4.00 | vis 0.00 | pol(+0.50,-1.28) -> out(+0.50,-1.28) | navigator    | 50.4 ms
+01:09:06 INFO    pi_deploy: t= 3305 | lidar 1.15 | tof 4.00 | vis 0.00 | pol(+0.42,-0.48) -> out(+0.42,-0.48) | navigator    | 43.5 ms
+01:09:07 INFO    pi_deploy: t= 3310 | lidar 0.23 | tof 1.82 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.50,-0.32) | navigator    | 58.2 ms
+01:09:07 INFO    pi_deploy: t= 3315 | lidar 1.47 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.42,-0.32) | navigator    | 6.6 ms
+01:09:08 INFO    pi_deploy: t= 3320 | lidar 1.42 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.16) | navigator    | 15.8 ms
+01:09:08 INFO    pi_deploy: t= 3325 | lidar 1.30 | tof 0.37 | vis 0.00 | pol(+0.18,-1.60) -> out(+0.18,-0.55) | navigator    | 28.1 ms
+01:09:09 INFO    pi_deploy: t= 3330 | lidar 1.05 | tof 4.00 | vis 0.00 | pol(+0.34,-0.16) -> out(+0.34,-0.16) | navigator    | 13.7 ms
+01:09:09 INFO    pi_deploy: t= 3335 | lidar 0.94 | tof 1.05 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.16) | navigator    | 17.0 ms
+01:09:10 INFO    pi_deploy: t= 3340 | lidar 0.91 | tof 0.35 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 16.2 ms
+01:09:10 INFO    pi_deploy: t= 3345 | lidar 0.82 | tof 0.35 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.15,+0.40) | navigator    | 12.5 ms
+01:09:11 INFO    pi_deploy: t= 3350 | lidar 0.70 | tof 0.44 | vis 0.00 | pol(+0.18,+1.60) -> out(+0.08,+1.60) | navigator    | 16.8 ms
+01:09:11 INFO    pi_deploy: t= 3355 | lidar 0.54 | tof 0.41 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 9.1 ms
+01:09:12 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:09:12 INFO    pi_deploy: t= 3360 | lidar 0.41 | tof 1.56 | vis 0.00 | pol(+0.32,+0.16) -> out(+0.32,+0.16) | navigator    | 40.2 ms
+01:09:13 INFO    pi_deploy: t= 3365 | lidar 0.59 | tof 1.06 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.38,+0.16) | navigator    | 67.6 ms
+01:09:13 INFO    pi_deploy: t= 3370 | lidar 0.79 | tof 0.90 | vis 0.00 | pol(+0.50,-1.12) -> out(+0.39,-1.05) | navigator    | 42.1 ms
+01:09:14 INFO    pi_deploy: t= 3375 | lidar 0.80 | tof 0.33 | vis 0.00 | pol(+0.50,-0.10) -> out(+0.13,-0.10) | planner      | 29.5 ms
+01:09:14 INFO    pi_deploy: t= 3380 | lidar 0.64 | tof 0.38 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 45.2 ms
+01:09:15 INFO    pi_deploy: t= 3385 | lidar 0.48 | tof 0.35 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.15,-1.19) | tof_slow     | 9.8 ms
+01:09:15 INFO    pi_deploy: t= 3390 | lidar 0.39 | tof 1.40 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.38,+0.16) | navigator    | 18.1 ms
+01:09:16 INFO    pi_deploy: t= 3395 | lidar 0.51 | tof 1.26 | vis 0.00 | pol(+0.31,+0.16) -> out(+0.31,+0.16) | navigator    | 10.5 ms
+01:09:16 INFO    pi_deploy: t= 3400 | lidar 0.68 | tof 1.04 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.50,+0.32) | navigator    | 16.6 ms
+01:09:17 INFO    pi_deploy: t= 3405 | lidar 0.84 | tof 0.86 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.16,+0.32) | governor     | 8.6 ms
+01:09:17 INFO    pi_deploy: t= 3410 | lidar 0.78 | tof 0.67 | vis 0.00 | pol(+0.22,+1.60) -> out(+0.15,+1.60) | navigator    | 9.9 ms
+01:09:18 INFO    pi_deploy: t= 3415 | lidar 0.63 | tof 1.10 | vis 0.00 | pol(+0.32,+0.32) -> out(+0.24,+1.20) | navigator    | 11.5 ms
+01:09:18 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.5 metres ahead. I am changing my route.
+01:09:18 INFO    pi_deploy: t= 3420 | lidar 0.60 | tof 1.10 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.22,-0.16) | navigator    | 17.8 ms
+01:09:19 INFO    pi_deploy: t= 3425 | lidar 0.73 | tof 0.33 | vis 0.00 | pol(+0.26,+0.31) -> out(+0.08,-1.22) | planner      | 35.4 ms
+01:09:19 INFO    pi_deploy: t= 3430 | lidar 0.87 | tof 4.00 | vis 0.00 | pol(+0.30,-0.32) -> out(+0.09,-0.32) | navigator    | 42.0 ms
+01:09:20 INFO    pi_deploy: t= 3435 | lidar 0.87 | tof 0.38 | vis 0.00 | pol(+0.33,-0.16) -> out(+0.24,-0.16) | navigator    | 57.1 ms
+01:09:21 INFO    pi_deploy: t= 3440 | lidar 0.77 | tof 0.47 | vis 0.00 | pol(+0.21,+1.60) -> out(+0.15,+0.76) | navigator    | 25.0 ms
+01:09:21 INFO    pi_deploy: t= 3445 | lidar 0.70 | tof 0.48 | vis 0.00 | pol(+0.22,+1.60) -> out(+0.00,+1.60) | governor     | 12.7 ms
+01:09:22 INFO    pi_deploy: t= 3450 | lidar 0.60 | tof 4.00 | vis 0.00 | pol(+0.20,-1.60) -> out(+0.20,-1.20) | navigator    | 39.4 ms
+01:09:22 INFO    pi_deploy: t= 3455 | lidar 0.65 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,-0.80) | navigator    | 8.3 ms
+01:09:23 INFO    pi_deploy: t= 3460 | lidar 0.68 | tof 0.53 | vis 0.00 | pol(+0.16,+1.60) -> out(+0.16,+1.60) | navigator    | 15.8 ms
+01:09:23 INFO    pi_deploy: t= 3465 | lidar 0.58 | tof 4.00 | vis 0.00 | pol(+0.22,-1.60) -> out(+0.16,-0.80) | navigator    | 18.5 ms
+01:09:24 INFO    pi_deploy: t= 3470 | lidar 0.61 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,-0.32) | navigator    | 80.5 ms
+01:09:24 INFO    pi_deploy: t= 3475 | lidar 0.62 | tof 0.63 | vis 0.00 | pol(+0.20,+1.60) -> out(+0.16,+1.60) | navigator    | 18.5 ms
+01:09:25 INFO    pi_deploy: t= 3480 | lidar 0.51 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 9.6 ms
+01:09:25 INFO    pi_deploy: t= 3485 | lidar 0.58 | tof 1.60 | vis 0.00 | pol(+0.20,-0.16) -> out(+0.20,-0.16) | navigator    | 12.3 ms
+01:09:26 INFO    pi_deploy: t= 3490 | lidar 0.68 | tof 1.34 | vis 0.00 | pol(+0.31,-0.32) -> out(+0.31,-0.32) | navigator    | 12.3 ms
+01:09:26 INFO    pi_deploy: t= 3495 | lidar 0.83 | tof 1.35 | vis 0.00 | pol(+0.50,-1.12) -> out(+0.00,-1.12) | governor     | 8.8 ms
+01:09:27 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:09:27 INFO    pi_deploy: t= 3500 | lidar 0.90 | tof 0.36 | vis 0.00 | pol(+0.16,-1.60) -> out(+0.16,-0.96) | navigator    | 22.0 ms
+01:09:27 INFO    pi_deploy: t= 3505 | lidar 0.81 | tof 0.38 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.15,+0.68) | navigator    | 196.1 ms
+01:09:28 INFO    pi_deploy: t= 3510 | lidar 0.56 | tof 0.55 | vis 0.00 | pol(+0.28,+1.60) -> out(+0.00,+1.60) | governor     | 78.2 ms
+01:09:28 INFO    pi_deploy: t= 3515 | lidar 0.45 | tof 1.67 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 20.0 ms
+01:09:29 INFO    pi_deploy: t= 3520 | lidar 0.54 | tof 1.18 | vis 0.00 | pol(+0.20,-0.16) -> out(+0.20,-0.16) | navigator    | 64.1 ms
+01:09:30 INFO    pi_deploy: t= 3525 | lidar 0.68 | tof 1.06 | vis 0.00 | pol(+0.37,-0.48) -> out(+0.31,-0.48) | navigator    | 54.7 ms
+01:09:30 INFO    pi_deploy: t= 3530 | lidar 0.87 | tof 1.25 | vis 0.00 | pol(+0.50,-0.80) -> out(+0.00,-0.80) | governor     | 8.0 ms
+01:09:31 INFO    pi_deploy: t= 3535 | lidar 0.80 | tof 0.86 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.32,-0.48) | navigator    | 12.6 ms
+01:09:31 INFO    pi_deploy: t= 3540 | lidar 0.84 | tof 0.35 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.15,+0.32) | tof_slow     | 5.5 ms
+01:09:32 INFO    pi_deploy: t= 3545 | lidar 0.71 | tof 0.49 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.15,+1.60) | navigator    | 12.9 ms
+01:09:32 INFO    pi_deploy: t= 3550 | lidar 0.53 | tof 0.44 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,+0.00) | governor     | 158.0 ms
+01:09:33 INFO    pi_deploy: t= 3555 | lidar 0.51 | tof 2.41 | vis 0.00 | pol(+0.22,+0.48) -> out(+0.15,-0.29) | governor     | 21.2 ms
+01:09:33 INFO    pi_deploy: t= 3560 | lidar 0.53 | tof 0.35 | vis 0.00 | pol(+0.50,+0.69) -> out(+0.08,+0.69) | governor     | 7.2 ms
+01:09:34 INFO    pi_deploy: t= 3565 | lidar 0.48 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 24.6 ms
+01:09:34 INFO    pi_deploy: t= 3570 | lidar 0.25 | tof 0.33 | vis 0.00 | pol(+0.01,+1.59) -> out(+0.01,+0.00) | tof_slow     | 5.6 ms
+01:09:35 INFO    pi_deploy: t= 3575 | lidar 0.55 | tof 0.34 | vis 0.00 | pol(+0.01,+1.26) -> out(+0.01,+1.26) | planner      | 5.6 ms
+01:09:35 INFO    pi_deploy: t= 3580 | lidar 0.48 | tof 0.32 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 23.4 ms
+01:09:35 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:09:36 INFO    pi_deploy: t= 3585 | lidar 0.52 | tof 0.48 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,+1.60) | recovery     | 105.5 ms
+01:09:37 INFO    pi_deploy: t= 3590 | lidar 0.32 | tof 1.25 | vis 0.00 | pol(+0.20,+0.00) -> out(+0.00,+1.60) | recovery     | 36.4 ms
+01:09:37 INFO    pi_deploy: t= 3595 | lidar 0.22 | tof 0.39 | vis 0.00 | pol(+0.34,+1.43) -> out(+0.21,+1.09) | tof_slow     | 12.8 ms
+01:09:38 INFO    pi_deploy: t= 3600 | lidar 0.43 | tof 0.89 | vis 0.00 | pol(+0.38,+0.80) -> out(+0.00,+0.80) | governor     | 38.7 ms
+01:09:39 INFO    pi_deploy: t= 3605 | lidar 0.64 | tof 0.80 | vis 0.00 | pol(+0.50,+1.60) -> out(+0.48,+1.60) | navigator    | 19.5 ms
+01:09:39 INFO    pi_deploy: t= 3610 | lidar 0.71 | tof 0.54 | vis 0.00 | pol(+0.22,+1.60) -> out(+0.16,+1.60) | navigator    | 12.9 ms
+01:09:40 INFO    pi_deploy: t= 3615 | lidar 0.81 | tof 0.93 | vis 0.00 | pol(+0.27,-0.32) -> out(+0.24,+0.40) | navigator    | 7.2 ms
+01:09:40 INFO    pi_deploy: t= 3620 | lidar 0.78 | tof 0.64 | vis 0.00 | pol(+0.42,-1.60) -> out(+0.35,-1.60) | navigator    | 8.9 ms
+01:09:41 INFO    pi_deploy: t= 3625 | lidar 0.62 | tof 0.35 | vis 0.00 | pol(+0.34,-1.50) -> out(+0.15,-1.50) | planner      | 16.6 ms
+01:09:41 INFO    pi_deploy: t= 3630 | lidar 0.46 | tof 0.86 | vis 0.00 | pol(+0.25,+0.32) -> out(+0.10,-0.35) | governor     | 50.6 ms
+01:09:42 INFO    pi_deploy: t= 3635 | lidar 0.44 | tof 0.77 | vis 0.00 | pol(+0.22,+0.48) -> out(+0.22,+0.48) | navigator    | 13.5 ms
+01:09:42 INFO    pi_deploy: t= 3640 | lidar 0.56 | tof 0.76 | vis 0.00 | pol(+0.50,+1.12) -> out(+0.47,+1.12) | navigator    | 11.3 ms
+01:09:43 INFO    pi_deploy: t= 3645 | lidar 0.70 | tof 0.90 | vis 0.00 | pol(+0.42,+0.64) -> out(+0.42,+0.64) | navigator    | 13.8 ms
+01:09:43 INFO    pi_deploy: t= 3650 | lidar 0.88 | tof 0.83 | vis 0.00 | pol(+0.34,+0.32) -> out(+0.23,+0.80) | navigator    | 11.1 ms
+01:09:44 INFO    pi_deploy: t= 3655 | lidar 0.54 | tof 0.70 | vis 0.00 | pol(+0.20,+1.28) -> out(+0.00,+1.28) | governor     | 7.3 ms
+01:09:44 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:09:44 INFO    pi_deploy: t= 3660 | lidar 0.63 | tof 0.90 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.10,+0.80) | governor     | 20.7 ms
+01:09:45 INFO    pi_deploy: t= 3665 | lidar 0.71 | tof 0.98 | vis 0.00 | pol(+0.30,-0.48) -> out(+0.30,-0.24) | navigator    | 104.1 ms
+01:09:46 INFO    pi_deploy: t= 3670 | lidar 0.86 | tof 0.92 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.30,-0.33) | navigator    | 52.5 ms
+01:09:46 INFO    pi_deploy: t= 3675 | lidar 0.77 | tof 4.00 | vis 0.00 | pol(+0.34,+0.16) -> out(+0.00,+0.00) | governor     | 63.6 ms
+01:09:47 INFO    pi_deploy: t= 3680 | lidar 0.77 | tof 0.33 | vis 0.00 | pol(+0.42,-1.57) -> out(+0.12,-0.00) | governor     | 17.1 ms
+01:09:47 INFO    pi_deploy: t= 3685 | lidar 0.84 | tof 0.93 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.50,+0.16) | navigator    | 12.3 ms
+01:09:48 INFO    pi_deploy: t= 3690 | lidar 0.78 | tof 0.34 | vis 0.00 | pol(+0.34,-1.55) -> out(+0.00,+0.00) | governor     | 32.8 ms
+01:09:48 INFO    pi_deploy: t= 3695 | lidar 0.67 | tof 0.34 | vis 0.00 | pol(+0.50,-1.56) -> out(+0.14,-0.80) | governor     | 10.6 ms
+01:09:49 INFO    pi_deploy: t= 3700 | lidar 0.57 | tof 0.44 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 11.1 ms
+01:09:49 INFO    pi_deploy: t= 3705 | lidar 0.44 | tof 4.00 | vis 0.00 | pol(+0.17,+0.16) -> out(+0.08,+1.20) | navigator    | 25.5 ms
+01:09:50 INFO    pi_deploy: t= 3710 | lidar 0.38 | tof 1.38 | vis 0.00 | pol(+0.33,+0.16) -> out(+0.16,+0.80) | navigator    | 26.8 ms
+01:09:50 INFO    pi_deploy: t= 3715 | lidar 0.42 | tof 0.34 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.14,-0.48) | planner      | 16.2 ms
+01:09:51 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:09:51 INFO    pi_deploy: t= 3720 | lidar 0.60 | tof 0.91 | vis 0.00 | pol(+0.38,-0.32) -> out(+0.38,-0.32) | navigator    | 19.0 ms
+01:09:52 INFO    pi_deploy: t= 3725 | lidar 0.87 | tof 0.72 | vis 0.00 | pol(+0.50,-1.12) -> out(+0.40,-1.12) | navigator    | 78.7 ms
+01:09:52 INFO    pi_deploy: t= 3730 | lidar 0.69 | tof 0.70 | vis 0.00 | pol(+0.38,-0.80) -> out(+0.20,-0.80) | navigator    | 40.2 ms
+01:09:53 INFO    pi_deploy: t= 3735 | lidar 0.56 | tof 0.96 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.36,-0.16) | navigator    | 38.1 ms
+01:09:53 INFO    pi_deploy: t= 3740 | lidar 0.55 | tof 0.91 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.10,-1.11) | navigator    | 40.0 ms
+01:09:54 INFO    pi_deploy: t= 3745 | lidar 0.60 | tof 4.00 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.16,+0.25) | navigator    | 32.9 ms
+01:09:54 INFO    pi_deploy: t= 3750 | lidar 0.64 | tof 4.00 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.38,+0.16) | navigator    | 29.2 ms
+01:09:55 INFO    pi_deploy: t= 3755 | lidar 0.67 | tof 4.00 | vis 0.00 | pol(+0.34,+0.16) -> out(+0.34,+0.16) | navigator    | 12.0 ms
+01:09:55 INFO    pi_deploy: t= 3760 | lidar 0.47 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.16,+0.80) | governor     | 18.3 ms
+01:09:56 INFO    pi_deploy: t= 3765 | lidar 0.84 | tof 4.00 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.37,-0.31) | navigator    | 11.8 ms
+01:09:56 INFO    pi_deploy: t= 3770 | lidar 0.81 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.50,-0.32) | navigator    | 17.8 ms
+01:09:57 INFO    pi_deploy: t= 3775 | lidar 0.74 | tof 1.24 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.50,-0.32) | navigator    | 28.5 ms
+01:09:57 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+01:09:57 INFO    pi_deploy: t= 3780 | lidar 0.67 | tof 1.48 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.38,-0.16) | navigator    | 58.5 ms
+01:09:58 INFO    pi_deploy: t= 3785 | lidar 0.62 | tof 1.13 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.38,-0.16) | navigator    | 107.2 ms
+01:09:59 INFO    pi_deploy: t= 3790 | lidar 0.62 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.50,-0.16) | navigator    | 228.4 ms
+01:10:00 INFO    pi_deploy: t= 3795 | lidar 0.67 | tof 4.00 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.38,-0.16) | navigator    | 64.8 ms
+01:10:00 INFO    pi_deploy: t= 3800 | lidar 0.59 | tof 4.00 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.38,-0.16) | navigator    | 14.3 ms
+01:10:00 INFO    pi_deploy: t= 3805 | lidar 0.61 | tof 4.00 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.38,-0.16) | navigator    | 13.2 ms
+01:10:01 INFO    pi_deploy: t= 3810 | lidar 0.63 | tof 4.00 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.38,-0.16) | navigator    | 35.6 ms
+01:10:02 INFO    pi_deploy: t= 3815 | lidar 0.66 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.48,-0.16) | navigator    | 49.6 ms
+01:10:02 INFO    pi_deploy: t= 3820 | lidar 0.70 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.50,+0.16) | navigator    | 18.9 ms
+01:10:02 INFO    pi_deploy: t= 3825 | lidar 0.75 | tof 4.00 | vis 0.00 | pol(+0.30,+0.16) -> out(+0.30,+0.16) | navigator    | 17.2 ms
+01:10:03 INFO    pi_deploy: t= 3830 | lidar 0.81 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.24,+0.16) | governor     | 19.2 ms
+01:10:03 INFO    pi_deploy: t= 3835 | lidar 0.88 | tof 1.20 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.42,+0.16) | navigator    | 12.2 ms
+01:10:04 INFO    pi_deploy: t= 3840 | lidar 0.81 | tof 1.10 | vis 0.00 | pol(+0.32,+0.16) -> out(+0.32,+0.16) | navigator    | 12.1 ms
+01:10:04 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+01:10:05 INFO    pi_deploy: t= 3845 | lidar 0.73 | tof 0.91 | vis 0.00 | pol(+0.33,+0.16) -> out(+0.33,+0.16) | navigator    | 64.1 ms
+01:10:05 INFO    pi_deploy: t= 3850 | lidar 0.65 | tof 0.77 | vis 0.00 | pol(+0.33,+0.64) -> out(+0.13,+0.64) | navigator    | 31.1 ms
+01:10:06 INFO    pi_deploy: t= 3855 | lidar 0.56 | tof 0.33 | vis 0.00 | pol(+0.33,+1.60) -> out(+0.00,+1.60) | governor     | 129.6 ms
+01:10:07 INFO    pi_deploy: t= 3860 | lidar 0.45 | tof 1.12 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.22,-0.16) | navigator    | 60.5 ms
+01:10:07 INFO    pi_deploy: t= 3865 | lidar 0.67 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-0.99) | navigator    | 81.4 ms
+01:10:08 INFO    pi_deploy: t= 3870 | lidar 0.85 | tof 0.80 | vis 0.00 | pol(+0.50,-0.64) -> out(+0.25,-1.20) | navigator    | 17.2 ms
+01:10:08 INFO    pi_deploy: t= 3875 | lidar 0.76 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.08,-0.16) | governor     | 11.9 ms
+01:10:09 INFO    pi_deploy: t= 3880 | lidar 0.77 | tof 0.40 | vis 0.00 | pol(+0.22,-1.60) -> out(+0.00,-1.60) | governor     | 15.4 ms
+01:10:09 INFO    pi_deploy: t= 3885 | lidar 0.73 | tof 1.02 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.33,+0.40) | navigator    | 15.5 ms
+01:10:10 INFO    pi_deploy: t= 3890 | lidar 0.85 | tof 0.71 | vis 0.00 | pol(+0.34,+0.64) -> out(+0.34,+0.64) | navigator    | 117.0 ms
+01:10:10 INFO    pi_deploy: t= 3895 | lidar 0.69 | tof 0.70 | vis 0.00 | pol(+0.20,+1.60) -> out(+0.00,+1.60) | governor     | 16.6 ms
+01:10:11 INFO    pi_deploy: t= 3900 | lidar 0.55 | tof 1.20 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.22,+0.16) | navigator    | 25.2 ms
+01:10:11 INFO    pi_deploy: t= 3905 | lidar 0.64 | tof 1.11 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.22,-0.16) | navigator    | 19.5 ms
+01:10:12 INFO    pi_deploy: t= 3910 | lidar 0.47 | tof 0.90 | vis 0.00 | pol(-0.15,+0.69) -> out(-0.15,+0.16) | planner      | 15.0 ms
+01:10:12 INFO    friday.voice: SAY [new_frontier] I found an unexplored area 5 metres to the west. I will investigate it.
+01:10:12 INFO    pi_deploy: t= 3915 | lidar 0.85 | tof 0.37 | vis 0.00 | pol(-0.15,-0.17) -> out(-0.15,-0.17) | governor     | 49.6 ms
+01:10:13 INFO    pi_deploy: t= 3920 | lidar 0.75 | tof 0.34 | vis 0.00 | pol(-0.15,-0.13) -> out(-0.15,-0.13) | governor     | 26.2 ms
+01:10:13 INFO    pi_deploy: t= 3925 | lidar 0.58 | tof 1.12 | vis 0.00 | pol(-0.15,-0.10) -> out(-0.15,-0.10) | governor     | 64.1 ms
+01:10:14 INFO    pi_deploy: t= 3930 | lidar 0.31 | tof 1.31 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 33.0 ms
+01:10:15 INFO    pi_deploy: t= 3935 | lidar 0.22 | tof 1.83 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 86.8 ms
+01:10:15 INFO    pi_deploy: t= 3940 | lidar 0.22 | tof 1.57 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 15.9 ms
+01:10:16 INFO    pi_deploy: t= 3945 | lidar 0.22 | tof 1.43 | vis 0.00 | pol(-0.15,+0.05) -> out(+0.00,+0.05) | governor     | 22.6 ms
+01:10:16 INFO    pi_deploy: t= 3950 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.05) -> out(+0.00,+0.05) | governor     | 19.1 ms
+01:10:17 INFO    pi_deploy: t= 3955 | lidar 0.22 | tof 2.22 | vis 0.00 | pol(-0.15,+0.05) -> out(+0.00,+0.05) | governor     | 11.8 ms
+01:10:17 INFO    pi_deploy: t= 3960 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.05) -> out(+0.00,+0.05) | governor     | 12.2 ms
+01:10:18 INFO    pi_deploy: t= 3965 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.05) -> out(+0.00,+0.05) | governor     | 37.4 ms
+01:10:18 INFO    pi_deploy: t= 3970 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,+0.00) | governor     | 20.6 ms
+01:10:19 INFO    pi_deploy: t= 3975 | lidar 0.22 | tof 1.55 | vis 0.00 | pol(-0.15,+0.05) -> out(+0.00,-1.60) | recovery     | 27.0 ms
+01:10:19 INFO    pi_deploy: t= 3980 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,-1.60) | recovery     | 8.8 ms
+01:10:20 INFO    pi_deploy: t= 3985 | lidar 0.35 | tof 0.16 | vis 0.00 | pol(-0.15,+0.32) -> out(-0.15,+0.32) | REFLEX_STOP  | 39.3 ms
+01:10:20 INFO    pi_deploy: t= 3990 | lidar 0.37 | tof 0.21 | vis 0.00 | pol(-0.15,+0.23) -> out(-0.15,+0.23) | REFLEX_STOP  | 10.6 ms
+01:10:21 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+01:10:21 INFO    pi_deploy: t= 3995 | lidar 0.39 | tof 0.21 | vis 0.00 | pol(-0.15,+1.59) -> out(-0.15,+1.59) | REFLEX_STOP  | 47.4 ms
+01:10:21 INFO    pi_deploy: t= 4000 | lidar 0.37 | tof 0.23 | vis 0.00 | pol(-0.15,+0.94) -> out(-0.15,+0.94) | REFLEX_STOP  | 33.8 ms
+01:10:22 INFO    pi_deploy: t= 4005 | lidar 0.39 | tof 0.22 | vis 0.00 | pol(-0.15,-0.68) -> out(-0.15,-0.68) | REFLEX_STOP  | 70.6 ms
+01:10:23 INFO    pi_deploy: t= 4010 | lidar 0.40 | tof 0.21 | vis 0.00 | pol(-0.15,-0.39) -> out(-0.15,-0.39) | REFLEX_STOP  | 42.3 ms
+01:10:23 INFO    pi_deploy: t= 4015 | lidar 0.40 | tof 0.20 | vis 0.00 | pol(-0.15,+0.01) -> out(-0.15,-0.80) | REFLEX_STOP  | 58.1 ms
+01:10:24 INFO    pi_deploy: t= 4020 | lidar 0.39 | tof 0.22 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,-0.80) | REFLEX_STOP  | 15.5 ms
+01:10:24 INFO    pi_deploy: t= 4025 | lidar 0.41 | tof 0.19 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,-0.80) | REFLEX_STOP  | 21.6 ms
+01:10:25 INFO    pi_deploy: t= 4030 | lidar 0.40 | tof 0.21 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | REFLEX_STOP  | 14.4 ms
+01:10:25 INFO    pi_deploy: t= 4035 | lidar 0.46 | tof 0.25 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.08,+0.08) | ok           | 10.5 ms
+01:10:26 INFO    pi_deploy: t= 4040 | lidar 0.49 | tof 0.27 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 8.8 ms
+01:10:26 INFO    pi_deploy: t= 4045 | lidar 0.62 | tof 0.39 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 22.7 ms
+01:10:27 INFO    pi_deploy: t= 4050 | lidar 0.77 | tof 0.31 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 13.9 ms
+01:10:27 INFO    pi_deploy: t= 4055 | lidar 0.82 | tof 0.33 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 13.6 ms
+01:10:28 INFO    pi_deploy: t= 4060 | lidar 0.66 | tof 0.83 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 11.2 ms
+01:10:28 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:10:28 INFO    pi_deploy: t= 4065 | lidar 0.53 | tof 0.95 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 30.1 ms
+01:10:29 INFO    pi_deploy: t= 4070 | lidar 0.39 | tof 1.18 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 74.4 ms
+01:10:30 INFO    pi_deploy: t= 4075 | lidar 0.24 | tof 1.49 | vis 0.00 | pol(-0.15,+1.35) -> out(+0.00,+1.35) | governor     | 47.3 ms
+01:10:30 INFO    pi_deploy: t= 4080 | lidar 0.35 | tof 0.28 | vis 0.00 | pol(-0.15,+0.87) -> out(+0.00,+0.87) | governor     | 11.7 ms
+01:10:31 INFO    pi_deploy: t= 4085 | lidar 0.25 | tof 0.28 | vis 0.00 | pol(-0.15,-0.51) -> out(-0.08,-0.40) | planner      | 11.6 ms
+01:10:31 INFO    pi_deploy: t= 4090 | lidar 0.50 | tof 0.31 | vis 0.00 | pol(+0.50,-0.74) -> out(+0.10,-0.74) | governor     | 11.0 ms
+01:10:32 INFO    pi_deploy: t= 4095 | lidar 0.43 | tof 0.27 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,-0.59) | governor     | 10.6 ms
+01:10:33 INFO    pi_deploy: t= 4100 | lidar 0.37 | tof 0.18 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,-0.59) | REFLEX_STOP  | 13.9 ms
+01:10:33 INFO    pi_deploy: t= 4105 | lidar 0.38 | tof 0.17 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 15.6 ms
+01:10:34 INFO    pi_deploy: t= 4110 | lidar 0.37 | tof 0.17 | vis 0.00 | pol(+0.50,-1.24) -> out(+0.00,-1.24) | REFLEX_STOP  | 155.1 ms
+01:10:34 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:10:34 INFO    pi_deploy: t= 4115 | lidar 0.37 | tof 0.19 | vis 0.00 | pol(+0.42,-0.71) -> out(+0.00,-0.71) | REFLEX_STOP  | 43.8 ms
+01:10:35 INFO    pi_deploy: t= 4120 | lidar 0.37 | tof 0.18 | vis 0.00 | pol(+0.42,-0.71) -> out(+0.00,-0.71) | REFLEX_STOP  | 38.6 ms
+01:10:35 INFO    pi_deploy: t= 4125 | lidar 0.37 | tof 0.19 | vis 0.00 | pol(+0.42,-1.55) -> out(+0.00,-1.55) | REFLEX_STOP  | 58.0 ms
+01:10:36 INFO    pi_deploy: t= 4130 | lidar 0.34 | tof 0.19 | vis 0.00 | pol(+0.50,-1.00) -> out(+0.00,-1.00) | REFLEX_STOP  | 16.7 ms
+01:10:36 INFO    pi_deploy: t= 4135 | lidar 0.36 | tof 0.17 | vis 0.00 | pol(+0.50,-0.74) -> out(+0.00,-0.74) | REFLEX_STOP  | 25.2 ms
+01:10:37 INFO    pi_deploy: t= 4140 | lidar 0.35 | tof 0.18 | vis 0.00 | pol(+0.50,-0.58) -> out(+0.00,-1.60) | REFLEX_STOP  | 23.1 ms
+01:10:37 INFO    pi_deploy: t= 4145 | lidar 0.35 | tof 0.19 | vis 0.00 | pol(+0.50,-1.33) -> out(+0.00,-1.60) | REFLEX_STOP  | 18.2 ms
+01:10:38 INFO    pi_deploy: t= 4150 | lidar 0.35 | tof 0.20 | vis 0.00 | pol(+0.42,-0.71) -> out(+0.00,-0.71) | REFLEX_STOP  | 23.4 ms
+01:10:38 INFO    pi_deploy: t= 4155 | lidar 0.34 | tof 0.23 | vis 0.00 | pol(+0.42,-0.66) -> out(+0.00,-0.66) | REFLEX_STOP  | 29.7 ms
+01:10:39 INFO    pi_deploy: t= 4160 | lidar 0.34 | tof 0.21 | vis 0.00 | pol(+0.50,-0.81) -> out(+0.00,-0.81) | REFLEX_STOP  | 25.4 ms
+01:10:39 INFO    pi_deploy: t= 4165 | lidar 0.34 | tof 0.21 | vis 0.00 | pol(+0.50,-0.73) -> out(+0.00,-0.73) | REFLEX_STOP  | 11.5 ms
+01:10:40 INFO    pi_deploy: t= 4170 | lidar 0.33 | tof 0.24 | vis 0.00 | pol(+0.50,-0.47) -> out(+0.00,-0.47) | governor     | 11.1 ms
+01:10:40 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:10:41 INFO    pi_deploy: t= 4175 | lidar 0.31 | tof 0.25 | vis 0.00 | pol(+0.50,-0.20) -> out(+0.02,-0.20) | planner      | 58.5 ms
+01:10:41 INFO    pi_deploy: t= 4180 | lidar 0.30 | tof 0.27 | vis 0.00 | pol(+0.50,-0.08) -> out(+0.00,-0.80) | rear_blocked | 69.6 ms
+01:10:42 INFO    pi_deploy: t= 4185 | lidar 0.28 | tof 0.27 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.80) | rear_blocked | 75.4 ms
+01:10:43 INFO    pi_deploy: t= 4190 | lidar 0.22 | tof 0.34 | vis 0.00 | pol(+0.50,+0.21) -> out(+0.00,-0.80) | rear_blocked | 30.7 ms
+01:10:43 INFO    pi_deploy: t= 4195 | lidar 0.22 | tof 0.34 | vis 0.00 | pol(+0.42,-1.16) -> out(+0.14,-1.16) | planner      | 29.7 ms
+01:10:44 INFO    pi_deploy: t= 4200 | lidar 0.27 | tof 0.93 | vis 0.00 | pol(+0.42,+1.12) -> out(+0.39,+0.23) | navigator    | 17.6 ms
+01:10:44 INFO    pi_deploy: t= 4205 | lidar 0.48 | tof 0.86 | vis 0.00 | pol(+0.50,+1.60) -> out(+0.08,+1.60) | governor     | 15.2 ms
+01:10:45 INFO    pi_deploy: t= 4210 | lidar 0.64 | tof 0.56 | vis 0.00 | pol(+0.18,+1.60) -> out(+0.00,+1.60) | governor     | 28.7 ms
+01:10:45 INFO    pi_deploy: t= 4215 | lidar 0.54 | tof 0.36 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+0.00) | governor     | 20.2 ms
+01:10:46 INFO    pi_deploy: t= 4220 | lidar 0.43 | tof 0.30 | vis 0.00 | pol(+0.01,-0.90) -> out(+0.00,-0.90) | governor     | 17.1 ms
+01:10:46 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+01:10:46 INFO    pi_deploy: t= 4225 | lidar 0.38 | tof 0.27 | vis 0.00 | pol(+0.01,-0.71) -> out(+0.00,-0.71) | REFLEX_STOP  | 78.9 ms
+01:10:47 INFO    pi_deploy: t= 4230 | lidar 0.41 | tof 0.19 | vis 0.00 | pol(+0.01,-0.70) -> out(+0.00,-0.70) | governor     | 97.8 ms
+01:10:47 INFO    pi_deploy: t= 4235 | lidar 0.44 | tof 0.18 | vis 0.00 | pol(+0.01,-0.97) -> out(+0.00,-0.97) | REFLEX_STOP  | 81.8 ms
+01:10:48 INFO    pi_deploy: t= 4240 | lidar 0.42 | tof 0.23 | vis 0.00 | pol(+0.09,-0.97) -> out(+0.00,-0.97) | governor     | 123.4 ms
+01:10:49 INFO    pi_deploy: t= 4245 | lidar 0.40 | tof 0.26 | vis 0.00 | pol(+0.09,-0.97) -> out(+0.00,-0.97) | governor     | 71.5 ms
+01:10:49 INFO    pi_deploy: t= 4250 | lidar 0.45 | tof 0.14 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 14.1 ms
+01:10:50 INFO    pi_deploy: t= 4255 | lidar 0.45 | tof 0.14 | vis 0.00 | pol(+0.01,-1.57) -> out(+0.00,-1.60) | REFLEX_STOP  | 21.8 ms
+01:10:50 INFO    pi_deploy: t= 4260 | lidar 0.45 | tof 0.15 | vis 0.00 | pol(+0.01,-0.89) -> out(+0.00,-1.60) | REFLEX_STOP  | 14.0 ms
+01:10:51 INFO    pi_deploy: t= 4265 | lidar 0.45 | tof 0.14 | vis 0.00 | pol(+0.01,-0.47) -> out(+0.00,-0.47) | REFLEX_STOP  | 24.1 ms
+01:10:51 INFO    pi_deploy: t= 4270 | lidar 0.44 | tof 0.14 | vis 0.00 | pol(+0.50,-1.35) -> out(+0.00,-1.35) | REFLEX_STOP  | 103.9 ms
+01:10:52 INFO    pi_deploy: t= 4275 | lidar 0.45 | tof 0.14 | vis 0.00 | pol(+0.50,-0.97) -> out(+0.00,-0.97) | REFLEX_STOP  | 28.0 ms
+01:10:52 INFO    pi_deploy: t= 4280 | lidar 0.45 | tof 0.14 | vis 0.00 | pol(+0.50,-0.97) -> out(+0.00,-0.97) | REFLEX_STOP  | 16.7 ms
+01:10:53 INFO    pi_deploy: t= 4285 | lidar 0.46 | tof 0.14 | vis 0.00 | pol(+0.50,-0.60) -> out(+0.00,-0.60) | REFLEX_STOP  | 11.2 ms
+01:10:53 INFO    pi_deploy: t= 4290 | lidar 0.47 | tof 0.14 | vis 0.00 | pol(+0.42,-1.38) -> out(+0.00,-1.38) | REFLEX_STOP  | 12.5 ms
+01:10:54 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:10:54 INFO    pi_deploy: t= 4295 | lidar 0.47 | tof 0.14 | vis 0.00 | pol(+0.42,-0.93) -> out(-0.15,-0.80) | REFLEX_STOP  | 34.0 ms
+01:10:54 INFO    pi_deploy: t= 4300 | lidar 0.47 | tof 0.15 | vis 0.00 | pol(+0.50,-0.67) -> out(-0.15,-0.80) | REFLEX_STOP  | 63.8 ms
+01:10:55 INFO    pi_deploy: t= 4305 | lidar 0.49 | tof 0.22 | vis 0.00 | pol(+0.50,-0.65) -> out(-0.15,-0.80) | REFLEX_STOP  | 97.6 ms
+01:10:55 INFO    pi_deploy: t= 4310 | lidar 0.45 | tof 0.24 | vis 0.00 | pol(+0.50,-1.01) -> out(+0.00,-1.01) | REFLEX_STOP  | 69.9 ms
+01:10:56 INFO    pi_deploy: t= 4315 | lidar 0.42 | tof 0.24 | vis 0.00 | pol(+0.50,-1.07) -> out(+0.00,-1.07) | governor     | 24.7 ms
+01:10:57 INFO    pi_deploy: t= 4320 | lidar 0.34 | tof 0.15 | vis 0.00 | pol(+0.50,-0.68) -> out(+0.00,-0.68) | REFLEX_STOP  | 24.6 ms
+01:10:57 INFO    pi_deploy: t= 4325 | lidar 0.33 | tof 0.13 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 21.3 ms
+01:10:58 INFO    pi_deploy: t= 4330 | lidar 0.33 | tof 0.13 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 13.4 ms
+01:10:58 INFO    pi_deploy: t= 4335 | lidar 0.32 | tof 0.15 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | REFLEX_STOP  | 19.3 ms
+01:10:59 INFO    pi_deploy: t= 4340 | lidar 0.32 | tof 0.13 | vis 0.00 | pol(+0.50,-0.07) -> out(-0.15,-0.80) | REFLEX_STOP  | 13.9 ms
+01:10:59 INFO    pi_deploy: t= 4345 | lidar 0.32 | tof 0.15 | vis 0.00 | pol(+0.50,-0.07) -> out(-0.15,-0.80) | REFLEX_STOP  | 19.8 ms
+01:11:00 INFO    pi_deploy: t= 4350 | lidar 0.33 | tof 0.15 | vis 0.00 | pol(+0.42,-1.60) -> out(-0.15,-0.80) | REFLEX_STOP  | 21.9 ms
+01:11:00 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:11:00 INFO    pi_deploy: t= 4355 | lidar 0.33 | tof 0.15 | vis 0.00 | pol(+0.42,-1.59) -> out(-0.15,-0.80) | REFLEX_STOP  | 83.9 ms
+01:11:01 INFO    pi_deploy: t= 4360 | lidar 0.34 | tof 0.14 | vis 0.00 | pol(+0.42,-1.59) -> out(+0.00,-1.59) | REFLEX_STOP  | 48.7 ms
+01:11:01 INFO    pi_deploy: t= 4365 | lidar 0.33 | tof 0.12 | vis 0.00 | pol(+0.50,+0.07) -> out(+0.00,+0.00) | REFLEX_STOP  | 60.0 ms
+01:11:02 INFO    pi_deploy: t= 4370 | lidar 0.34 | tof 0.12 | vis 0.00 | pol(+0.50,+0.94) -> out(+0.00,+0.00) | REFLEX_STOP  | 43.2 ms
+01:11:02 INFO    pi_deploy: t= 4375 | lidar 0.36 | tof 0.12 | vis 0.00 | pol(+0.50,+0.30) -> out(+0.00,+0.00) | REFLEX_STOP  | 11.2 ms
+01:11:03 INFO    pi_deploy: t= 4380 | lidar 0.35 | tof 0.12 | vis 0.00 | pol(+0.50,+0.30) -> out(+0.00,+0.00) | REFLEX_STOP  | 39.0 ms
+01:11:03 INFO    pi_deploy: t= 4385 | lidar 0.34 | tof 0.12 | vis 0.00 | pol(+0.50,+0.29) -> out(+0.00,+0.00) | REFLEX_STOP  | 35.8 ms
+01:11:04 INFO    pi_deploy: t= 4390 | lidar 0.34 | tof 0.12 | vis 0.00 | pol(+0.50,-0.37) -> out(-0.15,+0.00) | REFLEX_STOP  | 26.6 ms
+01:11:04 INFO    pi_deploy: t= 4395 | lidar 0.34 | tof 0.12 | vis 0.00 | pol(+0.50,-0.58) -> out(-0.15,-0.80) | REFLEX_STOP  | 37.2 ms
+01:11:05 INFO    pi_deploy: t= 4400 | lidar 0.34 | tof 0.17 | vis 0.00 | pol(+0.50,-0.58) -> out(-0.15,-0.80) | REFLEX_STOP  | 12.2 ms
+01:11:05 INFO    pi_deploy: t= 4405 | lidar 0.35 | tof 0.23 | vis 0.00 | pol(+0.50,-0.28) -> out(-0.15,-0.80) | REFLEX_STOP  | 17.7 ms
+01:11:06 INFO    pi_deploy: t= 4410 | lidar 0.38 | tof 0.34 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.14,-0.40) | tof_slow     | 12.5 ms
+01:11:06 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:11:06 INFO    pi_deploy: t= 4415 | lidar 0.40 | tof 0.66 | vis 0.00 | pol(+0.38,-1.60) -> out(+0.00,-1.60) | governor     | 53.9 ms
+01:11:07 INFO    pi_deploy: t= 4420 | lidar 0.30 | tof 1.45 | vis 0.00 | pol(+0.38,+0.32) -> out(+0.09,+0.32) | navigator    | 71.7 ms
+01:11:08 INFO    pi_deploy: t= 4425 | lidar 0.26 | tof 1.37 | vis 0.00 | pol(+0.50,-0.25) -> out(+0.00,+0.00) | governor     | 133.4 ms
+01:11:08 INFO    pi_deploy: t= 4430 | lidar 0.34 | tof 1.11 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.08,+0.13) | navigator    | 24.3 ms
+01:11:09 INFO    pi_deploy: t= 4435 | lidar 0.52 | tof 0.35 | vis 0.00 | pol(+0.50,+0.50) -> out(+0.15,+0.57) | planner      | 39.6 ms
+01:11:09 INFO    pi_deploy: t= 4440 | lidar 0.67 | tof 0.41 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.14,+1.21) | tof_slow     | 13.6 ms
+01:11:10 INFO    pi_deploy: t= 4445 | lidar 0.70 | tof 0.35 | vis 0.00 | pol(+0.50,+0.27) -> out(+0.15,-0.80) | tof_slow     | 14.7 ms
+01:11:10 INFO    pi_deploy: t= 4450 | lidar 0.63 | tof 0.67 | vis 0.00 | pol(+0.38,+1.60) -> out(+0.16,+0.80) | navigator    | 17.4 ms
+01:11:11 INFO    pi_deploy: t= 4455 | lidar 0.60 | tof 0.50 | vis 0.00 | pol(+0.27,-1.60) -> out(+0.20,+0.40) | navigator    | 15.4 ms
+01:11:11 INFO    pi_deploy: t= 4460 | lidar 0.56 | tof 0.35 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.15,-1.60) | navigator    | 34.7 ms
+01:11:12 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+01:11:12 INFO    pi_deploy: t= 4465 | lidar 0.43 | tof 0.33 | vis 0.00 | pol(+0.50,-0.54) -> out(+0.13,-0.43) | planner      | 33.2 ms
+01:11:13 INFO    pi_deploy: t= 4470 | lidar 0.42 | tof 4.00 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.23,+0.03) | navigator    | 71.7 ms
+01:11:13 INFO    pi_deploy: t= 4475 | lidar 0.41 | tof 4.00 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.38,+0.16) | navigator    | 56.2 ms
+01:11:14 INFO    pi_deploy: t= 4480 | lidar 0.41 | tof 4.00 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.38,+0.16) | navigator    | 189.5 ms
+01:11:15 INFO    pi_deploy: t= 4485 | lidar 0.51 | tof 4.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.50,+0.64) | navigator    | 73.3 ms
+01:11:15 INFO    pi_deploy: t= 4490 | lidar 0.77 | tof 4.00 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.50,+0.48) | navigator    | 16.6 ms
+01:11:16 INFO    pi_deploy: t= 4495 | lidar 1.09 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.50,+0.32) | navigator    | 16.0 ms
+01:11:16 INFO    pi_deploy: t= 4500 | lidar 1.30 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.50,+0.32) | navigator    | 179.0 ms
+01:11:17 INFO    pi_deploy: t= 4505 | lidar 1.28 | tof 0.38 | vis 0.00 | pol(+0.18,+1.60) -> out(+0.18,+0.57) | navigator    | 37.7 ms
+01:11:17 INFO    pi_deploy: t= 4510 | lidar 1.32 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.50,+0.16) | navigator    | 9.0 ms
+01:11:18 INFO    pi_deploy: t= 4515 | lidar 1.28 | tof 4.00 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.16,+0.80) | navigator    | 6.9 ms
+01:11:18 INFO    pi_deploy: t= 4520 | lidar 1.25 | tof 0.36 | vis 0.00 | pol(+0.17,-1.60) -> out(+0.17,-0.61) | navigator    | 7.0 ms
+01:11:19 INFO    pi_deploy: t= 4525 | lidar 1.06 | tof 0.78 | vis 0.00 | pol(+0.50,-0.80) -> out(+0.34,-0.80) | navigator    | 25.7 ms
+01:11:19 INFO    pi_deploy: t= 4530 | lidar 0.77 | tof 0.37 | vis 0.00 | pol(+0.17,-1.60) -> out(+0.17,-1.60) | navigator    | 21.3 ms
+01:11:20 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+01:11:20 INFO    pi_deploy: t= 4535 | lidar 0.50 | tof 1.42 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.16,+0.16) | navigator    | 39.6 ms
+01:11:21 INFO    pi_deploy: t= 4540 | lidar 0.44 | tof 1.21 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.21,+0.48) | navigator    | 67.3 ms
+01:11:21 INFO    pi_deploy: t= 4545 | lidar 0.53 | tof 4.00 | vis 0.00 | pol(+0.25,+0.16) -> out(+0.25,+0.16) | navigator    | 38.5 ms
+01:11:22 INFO    pi_deploy: t= 4550 | lidar 0.63 | tof 1.27 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.50,+0.16) | navigator    | 28.4 ms
+01:11:22 INFO    pi_deploy: t= 4555 | lidar 0.78 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.40,+0.16) | navigator    | 47.1 ms
+01:11:23 INFO    pi_deploy: t= 4560 | lidar 0.85 | tof 0.98 | vis 0.00 | pol(+0.33,+0.16) -> out(+0.33,+0.16) | navigator    | 16.3 ms
+01:11:23 INFO    pi_deploy: t= 4565 | lidar 0.71 | tof 0.84 | vis 0.00 | pol(+0.32,+0.32) -> out(+0.24,+0.32) | navigator    | 10.1 ms
+01:11:24 INFO    pi_deploy: t= 4570 | lidar 0.61 | tof 0.34 | vis 0.00 | pol(+0.50,+0.66) -> out(+0.13,+1.20) | planner      | 10.9 ms
+01:11:24 INFO    pi_deploy: t= 4575 | lidar 0.58 | tof 4.00 | vis 0.00 | pol(+0.33,-0.16) -> out(+0.33,-0.16) | navigator    | 14.2 ms
+01:11:25 INFO    pi_deploy: t= 4580 | lidar 0.72 | tof 1.62 | vis 0.00 | pol(+0.20,-0.16) -> out(+0.08,-0.16) | navigator    | 16.1 ms
+01:11:25 INFO    pi_deploy: t= 4585 | lidar 0.76 | tof 4.00 | vis 0.00 | pol(+0.30,-0.32) -> out(+0.16,-1.20) | navigator    | 39.7 ms
+01:11:26 INFO    pi_deploy: t= 4590 | lidar 0.82 | tof 0.78 | vis 0.00 | pol(+0.20,+0.32) -> out(+0.20,+0.32) | navigator    | 23.8 ms
+01:11:26 INFO    pi_deploy: t= 4595 | lidar 0.23 | tof 0.72 | vis 0.00 | pol(+0.20,+1.60) -> out(+0.08,+1.60) | navigator    | 30.3 ms
+01:11:27 INFO    pi_deploy: t= 4600 | lidar 0.62 | tof 4.00 | vis 0.00 | pol(+0.20,-0.16) -> out(+0.20,+0.40) | navigator    | 7.0 ms
+01:11:27 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+01:11:27 INFO    pi_deploy: t= 4605 | lidar 0.65 | tof 1.43 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.22,-0.16) | navigator    | 23.5 ms
+01:11:28 INFO    pi_deploy: t= 4610 | lidar 0.75 | tof 1.35 | vis 0.00 | pol(+0.30,-1.60) -> out(+0.17,-1.60) | navigator    | 71.8 ms
+01:11:28 INFO    pi_deploy: t= 4615 | lidar 0.86 | tof 0.85 | vis 0.00 | pol(-0.15,+1.31) -> out(-0.15,-0.36) | planner      | 39.3 ms
+01:11:29 INFO    pi_deploy: t= 4620 | lidar 0.81 | tof 0.35 | vis 0.00 | pol(-0.15,+0.74) -> out(-0.15,+0.74) | planner      | 111.9 ms
+01:11:30 INFO    pi_deploy: t= 4625 | lidar 0.71 | tof 0.93 | vis 0.00 | pol(-0.15,-0.32) -> out(-0.15,-0.32) | planner      | 10.2 ms
+01:11:30 INFO    pi_deploy: t= 4630 | lidar 0.62 | tof 1.08 | vis 0.00 | pol(-0.15,-0.26) -> out(-0.15,-0.26) | governor     | 8.2 ms
+01:11:31 INFO    pi_deploy: t= 4635 | lidar 0.51 | tof 0.37 | vis 0.00 | pol(-0.15,-1.60) -> out(-0.15,-1.44) | ok           | 3.6 ms
+01:11:31 INFO    pi_deploy: t= 4640 | lidar 0.46 | tof 1.01 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.25,-0.16) | navigator    | 25.3 ms
+01:11:32 INFO    pi_deploy: t= 4645 | lidar 0.59 | tof 0.95 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.46,-0.16) | navigator    | 7.0 ms
+01:11:32 INFO    pi_deploy: t= 4650 | lidar 0.82 | tof 0.74 | vis 0.00 | pol(+0.42,-0.80) -> out(+0.00,-0.80) | governor     | 9.3 ms
+01:11:33 INFO    pi_deploy: t= 4655 | lidar 0.81 | tof 0.52 | vis 0.00 | pol(+0.25,-1.60) -> out(+0.25,+0.40) | navigator    | 26.4 ms
+01:11:33 INFO    pi_deploy: t= 4660 | lidar 0.61 | tof 0.33 | vis 0.00 | pol(+0.50,-1.50) -> out(+0.00,-1.50) | governor     | 12.7 ms
+01:11:34 INFO    pi_deploy: t= 4665 | lidar 0.46 | tof 4.00 | vis 0.00 | pol(+0.27,-0.48) -> out(+0.01,-0.48) | governor     | 11.1 ms
+01:11:34 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:11:34 INFO    pi_deploy: t= 4670 | lidar 0.42 | tof 0.22 | vis 0.00 | pol(+0.50,-0.66) -> out(+0.00,-0.66) | REFLEX_STOP  | 24.4 ms
+01:11:35 INFO    pi_deploy: t= 4675 | lidar 0.41 | tof 0.26 | vis 0.00 | pol(+0.42,-0.71) -> out(+0.00,-0.71) | governor     | 65.0 ms
+01:11:35 INFO    pi_deploy: t= 4680 | lidar 0.38 | tof 0.35 | vis 0.00 | pol(+0.42,-1.58) -> out(+0.00,-1.58) | governor     | 30.0 ms
+01:11:36 INFO    pi_deploy: t= 4685 | lidar 0.29 | tof 0.40 | vis 0.00 | pol(+0.17,-1.60) -> out(+0.00,-1.60) | governor     | 69.0 ms
+01:11:36 INFO    pi_deploy: t= 4690 | lidar 0.22 | tof 1.57 | vis 0.00 | pol(+0.38,-0.32) -> out(+0.38,-0.32) | navigator    | 61.4 ms
+01:11:37 INFO    pi_deploy: t= 4695 | lidar 0.38 | tof 1.26 | vis 0.00 | pol(+0.50,-0.64) -> out(+0.45,-0.64) | navigator    | 15.2 ms
+01:11:37 INFO    pi_deploy: t= 4700 | lidar 0.59 | tof 1.02 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.50,-0.48) | navigator    | 22.1 ms
+01:11:38 INFO    pi_deploy: t= 4705 | lidar 0.83 | tof 0.78 | vis 0.00 | pol(+0.50,-0.80) -> out(+0.50,-0.80) | navigator    | 20.6 ms
+01:11:38 INFO    pi_deploy: t= 4710 | lidar 0.75 | tof 0.56 | vis 0.00 | pol(+0.29,+1.60) -> out(+0.08,+1.60) | governor     | 11.0 ms
+01:11:39 INFO    pi_deploy: t= 4715 | lidar 0.55 | tof 0.76 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,+0.00) | governor     | 6.6 ms
+01:11:39 INFO    pi_deploy: t= 4720 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.20,+0.32) -> out(+0.00,+0.00) | governor     | 6.7 ms
+01:11:40 INFO    pi_deploy: t= 4725 | lidar 0.54 | tof 0.44 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 28.3 ms
+01:11:40 INFO    pi_deploy: t= 4730 | lidar 0.59 | tof 0.45 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.15,-0.80) | navigator    | 18.8 ms
+01:11:40 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:11:41 INFO    pi_deploy: t= 4735 | lidar 0.60 | tof 0.35 | vis 0.00 | pol(+0.01,+1.34) -> out(+0.01,+1.34) | tof_slow     | 26.1 ms
+01:11:41 INFO    pi_deploy: t= 4740 | lidar 0.49 | tof 0.47 | vis 0.00 | pol(-0.15,+0.88) -> out(-0.15,+0.88) | planner      | 38.0 ms
+01:11:42 INFO    pi_deploy: t= 4745 | lidar 0.42 | tof 4.00 | vis 0.00 | pol(-0.15,+0.29) -> out(-0.15,+0.29) | planner      | 36.0 ms
+01:11:42 INFO    pi_deploy: t= 4750 | lidar 0.39 | tof 4.00 | vis 0.00 | pol(-0.15,+0.27) -> out(-0.15,+0.27) | governor     | 39.9 ms
+01:11:43 INFO    pi_deploy: t= 4755 | lidar 0.34 | tof 4.00 | vis 0.00 | pol(-0.15,+0.23) -> out(-0.15,+0.23) | planner      | 3.8 ms
+01:11:43 INFO    pi_deploy: t= 4760 | lidar 0.26 | tof 4.00 | vis 0.00 | pol(-0.15,+0.22) -> out(+0.00,+0.22) | governor     | 54.1 ms
+01:11:44 INFO    pi_deploy: t= 4765 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.09) -> out(+0.00,+0.09) | governor     | 5.8 ms
+01:11:44 INFO    pi_deploy: t= 4770 | lidar 0.22 | tof 1.62 | vis 0.00 | pol(-0.15,+0.71) -> out(+0.00,+0.71) | governor     | 5.3 ms
+01:11:45 INFO    pi_deploy: t= 4775 | lidar 0.22 | tof 1.67 | vis 0.00 | pol(+0.01,+0.71) -> out(+0.00,+0.71) | governor     | 12.2 ms
+01:11:45 INFO    pi_deploy: t= 4780 | lidar 0.22 | tof 1.45 | vis 0.00 | pol(+0.01,+1.59) -> out(+0.00,+1.59) | governor     | 9.6 ms
+01:11:46 INFO    pi_deploy: t= 4785 | lidar 0.22 | tof 0.34 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.01,+1.60) | tof_slow     | 18.4 ms
+01:11:46 INFO    pi_deploy: t= 4790 | lidar 0.22 | tof 1.29 | vis 0.00 | pol(+0.37,+0.16) -> out(+0.17,+1.19) | navigator    | 11.1 ms
+01:11:47 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:11:47 INFO    pi_deploy: t= 4795 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+1.59) | governor     | 105.3 ms
+01:11:48 INFO    pi_deploy: t= 4800 | lidar 0.28 | tof 0.38 | vis 0.00 | pol(+0.17,-1.44) -> out(+0.00,-1.60) | recovery     | 266.9 ms
+01:11:49 INFO    pi_deploy: t= 4805 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.17,-0.08) -> out(+0.00,-1.60) | recovery     | 30.8 ms
+01:11:49 INFO    pi_deploy: t= 4810 | lidar 0.22 | tof 0.34 | vis 0.00 | pol(+0.50,+0.89) -> out(+0.14,+0.32) | tof_slow     | 67.9 ms
+01:11:49 INFO    pi_deploy: t= 4815 | lidar 0.24 | tof 1.17 | vis 0.00 | pol(+0.38,+0.00) -> out(+0.24,+0.48) | navigator    | 10.1 ms
+01:11:50 INFO    pi_deploy: t= 4820 | lidar 0.40 | tof 1.04 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.45,-0.16) | navigator    | 10.2 ms
+01:11:51 INFO    pi_deploy: t= 4825 | lidar 0.66 | tof 0.83 | vis 0.00 | pol(+0.30,+0.16) -> out(+0.30,+0.16) | navigator    | 16.5 ms
+01:11:51 INFO    pi_deploy: t= 4830 | lidar 0.84 | tof 0.58 | vis 0.00 | pol(+0.18,+1.60) -> out(+0.18,+1.36) | navigator    | 19.2 ms
+01:11:51 INFO    pi_deploy: t= 4835 | lidar 0.65 | tof 0.49 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 6.0 ms
+01:11:52 INFO    pi_deploy: t= 4840 | lidar 0.54 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,+0.00) | governor     | 17.4 ms
+01:11:53 INFO    pi_deploy: t= 4845 | lidar 0.50 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 8.4 ms
+01:11:53 INFO    pi_deploy: t= 4850 | lidar 0.53 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 9.6 ms
+01:11:53 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:11:54 INFO    pi_deploy: t= 4855 | lidar 0.56 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 17.0 ms
+01:11:54 INFO    pi_deploy: t= 4860 | lidar 0.60 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 53.6 ms
+01:11:55 INFO    pi_deploy: t= 4865 | lidar 0.63 | tof 0.93 | vis 0.00 | pol(+0.20,-1.60) -> out(+0.17,-0.87) | navigator    | 34.1 ms
+01:11:55 INFO    pi_deploy: t= 4870 | lidar 0.23 | tof 0.34 | vis 0.00 | pol(+0.01,+1.18) -> out(+0.01,+0.00) | planner      | 45.4 ms
+01:11:56 INFO    pi_deploy: t= 4875 | lidar 0.75 | tof 0.49 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.09,+0.40) | navigator    | 10.0 ms
+01:11:56 INFO    pi_deploy: t= 4880 | lidar 0.72 | tof 0.42 | vis 0.00 | pol(-0.15,+0.44) -> out(-0.15,+0.44) | planner      | 16.7 ms
+01:11:57 INFO    pi_deploy: t= 4885 | lidar 0.73 | tof 0.56 | vis 0.00 | pol(-0.15,-0.53) -> out(-0.15,-0.53) | planner      | 5.4 ms
+01:11:57 INFO    pi_deploy: t= 4890 | lidar 0.80 | tof 0.56 | vis 0.00 | pol(-0.15,-0.38) -> out(-0.15,-0.38) | planner      | 14.1 ms
+01:11:58 INFO    pi_deploy: t= 4895 | lidar 0.83 | tof 0.39 | vis 0.00 | pol(-0.15,-0.31) -> out(-0.15,-0.31) | planner      | 3.9 ms
+01:11:58 INFO    pi_deploy: t= 4900 | lidar 0.70 | tof 0.92 | vis 0.00 | pol(-0.15,-0.25) -> out(-0.15,-0.25) | planner      | 13.3 ms
+01:11:59 INFO    pi_deploy: t= 4905 | lidar 0.59 | tof 1.04 | vis 0.00 | pol(-0.15,-0.20) -> out(-0.15,-0.20) | planner      | 15.4 ms
+01:11:59 INFO    pi_deploy: t= 4910 | lidar 0.44 | tof 1.20 | vis 0.00 | pol(-0.15,-0.16) -> out(-0.15,-0.16) | planner      | 5.9 ms
+01:12:00 INFO    friday.voice: SAY [timeout] That area is taking too long to reach. Selecting a new target.
+01:12:00 INFO    pi_deploy: t= 4915 | lidar 0.35 | tof 1.37 | vis 0.00 | pol(-0.15,-0.14) -> out(+0.00,-0.14) | governor     | 19.0 ms
+01:12:01 INFO    pi_deploy: t= 4920 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(-0.15,-0.14) -> out(+0.00,-0.14) | governor     | 70.4 ms
+01:12:01 INFO    pi_deploy: t= 4925 | lidar 0.27 | tof 1.64 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 11.6 ms
+01:12:02 INFO    pi_deploy: t= 4930 | lidar 0.27 | tof 4.00 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 22.2 ms
+01:12:02 INFO    pi_deploy: t= 4935 | lidar 0.27 | tof 4.00 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 11.7 ms
+01:12:03 INFO    pi_deploy: t= 4940 | lidar 0.27 | tof 1.40 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 5.6 ms
+01:12:03 INFO    pi_deploy: t= 4945 | lidar 0.26 | tof 0.33 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 10.0 ms
+01:12:04 INFO    pi_deploy: t= 4950 | lidar 0.27 | tof 1.32 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 12.3 ms
+01:12:04 INFO    pi_deploy: t= 4955 | lidar 0.27 | tof 1.36 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 14.0 ms
+01:12:05 INFO    pi_deploy: t= 4960 | lidar 0.26 | tof 1.25 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | governor     | 5.8 ms
+01:12:05 INFO    pi_deploy: t= 4965 | lidar 0.25 | tof 1.16 | vis 0.00 | pol(+0.38,+0.32) -> out(+0.00,-1.60) | recovery     | 47.2 ms
+01:12:06 INFO    pi_deploy: t= 4970 | lidar 0.22 | tof 1.16 | vis 0.00 | pol(+0.31,+0.64) -> out(+0.16,-0.80) | navigator    | 7.2 ms
+01:12:06 INFO    pi_deploy: t= 4975 | lidar 0.25 | tof 1.15 | vis 0.00 | pol(+0.38,+0.80) -> out(+0.38,+0.12) | navigator    | 11.2 ms
+01:12:07 INFO    pi_deploy: t= 4980 | lidar 0.55 | tof 0.95 | vis 0.00 | pol(+0.31,+0.48) -> out(+0.31,+0.48) | navigator    | 6.8 ms
+01:12:07 INFO    pi_deploy: t= 4985 | lidar 0.87 | tof 0.61 | vis 0.00 | pol(+0.42,+1.60) -> out(+0.00,+1.60) | governor     | 11.6 ms
+01:12:07 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:12:08 INFO    pi_deploy: t= 4990 | lidar 0.79 | tof 0.46 | vis 0.00 | pol(+0.20,+1.60) -> out(+0.19,+1.22) | navigator    | 33.6 ms
+01:12:09 INFO    pi_deploy: t= 4995 | lidar 0.69 | tof 4.00 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.08,+1.21) | navigator    | 109.7 ms
+01:12:09 INFO    pi_deploy: t= 5000 | lidar 0.62 | tof 1.47 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 37.0 ms
+01:12:10 INFO    pi_deploy: t= 5005 | lidar 0.70 | tof 1.17 | vis 0.00 | pol(+0.30,-0.48) -> out(+0.30,-0.24) | navigator    | 32.8 ms
+01:12:10 INFO    pi_deploy: t= 5010 | lidar 0.81 | tof 1.09 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.96) | reverse_lifted | 5.9 ms
+01:12:11 INFO    pi_deploy: t= 5015 | lidar 0.85 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.96) | reverse_lifted | 3.6 ms
+01:12:11 INFO    pi_deploy: t= 5020 | lidar 0.80 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.96) | reverse_lifted | 3.8 ms
+01:12:12 INFO    pi_deploy: t= 5025 | lidar 0.76 | tof 1.20 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,-0.96) | reverse_lifted | 14.2 ms
+01:12:12 INFO    pi_deploy: t= 5030 | lidar 0.72 | tof 4.00 | vis 0.00 | pol(+0.30,+0.32) -> out(+0.23,-0.17) | navigator    | 19.4 ms
+01:12:13 INFO    pi_deploy: t= 5035 | lidar 0.72 | tof 1.20 | vis 0.00 | pol(+0.30,+0.32) -> out(+0.30,+0.32) | navigator    | 90.6 ms
+01:12:13 INFO    pi_deploy: t= 5040 | lidar 0.80 | tof 1.10 | vis 0.00 | pol(+0.30,+0.16) -> out(+0.30,+0.16) | navigator    | 12.1 ms
+01:12:14 INFO    pi_deploy: t= 5045 | lidar 0.86 | tof 1.89 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 15.2 ms
+01:12:14 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:12:14 INFO    pi_deploy: t= 5050 | lidar 0.77 | tof 1.15 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.05,+0.16) | governor     | 16.2 ms
+01:12:15 INFO    pi_deploy: t= 5055 | lidar 0.70 | tof 0.78 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 80.6 ms
+01:12:15 INFO    pi_deploy: t= 5060 | lidar 0.60 | tof 0.44 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 34.2 ms
+01:12:16 INFO    pi_deploy: t= 5065 | lidar 0.42 | tof 0.32 | vis 0.00 | pol(+0.20,-0.16) -> out(+0.20,+0.20) | navigator    | 115.6 ms
+01:12:16 INFO    pi_deploy: t= 5070 | lidar 0.44 | tof 0.97 | vis 0.00 | pol(+0.22,-0.16) -> out(+0.22,-0.16) | navigator    | 136.9 ms
+01:12:17 INFO    pi_deploy: t= 5075 | lidar 0.69 | tof 0.81 | vis 0.00 | pol(-0.15,-0.97) -> out(-0.15,-0.72) | reverse_lifted | 10.6 ms
+01:12:17 INFO    pi_deploy: t= 5080 | lidar 0.84 | tof 0.34 | vis 0.00 | pol(+0.50,-0.03) -> out(+0.08,-0.03) | planner      | 18.1 ms
+01:12:18 INFO    pi_deploy: t= 5085 | lidar 0.80 | tof 0.36 | vis 0.00 | pol(+0.17,-1.60) -> out(+0.17,-0.23) | navigator    | 20.7 ms
+01:12:18 INFO    pi_deploy: t= 5090 | lidar 0.69 | tof 0.85 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.32,-0.40) | navigator    | 10.4 ms
+01:12:19 INFO    pi_deploy: t= 5095 | lidar 0.65 | tof 0.33 | vis 0.00 | pol(+0.50,+0.31) -> out(+0.00,+0.31) | governor     | 8.6 ms
+01:12:19 INFO    pi_deploy: t= 5100 | lidar 0.68 | tof 0.33 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.13,-0.06) | tof_slow     | 8.7 ms
+01:12:20 INFO    pi_deploy: t= 5105 | lidar 0.66 | tof 0.37 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 16.0 ms
+01:12:20 INFO    pi_deploy: t= 5110 | lidar 0.56 | tof 0.29 | vis 0.00 | pol(+0.50,-0.09) -> out(+0.07,-0.09) | planner      | 7.8 ms
+01:12:21 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:12:21 INFO    pi_deploy: t= 5115 | lidar 0.62 | tof 0.36 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.09,-0.51) | navigator    | 26.5 ms
+01:12:21 INFO    pi_deploy: t= 5120 | lidar 0.65 | tof 0.34 | vis 0.00 | pol(+0.50,+0.30) -> out(+0.14,-0.80) | tof_slow     | 44.8 ms
+01:12:22 INFO    pi_deploy: t= 5125 | lidar 0.58 | tof 4.00 | vis 0.00 | pol(+0.38,+0.00) -> out(+0.08,+0.00) | navigator    | 60.9 ms
+01:12:23 INFO    pi_deploy: t= 5130 | lidar 0.48 | tof 0.44 | vis 0.00 | pol(+0.21,+1.60) -> out(+0.16,-1.18) | navigator    | 45.0 ms
+01:12:23 INFO    pi_deploy: t= 5135 | lidar 0.60 | tof 1.00 | vis 0.00 | pol(+0.37,+0.32) -> out(+0.16,+0.32) | navigator    | 12.0 ms
+01:12:24 INFO    pi_deploy: t= 5140 | lidar 0.74 | tof 0.83 | vis 0.00 | pol(+0.27,+0.48) -> out(+0.16,+0.48) | governor     | 29.5 ms
+01:12:24 INFO    pi_deploy: t= 5145 | lidar 0.61 | tof 0.58 | vis 0.00 | pol(+0.19,+1.60) -> out(+0.00,+1.60) | governor     | 27.8 ms
+01:12:25 INFO    pi_deploy: t= 5150 | lidar 0.69 | tof 0.83 | vis 0.00 | pol(+0.17,+0.16) -> out(+0.17,+0.80) | navigator    | 8.2 ms
+01:12:25 INFO    pi_deploy: t= 5155 | lidar 0.54 | tof 1.32 | vis 0.00 | pol(+0.20,+0.16) -> out(+0.20,+0.16) | navigator    | 12.7 ms
+01:12:26 INFO    pi_deploy: t= 5160 | lidar 0.73 | tof 4.00 | vis 0.00 | pol(+0.30,-0.48) -> out(+0.08,-0.40) | navigator    | 10.5 ms
+01:12:26 INFO    pi_deploy: t= 5165 | lidar 0.79 | tof 4.00 | vis 0.00 | pol(+0.20,-1.60) -> out(+0.08,-1.60) | navigator    | 6.9 ms
+01:12:27 INFO    pi_deploy: t= 5170 | lidar 0.55 | tof 0.21 | vis 0.00 | pol(+0.20,+1.60) -> out(+0.00,+1.60) | governor     | 25.0 ms
+01:12:27 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:12:27 INFO    pi_deploy: t= 5175 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.59) | governor     | 17.2 ms
+01:12:28 INFO    pi_deploy: t= 5180 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.01,-1.52) -> out(+0.00,+0.00) | REFLEX_STOP  | 11.1 ms
+01:12:28 INFO    pi_deploy: t= 5185 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 67.7 ms
+01:12:29 INFO    pi_deploy: t= 5190 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 8.9 ms
+01:12:29 INFO    pi_deploy: t= 5195 | lidar 0.22 | tof 0.31 | vis 0.00 | pol(+0.26,+1.23) -> out(+0.00,+0.00) | REFLEX_STOP  | 15.6 ms
+01:12:30 INFO    pi_deploy: t= 5200 | lidar 0.46 | tof 0.31 | vis 0.00 | pol(+0.17,+0.48) -> out(+0.09,+0.48) | planner      | 13.7 ms
+01:12:30 INFO    pi_deploy: t= 5205 | lidar 0.25 | tof 0.37 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 11.0 ms
+01:12:31 INFO    pi_deploy: t= 5210 | lidar 0.26 | tof 4.00 | vis 0.00 | pol(+0.20,-0.32) -> out(+0.08,+1.19) | navigator    | 11.6 ms
+01:12:31 INFO    pi_deploy: t= 5215 | lidar 0.22 | tof 0.40 | vis 0.00 | pol(+0.01,+1.36) -> out(+0.00,+1.60) | recovery     | 5.4 ms
+01:12:32 INFO    pi_deploy: t= 5220 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(+0.01,-1.17) -> out(+0.00,+1.60) | recovery     | 8.7 ms
+01:12:32 INFO    pi_deploy: t= 5225 | lidar 0.22 | tof 1.49 | vis 0.00 | pol(-0.15,-0.49) -> out(+0.00,-0.49) | governor     | 13.8 ms
+01:12:33 INFO    pi_deploy: t= 5230 | lidar 0.23 | tof 0.35 | vis 0.00 | pol(+0.01,-0.74) -> out(+0.01,-0.74) | planner      | 6.8 ms
+01:12:33 INFO    pi_deploy: t= 5235 | lidar 0.22 | tof 1.82 | vis 0.00 | pol(+0.20,+1.60) -> out(+0.08,+1.60) | navigator    | 10.3 ms
+01:12:33 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+01:12:34 INFO    pi_deploy: t= 5240 | lidar 0.22 | tof 1.85 | vis 0.00 | pol(+0.01,-1.00) -> out(+0.01,-1.00) | planner      | 114.2 ms
+01:12:34 INFO    pi_deploy: t= 5245 | lidar 0.22 | tof 0.33 | vis 0.00 | pol(+0.01,-0.72) -> out(+0.01,-0.72) | planner      | 31.6 ms
+01:12:35 INFO    pi_deploy: t= 5250 | lidar 0.71 | tof 0.34 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.01,-1.59) | tof_slow     | 39.4 ms
+01:12:36 INFO    pi_deploy: t= 5255 | lidar 0.22 | tof 0.45 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,+0.80) | rear_blocked | 9.9 ms
+01:12:36 INFO    pi_deploy: t= 5260 | lidar 0.72 | tof 0.48 | vis 0.00 | pol(+0.15,+1.60) -> out(-0.15,+0.80) | recovery     | 40.9 ms
+01:12:37 INFO    pi_deploy: t= 5265 | lidar 0.23 | tof 0.38 | vis 0.00 | pol(+0.15,+1.60) -> out(-0.15,+0.80) | recovery     | 17.1 ms
+01:12:37 INFO    pi_deploy: t= 5270 | lidar 0.71 | tof 0.38 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.15,+0.79) | navigator    | 6.2 ms
+01:12:38 INFO    pi_deploy: t= 5275 | lidar 0.64 | tof 4.00 | vis 0.00 | pol(+0.20,+0.32) -> out(+0.20,+1.20) | navigator    | 7.4 ms
+01:12:38 INFO    pi_deploy: t= 5280 | lidar 0.22 | tof 1.30 | vis 0.00 | pol(+0.01,-1.11) -> out(+0.01,-1.11) | planner      | 6.6 ms
+01:12:39 INFO    pi_deploy: t= 5285 | lidar 0.22 | tof 1.75 | vis 0.00 | pol(+0.20,+0.48) -> out(+0.16,+0.48) | navigator    | 10.3 ms
+01:12:39 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+01:12:39 INFO    pi_deploy: t= 5290 | lidar 0.24 | tof 4.00 | vis 0.00 | pol(+0.20,+0.32) -> out(+0.20,+0.32) | navigator    | 87.7 ms
+01:12:40 INFO    pi_deploy: t= 5295 | lidar 0.53 | tof 1.62 | vis 0.00 | pol(+0.20,+0.32) -> out(+0.05,+0.32) | governor     | 105.6 ms
+01:12:41 INFO    pi_deploy: t= 5300 | lidar 0.36 | tof 1.19 | vis 0.00 | pol(+0.22,+0.32) -> out(+0.16,+0.32) | navigator    | 47.8 ms
+01:12:41 INFO    pi_deploy: t= 5305 | lidar 0.31 | tof 0.35 | vis 0.00 | pol(+0.22,+0.16) -> out(+0.16,+0.81) | navigator    | 136.1 ms
+01:12:42 INFO    pi_deploy: t= 5310 | lidar 0.23 | tof 0.41 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+1.57) | governor     | 23.8 ms
+01:12:42 INFO    pi_deploy: t= 5315 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.17,+1.46) -> out(+0.00,+1.46) | REFLEX_STOP  | 12.8 ms
+01:12:43 INFO    pi_deploy: t= 5320 | lidar 0.27 | tof 0.15 | vis 0.00 | pol(+0.17,+0.68) -> out(+0.00,+0.68) | REFLEX_STOP  | 10.9 ms
+01:12:43 INFO    pi_deploy: t= 5325 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.01,+0.94) -> out(+0.00,+0.00) | REFLEX_STOP  | 32.6 ms
+01:12:44 INFO    pi_deploy: t= 5330 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(+0.00,+0.71) -> out(+0.00,+0.71) | planner      | 14.4 ms
+01:12:44 INFO    pi_deploy: t= 5335 | lidar 0.25 | tof 1.04 | vis 0.00 | pol(+0.20,-0.96) -> out(+0.20,-0.96) | navigator    | 95.6 ms
+01:12:45 INFO    pi_deploy: t= 5340 | lidar 0.24 | tof 4.00 | vis 0.00 | pol(-0.15,+0.72) -> out(+0.00,+0.00) | governor     | 24.2 ms
+01:12:45 INFO    pi_deploy: t= 5345 | lidar 0.62 | tof 1.31 | vis 0.00 | pol(-0.15,+0.09) -> out(-0.15,+0.09) | planner      | 19.9 ms
+01:12:46 INFO    pi_deploy: t= 5350 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.09) -> out(+0.00,+0.09) | governor     | 9.6 ms
+01:12:46 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+01:12:46 INFO    pi_deploy: t= 5355 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.08) | governor     | 31.9 ms
+01:12:47 INFO    pi_deploy: t= 5360 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,+0.09) -> out(+0.00,+0.09) | governor     | 44.6 ms
+01:12:47 INFO    pi_deploy: t= 5365 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(-0.15,+0.09) -> out(+0.00,+0.09) | governor     | 16.8 ms
+01:12:48 INFO    pi_deploy: t= 5370 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.08) | governor     | 30.4 ms
+01:12:49 INFO    pi_deploy: t= 5375 | lidar 0.23 | tof 1.33 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.08) | governor     | 46.4 ms
+01:12:49 INFO    pi_deploy: t= 5380 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.96) | governor     | 15.7 ms
+01:12:50 INFO    pi_deploy: t= 5385 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.96) | governor     | 15.8 ms
+01:12:50 INFO    pi_deploy: t= 5390 | lidar 0.69 | tof 0.38 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,-0.17) | ok           | 12.9 ms
+01:12:51 INFO    pi_deploy: t= 5395 | lidar 0.67 | tof 0.47 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 11.5 ms
+01:12:51 INFO    pi_deploy: t= 5400 | lidar 0.67 | tof 0.38 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 14.5 ms
+01:12:52 INFO    pi_deploy: t= 5405 | lidar 0.67 | tof 0.47 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 20.4 ms
+01:12:52 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.8 metres ahead. I am changing my route.
+01:12:52 INFO    pi_deploy: t= 5410 | lidar 0.67 | tof 0.37 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 61.1 ms
+01:12:53 INFO    pi_deploy: t= 5415 | lidar 0.67 | tof 0.34 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 74.3 ms
+01:12:53 INFO    pi_deploy: t= 5420 | lidar 0.67 | tof 0.33 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 28.2 ms
+01:12:54 INFO    pi_deploy: t= 5425 | lidar 0.67 | tof 0.40 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 66.2 ms
+01:12:55 INFO    pi_deploy: t= 5430 | lidar 0.67 | tof 0.49 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 52.1 ms
+01:12:55 INFO    pi_deploy: t= 5435 | lidar 0.67 | tof 0.41 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 66.6 ms
+01:12:56 INFO    pi_deploy: t= 5440 | lidar 0.67 | tof 0.42 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 15.4 ms
+01:12:56 INFO    pi_deploy: t= 5445 | lidar 0.67 | tof 0.35 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 21.5 ms
+01:12:57 INFO    pi_deploy: t= 5450 | lidar 0.67 | tof 0.35 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 15.2 ms
+01:12:57 INFO    pi_deploy: t= 5455 | lidar 0.67 | tof 0.38 | vis 0.00 | pol(-0.15,+0.12) -> out(-0.15,+0.12) | planner      | 14.2 ms
+01:12:58 INFO    pi_deploy: t= 5460 | lidar 0.67 | tof 0.35 | vis 0.00 | pol(-0.15,+0.09) -> out(-0.15,+0.09) | planner      | 12.3 ms
+01:12:58 INFO    pi_deploy: t= 5465 | lidar 0.67 | tof 0.44 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 13.1 ms
+01:12:59 INFO    pi_deploy: t= 5470 | lidar 0.67 | tof 0.41 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 8.9 ms
+01:12:59 INFO    pi_deploy: t= 5475 | lidar 0.67 | tof 0.36 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 15.8 ms
+01:13:00 INFO    pi_deploy: t= 5480 | lidar 0.67 | tof 0.39 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 23.6 ms
+01:13:00 INFO    pi_deploy: t= 5485 | lidar 0.67 | tof 0.36 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 17.4 ms
+01:13:01 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+01:13:01 INFO    pi_deploy: t= 5490 | lidar 0.67 | tof 0.42 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 13.4 ms
+01:13:01 INFO    pi_deploy: t= 5495 | lidar 0.67 | tof 0.39 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 31.2 ms
+01:13:02 INFO    pi_deploy: t= 5500 | lidar 0.67 | tof 0.44 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 52.9 ms
+01:13:02 INFO    pi_deploy: t= 5505 | lidar 0.67 | tof 0.36 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 49.2 ms
+01:13:03 INFO    pi_deploy: t= 5510 | lidar 0.67 | tof 0.35 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 55.8 ms
+01:13:04 INFO    pi_deploy: t= 5515 | lidar 0.63 | tof 0.37 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 16.9 ms
+01:13:04 INFO    pi_deploy: t= 5520 | lidar 0.61 | tof 0.37 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 43.2 ms
+01:13:05 INFO    pi_deploy: t= 5525 | lidar 0.61 | tof 0.42 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | ok           | 9.0 ms
+01:13:05 INFO    pi_deploy: t= 5530 | lidar 0.62 | tof 0.34 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 10.9 ms
+01:13:06 INFO    pi_deploy: t= 5535 | lidar 0.51 | tof 0.36 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.15,+0.08) | governor     | 8.9 ms
+01:13:06 INFO    pi_deploy: t= 5540 | lidar 0.50 | tof 0.34 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 13.5 ms
+01:13:07 INFO    pi_deploy: t= 5545 | lidar 0.47 | tof 0.47 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 25.5 ms
+01:13:07 INFO    pi_deploy: t= 5550 | lidar 0.47 | tof 0.44 | vis 0.00 | pol(-0.15,-0.08) -> out(-0.15,-0.08) | ok           | 21.2 ms
+01:13:08 INFO    pi_deploy: t= 5555 | lidar 0.23 | tof 0.35 | vis 0.00 | pol(-0.15,-0.06) -> out(-0.08,-0.06) | planner      | 9.1 ms
+01:13:08 INFO    friday.voice: SAY [new_frontier] I found an unexplored area 5 metres to the north west. I will investigate it.
+01:13:08 INFO    pi_deploy: t= 5560 | lidar 0.22 | tof 0.42 | vis 0.00 | pol(-0.15,-0.06) -> out(+0.00,-0.06) | governor     | 29.8 ms
+01:13:09 INFO    pi_deploy: t= 5565 | lidar 0.22 | tof 0.41 | vis 0.00 | pol(-0.15,+0.24) -> out(+0.00,+0.24) | governor     | 44.2 ms
+01:13:09 INFO    pi_deploy: t= 5570 | lidar 0.22 | tof 0.38 | vis 0.00 | pol(-0.15,+0.10) -> out(+0.00,+0.10) | governor     | 50.5 ms
+01:13:10 INFO    pi_deploy: t= 5575 | lidar 0.22 | tof 0.33 | vis 0.00 | pol(-0.15,+0.10) -> out(+0.00,+0.10) | governor     | 51.2 ms
+01:13:11 ERROR   pi_deploy: Motor write failed: Write timeout
+01:13:11 INFO    pi_deploy: t= 5580 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(-0.15,+0.10) -> out(+0.00,+0.10) | governor     | 26.5 ms
+01:13:11 INFO    pi_deploy: t= 5585 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.08) | governor     | 22.7 ms
+01:13:12 INFO    pi_deploy: t= 5590 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.08) | governor     | 20.7 ms
+01:13:12 INFO    pi_deploy: t= 5595 | lidar 0.22 | tof 0.37 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.08) | governor     | 9.1 ms
+01:13:13 INFO    pi_deploy: t= 5600 | lidar 0.22 | tof 0.36 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+1.60) | recovery     | 9.2 ms
+01:13:13 INFO    pi_deploy: t= 5605 | lidar 0.24 | tof 0.34 | vis 0.00 | pol(-0.15,-0.10) -> out(+0.00,+1.60) | recovery     | 8.8 ms
+01:13:14 INFO    pi_deploy: t= 5610 | lidar 0.30 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.96) | governor     | 15.6 ms
+01:13:15 INFO    pi_deploy: t= 5615 | lidar 0.25 | tof 0.73 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.96) | governor     | 54.9 ms
+01:13:15 INFO    pi_deploy: t= 5620 | lidar 0.22 | tof 0.38 | vis 0.00 | pol(-0.15,-0.87) -> out(+0.00,-0.87) | governor     | 11.7 ms
+01:13:16 INFO    pi_deploy: t= 5625 | lidar 0.22 | tof 0.56 | vis 0.00 | pol(-0.15,+0.55) -> out(+0.00,+0.00) | governor     | 17.5 ms
+01:13:16 INFO    pi_deploy: t= 5630 | lidar 0.22 | tof 0.52 | vis 0.00 | pol(-0.15,-0.35) -> out(+0.00,-0.35) | governor     | 13.8 ms
+01:13:17 INFO    pi_deploy: t= 5635 | lidar 0.22 | tof 0.53 | vis 0.00 | pol(-0.15,-0.49) -> out(+0.00,+0.00) | governor     | 10.5 ms
+01:13:17 INFO    pi_deploy: t= 5640 | lidar 0.22 | tof 0.53 | vis 0.00 | pol(-0.15,-0.99) -> out(+0.00,+0.80) | rear_blocked | 9.1 ms
+01:13:17 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+01:13:18 INFO    pi_deploy: t= 5645 | lidar 0.22 | tof 0.28 | vis 0.00 | pol(-0.15,-0.76) -> out(+0.00,+0.80) | rear_blocked | 29.7 ms
+01:13:18 INFO    pi_deploy: t= 5650 | lidar 0.22 | tof 0.56 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.80) | rear_blocked | 15.3 ms
+01:13:19 INFO    pi_deploy: t= 5655 | lidar 0.25 | tof 0.68 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.96) | governor     | 40.6 ms
+01:13:20 INFO    pi_deploy: t= 5660 | lidar 0.22 | tof 0.57 | vis 0.00 | pol(-0.15,-0.56) -> out(+0.00,-0.56) | governor     | 93.2 ms
+01:13:20 INFO    pi_deploy: t= 5665 | lidar 0.22 | tof 0.58 | vis 0.00 | pol(-0.15,+0.35) -> out(+0.00,+0.35) | governor     | 30.4 ms
+01:13:21 INFO    pi_deploy: t= 5670 | lidar 0.22 | tof 0.57 | vis 0.00 | pol(-0.15,+0.21) -> out(+0.00,+0.21) | governor     | 15.8 ms
+01:13:22 INFO    pi_deploy: Planner: 48 chosen, 1 ARRIVED at, 21 revealed without arriving, 24 abandoned, 164 cycles, 413 frontiers left
+01:13:22 INFO    pi_deploy: World map saved: rl_map.npz  (262.4 m^2 known, 34.0 m^2 driven, 22.9 m^2 re-entered, revisit ratio 0.67, 2539 sweeps, 3031 superseded)
+01:13:22 INFO    pi_deploy: Black box written: /home/harsh/friday/rl/blackbox-20260919-011322.csv (5672 rows)
+01:13:22 INFO    pi_deploy: ==========================================================================
+01:13:22 INFO    pi_deploy: ticks=5672  explored=127.4 m^2
+01:13:22 INFO    pi_deploy: loop ms over the LAST 200 ticks: mean 32.79 | p95 91.71 | max 425.78 (budget 100) -- the black box has the whole run
+01:13:22 INFO    pi_deploy: budget by stage, mean ms/tick over all 5672 ticks: sensors+obs 12.4  pose+telemetry 12.1  navigator 5.9  governor+escape+rear 3.4  actuate 1.7  policy 1.4  adapter 0.7  reflex 0.2  planner-bias 0.1  cameras 0.1
+01:13:22 INFO    pi_deploy:   measured inside tick(): 38.0 ms/tick; wall clock per tick (last 200): 32.8 ms; unaccounted 0.0 ms = time this thread was NOT RUNNING (other threads holding the GIL)
+01:13:22 INFO    pi_deploy: navigator: 1971 ticks steered (49%), 2051 handed back (260 blocked ahead, 1791 no drivable arc); open 760 / corridor 507 / cluttered 704
+01:13:22 INFO    pi_deploy:   near field: 3238 ticks with a ToF barrier in the arc search (1163 of them already inside the reflex's stop distance -- the other 2075 are arcs steered around something the reflex could only have braked for), 2170 ticks speed-capped by it
+01:13:22 INFO    pi_deploy:   commitments 176 taken, 71 reversed by a better option, 19 expired on age; arc choice 6.26 ms mean (a HIGH handback count means she is spending her time in places with no drivable way forward)
+01:13:22 INFO    pi_deploy: escape turns: 0  (boxed in: forward blocked and not moving, so she turned toward open space)
+01:13:22 INFO    pi_deploy: reverse lifts: 273  (policy asked for a reverse too gentle to execute; honoured at the executable v_min instead of pivoting)
+01:13:22 INFO    pi_deploy: reverse floor lifts: 0  (a reverse from ANY stage -- escape, recovery, the policy -- that was under the stiction floor and would have executed as a stop, reissued at the slowest speed the wheels can actually turn)
+01:13:22 INFO    pi_deploy: no-reverse turns: 0  (policy asked to back up; this drivetrain cannot, so it turned toward open space instead)
+01:13:22 INFO    pi_deploy: interventions: reflex=1547 visual=0 governor=2857 rear=253 stale=0 scrape=0 overruns=189
+01:13:22 INFO    pi_deploy: object detection: 0 frames, 0 ms mean, 0 failures; currently sees nothing
+01:13:22 INFO    pi_deploy: cameras: free-space updates=0 failures=0, nudges=0, ticks driven on vision=0
+01:13:22 INFO    pi_deploy: lidar: 0 sub-footprint returns rejected outside the self-mask (a growing count means the chassis wedge moved -- re-measure --lidar-self-mask); 404 ticks braked for closing rate alone
+01:13:22 INFO    pi_deploy:   sensor lidar  updates=6002    stale=False
+01:13:22 INFO    pi_deploy:   sensor tof    updates=9246    stale=False
+01:13:22 INFO    pi_deploy:   sensor cam_up updates=0       stale=True
+01:13:22 INFO    pi_deploy:   sensor cam_down updates=0       stale=True
+01:13:22 INFO    pi_deploy:   sensor cam_up_rgb updates=0       stale=True
+01:13:22 INFO    pi_deploy: ==========================================================================
+01:13:22 INFO    friday.localnav: policy source: LEROBOT_EXPERIMENTAL
+01:13:22 INFO    friday.explore: exploration: phase=select explored=127.4 m^2 frontier_cells=195
+01:13:22 INFO    friday.explore: targets: selected=49 reached=0 abandoned=3  blacklisted=0
+01:13:22 INFO    friday.explore: recoveries: 17 attempted, 17 successful
+01:13:22 INFO    friday.localnav: no_target_ticks=0
+01:13:22 INFO    friday.voice: voice: backend=friday spoken=85 dropped(cooldown=4573 full=26)
+01:13:22 INFO    friday.localnav: ACT chunks: 709 forward passes over 5672 ticks (8.00 ticks/pass)

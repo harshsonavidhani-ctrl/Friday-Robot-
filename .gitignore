@@ -205,3 +205,18 @@ state/nav_mode.json
 state/nav_round_trip.json
 state/nav_log.jsonl
 state/map_session.json
+state/nav_failsafe.json
+state/nav_early_return.json
+
+# Rewritten every few seconds (the wake heartbeat) or on every dashboard
+# event: committing them leaves git status permanently dirty, the lesson of
+# state/scene.json above.
+state/wake_alive.json
+state/dashboard_events.jsonl
+
+# HIS content, for the same reason memory.db is not tracked: backups and a
+# dump of deleted memories are his memories, and a room recording is his
+# room. They stay on this card, out of any history that might be pushed.
+state/memory.db.bak-*
+state/memory-deleted-*.json
+logs/*.wav
