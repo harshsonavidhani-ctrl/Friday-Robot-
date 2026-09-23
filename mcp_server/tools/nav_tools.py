@@ -58,10 +58,27 @@ def _controller():
     """
     import nav_follower
 
+    _reclaim_if_run_gone()
     robot = nav_follower.GuardedRobot()
     hardware.ABORT.clear()
     robot.arm()
     return nsm.NavController(robot=robot, voice=nav_voice.VOICE), robot
+
+
+def _reclaim_if_run_gone() -> None:
+    """Take back a lease whose exploration run has already ended.
+
+    A run that finishes on its own does not return its lease (only
+    stop_exploration() does), and the lease runs 300 s past the run. Every
+    navigation command in that window was refused with "the range sensors are
+    in use by an autonomous run" although no run was out. With `_running()`
+    False the run's unit and processes are gone, so nothing holds the ports.
+    """
+    from mcp_server.tools import autonomy
+
+    if hardware.lease_active() > 0.0 and not autonomy._running():
+        log.info("the exploration run has ended; taking the hardware back")
+        hardware.lease_return()
 
 
 @tool
@@ -219,6 +236,10 @@ async def explore_and_return(minutes: float | None = None,
 
     global _WATCHER
 
+    # FIRST, WHERE AM I -- from the LiDAR, against the saved map. This is the
+    # spot she comes back to, so a lease left over from an earlier run must
+    # not be what stops her looking.
+    _reclaim_if_run_gone()
     mapper, why = await nsm.relocalise()
     if mapper is None:
         return (f"I am not setting off: {why} I would not be able to find my "
@@ -299,13 +320,48 @@ async def _watch_then_return(poll_s: float = 2.0,
             return
         log.info("exploration finished — returning to the start pose")
         _claim_journey("where I set off from")
+        # ⚠ TAKE THE HARDWARE BACK FIRST. A run that ends ON ITS OWN leaves
+        # its lease behind -- only stop_exploration() returns it -- and the
+        # lease is the run's length plus a 300 s margin. 2026-09-23 23:22: the
+        # two-minute run finished, this fired, and the first sweep of the way
+        # back was refused ("the range sensors are in use by an autonomous run
+        # for another 252s"). `_running()` is False here, so the run's unit
+        # and processes are gone and nothing else holds the ports: the same
+        # reasoning stop_exploration() uses to return it.
+        _reclaim_if_run_gone()
+        nav_voice.VOICE.say("setting_off", "where I set off from")
+        mapper = await _relocalise_when_ready()
         controller, _ = _controller()
-        report = await controller.return_to_armed_start()
+        report = await controller.return_to_armed_start(mapper=mapper)
         log.info("return after exploring: %s", report.why)
     except asyncio.CancelledError:
         raise
     except Exception as exc:             # noqa: BLE001
         log.error("the return after exploring failed: %s", exc)
+
+
+async def _relocalise_when_ready(tries: int = 4, wait_s: float = 3.0):
+    """Relocalise once the range sensors are answering again. Mapper or None.
+
+    Straight after a run hands the hardware back, the LiDAR reopens lazily on
+    first use and its first sweep can come back empty. A few short retries
+    cover that; if it still cannot place her, None goes to the engine, which
+    tries once more and then stops in FAILSAFE with the start spot recorded
+    -- so "try again" can still bring her back.
+    """
+    import asyncio
+
+    why = ""
+    for attempt in range(1, tries + 1):
+        mapper, why = await nsm.relocalise()
+        if mapper is not None:
+            return mapper
+        log.info("relocalise after the run, try %d/%d: %s", attempt, tries,
+                 why)
+        if attempt < tries:
+            await asyncio.sleep(wait_s)
+    log.warning("could not place myself after the run: %s", why)
+    return None
 
 
 @tool

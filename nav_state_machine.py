@@ -241,8 +241,19 @@ async def relocalise():
     rather than reimplemented so that "where am I" has exactly one answer on
     this robot, and `go_to` and return-to-home cannot drift apart.
     """
+    # ⚠ IT NEVER RAISES. A busy or silent sensor is an answer ("I cannot
+    # place myself"), not a crash: on 2026-09-23 the return after exploring
+    # hit HardwareLeased here, the exception went straight past FAILSAFE, and
+    # she neither came back nor said a word -- with the start spot already
+    # used up. Returned as (None, why), it goes through FAILSAFE like any
+    # other refusal: halted, announced, and recorded for "try again".
     from mcp_server.tools.places_tools import _placed_mapper
-    return await _placed_mapper()
+    try:
+        return await _placed_mapper()
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("relocalise failed: %s", exc)
+        return None, (f"my range sensors did not give me a sweep to place "
+                      f"myself with ({exc})")
 
 
 @dataclass
@@ -744,6 +755,22 @@ class NavController:
                 await self._enter_failsafe(report, mode, goal_xy, label)
                 return report
         report.pose = [round(float(v), 3) for v in mapper.pose]
+
+        # ALREADY THERE is an arrival, not a missing route. A zero-length
+        # plan comes back with fewer than two cells, which the loop below
+        # reports as "nothing passable connects here to it" -- so an
+        # exploration run that happened to end where it started would have
+        # her stop and ask for help instead of saying she is back.
+        away = math.hypot(float(mapper.pose[0]) - float(goal_xy[0]),
+                          float(mapper.pose[1]) - float(goal_xy[1]))
+        if away <= nav_follower.ARRIVE_TOL_M:
+            report.arrived, report.state = True, NavState.ARRIVED
+            report.why = (f"already there: {away:.2f} m from it, inside the "
+                          f"{nav_follower.ARRIVE_TOL_M:.2f} m tolerance")
+            self.state = report.state
+            self.voice.say(nav_voice.arrival_key(label), label)
+            _log_attempt(report)
+            return report
 
         robot = self.robot or nav_follower.GuardedRobot()
         follower = nav_follower.Follower(robot)

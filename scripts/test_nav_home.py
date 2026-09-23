@@ -1555,6 +1555,25 @@ def test_refused_restart_is_not_a_run() -> None:
         nsm.clear_failsafe()
 
 
+def test_already_there_is_arrived() -> None:
+    print("\n— already at the goal is an arrival, not \"no route\" —")
+    sim = _sim()
+    with TempPlaces():
+        nsm.set_home((1.0, 1.0, 0.0))
+        world = sim.FakeWorld(pose=(1.05, 0.98, 2.0))
+        mapper = sim.FakeMapper(world)
+        mapper.grid = _grid(free=True)
+        voice = _quiet_voice()
+        rep = asyncio.run(nsm.NavController(
+            robot=_halting_robot(world), voice=voice).go_home(mapper=mapper))
+        check("she is home without moving",
+              rep.arrived and rep.state is nsm.NavState.ARRIVED
+              and not world.commands, rep.why)
+        check("and says so, not that there is no route",
+              voice.said == [_line("arrived_home")], str(voice.said))
+        check("nothing is left waiting for help", nsm.failsafe_record() is None)
+
+
 def test_offline_tools_registered() -> None:
     print("\n— the offline navigation tools —")
     from mcp_server import registry
@@ -1614,6 +1633,7 @@ def main() -> int:
     test_frontier_watch_debounces()
     test_bundle_keeps_data_with_its_map()
     test_refused_restart_is_not_a_run()
+    test_already_there_is_arrived()
     test_offline_tools_registered()
     print(f"\n{'ALL PASSED' if not _failures else f'{_failures} FAILED'}")
     return 1 if _failures else 0

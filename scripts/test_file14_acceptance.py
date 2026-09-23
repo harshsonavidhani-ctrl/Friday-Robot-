@@ -806,6 +806,137 @@ def thirteen_try_again_after_being_moved() -> None:
                            row["arrived"] and row["retried"]))
 
 
+def fourteen_run_ends_on_its_own() -> None:
+    item(14, "\"Explore for 2 minutes and come back\": the run ends ON ITS "
+             "OWN, leaves its hardware lease behind, and she still comes back")
+    import offline
+    from mcp_server import hardware
+    from mcp_server.tools import nav_tools
+
+    tmp = tempfile.TemporaryDirectory()
+    saved_lease = hardware.LEASE_FILE
+    hardware.LEASE_FILE = Path(tmp.name) / "hardware.lease"
+    try:
+        with TempPlaces():
+            nsm.clear_pending()
+            start_world = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
+            start_map = FakeMapper(start_world)
+            start_map.grid = _grid(free=True)
+            with _ToolRig(start_world, start_map) as rig:
+                # The real sweep refuses while the hardware is lent out --
+                # exactly what broke the return on 2026-09-23 at 23:22.
+                async def relocalise():
+                    rig.relocalised_at.append(len(rig.world.commands))
+                    left = hardware.lease_active()
+                    if left > 0.0:
+                        raise hardware.HardwareLeased(
+                            f"the range sensors are in use by an autonomous "
+                            f"run for another {left:.0f}s")
+                    rig.mapper.update({0: 1500})   # measure where she IS
+                    return rig.mapper, ""
+
+                nsm.relocalise = relocalise
+
+                def start(minutes=None, thinking=None):
+                    rig.calls.append(("start_exploration", minutes))
+                    hardware.lease_out((minutes or 20) * 60 + 300,
+                                       holder="test-run")
+                    rig.running = True
+                    return json.dumps({"started": True, "minutes": minutes})
+
+                rig.autonomy.start_exploration = start
+                intent = offline.understand(
+                    "Go explore for 2 minutes and come back.", strict=True)
+                check("the sentence she heard tonight is explore-and-return",
+                      intent is not None and intent.name == "explore_return",
+                      str(intent and intent.name))
+
+                async def run():
+                    said = await nav_tools.explore_and_return(**intent.args)
+                    armed = nsm.pending_return()
+                    # She explores and ends up somewhere else entirely -- the
+                    # SAME chassis, moved, so the robot and the map agree.
+                    start_world.x, start_world.y, start_world.theta = (
+                        2.2, 1.4, 1.0)
+                    await asyncio.sleep(0.2)
+                    rig.running = False          # the timer ended the run...
+                    # ...and, like the real run, it did NOT return the lease.
+                    lease_left = hardware.lease_active()
+                    await nav_tools._watch_then_return(
+                        poll_s=0.05, watch=nsm.FrontierWatch(
+                            path=Path(tmp.name) / "none.json"))
+                    return said, armed, lease_left
+
+                said, armed, lease_left = asyncio.run(run())
+                check("she placed herself with the LiDAR BEFORE exploring",
+                      rig.relocalised_at[:1] == [0] and armed is not None
+                      and abs(armed["x"] - 0.5) < 0.1,
+                      str(armed))
+                check("the run left its lease behind, as the real one does",
+                      lease_left > 60, f"{lease_left:.0f}s left")
+                check("she took the hardware back once the run was gone",
+                      hardware.lease_active() == 0.0)
+                check("she came back to the spot she started from",
+                      math.hypot(rig.world.x - 0.5, rig.world.y - 2.0) < 0.5,
+                      f"{math.hypot(rig.world.x - 0.5, rig.world.y - 2.0):.2f}"
+                      " m away")
+                check("and said so",
+                      rig.voice.said[-2:] ==
+                      [_line("setting_off", "where I set off from"),
+                       _line("arrived_start")] or
+                      rig.voice.said[-1] == _line("arrived_start"),
+                      str(rig.voice.said))
+                check("nothing is left waiting", nsm.pending_return() is None
+                      and nsm.failsafe_record() is None)
+                _items.append(("Run ends on its own, still comes back",
+                               math.hypot(rig.world.x - 0.5,
+                                          rig.world.y - 2.0) < 0.5))
+
+        # If she really cannot place herself afterwards, she must not go
+        # silent: FAILSAFE, said out loud, with the start spot kept.
+        with TempPlaces():
+            import functools
+            from mcp_server.tools import places_tools
+
+            nsm.arm_return_to_start((0.5, 2.0, 0.0))
+            idle = FakeWorld(pose=(2.0, 0.6, 1.0))
+            with _ToolRig(idle, None) as rig:
+                async def busy():
+                    raise hardware.HardwareLeased("the range sensors are busy")
+
+                # The REAL relocalise (the rig swapped in a fake), over a
+                # sensor that raises: the exception must become an answer.
+                faked = nsm.relocalise
+                nsm.relocalise = rig.saved[1]
+                saved_pm = places_tools._placed_mapper
+                places_tools._placed_mapper = busy
+                saved_ready = nav_tools._relocalise_when_ready
+                nav_tools._relocalise_when_ready = functools.partial(
+                    saved_ready, wait_s=0.0)
+                try:
+                    asyncio.run(nav_tools._watch_then_return(
+                        poll_s=0.01, watch=nsm.FrontierWatch(
+                            path=Path(tmp.name) / "none.json")))
+                finally:
+                    nav_tools._relocalise_when_ready = saved_ready
+                    places_tools._placed_mapper = saved_pm
+                    nsm.relocalise = faked
+                rec = nsm.failsafe_record()
+                check("a sensor that will not answer is FAILSAFE, not silence",
+                      rec is not None and rec["mode"] == "returning_to_start"
+                      and rec["goal_xy"] == [0.5, 2.0], str(rec))
+                check("she says she cannot place herself, then asks for help",
+                      rig.voice.said[-2:] == [_line("lost"),
+                                              _line("failsafe")],
+                      str(rig.voice.said))
+                check("she never moved without knowing where she was",
+                      not idle.commands)
+                nsm.clear_failsafe()
+    finally:
+        hardware.LEASE_FILE = saved_lease
+        tmp.cleanup()
+
+
 def main() -> int:
     print("FILE 14 — STEP 13 ACCEPTANCE RUN")
     print("=" * 64)
@@ -822,6 +953,7 @@ def main() -> int:
     eleven_stuck_is_not_blocked()
     twelve_frontiers_run_out()
     thirteen_try_again_after_being_moved()
+    fourteen_run_ends_on_its_own()
 
     print("\n" + "=" * 64)
     for name, ok in _items:
