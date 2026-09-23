@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import functools
 import json
 import logging
@@ -785,6 +786,98 @@ async def _mcp_session(held: "contextlib.AsyncExitStack", wait_s: float):
     return session
 
 
+def _mcp_listening(timeout_s: float = 0.5) -> bool:
+    """Is anything accepting connections at friday-mcp's address right now?"""
+    import socket
+    from urllib.parse import urlparse
+
+    url = urlparse(config.MCP_HTTP_URL)
+    try:
+        with socket.create_connection((url.hostname or "127.0.0.1",
+                                       url.port or 80), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+class _MCPLink:
+    """The friday-mcp session the wake loop uses, REOPENED when it has died.
+
+    ⚠ A SESSION DOES NOT SURVIVE A SERVER RESTART. The session ID lives in the
+    server process; restart friday-mcp (a deploy, a crash, a power blip) and
+    every call on the old session comes back "Session not found". This loop
+    used to open one session on the first turn and keep it for the life of
+    the process, so after 2026-09-23 23:36 -- friday-mcp restarted to ship a
+    fix -- Harsh said "go explore for two minutes and come back" three times,
+    she understood it three times, and all three died on "offline command
+    failed: Session not found" until friday-brain itself was restarted.
+
+    So every turn pings first (a local round trip, milliseconds), and a dead
+    session is closed and replaced before the command runs.
+
+    Each session gets its OWN exit stack, entered and closed by the loop's
+    task: the anyio task group inside the MCP client must be closed by the
+    task that opened it, which is also why nothing here uses wait_for.
+    """
+
+    PING_TIMEOUT_S = 3.0
+
+    def __init__(self) -> None:
+        self.stack: contextlib.AsyncExitStack | None = None
+        self.session = None
+
+    async def get(self, wait_s: float):
+        # ⚠ SERVER DOWN IS CHECKED WITHOUT THE SESSION. friday-mcp takes ~40 s
+        # to come back from a restart, and inside that window a request on the
+        # old session gets "connection refused", on which the MCP client
+        # cancels its own task group -- the task group that encloses THIS
+        # task, i.e. the wake loop. Measured 2026-09-23: CancelledError out of
+        # a plain call_tool. So a closed port means "dead session" without
+        # asking it anything, and the reconnect below waits for the server
+        # exactly as the first turn after boot does.
+        if self.session is not None and not _mcp_listening():
+            log.warning("friday-mcp is not listening (restarting?) — "
+                        "dropping the old session and waiting for it")
+            await self.drop()
+        if self.session is not None and not await self._alive():
+            log.warning("friday-mcp session is gone (the server restarted?) "
+                        "— reconnecting before this turn")
+            await self.drop()
+        if self.session is None:
+            stack = contextlib.AsyncExitStack()
+            await stack.__aenter__()
+            try:
+                self.session = await _mcp_session(stack, wait_s)
+            except BaseException:
+                await stack.aclose()
+                raise
+            self.stack = stack
+        return self.session
+
+    async def _alive(self) -> bool:
+        import anyio
+        try:
+            with anyio.fail_after(self.PING_TIMEOUT_S):
+                await self.session.send_ping()
+            return True
+        except Exception as exc:                # noqa: BLE001
+            log.info("friday-mcp ping failed: %s: %s", type(exc).__name__,
+                     exc)
+            return False
+
+    async def drop(self) -> None:
+        stack, self.stack, self.session = self.stack, None, None
+        if stack is None:
+            return
+        try:
+            await stack.aclose()
+        except BaseException as exc:            # noqa: BLE001
+            # Closing a session the server has already forgotten can complain
+            # on the way out; the replacement is what matters.
+            log.info("closing the old friday-mcp session: %s: %s",
+                     type(exc).__name__, exc)
+
+
 _announced = False
 
 
@@ -869,8 +962,11 @@ async def run(once: bool = False, typed: str | None = None) -> int:
 
             # CONNECTED ON THE FIRST TURN, not here. Waiting here for
             # friday-mcp would park the wake loop behind it again, which is
-            # the whole delay this ordering removes.
+            # the whole delay this ordering removes. And checked on EVERY
+            # turn after that -- see _MCPLink.
             session = None
+            link = _MCPLink()
+            held.push_async_callback(link.drop)
             _explore_targeter(voice)
             # SHE LOOKS THINGS UP IN THE QUIET (file 08 step 8). A thread with
             # its own client, deliberately NOT part of this loop: a search
@@ -964,19 +1060,19 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 else:
                     if spoken.strip():
                         brain_obj = await brains.get()
-                        if session is None:
-                            # At boot friday-mcp may still be coming up, so
-                            # the first turn waits for it. The age check below
-                            # still counts from said_at, so a move asked for
-                            # before it answered is refused as stale, never
-                            # driven late.
-                            try:
-                                session = await _mcp_session(
-                                    held, MCP_CONNECT_WAIT_S)
-                            except Exception as exc:    # noqa: BLE001
-                                log.error("friday-mcp did not answer within "
-                                          "%.0fs: %s: %s", MCP_CONNECT_WAIT_S,
-                                          type(exc).__name__, exc)
+                        # At boot friday-mcp may still be coming up, so the
+                        # first turn waits for it; after a server restart the
+                        # old session is dead and is replaced here. The age
+                        # check below still counts from said_at, so a move
+                        # asked for before it answered is refused as stale,
+                        # never driven late.
+                        try:
+                            session = await link.get(MCP_CONNECT_WAIT_S)
+                        except Exception as exc:    # noqa: BLE001
+                            session = None
+                            log.error("friday-mcp did not answer within "
+                                      "%.0fs: %s: %s", MCP_CONNECT_WAIT_S,
+                                      type(exc).__name__, exc)
                         if session is None:
                             face.alarm("dizzy")
                             voice.say("Sorry, I lost that one.")
