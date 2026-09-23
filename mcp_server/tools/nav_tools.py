@@ -18,9 +18,14 @@ fact rather than a shortcut. The brain calls this server; this server cannot
 call the brain. So "when you get there, tell me what you see" comes back in
 the result as `action_pending`, and the brain -- which is mid-turn waiting on
 this call -- performs it through file 08's ordinary reply/emotion pipeline,
-which is where speaking and face changes are supposed to come from. A tool
-that spoke on its own would bypass `reply_contract` and the face arbiter, and
-would also speak from the wrong process.
+which is where speaking and face changes are supposed to come from.
+
+⚠ WHAT THE DRIVE ITSELF SAYS IS DIFFERENT, since 2026-09-23. Step 10 wants
+the transitions announced -- blocked, stuck, recovered, arrived, stopped for
+help -- and Harsh ruled that none of navigation may need a model. Those are
+therefore FIXED LINES from `nav_voice`, spoken through `tts.speak()` (so the
+wake detector still knows it is her voice), from whichever drive is running.
+They are the only speech in this file, and none of it is composed by a model.
 
 ⚠ NO FUZZY MATCHING. Step 8 is explicit and it is right: a near-miss string
 match sends a robot several metres across a flat to somewhere nobody asked
@@ -37,6 +42,7 @@ import time
 
 import config
 import nav_state_machine as nsm
+import nav_voice
 from mcp_server import hardware
 from mcp_server.registry import tool
 
@@ -44,13 +50,18 @@ log = logging.getLogger("friday.tools.nav")
 
 
 def _controller():
-    """A controller holding a guarded robot, armed against a stale abort."""
+    """A controller holding a guarded robot, armed against a stale abort.
+
+    It gets the REAL voice: every drive, whoever started it, says the same
+    fixed lines at the same transitions (step 10). The engine itself defaults
+    to silence so the test suites never make a sound.
+    """
     import nav_follower
 
     robot = nav_follower.GuardedRobot()
     hardware.ABORT.clear()
     robot.arm()
-    return nsm.NavController(robot=robot), robot
+    return nsm.NavController(robot=robot, voice=nav_voice.VOICE), robot
 
 
 @tool
@@ -222,6 +233,7 @@ async def explore_and_return(minutes: float | None = None,
     if "FAILED" in said.upper() or "could not" in said.lower():
         nsm.clear_pending()
         return said
+    _note_run_clock(minutes)
 
     if _WATCHER is None or _WATCHER.done():
         _WATCHER = asyncio.create_task(_watch_then_return())
@@ -230,13 +242,21 @@ async def explore_and_return(minutes: float | None = None,
             "this spot when the run finishes.")
 
 
-async def _watch_then_return(poll_s: float = 5.0) -> None:
+async def _watch_then_return(poll_s: float = 2.0,
+                             watch: "nsm.FrontierWatch | None" = None,
+                             lease_wait_s: float = 30.0) -> None:
     """Wait for the exploration run to end, then bring her home to her spot.
 
     ⚠ IT WAITS FOR THE RUN TO ACTUALLY BE GONE before doing anything. The
     exploration process holds the hardware lease, and two things driving one
     robot is the failure this whole module is arranged to avoid. `_running()`
     going False is the lease being back.
+
+    STEP 16: IT ALSO ENDS THE RUN EARLY when the run has genuinely run out of
+    frontiers -- the explorer's own `exhausted` flag and frontier count, read
+    from the telemetry the run already writes, held over several fresh
+    readings (`nsm.FrontierWatch`). That is the same transition the run's own
+    timer triggers, only sooner: stop the run, wait for the lease, come back.
 
     If this server restarts mid-run the task dies with it and the return stays
     ARMED on disk — `nav_status` reports it and `come_back()` fires it by hand.
@@ -246,14 +266,36 @@ async def _watch_then_return(poll_s: float = 5.0) -> None:
 
     from mcp_server.tools import autonomy
 
+    watch = watch or nsm.FrontierWatch()
     deadline = time.monotonic() + 6 * 3600.0
     try:
         await asyncio.sleep(poll_s)
         while autonomy._running() and time.monotonic() < deadline:
+            if watch.update():
+                row = nsm.note_early_return(watch)
+                log.info("frontiers exhausted %s — ending the run early", row)
+                nav_voice.VOICE.say("frontiers_done")
+                said = autonomy.stop_exploration()
+                if not nsm._stopped_ok(said):
+                    log.error("could not end the run early: %s", said)
+                waited = 0.0
+                while autonomy._running() and waited < lease_wait_s:
+                    await asyncio.sleep(0.5)
+                    waited += 0.5
+                break
             await asyncio.sleep(poll_s)
+        if autonomy._running():
+            # The run would not stop. Driving now would be two things
+            # steering one robot, so the return stays armed for come_back().
+            log.error("exploration is still running; the return stays armed")
+            return
         if nsm.pending_return() is None:
             return                       # somebody already brought her back
+        if _journey_running():
+            log.info("another journey is driving; the return stays armed")
+            return
         log.info("exploration finished — returning to the start pose")
+        _claim_journey("where I set off from")
         controller, _ = _controller()
         report = await controller.return_to_armed_start()
         log.info("return after exploring: %s", report.why)
@@ -278,3 +320,288 @@ async def come_back() -> str:
     controller, _ = _controller()
     report = await controller.return_to_armed_start()
     return json.dumps(report.as_dict(), indent=2)
+
+
+# ===========================================================================
+# OFFLINE NAVIGATION — every behaviour here runs with no model at all.
+#
+# Harsh, 2026-09-23: "no ai will be used all behaviour in offline model".
+# `offline.py` matches "go to the kitchen", "go home", "come back" and "try
+# again" and calls the four tools below -- online or off, the brain is never
+# asked. Everything they say is a fixed line from `nav_voice`.
+#
+# ⚠ THEY RETURN AT ONCE AND DRIVE IN THE BACKGROUND. A journey takes minutes
+# and the offline path gives one tool call `STAGE_TOOL_TIMEOUT_S` (25 s). So
+# each tool checks what it can check immediately (is the place known, is a
+# journey already under way), says so, and hands the drive to ONE task in this
+# server -- the same pattern as `_WATCHER`. `stop()` still ends it: ABORT is
+# what the follower checks before every move.
+#
+# ⚠ THEY SPEAK FOR THEMSELVES, through the one navigation voice, so that the
+# first sentence ("Heading to the kitchen.") and every later one ("Path
+# blocked. Replanning my route.") come out of the same queue in order, never
+# on top of each other from two processes. The offline intents therefore do
+# not read the result out again.
+# ===========================================================================
+
+_JOURNEY: "asyncio.Task | None" = None
+_JOURNEY_LABEL = ""
+
+# When navigation itself started an exploration run, and for how long, so a
+# pause can hand back the time that was left. The run's own state file does
+# not record its length.
+_RUN_CLOCK: dict = {}
+
+
+def _note_run_clock(minutes: float | None) -> None:
+    _RUN_CLOCK.clear()
+    _RUN_CLOCK.update({"started": time.monotonic(),
+                       "minutes": float(minutes or nsm.RETURN_AFTER_MIN)})
+
+
+def _journey_running() -> str:
+    """The destination of the journey under way, or "" if there is none."""
+    if _JOURNEY is not None and not _JOURNEY.done():
+        return _JOURNEY_LABEL
+    return ""
+
+
+def _claim_journey(label: str) -> None:
+    """Mark the CURRENT task as the journey (used by the exploration watcher)."""
+    import asyncio
+
+    global _JOURNEY, _JOURNEY_LABEL
+    _JOURNEY, _JOURNEY_LABEL = asyncio.current_task(), label
+
+
+def _start_journey(label: str, coro) -> None:
+    import asyncio
+
+    global _JOURNEY, _JOURNEY_LABEL
+    _JOURNEY_LABEL = label
+    _JOURNEY = asyncio.create_task(_run_journey(label, coro))
+
+
+async def _run_journey(label: str, coro) -> None:
+    """Await one journey, and make sure nothing it raises leaves the wheels on."""
+    import asyncio
+
+    try:
+        report = await coro
+        log.info("journey to %s: %s", label,
+                 getattr(report, "why", report))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:                     # noqa: BLE001
+        log.error("journey to %s failed: %s", label, exc)
+        try:
+            from mcp_server.tools import movement
+            import anyio.to_thread
+            await anyio.to_thread.run_sync(movement.stop)
+        except Exception as stop_exc:            # noqa: BLE001
+            log.error("could not stop after the failure: %s", stop_exc)
+        nav_voice.VOICE.say("failsafe")
+
+
+async def _pause_exploration(controller) -> bool:
+    """Step 9: stop a live exploration run before driving, keeping its time.
+
+    Returns True if a run was paused (and so should be resumed on arrival).
+    Waits for the run to actually release the robot -- the lease coming back
+    is `_running()` going False -- because driving while it still steers is
+    two things steering one robot.
+    """
+    import asyncio
+
+    from mcp_server.tools import autonomy
+
+    if not autonomy._running():
+        return False
+    if _RUN_CLOCK:
+        controller.timer.minutes = _RUN_CLOCK["minutes"]
+        controller.timer.started_at = _RUN_CLOCK["started"]
+    out = controller.pause_exploration()
+    for _ in range(60):
+        if not autonomy._running():
+            break
+        await asyncio.sleep(0.5)
+    if autonomy._running():
+        raise RuntimeError(f"exploration did not stop: {out.get('stopped')}")
+    return True
+
+
+def _resume_after(controller, paused: bool, report) -> None:
+    """Step 9: pick exploration back up once the errand has ARRIVED.
+
+    Not after FAILSAFE: that waits for a person (step 13), and the paused
+    run's time is in the failsafe record for "try again" to resume.
+    """
+    if not paused or report.state is not nsm.NavState.ARRIVED:
+        return
+    out = controller.resume_exploration()
+    if out.get("resumed"):
+        nav_voice.VOICE.say("resuming")
+    log.info("resume after the errand: %s", out)
+
+
+def _arrival_action(then: str):
+    """An offline command to run on arrival, as a coroutine function, or None.
+
+    Only commands that neither move her nor need the spine qualify -- the
+    time, the battery, the weather card, the clock. It is parsed again AT
+    arrival, so "tell me the time" tells the time it is when she gets there.
+    """
+    import offline
+
+    first = offline.understand(then) if then else None
+    if first is None or first.local or first.name in _NOT_ON_ARRIVAL:
+        return None
+
+    async def act() -> None:
+        from mcp_server.registry import REGISTRY
+
+        intent = offline.understand(then)
+        if intent is None:
+            return
+        answer = ""
+        for tool_name, args in intent.plan():
+            invoke = next((fn for fn, name, _ in REGISTRY
+                           if name == tool_name), None)
+            if invoke is None:
+                log.warning("no tool %r for the arrival action", tool_name)
+                return
+            answer = str(await invoke(**args))
+        spoken = (offline.speakable(intent.name, answer) if intent.speak_result
+                  else intent.say)
+        if spoken:
+            nav_voice.VOICE.say_text(spoken)
+
+    return act
+
+
+# Offline intents that must never run as an arrival action: anything that
+# moves her, starts a run, or is itself navigation.
+_NOT_ON_ARRIVAL = frozenset({
+    "stop", "stop_exploring", "explore", "around", "backward", "forward",
+    "left", "right", "go_left", "go_right", "go_forward", "go_backward",
+    "speed", "nav_go", "nav_home", "nav_come_back", "try_again",
+    "explore_return",
+})
+
+
+async def _errand(controller, name: str, come_back: bool | None, act):
+    paused = await _pause_exploration(controller)
+    report = await controller.go_to_landmark(
+        name, return_to_start=come_back, after_arrival=act)
+    _resume_after(controller, paused, report)
+    return report
+
+
+async def _home_errand(controller):
+    paused = await _pause_exploration(controller)
+    report = await controller.go_home()
+    _resume_after(controller, paused, report)
+    return report
+
+
+def _busy_reply() -> str:
+    busy = _journey_running()
+    return nav_voice.VOICE.say("busy", busy) or nav_voice.line("busy", busy)
+
+
+@tool
+async def nav_go(place: str, come_back: bool | None = None,
+                 then: str = "") -> str:
+    """Offline voice command: drive to a place I know. Returns at once.
+
+    Called by the offline command matcher for "go to the kitchen", "kitchen
+    chalo", "go to the desk and come back". I announce everything myself —
+    setting off, blocks, getting stuck, arriving — so do not repeat my reply.
+    For a brain-driven errand whose result you need, use navigate_to instead.
+
+    Args:
+        place: the exact name of a saved place. Never guessed at.
+        come_back: True to return to this spot afterwards; left out, the
+            round-trip setting decides.
+        then: an offline command to carry out on arrival, like "tell me the
+            time". Anything that moves me is not allowed there.
+    """
+    if _journey_running():
+        return _busy_reply()
+    row, why = nsm.resolve_landmark(place)
+    if row is None:
+        return nav_voice.VOICE.say_text(why)
+    act = _arrival_action(then)
+    # A person giving a new order has dealt with whatever the last failure
+    # was, as surely as by saying "try again"; the old record would otherwise
+    # send the NEXT "try again" somewhere nobody now wants to go.
+    nsm.clear_failsafe()
+    controller, _ = _controller()
+    _start_journey(row["name"], _errand(controller, row["name"], come_back,
+                                        act))
+    said = nav_voice.VOICE.say("setting_off", row["name"])
+    if then and act is None:
+        said += " " + nav_voice.VOICE.say_text(
+            "I cannot do the rest of that on my own, so I will just go "
+            "there.")
+    return said
+
+
+@tool
+async def nav_home() -> str:
+    """Offline voice command: drive to the saved place called home. Returns at once.
+
+    Called by the offline command matcher for "go home" / "ghar chalo". I
+    announce everything myself, so do not repeat my reply.
+    """
+    if _journey_running():
+        return _busy_reply()
+    if nsm.home_place() is None:
+        return nav_voice.VOICE.say_text(
+            "I do not know where home is. Stand where you want it and say "
+            "remember this as home.")
+    nsm.clear_failsafe()
+    controller, _ = _controller()
+    _start_journey("home", _home_errand(controller))
+    return nav_voice.VOICE.say("setting_off", "home")
+
+
+@tool
+async def nav_come_back() -> str:
+    """Offline voice command: drive back to the spot I set off from. Returns at once.
+
+    Called by the offline command matcher for "come back" / "wapas aao". I
+    announce everything myself, so do not repeat my reply.
+    """
+    if _journey_running():
+        return _busy_reply()
+    if nsm.pending_return() is None:
+        return nav_voice.VOICE.say_text(
+            "I have not got a spot noted to come back to.")
+    nsm.clear_failsafe()
+    controller, _ = _controller()
+    _start_journey("where I set off from", controller.return_to_armed_start())
+    return nav_voice.VOICE.say("setting_off", "where I set off from")
+
+
+@tool
+async def try_again() -> str:
+    """"Friday, try again" — the only way out of a navigation FAILSAFE.
+
+    Use this ONLY when Harsh says try again / resume / phir se try karo after
+    I have stopped and asked for help. I work out where I am from scratch
+    first (I may have been moved), start with a fresh allowance of stuck
+    recoveries, and then do again whatever failed: exploring, going home, or
+    going to a place. I never do this by myself. Returns at once; I announce
+    everything myself.
+    """
+    if _journey_running():
+        return _busy_reply()
+    record = nsm.failsafe_record()
+    if record is None:
+        return nav_voice.VOICE.say("nothing_waiting")
+    controller, _ = _controller()
+    label = record.get("label") or "my destination"
+    _start_journey(label, controller.retry_failsafe(record))
+    # retry_failsafe says the "trying again" line itself, first thing.
+    return nav_voice.line("try_again")

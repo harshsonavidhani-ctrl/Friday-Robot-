@@ -1041,7 +1041,10 @@ STT_LANGUAGE = "en"
 # to 11 seconds". The age is fixed when she starts ACTING (main._FreshOrders).
 COMMAND_MAX_AGE_S = 11.0
 COMMAND_FRESH_TOOLS = ("move", "move_distance", "turn_degrees", "go_to",
-                       "start_exploration", "explore_room")
+                       "start_exploration", "explore_room",
+                       # file 14's offline navigation orders (2026-09-23)
+                       "nav_go", "nav_home", "nav_come_back", "try_again",
+                       "explore_and_return")
 
 # Endpointing. VAD_SILENCE_MS is how long a pause has to last before Friday
 # decides Harsh has finished. Too short and it interrupts him mid-sentence;

@@ -400,15 +400,42 @@ async function refreshNav() {
       (last.arrived ? '' : ` · ${last.why || ''}`)
     : 'No return home yet.';
 
+  // Step 17: stopped for help. It only clears when he says "try again" (or
+  // gives her a new order), so it is shown until then.
+  const fs = n.failsafe;
+  $('navfailsafe').hidden = !fs;
+  if (fs) $('navfailsafe').textContent =
+    `Stopped, waiting for help (${String(fs.mode).replace(/_/g, ' ')}` +
+    (fs.label ? ` → ${fs.label}` : '') + `, ${ago(fs.at)}): ${fs.why || ''} ` +
+    `· say “try again” when she is clear`;
+
+  // Step 16: exploration that ran out of places and came back early.
+  const early = n.early_return;
+  $('navearly').hidden = !early;
+  if (early) $('navearly').textContent =
+    `Last early return: frontiers ran out ${ago(early.at)} ` +
+    `(${early.reads} readings in a row)`;
+
+  // Stuck and blocked are different problems, so the log names which.
+  const trouble = a => {
+    const bits = [];
+    if (a.stucks) bits.push(`stuck ×${a.stucks}` +
+      (a.recoveries ? `, ${a.recoveries_freed || 0}/${a.recoveries} freed` : ''));
+    if (a.blocks_seen) bits.push(`blocked ×${a.blocks_seen}`);
+    if (a.retried) bits.push('retry');
+    return bits.length ? ` · ${bits.join(' · ')}` : '';
+  };
   const rows = n.attempts || [];
   $('navlog').innerHTML = rows.length
     ? rows.map(a => `<div><span>${esc(a.destination)}</span>` +
         `<span class="${a.arrived ? 'ok' : 'bad'}">` +
-        `${a.arrived ? 'arrived' : esc(a.state)} · ${a.seconds}s · ${ago(a.at)}</span></div>`).join('')
+        `${a.arrived ? 'arrived' : esc(a.state)} · ${a.seconds}s · ${ago(a.at)}` +
+        `${esc(trouble(a))}</span></div>`).join('')
     : '<div><span>no navigation attempts logged yet</span><span></span></div>';
 
   const live = rows[0];
-  $('navnow').textContent = live ? (live.arrived ? 'arrived' : live.state) : 'idle';
+  $('navnow').textContent = fs ? 'failsafe'
+    : live ? (live.arrived ? 'arrived' : live.state) : 'idle';
 }
 
 /* One POST for every navigation action. It goes to the MCP server, never to

@@ -497,6 +497,170 @@ def _clean_tail(text: str) -> str:
     return tail.strip(" .,!?;:-\u0964").strip()
 
 
+# --- FILE 14: navigation, with no model at all -------------------------------
+#
+# Harsh, 2026-09-23: "no ai will be used all behaviour in offline model". So
+# "go to the kitchen", "go home", "come back", "try again" and "explore and
+# come back" are matched here and handed to the navigation tools directly --
+# online or off, the brain is never asked (they are all in _REFLEX_INTENTS).
+#
+# ⚠ CHECKED FIRST IN _match, AND THAT ORDER IS LOAD BEARING, in both
+# directions:
+#   * ahead of `_local_intent`, whose explore parser claims any sentence with
+#     "explore" in it -- "explore and come back" would be a plain run with no
+#     way back;
+#   * ahead of the "backward" row, whose `\bback\b` would make "come back"
+#     REVERSE the robot;
+#   * but BEHIND stop and sleep, which `_nav_intent` checks for itself and
+#     yields to: "stop, don't come back" must stop, and "go to sleep" is not
+#     a place.
+#
+# Every rule is anchored to the START of the order (after "Friday," and "can
+# you please"), because these start journeys that last minutes. "You should
+# come back tomorrow" on the television is not an order.
+
+_NAV_LEAD = r"^(?:(?:ok(?:ay)?|now|so|and|abhi|chalo)[\s,]+)*"
+
+_NAV_TRY_AGAIN_RE = re.compile(
+    _NAV_LEAD + r"(?:try (?:it )?again|try once more|one more try|"
+    r"resume(?: (?:navigation|driving|the route))?|"
+    r"(?:phir|fir|dobara) se (?:try|koshish)(?: karo| kar)?|"
+    r"(?:phir|fir|dobara) (?:try|koshish) karo|"
+    r"फिर से (?:कोशिश|ट्राई) करो|दोबारा कोशिश करो)[\s.!?]*$",
+    re.IGNORECASE | re.UNICODE)
+
+_NAV_HOME_RE = re.compile(
+    _NAV_LEAD + r"(?:(?:go|come|head|drive|get|return)(?: back)? home|"
+    r"return to home|ghar(?: wapas| vapas)? (?:chalo|chal|jao|jaao|aao)|"
+    r"घर (?:वापस )?(?:चलो|जाओ|आओ))\b",
+    re.IGNORECASE | re.UNICODE)
+
+_NAV_COME_BACK_RE = re.compile(
+    _NAV_LEAD + r"(?:come back(?: here| to me| to where you started| to the "
+    r"start)?|return to (?:me|where you started|the start|your start)|"
+    r"(?:wapas|vapas) (?:aao|aa jao|aa ja)|वापस आओ|वापस आ जाओ)[\s.!?]*$",
+    re.IGNORECASE | re.UNICODE)
+
+_NAV_GO_TO_RE = re.compile(
+    _NAV_LEAD + r"(?:go|drive|head|navigate|move|walk|take me|get)"
+    r"(?: over| back| straight)? to (?P<rest>.+)$",
+    re.IGNORECASE | re.UNICODE)
+
+# Hindi puts the verb last: "kitchen chalo", "the desk tak jao".
+_NAV_HINDI_GO_RE = re.compile(
+    r"^(?P<rest>.+?)\s+(?:(?:mein|me|main|par|pe|tak|ki taraf)\s+)?"
+    r"(?:chalo|chal|jao|jaao|chale jao)[\s.!?]*$",
+    re.IGNORECASE | re.UNICODE)
+
+_NAV_BACK_TAIL_RE = re.compile(
+    r"\b(?:come back|coming back|return|and back|wapas|vapas|वापस)\b",
+    re.IGNORECASE | re.UNICODE)
+
+# Words that are never a place, so "go to the left" and "go to bed" stay
+# with the rules that own them.
+_NOT_A_PLACE = frozenset({
+    "left", "right", "forward", "back", "backward", "front", "sleep", "bed",
+    "the left", "the right", "the front", "the back", "it", "him", "her",
+    "them", "me", "you", "there", "here", "work", "school",
+})
+
+
+def _known_places() -> list[str]:
+    """Saved place names, longest first, from the places table. Never guessed."""
+    try:
+        from slam import places                 # noqa: PLC0415
+        return sorted((row["name"] for row in places.all()), key=len,
+                      reverse=True)
+    except Exception:                           # noqa: BLE001
+        return []
+
+
+def _split_place(rest: str) -> tuple[str, str, bool]:
+    """(place, the rest of the sentence, is it a place she knows)."""
+    rest = rest.strip(" .,!?")
+    for name in _known_places():
+        bare = name[4:] if name.startswith("the ") else name
+        m = re.match(r"(?:the\s+)?" + re.escape(bare) + r"\b", rest,
+                     re.IGNORECASE)
+        if m:
+            return name, rest[m.end():], True
+    # Not one she knows. Take the words up to the first joint as the name, so
+    # the tool can say plainly that she does not know it -- never a guess.
+    head = re.split(r"\s*(?:,|\band\b|\bthen\b|\baur\b)\s*", rest, 1)
+    place = head[0].strip()
+    tail = rest[len(place):]
+    return place, tail, False
+
+
+def _nav_tail(tail: str) -> tuple[bool | None, str]:
+    """"and come back" / "and tell me the time" after the place."""
+    come_back = True if _NAV_BACK_TAIL_RE.search(tail) else None
+    then = _NAV_BACK_TAIL_RE.sub(" ", tail)
+    then = re.sub(r"\b(?:and|then|aur|here|to me|after(?:wards)?)\b", " ",
+                  then, flags=re.IGNORECASE)
+    then = _clean_tail(" ".join(then.split()))
+    return come_back, then
+
+
+def _nav_intent(heard: str, strict: bool = False) -> Intent | None:
+    """A navigation order, or None. See the block comment above."""
+    text = _POLITE_RE.sub("", _ADDRESS_RE.sub("", heard)).strip(" .,!?")
+    if not text:
+        return None
+    # Stop, sleep and questions about the run always win.
+    if (_COMPILED[0][1].search(text) or _STOP_EXPLORE_RE.search(text)
+            or _SLEEP_RE.search(text) or _EXPLORE_STATUS_RE.search(text)):
+        return None
+    words = len(text.split())
+
+    # "Explore and come back" -- a run with the way back armed.
+    if (_EXPLORE_VERB_RE.search(text) and _NAV_BACK_TAIL_RE.search(text)
+            and words <= 12):
+        if strict and not _looks_like_an_order(heard):
+            return None
+        try:
+            import exploration_mode             # noqa: PLC0415
+            minutes = exploration_mode.parse_request(text)
+        except Exception:                       # noqa: BLE001
+            minutes = None
+        args = {"thinking": False}              # no model steers the run
+        if minutes is not None:
+            args["minutes"] = minutes
+        return Intent(name="explore_return", tool="explore_and_return",
+                      args=args)
+
+    if words <= 6 and _NAV_TRY_AGAIN_RE.search(text):
+        return Intent(name="try_again", tool="try_again")
+
+    m = _NAV_GO_TO_RE.search(text)
+    if m:
+        place, tail, known = _split_place(m.group("rest"))
+        if place and place.lower() not in _NOT_A_PLACE and (
+                known or len(place.split()) <= 3):
+            come_back, then = _nav_tail(tail)
+            args = {"place": place}
+            if come_back is not None:
+                args["come_back"] = True
+            if then:
+                args["then"] = then
+            return Intent(name="nav_go", tool="nav_go", args=args)
+
+    if words <= 6 and _NAV_HOME_RE.search(text):
+        return Intent(name="nav_home", tool="nav_home")
+
+    # Hindi, verb last -- only for a place she KNOWS, because "chalo" ends a
+    # great many sentences that are not about going anywhere.
+    m = _NAV_HINDI_GO_RE.search(text)
+    if m and words <= 8:
+        place, tail, known = _split_place(m.group("rest"))
+        if known and not tail.strip(" .,!?"):
+            return Intent(name="nav_go", tool="nav_go", args={"place": place})
+
+    if words <= 6 and _NAV_COME_BACK_RE.search(text):
+        return Intent(name="nav_come_back", tool="nav_come_back")
+    return None
+
+
 def _local_intent(heard: str, strict: bool = False) -> Intent | None:
     """The two things the spine does itself: stop listening, and say what it
     knows how to do. Checked before every tool rule, because both phrasings
@@ -749,6 +913,8 @@ def help_text() -> str:
     """
     return (
         "I can drive — forward, back, left, right, turn around, and stop. "
+        "I can go to a place I know, go home, come back, and try again if I "
+        "get stuck. "
         "I can explore on my own, map the room, and tell you what I see or "
         "how far away things are. I can set alarms and timers, show the "
         "clock, tell you the time and my battery. Say go to sleep and I'll "
@@ -780,6 +946,8 @@ _SPEAK_RESULT = frozenset({
     "distance", "battery", "status", "map_what", "screen", "alarms",
     "explore_status", "scan", "lidar", "recall", "alarm", "timer", "cancel",
     "weather", "learned", "growth",
+    # explore_and_return answers in prose and does not speak for itself.
+    "explore_return",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -800,6 +968,10 @@ _REFLEX_INTENTS = frozenset({
     "speed", "face",
     "alarm", "timer", "cancel", "alarms", "clock", "dismiss", "screen",
     "battery", "status", "weather", "learned", "growth",
+    # File 14 navigation: never a brain turn, online or off (Harsh,
+    # 2026-09-23). The tools announce themselves, so none of these is in
+    # _SPEAK_RESULT except the one that is an existing brain-facing tool.
+    "nav_go", "nav_home", "nav_come_back", "try_again", "explore_return",
 })
 
 
@@ -829,6 +1001,12 @@ def _match(text: str, strict: bool) -> Intent | None:
     # Counted without a leading "hey Friday," -- the name is not part of the
     # order, and counting it pushed "hey Friday, can you turn left" over.
     words = len(_ADDRESS_RE.sub("", heard).split())
+
+    # NAVIGATION FIRST -- it yields to stop and sleep on its own, and must
+    # beat the explore parser and the "back" row. See _nav_intent.
+    nav = _nav_intent(heard, strict)
+    if nav is not None:
+        return nav
 
     # "STOP LISTENING" IS NOT "STOP". Above the stop rule, and the only thing
     # that is, because the stop rule matches the word `stop` on its own and

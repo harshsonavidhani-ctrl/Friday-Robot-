@@ -469,3 +469,101 @@ dashboard showed them as real history.
   everything goes out through the MCP server and its safety interrupt, never
   the motors, and the destination must be a place she already knows. Keep it
   that way.
+
+## File 14, updated (2026-09-23): stuck, the voice, early return, try again
+
+The updated spec added four things to the engine above and changed one rule
+of the whole module. Everything below is ADDED; nothing in PART 5 above is
+weakened by it.
+
+**No model anywhere in navigation.** Harsh, 2026-09-23: "no ai will be used,
+all behaviour in offline model". `offline.py::_nav_intent` matches "go to the
+kitchen [and come back] [and tell me the time]", "kitchen chalo", "go home" /
+"ghar chalo", "come back" / "wapas aao", "try again" / "phir se try karo" and
+"explore and come back", and they are all in `_REFLEX_INTENTS`, so they never
+reach the brain, online or off. They call four tools in `nav_tools.py`
+(`nav_go`, `nav_home`, `nav_come_back`, `try_again`) which **return at once
+and drive in ONE background task**, because a journey takes minutes and an
+offline tool call gets `STAGE_TOOL_TIMEOUT_S` (25 s). `navigate_to` /
+`return_home` / `come_back` are unchanged for MCP callers. `_nav_intent` runs
+first in `_match` and that order is load bearing: it must beat the explore
+parser (or "explore and come back" is a run with no way back) and the "back"
+row (or "come back" REVERSES her), and it yields to stop and sleep itself.
+
+**Everything she says while navigating is a fixed line** from `nav_voice.py`,
+in the exploration's own style ("I am unable to make progress. Initiating
+recovery." is its sentence, word for word). Lines are queued to one daemon
+thread so a drive never waits on Piper, go through `tts.speak()` (PART 4), and
+the engine is SILENT unless a caller hands it `nav_voice.VOICE` — so the test
+suites never make a sound.
+
+**Stuck is not blocked (steps 4, 9).** Blocked = the guard refused because
+something is in the way: wait, recheck, runtime obstacle, re-plan. Stuck = the
+follower's stall rule (wheels commanded, pose did not follow): back off
+`RECOVERY_REVERSE_M` and turn `RECOVERY_TURN_DEG`, measure whether that freed
+her, and only then re-plan. They are counted, logged (`trouble`, `stucks`,
+`recoveries` in `nav_log.jsonl`) and announced separately.
+
+**How the follower sees a stall — the bug this update found.**
+`Follower._execute` folded every post-move sweep with NO motion hint, so the
+real `Mapper` searched ±4 cm / ±3° around where she WAS: a 30 cm step read as
+no step (a false stall) or no match. Passing the commanded motion instead
+would hide a real stall. `nav_follower.motion_fraction` asks the map: it
+matches the sweep at 100% / 50% / 0% of the commanded move, each in the
+tracker's own window, and judges them with EVERY beam in the denominator
+(the tracker's score divides by mapped beams only and flatters hypotheses
+that look at unmapped floor — above 1.0 was seen). Measured on the real map,
+60 poses: 60/60 for full, half, stalled, turned and not-turned; the tracker's
+own score got 23/60 and 0/60. The test doubles ignore motion priors, which is
+why no suite saw it — `test_nav_follower.py::test_moves_are_measured_by_the_map`
+uses the real `Mapper` on the real map.
+
+**The way out of FAILSAFE (step 17)** is `NavController.retry_failsafe()`,
+reached only by a spoken "try again" (or the `try_again` tool). Every
+FAILSAFE writes `state/nav_failsafe.json` (mode, destination, goal, why,
+paused exploration's minutes) because no controller outlives its tool call.
+The retry ALWAYS relocalises first (the global search — she may have been
+carried), ALWAYS resets the recovery allowance, then redoes the failed mode:
+exploration restarts with the minutes it had; a journey re-reads its goal
+from the places table. A new spoken order also clears the record (a person
+dealt with it). Nothing automatic clears it.
+
+**Early return (step 16).** The exploration already publishes the signal:
+`EXPLORATION_TARGET.exhausted` + `frontiers` in `state/rl_autonomy.json`
+(`rl/explorer.py` via `pi_deploy`, read only). `nsm.FrontierWatch` counts it
+only when the file is under 5 s old, the TICK has moved, there is no planner
+error, and it has held for 4 readings over at least 8 s. Then the
+explore-and-return watcher says so, stops the run, waits for the lease and
+drives back — the same transition the run's own timer causes, only sooner.
+⚠ The last real run still reported 419 frontiers on the dead-reckoned map, so
+expect this to fire rarely until that map is cleaner.
+
+**The map is read, never written, by navigation.** Relocalising and following
+fold sweeps into an in-memory copy only; nothing in file 14 calls
+`grid.save()`. (`go_to`, which is not file 14, still saves after its drives.)
+Both maps stay as they are (Harsh, 2026-09-23): exploration keeps its own
+permanent map and vault; navigation reads the survey map.
+
+### The hard rules this update adds
+
+- **Stuck recovery is capped** at `MAX_STUCK_RECOVERIES` (2) per controller —
+  not reset per leg, so a round trip shares it. Past the cap: FAILSAFE.
+- **FAILSAFE halts, speaks, writes its record, and waits.** Only a person's
+  "try again" (or a new order) moves her again. There is no timer, watcher or
+  retry loop that can let her out.
+- **"Try again" always relocalises first and always resets the counter.** If
+  she still cannot place herself, she says so and stays in FAILSAFE.
+- **Every recovery move is a guarded move**: `follower.step()` →
+  `GuardedRobot.drive_seconds` → `movement.move()` → `safety.guarded_move()`.
+- **Navigation never needs a model.** A new navigation behaviour that only
+  works through the brain breaks this module's contract.
+- **Tests stay side-effect free**: every suite redirects `NAV_LOG`,
+  `FAILSAFE_FILE`, `EARLY_RETURN_FILE`, `PENDING_FILE` and `NAV_MODE_FILE` to
+  a temp dir. A leaked failsafe record is worse than a fake log row: "try
+  again" on the real robot would act on it.
+
+    ./venv/bin/python scripts/test_global_localise.py    # finding herself
+    ./venv/bin/python scripts/test_nav_follower.py       # incl. the real-map motion check
+    ./venv/bin/python scripts/test_nav_home.py           # stuck, try again, FrontierWatch
+    ./venv/bin/python scripts/test_file14_acceptance.py  # 13 journeys, end to end
+    ./venv/bin/python scripts/test_orders.py             # the offline phrases

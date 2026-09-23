@@ -112,6 +112,11 @@ def current() -> dict:
         "states": [s.value for s in nsm.NavState],
         "round_trip": nsm.round_trip_enabled(),
         "waiting_to_come_back": nsm.pending_return(),
+        # Step 17: stopped and waiting for a person to say "try again".
+        "failsafe": nsm.failsafe_record(),
+        # Step 16: the last time exploration ran out of frontiers and she
+        # came back early rather than waiting for the timer.
+        "early_return": nsm.last_early_return(),
         "note": ("landmarks are in the survey map's frame (state/map.npz), "
                  "which is NOT the frame of the picture in the Map panel"),
     }

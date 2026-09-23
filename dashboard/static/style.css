@@ -813,6 +813,9 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
               border-bottom: 1px solid #161b22; padding-bottom: 2px; }
 .navlog .ok { color: #7bd88f; }
 .navlog .bad { color: #ff8a7a; }
+/* Stopped for help (step 17): the one line on the panel that asks for him. */
+.drivenote.navfailsafe { color: #ffd2d6; border-left: 3px solid var(--bad);
+                         padding-left: 8px; }
 
 /* The Navigation panel's controls (file 14, added when Harsh asked for the
    dashboard to trigger target nav as well as the voice). */

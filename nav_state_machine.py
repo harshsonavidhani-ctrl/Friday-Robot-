@@ -9,6 +9,14 @@
                 │                                        └──> FAILSAFE (halts)     │
                 └────────────────────────────────────────────────────┘<────────────┘
 
+    BLOCKED_REPLANNING has two doors (step 9): an obstacle on the path waits,
+    rechecks and re-plans around it; a STALL (wheels commanded, pose unmoved)
+    backs off and turns first, at most MAX_STUCK_RECOVERIES times.
+
+    FAILSAFE has exactly one way out (step 17): a person says "try again" ->
+    `retry_failsafe()` relocalises, resets the recovery allowance, and does
+    again whatever failed. Nothing automatic ever calls it.
+
 WHAT THIS OWNS. The six states, the home timer, the re-plan loop, the runtime
 obstacle layer, and pause/resume of exploration. It owns no geometry and does
 no driving of its own: `path_planner` plans, `nav_follower` drives, and both
@@ -41,6 +49,11 @@ file that could disagree with the places table.
 home", not "stop". Stopping is `stop()` and the reflex, which are unaffected
 by anything here. FAILSAFE is the one that halts, and it waits for a human
 rather than retrying past the replanning budget.
+
+NO MODEL ANYWHERE IN HERE (Harsh, 2026-09-23: "no ai will be used all
+behaviour in offline model"). Every decision -- stuck or blocked, recover or
+re-plan, give up, come home early, try again -- is plain code, and everything
+it says is a fixed line from `nav_voice`.
 """
 
 from __future__ import annotations
@@ -57,6 +70,7 @@ import numpy as np
 
 import config
 import nav_follower
+import nav_voice
 import path_planner
 
 log = logging.getLogger("friday.nav_state")
@@ -232,6 +246,12 @@ class ReturnReport:
     inbound: dict = field(default_factory=dict)
     blocks_seen: int = 0
     blocks_confirmed: int = 0
+    # Stuck is not blocked (step 4): counted apart, answered apart.
+    stucks_seen: int = 0
+    recoveries: int = 0
+    recoveries_freed: int = 0
+    trouble: str = ""           # "stuck" / "blocked" / "" — the last kind seen
+    retried: bool = False       # this run was a "try again" out of FAILSAFE
     obstacles: dict = field(default_factory=dict)
     home: list[float] = field(default_factory=list)
     pose: list[float] = field(default_factory=list)
@@ -259,12 +279,25 @@ class NavController:
     """
 
     def __init__(self, robot=None, minutes: float = RETURN_AFTER_MIN,
-                 timer: HomeTimer | None = None) -> None:
+                 timer: HomeTimer | None = None,
+                 voice: "nav_voice.Voice | None" = None) -> None:
         self.robot = robot
         self.timer = timer or HomeTimer(minutes=minutes)
         self.state = NavState.IDLE
         self.snapshot: ExplorationSnapshot | None = None
         self.obstacles = RuntimeObstacles()
+        # Silent unless the caller hands over a real voice -- see nav_voice.
+        self.voice = voice or nav_voice.SILENT
+        # STUCK-RECOVERY ATTEMPTS, per controller and deliberately NOT reset
+        # per leg: a robot that wedged twice on the way to the kitchen does not
+        # get a fresh allowance for the way back. Only `reset_recovery()`
+        # clears it, and only "try again" calls that (step 17).
+        self.recoveries = 0
+        self._retrying = False
+
+    def reset_recovery(self) -> None:
+        """A fresh allowance of stuck-recovery attempts. Step 17 only."""
+        self.recoveries = 0
 
     # ---- the state half ---------------------------------------------------
 
@@ -376,7 +409,20 @@ class NavController:
             from mcp_server.tools import autonomy
             said = autonomy.start_exploration(minutes=minutes)
         except Exception as exc:                 # noqa: BLE001
-            return {"resumed": False, "why": f"could not restart: {exc}"}
+            said = f"could not restart: {exc}"
+        if "FAILED" in (said or "").upper() or "could not" in (said or "").lower():
+            # EXPLORING -> FAILSAFE. Nothing is moving, so there is nothing
+            # to halt; what matters is the record, so "try again" can restart
+            # the run with the time it still had.
+            self.state = NavState.FAILSAFE
+            self.voice.say("failsafe")
+            write_failsafe({
+                "mode": NavState.EXPLORING.value, "label": "exploration",
+                "goal_xy": None, "why": said, "at": time.time(),
+                "paused_exploration": True, "resume_minutes": minutes,
+                "recoveries": self.recoveries})
+            return {"resumed": False, "why": said,
+                    "state": self.state.value}
         self.state = NavState.EXPLORING
         if minutes:
             self.timer.minutes = minutes
@@ -410,7 +456,7 @@ class NavController:
 
     async def go_to_landmark(self, name: str, action: str = "",
                              mapper=None, return_to_start: bool | None = None,
-                             **kw) -> ReturnReport:
+                             after_arrival=None, **kw) -> ReturnReport:
         """TARGET_NAV: drive to a landmark she already knows by name.
 
         The landmark must be one she KNOWS. No fuzzy match, no nearest guess:
@@ -420,9 +466,16 @@ class NavController:
         standing now, drive there, and come back to this spot afterwards.
         None means "whatever the mode says" (`round_trip_enabled()`), so the
         dashboard toggle and a spoken "and come back" reach the same place.
+
+        `after_arrival` is an optional coroutine function, awaited AT the
+        landmark once she has arrived and BEFORE any way back -- "go to the
+        kitchen and tell me the time and come back" tells the time in the
+        kitchen. Whatever it raises is logged and does not un-arrive her.
         """
         row, why = resolve_landmark(name)
         if row is None:
+            # A refusal, not a failure: nothing was attempted, so there is
+            # nothing for "try again" to retry and no record is written.
             report = ReturnReport(state=NavState.FAILSAFE, destination=name,
                                   why=why, action=action)
             self.state = report.state
@@ -434,7 +487,10 @@ class NavController:
                 report = ReturnReport(state=NavState.FAILSAFE,
                                       destination=row["name"], action=action,
                                       why=f"I am not setting off: {whynot}")
-                self.state = report.state
+                report.at = time.time()
+                self.voice.say("lost")
+                await self._enter_failsafe(report, NavState.TARGET_NAV,
+                                           (row["x"], row["y"]), row["name"])
                 return report
 
         # ⚠ CAPTURED BEFORE THE FIRST WHEEL TURNS, from the relocalised pose.
@@ -448,6 +504,11 @@ class NavController:
         if report.arrived:
             from slam import places
             places.visited(row["name"])
+            if after_arrival is not None:
+                try:
+                    await after_arrival()
+                except Exception as exc:         # noqa: BLE001
+                    log.warning("the action at %s failed: %s", row["name"], exc)
 
         wants = (round_trip_enabled() if return_to_start is None
                  else bool(return_to_start))
@@ -480,6 +541,101 @@ class NavController:
         report.returned_to_start = report.arrived
         report.start_pose = [round(row["x"], 3), round(row["y"], 3)]
         return report
+
+    async def retry_failsafe(self, record: dict | None = None, mapper=None,
+                             **kw) -> ReturnReport:
+        """Step 17: "Friday, try again". The ONLY way out of FAILSAFE.
+
+        Called by a spoken command or an explicit tool call, never by a timer
+        or a watcher: FAILSAFE exists because the situation needed a person,
+        and a robot that let itself out again would make that meaningless.
+        In this order, every time:
+
+          1. WHERE AM I NOW. Relocalise from scratch (the global search, not
+             the old pose): whoever sorted her out may well have carried her.
+          2. A FRESH RECOVERY ALLOWANCE. The attempts that led here are spent
+             history, not a debt this attempt starts with.
+          3. DO WHAT FAILED, AGAIN. Exploration restarts with the minutes it
+             still had; a journey drives to the same goal, re-read from the
+             places table where there is one, since it may have been re-saved.
+
+        If it fails again it lands in FAILSAFE again, through the same door as
+        the first time. There is no retry loop here, only one retry per ask.
+        """
+        record = record if record is not None else failsafe_record()
+        if record is None:
+            return ReturnReport(state=self.state, destination="",
+                                why="There is nothing waiting to try again.")
+        try:
+            mode = NavState(record.get("mode"))
+        except ValueError:
+            clear_failsafe()
+            return ReturnReport(state=self.state, destination="",
+                                why="I could not read what I was doing before "
+                                    "I stopped, so I have nothing to retry.")
+        label = record.get("label") or "my destination"
+        clear_failsafe()
+        self.reset_recovery()
+        self._retrying = True
+        self.voice.say("try_again")
+        log.info("try again: %s (recovery counter reset)", record)
+        if record.get("paused_exploration") or mode is NavState.EXPLORING:
+            self.snapshot = ExplorationSnapshot(
+                taken_at=time.time(),
+                remaining_minutes=record.get("resume_minutes"))
+        goal = self._retry_goal(mode, record)
+
+        if mapper is None:
+            mapper, why = await relocalise()
+        if mapper is None:
+            report = ReturnReport(state=mode, destination=label, retried=True)
+            report.at = time.time()
+            report.why = f"I am not setting off: {why}"
+            self.voice.say("lost")
+            await self._enter_failsafe(report, mode, goal, label)
+            return report
+
+        if mode is NavState.EXPLORING:
+            out = self.resume_exploration()
+            report = ReturnReport(state=self.state, destination="exploration",
+                                  retried=True, at=time.time())
+            report.pose = [round(float(v), 3) for v in mapper.pose]
+            report.why = out.get("why") or out.get("said") or ""
+            if out.get("resumed"):
+                self.voice.say("resuming")
+            return report
+
+        if goal is None:
+            report = ReturnReport(state=mode, destination=label, retried=True,
+                                  at=time.time(),
+                                  why=f"I no longer know where {label} is.")
+            await self._enter_failsafe(report, mode, None, label)
+            return report
+
+        report = await self._drive_to(goal, label, mode, mapper, **kw)
+        if report.arrived:
+            if mode is NavState.TARGET_NAV:
+                from slam import places
+                places.visited(label)
+            if self.snapshot is not None:
+                resumed = self.resume_exploration()
+                if resumed.get("resumed"):
+                    self.voice.say("resuming")
+        return report
+
+    @staticmethod
+    def _retry_goal(mode: NavState, record: dict):
+        """Where a retry drives to. The places table wins over the record."""
+        if mode is NavState.TARGET_NAV:
+            row, _ = resolve_landmark(record.get("label") or "")
+            if row is not None:
+                return (row["x"], row["y"])
+        if mode is NavState.RETURN_TO_HOME:
+            home = home_place()
+            if home is not None:
+                return (home["x"], home["y"])
+        xy = record.get("goal_xy")
+        return (float(xy[0]), float(xy[1])) if xy else None
 
     async def _return_to_start(self, mapper, start, report: ReturnReport,
                                **kw) -> None:
@@ -542,13 +698,23 @@ class NavController:
 
         NOT EVERY FAILURE IS WORTH RETRYING, and getting that wrong turns one
         problem into a robot repeating it. A human stop, a refusal from the
-        guard, a drivetrain that is not driving and a pose that cannot be
-        matched are all conditions another identical attempt cannot improve,
-        so they go straight to FAILSAFE. Only "no route" and "ran out of path"
-        are re-planned, because those are the ones a changed map can fix.
+        guard and a pose that cannot be matched are all conditions another
+        identical attempt cannot improve, so they go straight to FAILSAFE.
+        "No route" and "ran out of path" are re-planned, because those are the
+        ones a changed map can fix.
+
+        ⚠ STUCK IS NOT BLOCKED, AND NEITHER IS FINAL (step 4). Blocked means
+        the LiDAR sees something new in the way: wait, look again, and plan
+        around it if it stayed. Stuck means the wheels were told to move and
+        the scan matcher says she did not -- the path can be perfectly good,
+        and planning it again from the same spot changes nothing. So a stall
+        gets a short physical recovery first (back off, turn a little), and
+        only then a new plan. Recoveries are capped at MAX_STUCK_RECOVERIES
+        across the whole controller; past that it is FAILSAFE and a human.
         """
         report = ReturnReport(state=mode, destination=label)
         report.at = time.time()
+        report.retried = self._retrying
         started = time.monotonic()
         self.state = mode
 
@@ -557,7 +723,8 @@ class NavController:
             if mapper is None:
                 report.state, report.why = NavState.FAILSAFE, (
                     f"I am not setting off: {why}")
-                self.state = report.state
+                self.voice.say("lost")
+                await self._enter_failsafe(report, mode, goal_xy, label)
                 return report
         report.pose = [round(float(v), 3) for v in mapper.pose]
 
@@ -637,24 +804,58 @@ class NavController:
                 self.state = report.state
                 report.seconds = round(time.monotonic() - started, 1)
                 log.info("%s: arrived in %d attempt(s)", label, attempt)
+                self.voice.say(nav_voice.arrival_key(label), label)
                 _log_attempt(report)
                 return report
 
-            # ---- step 10: what KIND of stop was that? ---------------------
+            # ---- step 11: what KIND of stop was that? ---------------------
             if is_block(result.why):
                 report.blocks_seen += 1
+                report.trouble = "blocked"
                 self.state = report.state = NavState.BLOCKED_REPLANNING
+                self.voice.say("blocked")
                 still, clearance = await self._still_blocked(robot)
                 if not still:
                     # It walked away. Re-plan on the unchanged map, which is
                     # nearly free, rather than recording a ghost obstacle.
                     log.info("%s: the block cleared on recheck", label)
+                    self.voice.say("clear", label)
                     continue
                 report.blocks_confirmed += 1
                 self.obstacles.add(obstacle_ahead(mapper.pose, clearance))
                 report.obstacles = self.obstacles.as_dict()
                 log.info("%s: block confirmed, %d runtime obstacle(s)",
                          label, len(self.obstacles))
+                continue
+
+            # ---- step 4: STUCK -- the wheels, not the room ----------------
+            if is_stuck(result.why):
+                report.stucks_seen += 1
+                report.trouble = "stuck"
+                self.state = report.state = NavState.BLOCKED_REPLANNING
+                # No recovery a re-plan could not follow up is worth making:
+                # on the last attempt, or with the allowance spent, a
+                # manoeuvre would only move her before FAILSAFE stops her.
+                if (attempt >= max_attempts
+                        or self.recoveries >= MAX_STUCK_RECOVERIES):
+                    report.why = (
+                        f"{result.why}. I tried to free myself "
+                        f"{self.recoveries} time(s) and it did not work")
+                    log.info("%s: stuck, recovery allowance spent (%d)",
+                             label, self.recoveries)
+                    break
+                freed = await self._recover(robot, mapper, follower, label)
+                report.recoveries = self.recoveries
+                report.pose = [round(float(v), 3) for v in mapper.pose]
+                if freed:
+                    report.recoveries_freed += 1
+                    continue
+                # The manoeuvre could not move her either. Whatever she is
+                # pushing against is not on the map, so it goes into the
+                # runtime layer and the next plan has to go around it.
+                self.voice.say("recovery_failed")
+                self.obstacles.add(obstacle_ahead(mapper.pose, None))
+                report.obstacles = self.obstacles.as_dict()
                 continue
 
             if _is_final(result.why):
@@ -668,16 +869,107 @@ class NavController:
         # happened to be running.
         report.seconds = round(time.monotonic() - started, 1)
         report.state = NavState.FAILSAFE
+        if _is_no_route(report.why):
+            self.voice.say("no_route", label)
+        await self._enter_failsafe(report, mode, goal_xy, label, robot)
+        log.info("%s: %s", label, report.as_dict())
+        return report
+
+    async def _enter_failsafe(self, report: "ReturnReport", mode: NavState,
+                              goal_xy, label: str, robot=None) -> None:
+        """Stop, say so, and write down what was being attempted (step 17).
+
+        Every road into FAILSAFE comes through here, so the three things that
+        must be true of it always are: the wheels are off, a person is told
+        in the same calm sentence every time, and there is a record for "try
+        again" to pick up. The record is a file because the controller does
+        not survive the call that made it -- every MCP tool builds a fresh one.
+        """
+        report.state = NavState.FAILSAFE
         self.state = report.state
+        # "FAILSAFE means the wheels are off" should be true because something
+        # made it true, not because nothing happened to be running.
+        robot = robot if robot is not None else self.robot
         try:
             halt = getattr(robot, "halt", None)
             if halt is not None:
                 await halt()
         except Exception as exc:                 # noqa: BLE001
             log.warning("could not halt on failsafe: %s", exc)
-        log.info("%s: %s", label, report.as_dict())
+        self.voice.say("failsafe")
+        snap = self.snapshot
+        write_failsafe({
+            "mode": mode.value, "label": label,
+            "goal_xy": ([round(float(goal_xy[0]), 3),
+                         round(float(goal_xy[1]), 3)]
+                        if goal_xy is not None else None),
+            "why": report.why, "at": time.time(),
+            "paused_exploration": snap is not None,
+            "resume_minutes": snap.remaining_minutes if snap else None,
+            "recoveries": self.recoveries,
+        })
         _log_attempt(report)
-        return report
+
+    async def _recover(self, robot, mapper, follower, label: str) -> bool:
+        """One short physical recovery from a stall. True if it freed her.
+
+        Back off a little, turn a little -- alternating sides, so a second try
+        does not repeat the first -- then look and measure. The same idea the
+        exploration's own recovery uses, written fresh here: that code is read
+        only and belongs to another process.
+
+        ⚠ EVERY MOVE IS A GUARDED MOVE. `drive_seconds` is `movement.move()`
+        -> `safety.guarded_move()`, so the reverse cap, the clearance check,
+        ABORT and the reflex all apply exactly as they do to any other move. A
+        refusal ends the manoeuvre; it is never retried here.
+
+        "Freed" is measured, never assumed: each move goes through the
+        follower's own `step()`, which asks the map how much of it happened
+        (nav_follower.MOTION_HYPOTHESES) rather than believing the command,
+        and the two together must move her RECOVERY_FREED_M or turn her
+        RECOVERY_FREED_DEG -- clear of the matcher's few-centimetre noise.
+        """
+        self.recoveries += 1
+        n = self.recoveries
+        self.voice.say("stuck")
+        log.info("%s: stuck — recovery %d of %d", label, n,
+                 MAX_STUCK_RECOVERIES)
+        side = "left" if n % 2 else "right"
+        rates = follower.rates
+        moves = (("backward", min(rates.seconds_for(RECOVERY_REVERSE_M),
+                                  config.MAX_REVERSE_SECONDS)),
+                 (side, rates.seconds_for_turn(RECOVERY_TURN_DEG)))
+        before = tuple(float(v) for v in mapper.pose)
+        refused = ""
+        for direction, seconds in moves:
+            if robot.stopped():
+                refused = "stop was called"
+                break
+            try:
+                # The guard refuses a straight move without a fresh look.
+                await robot.observe()
+                done = await follower.step(mapper, direction, seconds)
+            except Exception as exc:             # noqa: BLE001
+                refused = f"could not move: {exc}"
+                break
+            if done.refused:
+                refused = done.said
+                break
+        # NET, from where the manoeuvre started. Summing each step's measured
+        # motion adds the matcher's noise up twice, and on a chassis that did
+        # not move at all that was enough to call it freed.
+        after = tuple(float(v) for v in mapper.pose)
+        moved = math.hypot(after[0] - before[0], after[1] - before[1])
+        turned = abs(math.degrees(math.atan2(math.sin(after[2] - before[2]),
+                                             math.cos(after[2] - before[2]))))
+        freed = (not refused
+                 and (moved >= RECOVERY_FREED_M or turned >= RECOVERY_FREED_DEG))
+        log.info("%s: recovery %d %s (moved %.2f m, turned %.0f deg%s)", label,
+                 n, "freed her" if freed else "did not free her", moved,
+                 turned, f", {refused}" if refused else "")
+        if freed:
+            self.voice.say("recovered", label)
+        return freed
 
     async def _still_blocked(self, robot) -> tuple[bool, float | None]:
         """Wait, look again, and say whether the thing is still there.
@@ -840,13 +1132,193 @@ def snap_goal(prep, cell, radius_m: float = GOAL_SNAP_M):
 # stops a reason matching. That is not a cosmetic bug — "do not know where I
 # am" failing to match meant an unmatched pose was RE-PLANNED rather than
 # failing safe, i.e. the one situation where driving again is driving blind.
-_FINAL_REASONS = ("stop was called", "refused:", "not driving",
-                  "do not know where i am", "budget")
+#
+# A stall ("the wheels are not driving") USED to be in this list, which sent a
+# wedged robot straight to FAILSAFE with no attempt to free itself. It is its
+# own case now -- see is_stuck() and NavController._recover().
+_FINAL_REASONS = ("stop was called", "refused:", "do not know where i am",
+                  "budget")
 
 
 def _is_final(why: str) -> bool:
     low = (why or "").lower()
     return any(reason in low for reason in _FINAL_REASONS)
+
+
+# --- step 4: stuck, as opposed to blocked ----------------------------------
+
+# The follower's stall sentence (nav_follower.STALL_TICKS / STALL_RATIO): the
+# wheels were commanded and the scan matcher saw her not go.
+_STUCK_WORDS = ("wheels are not driving",)
+
+
+def is_stuck(why: str) -> bool:
+    """Did the follower stop because she physically is not moving?"""
+    low = (why or "").lower()
+    return any(word in low for word in _STUCK_WORDS)
+
+
+# The cap step 13 asks for: a small fixed number, then FAILSAFE and a human.
+MAX_STUCK_RECOVERIES = 2
+
+# The manoeuvre. Small on purpose -- it exists to unhook a wheel from a rug
+# edge or a chair foot, not to go anywhere -- and backwards is short because
+# nothing on this robot looks behind it (config.MAX_REVERSE_SECONDS).
+RECOVERY_REVERSE_M = 0.15
+RECOVERY_TURN_DEG = 20.0
+
+# What counts as having been freed, as MEASURED from where the manoeuvre
+# began. Well above the scan matcher's few-centimetre noise so a jitter does
+# not read as an escape, and well below what the manoeuvre delivers even on a
+# drivetrain losing 30% (15 cm back -> ~10 cm, 20 deg -> ~14 deg).
+RECOVERY_FREED_M = 0.06
+RECOVERY_FREED_DEG = 8.0
+
+_NO_ROUTE_WORDS = ("nothing passable connects", "nowhere on my map i can plan",
+                   "not somewhere i can stand")
+
+
+def _is_no_route(why: str) -> bool:
+    low = (why or "").lower()
+    return any(word in low for word in _NO_ROUTE_WORDS)
+
+
+# --- step 17: the way out of FAILSAFE --------------------------------------
+#
+# FAILSAFE waits for a human, and "Friday, try again" is how the human says
+# they have dealt with it. The record says what she was doing so the retry
+# can do it again; it lives on disk because no controller outlives the tool
+# call that made it. Same freshness rule as a pending return: past this the
+# goal is a coordinate from a session nobody remembers.
+FAILSAFE_FILE = config.ROOT / "state" / "nav_failsafe.json"
+FAILSAFE_TTL_S = 6 * 3600.0
+
+
+def write_failsafe(row: dict) -> None:
+    try:
+        FAILSAFE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = FAILSAFE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(row))
+        tmp.replace(FAILSAFE_FILE)
+    except OSError as exc:                       # noqa: BLE001
+        log.warning("could not write the failsafe record: %s", exc)
+
+
+def failsafe_record() -> dict | None:
+    """What she was doing when she stopped for help, if it is still fresh."""
+    try:
+        row = json.loads(FAILSAFE_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+    if time.time() - float(row.get("at", 0)) > FAILSAFE_TTL_S:
+        clear_failsafe()
+        return None
+    return row
+
+
+def clear_failsafe() -> None:
+    try:
+        FAILSAFE_FILE.unlink()
+    except OSError:
+        pass
+
+
+# --- step 16: exploration that has run out of places to go -----------------
+#
+# The signal is the one the exploration already publishes, read and never
+# inferred: `rl/explorer.py::ExplorationPlanner` sets `exhausted` and
+# `frontier_count` each planning cycle, and `rl/pi_deploy.py` writes them to
+# `state/rl_autonomy.json` under EXPLORATION_TARGET every five ticks. Both
+# files are read only to this module; the telemetry file is the accessor.
+AUTONOMY_FILE = config.ROOT / "state" / "rl_autonomy.json"
+
+# ⚠ ONE READING OF "NONE LEFT" IS NOT AN EMPTY HOUSE. The planner reports no
+# frontiers in its first seconds (nothing mapped yet) and between cycles, and
+# a stale file from a run that has died says whatever it said last. So: this
+# many consecutive readings, spanning at least this long, every one of them
+# from a file written in the last few seconds by a run whose tick is moving.
+EXHAUSTED_READS = 4
+EXHAUSTED_MIN_S = 8.0
+TELEMETRY_FRESH_S = 5.0
+EARLY_RETURN_FILE = config.ROOT / "state" / "nav_early_return.json"
+
+
+class FrontierWatch:
+    """Debounced "exploration has genuinely finished" from live telemetry."""
+
+    def __init__(self, path=None, reads: int = EXHAUSTED_READS,
+                 min_s: float = EXHAUSTED_MIN_S,
+                 fresh_s: float = TELEMETRY_FRESH_S) -> None:
+        self.path = path or AUTONOMY_FILE
+        self.reads, self.min_s, self.fresh_s = reads, min_s, fresh_s
+        self.streak = 0
+        self.since: float | None = None
+        self.last_tick = None
+        self.last: dict = {}
+
+    def _reset(self) -> None:
+        self.streak, self.since = 0, None
+
+    def update(self, now: float | None = None,
+               wall: float | None = None) -> bool:
+        """Read once. True only when exhaustion has held long enough."""
+        now = time.monotonic() if now is None else now
+        wall = time.time() if wall is None else wall
+        try:
+            age = wall - self.path.stat().st_mtime
+            live = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            self._reset()
+            return False
+        if age > self.fresh_s:
+            self._reset()                   # nobody is writing it: no run
+            return False
+        tick = live.get("TICK")
+        if tick is not None and tick == self.last_tick:
+            return False                    # nothing new to go on, either way
+        self.last_tick = tick
+        target = live.get("EXPLORATION_TARGET") or {}
+        self.last = {"tick": tick, "frontiers": target.get("frontiers"),
+                     "exhausted": target.get("exhausted"),
+                     "error": target.get("error") or ""}
+        empty = (bool(target.get("exhausted"))
+                 and target.get("frontiers") == 0
+                 and not target.get("error"))
+        if not empty:
+            self._reset()
+            return False
+        self.streak += 1
+        if self.since is None:
+            self.since = now
+        return self.streak >= self.reads and now - self.since >= self.min_s
+
+    def as_dict(self) -> dict:
+        return {"streak": self.streak, "reads_needed": self.reads,
+                "span_s": (None if self.since is None
+                           else round(time.monotonic() - self.since, 1)),
+                "min_s": self.min_s, "last": self.last}
+
+
+def note_early_return(watch: FrontierWatch) -> dict:
+    """Write down that exploration ended early, for the dashboard."""
+    row = {"at": time.time(), "reads": watch.streak,
+           "frontiers": watch.last.get("frontiers"),
+           "tick": watch.last.get("tick")}
+    try:
+        EARLY_RETURN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = EARLY_RETURN_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(row))
+        tmp.replace(EARLY_RETURN_FILE)
+    except OSError as exc:                       # noqa: BLE001
+        log.warning("could not note the early return: %s", exc)
+    return row
+
+
+def last_early_return() -> dict | None:
+    try:
+        return json.loads(EARLY_RETURN_FILE.read_text())
+    except (OSError, ValueError):
+        return None
 
 
 # A round trip whose outbound leg is ANOTHER PROCESS -- an exploration run --
@@ -916,6 +1388,12 @@ def _log_attempt(report: "ReturnReport") -> None:
            "state": report.state.value, "arrived": report.arrived,
            "seconds": report.seconds, "attempts": report.attempts,
            "replans": report.replans, "blocks": report.blocks_confirmed,
+           "blocks_seen": report.blocks_seen,
+           # Stuck and blocked are logged apart because they are different
+           # problems with different answers (step 4 / step 14).
+           "stucks": report.stucks_seen, "recoveries": report.recoveries,
+           "recoveries_freed": report.recoveries_freed,
+           "trouble": report.trouble, "retried": report.retried,
            "planned_m": round(report.planned_m, 2),
            "driven_m": (report.follow or {}).get("driven_m", 0.0),
            "why": report.why}

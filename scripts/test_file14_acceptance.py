@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""File 14 step 13 — the acceptance run. Eight scenarios, end to end.
+"""File 14 steps 14 and 18 — the acceptance run, end to end.
+
+Scenarios 1-9 are the original step-13 journeys. 10-13 (2026-09-23) are the
+updated spec's additions: an offline voice errand with no model anywhere,
+stuck told apart from blocked, exploration ending early when its frontiers run
+out, and FAILSAFE -> a person moves her -> "try again".
 
     scripts/test_file14_acceptance.py
 
@@ -26,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import ssl
 import subprocess
 import sys
@@ -50,6 +56,8 @@ _LOG_DIR = tempfile.TemporaryDirectory()
 nsm.NAV_LOG = Path(_LOG_DIR.name) / "nav_log.jsonl"
 nsm.NAV_MODE_FILE = Path(_LOG_DIR.name) / "nav_mode.json"
 nsm.PENDING_FILE = Path(_LOG_DIR.name) / "nav_round_trip.json"
+nsm.FAILSAFE_FILE = Path(_LOG_DIR.name) / "nav_failsafe.json"
+nsm.EARLY_RETURN_FILE = Path(_LOG_DIR.name) / "nav_early_return.json"
 
 PASS, FAIL = "  ok  ", " FAIL "
 _failures = 0
@@ -315,6 +323,16 @@ def seven_exploration_untouched() -> None:
     fingerprint = ("nav_", "landmark", "path_planner", "pursuit", "speck",
                    "failsafe", "return_home", "astar", "navigate_to",
                    "nav_follower", "nav_state_machine", "RuntimeObstacles")
+    # The ONE file-14 line allowed outside file 14's own files (2026-09-23):
+    # the offline navigation tools join config.COMMAND_FRESH_TOOLS, so a
+    # spoken "go to the kitchen" goes stale like every other move. It has to
+    # live in config.py (one config file, CLAUDE.md PART 2). Only lines that
+    # are exactly that are excused; anything else navigation-shaped still
+    # fails.
+    excused = {"config.py": re.compile(
+        r'^\+\s*(?:# file 14\'s offline navigation orders.*|'
+        r'(?:"(?:nav_go|nav_home|nav_come_back|try_again|'
+        r'explore_and_return)",?\s*)+\)?)\s*$')}
     ok = True
     for path in watched:
         status = subprocess.run(
@@ -326,8 +344,10 @@ def seven_exploration_untouched() -> None:
             continue
         diff = subprocess.run(["git", "diff", "--", path], cwd=ROOT,
                               capture_output=True, text=True).stdout
+        allow = excused.get(path)
         added = "\n".join(ln for ln in diff.splitlines()
-                           if ln.startswith("+") and not ln.startswith("+++"))
+                           if ln.startswith("+") and not ln.startswith("+++")
+                           and not (allow and allow.match(ln)))
         mine = [w for w in fingerprint if w.lower() in added.lower()]
         if mine:
             ok = False
@@ -441,6 +461,351 @@ def nine_round_trip() -> None:
                        report.returned_to_start and armed.arrived))
 
 
+# --------------------------------------------------------------------------
+# 2026-09-23: offline navigation, stuck vs blocked, frontier exhaustion and
+# the way out of FAILSAFE -- driven through the REAL tool functions, with the
+# chassis, the scan matcher and the exploration process simulated.
+# --------------------------------------------------------------------------
+
+# A simulated chassis that drives as fast as the calibration says it does
+# (state/calibration.json: 45.2 cm/s, 75 deg/s, less the sim's 30% loss).
+# The older FakeWorld default is six times slower than the calibration, which
+# the follower rightly reads as a stall -- fine for scenarios about stalls,
+# wrong for ones that are not.
+_CALIBRATED = {"cm_s": 45.0, "deg_s": 75.0}
+
+
+class _SimController(nsm.NavController):
+    """The real controller, with the sim's instant arrival test on every leg."""
+
+    async def _drive_to(self, goal_xy, label, mode, mapper=None,
+                        max_attempts=3, **kw):
+        kw.setdefault("max_ticks", 80)
+        kw.setdefault("arrival", _arrival(goal_xy))
+        return await super()._drive_to(goal_xy, label, mode, mapper,
+                                       max_attempts, **kw)
+
+
+class _ToolRig:
+    """Point nav_tools at a simulated robot, voice and exploration process."""
+
+    def __init__(self, world, mapper, running=False):
+        import nav_voice
+        from mcp_server.tools import autonomy, nav_tools
+        self.nav_voice, self.autonomy, self.nav_tools = (nav_voice, autonomy,
+                                                         nav_tools)
+        self.world, self.mapper = world, mapper
+        self.voice = nav_voice.Voice(speak=lambda _t: None, background=False)
+        self.running = running
+        self.calls: list = []
+        self.relocalised_at: list[int] = []
+
+    def __enter__(self):
+        a, nt = self.autonomy, self.nav_tools
+        self.saved = (nt._controller, nsm.relocalise, self.nav_voice.VOICE,
+                      a._running, a.stop_exploration, a.start_exploration)
+        robot = FakeRobot(self.world)
+
+        async def halt():
+            self.calls.append("halt")
+            return "stopped"
+
+        robot.halt = halt
+
+        def controller():
+            return _SimController(robot=robot, voice=self.voice), robot
+
+        async def relocalise():
+            self.relocalised_at.append(len(self.world.commands))
+            return self.mapper, ""
+
+        def stop():
+            self.calls.append("stop_exploration")
+            self.running = False
+            return "stopped the run and took my wheels back"
+
+        def start(minutes=None, thinking=None):
+            self.calls.append(("start_exploration", minutes))
+            self.running = True
+            return f"exploring for {minutes} minutes"
+
+        nt._controller = controller
+        nsm.relocalise = relocalise
+        self.nav_voice.VOICE = self.voice
+        a._running = lambda: self.running
+        a.stop_exploration, a.start_exploration = stop, start
+        return self
+
+    def __exit__(self, *exc):
+        a, nt = self.autonomy, self.nav_tools
+        (nt._controller, nsm.relocalise, self.nav_voice.VOICE,
+         a._running, a.stop_exploration, a.start_exploration) = self.saved
+        return False
+
+
+def _line(key, dest=""):
+    import nav_voice
+    return nav_voice.line(key, dest)
+
+
+def ten_offline_voice_errand() -> None:
+    item(10, "Offline: \"go to the kitchen and tell me the time and come "
+             "back\" with no model at all")
+    import offline
+    from mcp_server.tools import nav_tools
+    with TempPlaces():
+        from slam import places
+        places.remember_here("the kitchen", (2.0, 2.0, 0.0))
+        world = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
+        mapper = FakeMapper(world)
+        mapper.grid = _grid(free=True)
+        said = "Friday, go to the kitchen and tell me the time and come back"
+        intent = offline.understand(said, strict=True)
+        check("the order is understood locally, even with a brain available",
+              intent is not None and intent.name == "nav_go"
+              and intent.name in offline._REFLEX_INTENTS,
+              str(intent and (intent.name, intent.args)))
+        check("the place, the action and the way back are all parsed",
+              intent.args == {"place": "the kitchen", "come_back": True,
+                              "then": "tell me the time"}, str(intent.args))
+        check("main.py will not read the tool's answer out a second time",
+              not intent.speak_result and not intent.say)
+
+        with _ToolRig(world, mapper) as rig:
+            async def run():
+                import time as _t
+                t0 = _t.monotonic()
+                reply = await nav_tools.nav_go(**intent.args)
+                took = _t.monotonic() - t0
+                await nav_tools._JOURNEY
+                return reply, took
+
+            reply, took = asyncio.run(run())
+            check("the tool answers at once, inside the offline timeout",
+                  took < 1.0 and reply == _line("setting_off", "the kitchen"),
+                  f"{took:.2f} s: {reply!r}")
+            spoken = rig.voice.said
+            check("she set off, arrived, told the time THERE, then came back",
+                  len(spoken) >= 4
+                  and spoken[0] == _line("setting_off", "the kitchen")
+                  and spoken[1] == _line("arrived", "the kitchen")
+                  and spoken[2].lower().startswith(("it's", "it is"))
+                  and spoken[3] == _line("arrived_start"), str(spoken))
+            check("and really is back where she started",
+                  math.hypot(world.x - 0.5, world.y - 2.0) < 0.5,
+                  f"{math.hypot(world.x - 0.5, world.y - 2.0):.2f} m away")
+            check("every sentence came from the fixed table or the clock",
+                  all(s in _all_lines() or s.lower().startswith(("it's",
+                                                                 "it is"))
+                      for s in spoken), str(spoken))
+        _items.append(("Offline voice errand, no model",
+                       len(spoken) >= 4 and spoken[3] == _line("arrived_start")))
+
+
+def _all_lines() -> set[str]:
+    import nav_voice
+    out = set()
+    for key in nav_voice.LINES:
+        for dest in ("home", "the kitchen", "the desk", "where I set off from",
+                     ""):
+            out.add(nav_voice.line(key, dest))
+    return out
+
+
+def eleven_stuck_is_not_blocked() -> None:
+    item(11, "Stuck vs blocked: recovery before any re-plan, and told apart "
+             "in the log and out loud")
+    import nav_voice
+    saved = nsm.BLOCK_RECHECK_S
+    nsm.BLOCK_RECHECK_S = 0.0
+    try:
+        with TempPlaces():
+            nsm.set_home((2.0, 2.0, 0.0))
+
+            class Wedged(FakeWorld):
+                def drive(self, direction, seconds):
+                    if direction == "backward":
+                        self.dead = False
+                    super().drive(direction, seconds)
+
+            stuck_world = Wedged(pose=(0.5, 2.0, 0.0), cm_s=45.0, deg_s=75.0,
+                                 dead=True, match_noise_m=0.01)
+            stuck_map = FakeMapper(stuck_world)
+            stuck_map.grid = _grid(free=True)
+            stuck_voice = nav_voice.Voice(speak=lambda _t: None,
+                                          background=False)
+            stuck = asyncio.run(_SimController(
+                robot=FakeRobot(stuck_world), voice=stuck_voice).go_home(
+                mapper=stuck_map))
+            stuck_row = nsm.recent_attempts(1)[0]
+
+            block_world = FakeWorld(pose=(0.5, 2.0, 0.0))
+            block_map = FakeMapper(block_world)
+            block_map.grid = _grid(free=True)
+            block_voice = nav_voice.Voice(speak=lambda _t: None,
+                                          background=False)
+            blocker = BlockingRobot(block_world, clears_after=1)
+            asyncio.run(_SimController(robot=blocker, voice=block_voice)
+                        .go_home(mapper=block_map, max_attempts=2))
+            block_row = nsm.recent_attempts(1)[0]
+
+            dirs = [d for d, _ in stuck_world.commands]
+            check("stuck: the manoeuvre ran BEFORE the only re-plan",
+                  "backward" in dirs and stuck.replans == 1
+                  and stuck.recoveries == 1, f"{stuck.replans} re-plans, "
+                  f"{stuck.recoveries} recoveries, {dirs[:10]}")
+            check("stuck: and she got there", stuck.arrived, stuck.why)
+            check("the log tells them apart",
+                  stuck_row["trouble"] == "stuck" and stuck_row["stucks"] == 1
+                  and block_row["trouble"] == "blocked"
+                  and block_row["stucks"] == 0
+                  and block_row["blocks_seen"] >= 1,
+                  f"stuck={stuck_row['trouble']} blocked={block_row['trouble']}")
+            check("and so does she",
+                  _line("stuck") in stuck_voice.said
+                  and _line("blocked") not in stuck_voice.said
+                  and _line("blocked") in block_voice.said
+                  and _line("stuck") not in block_voice.said,
+                  f"{stuck_voice.said} / {block_voice.said}")
+            check("a block was never answered with a reverse",
+                  not blocker.world.commands
+                  or "backward" not in [d for d, _ in blocker.world.commands])
+            _items.append(("Stuck vs blocked",
+                           stuck.arrived and stuck_row["trouble"] == "stuck"
+                           and block_row["trouble"] == "blocked"))
+    finally:
+        nsm.BLOCK_RECHECK_S = saved
+
+
+def twelve_frontiers_run_out() -> None:
+    item(12, "Exploration runs out of frontiers before the timer: home "
+             "early, and not on a momentary zero")
+    from mcp_server.tools import nav_tools
+    tmp = tempfile.TemporaryDirectory()
+    telemetry = Path(tmp.name) / "rl_autonomy.json"
+    saved_file = nsm.AUTONOMY_FILE
+    nsm.AUTONOMY_FILE = telemetry
+    try:
+        with TempPlaces():
+            world = FakeWorld(pose=(2.0, 2.0, 0.0), **_CALIBRATED)
+            mapper = FakeMapper(world)
+            mapper.grid = _grid(free=True)
+            nsm.arm_return_to_start((0.5, 2.0, 0.0), why="exploration")
+
+            with _ToolRig(world, mapper, running=True) as rig:
+                # A 20-minute run's telemetry: frontiers, ONE momentary zero,
+                # frontiers again, then genuinely none left.
+                script = ([(14, False)] * 3 + [(0, True)] + [(9, False)] * 3
+                          + [(0, True)] * 40)
+
+                async def fake_run():
+                    for tick, (frontiers, exhausted) in enumerate(script):
+                        if not rig.running:
+                            return
+                        telemetry.write_text(json.dumps({
+                            "TICK": tick * 5, "EXPLORATION_TARGET": {
+                                "frontiers": frontiers,
+                                "exhausted": exhausted, "error": ""}}))
+                        await asyncio.sleep(0.05)
+
+                async def run():
+                    import time as _t
+                    writer = asyncio.create_task(fake_run())
+                    t0 = _t.monotonic()
+                    await nav_tools._watch_then_return(
+                        poll_s=0.05, watch=nsm.FrontierWatch(
+                            path=telemetry, reads=4, min_s=0.3),
+                        lease_wait_s=2.0)
+                    writer.cancel()
+                    return _t.monotonic() - t0
+
+                took = asyncio.run(run())
+                early = nsm.last_early_return()
+                check("it ended the run itself, well before any timer",
+                      "stop_exploration" in rig.calls and took < 10.0,
+                      f"{took:.1f} s, calls {rig.calls}")
+                check("the single zero reading did not do it",
+                      early is not None and early["tick"] >= 7 * 5,
+                      str(early))
+                check("she said why, in the exploration's voice",
+                      _line("frontiers_done") in rig.voice.said,
+                      str(rig.voice.said))
+                check("and came back to where she set off from",
+                      math.hypot(world.x - 0.5, world.y - 2.0) < 0.5
+                      and _line("arrived_start") in rig.voice.said,
+                      f"{math.hypot(world.x - 0.5, world.y - 2.0):.2f} m away")
+                check("the armed return is used up", nsm.pending_return() is None)
+                _items.append(("Early return when frontiers run out",
+                               early is not None
+                               and "stop_exploration" in rig.calls))
+    finally:
+        nsm.AUTONOMY_FILE = saved_file
+        tmp.cleanup()
+
+
+def thirteen_try_again_after_being_moved() -> None:
+    item(13, "FAILSAFE, a person moves her, \"try again\": relocalise first, "
+             "fresh allowance, same goal")
+    import offline
+    from mcp_server.tools import nav_tools
+    with TempPlaces():
+        nsm.set_home((2.0, 2.0, 0.0))
+        nsm.clear_failsafe()
+
+        # 1. Wedged for good on the way home: she stops and asks for help.
+        stuck_world = FakeWorld(pose=(0.5, 2.0, 0.0), cm_s=45.0, deg_s=75.0,
+                                dead=True, match_noise_m=0.01)
+        stuck_map = FakeMapper(stuck_world)
+        stuck_map.grid = _grid(free=True)
+        with _ToolRig(stuck_world, stuck_map) as rig:
+            async def first():
+                await nav_tools.nav_home()
+                await nav_tools._JOURNEY
+            asyncio.run(first())
+            record = nsm.failsafe_record()
+            check("she ended in FAILSAFE and wrote down what she was doing",
+                  record is not None and record["mode"] == "return_to_home",
+                  str(record))
+            check("with the stuck allowance spent",
+                  record and record["recoveries"] == nsm.MAX_STUCK_RECOVERIES)
+            check("FAILSAFE halted the wheels", "halt" in rig.calls)
+            check("nothing lets her out on her own: the record just waits",
+                  nsm.failsafe_record() is not None)
+
+        # 2. A person lifts her clear and sets her down somewhere else.
+        free_world = FakeWorld(pose=(1.0, 1.4, 0.6), **_CALIBRATED)
+        free_map = FakeMapper(free_world)
+        free_map.grid = _grid(free=True)
+        intent = offline.understand("Friday, try again", strict=True)
+        check("\"try again\" is understood locally",
+              intent is not None and intent.tool == "try_again")
+        with _ToolRig(free_world, free_map) as rig:
+            async def second():
+                reply = await nav_tools.try_again()
+                await nav_tools._JOURNEY
+                return reply
+            reply = asyncio.run(second())
+            check("it answers at once", reply == _line("try_again"), reply)
+            check("it relocalised before a single wheel turned",
+                  rig.relocalised_at[:1] == [0], str(rig.relocalised_at))
+            check("from where she was PUT, not where she stopped",
+                  free_world.commands
+                  and math.hypot(free_world.x - 2.0, free_world.y - 2.0) < 0.5,
+                  f"now {math.hypot(free_world.x - 2.0, free_world.y - 2.0):.2f}"
+                  " m from home")
+            row = nsm.recent_attempts(1)[0]
+            check("it retried the mode that failed, and arrived",
+                  row["destination"] == "home" and row["arrived"]
+                  and row["retried"], str(row))
+            check("the record is gone", nsm.failsafe_record() is None)
+            check("she said so, in order",
+                  rig.voice.said[:1] == [_line("try_again")]
+                  and rig.voice.said[-1] == _line("arrived_home"),
+                  str(rig.voice.said))
+            _items.append(("FAILSAFE, moved, try again",
+                           row["arrived"] and row["retried"]))
+
+
 def main() -> int:
     print("FILE 14 — STEP 13 ACCEPTANCE RUN")
     print("=" * 64)
@@ -453,6 +818,10 @@ def main() -> int:
     seven_exploration_untouched()
     eight_dashboard_live()
     nine_round_trip()
+    ten_offline_voice_errand()
+    eleven_stuck_is_not_blocked()
+    twelve_frontiers_run_out()
+    thirteen_try_again_after_being_moved()
 
     print("\n" + "=" * 64)
     for name, ok in _items:
