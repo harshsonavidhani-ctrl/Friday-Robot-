@@ -322,6 +322,7 @@ async def _explore_trip(minutes: float):
              [round(v, 2) for v in start], frame, minutes)
 
     # 2. EXPLORE, tracked the whole way on the same map.
+    deadline = time.monotonic() + minutes * 60.0
     hardware.ABORT.clear()
     robot = _explorer_robot()
     report = await _mission(robot).run(
@@ -337,17 +338,81 @@ async def _explore_trip(minutes: float):
         log.info("explore trip: stopped by a person — not driving back")
         return report
 
-    # 4. BACK TO THE MARK, on the map she was tracked on.
-    if why in _EXPLORED_OUT:
-        nsm.note_explored_out(why, report.get("floor_m2"))
+    # 4. THE ROOM IS ALREADY MAPPED, BUT HE ASKED FOR MINUTES: tour it.
+    # 2026-09-24 00:20 in the hostel: the LiDAR saw the whole 11 m2 room from
+    # the start spot, the mapping explorer found no frontiers at all, and
+    # "explore for 2 minutes" came back after 25 cm. So with time left she
+    # drives to the reachable spot farthest from everywhere she has been,
+    # again and again, on the same tracked map, until the time is up or the
+    # room has been toured.
+    controller, _ = _controller()           # a fresh stop baseline
+    controller.frame = frame
+    toured_out = False
+    if why in _EXPLORED_OUT and time.monotonic() < deadline - TOUR_MIN_LEG_S:
+        outcome = await _tour(controller, mapper, start, deadline)
+        if outcome == "stopped":
+            log.info("explore trip: stopped by a person — not driving back")
+            return report
+        toured_out = outcome == "toured"
+
+    # 5. BACK TO THE MARK, on the map she was tracked on.
+    if toured_out or (why in _EXPLORED_OUT
+                      and time.monotonic() < deadline - TOUR_MIN_LEG_S):
+        nsm.note_explored_out("toured the whole room" if toured_out else why,
+                              report.get("floor_m2"))
         nav_voice.VOICE.say("frontiers_done")
     else:
         nav_voice.VOICE.say("setting_off", "where I set off from")
-    controller, _ = _controller()           # a fresh stop baseline
+    controller, _ = _controller()           # a fresh baseline for the way home
     controller.frame = frame
     back = await controller.return_to(start[:2], mapper)
     log.info("explore trip: back — %s", back.why)
     return back
+
+
+# A tour leg needs at least this long to be worth starting: a sweep per step
+# at ~1 Hz makes even a short leg ten-odd seconds.
+TOUR_MIN_LEG_S = 12.0
+# Two legs in a row that got nowhere -- blocked, wedged, no route -- and the
+# tour is over; the drive home, with its full recovery, is what comes next.
+TOUR_MAX_FAILED_LEGS = 2
+
+
+async def _tour(controller, mapper, start, deadline: float) -> str:
+    """Drive around an already-mapped room until the time is up.
+
+    Returns "time" (ran out of time), "toured" (been everywhere reachable),
+    "stuck" (legs kept failing), or "stopped" (a person said stop).
+    """
+    visited = [tuple(start[:2]), tuple(float(v) for v in mapper.pose[:2])]
+    failed = 0
+    announced = False
+    while time.monotonic() < deadline - TOUR_MIN_LEG_S:
+        if controller.robot.stopped():
+            return "stopped"
+        goal = nsm.tour_goal(mapper.grid, mapper.pose, visited,
+                             extra_blocked=controller.obstacles.points())
+        if goal is None:
+            return "toured"
+        if not announced:
+            nav_voice.VOICE.say("tour")
+            announced = True
+        leg = await controller._drive_to(
+            goal, "a new spot", nsm.NavState.EXPLORING, mapper,
+            max_attempts=1, touring=True,
+            budget_s=max(TOUR_MIN_LEG_S, deadline - time.monotonic()))
+        if leg.why == "stop was called" or controller.robot.stopped():
+            return "stopped"
+        # Wherever she got to counts as visited, and so does the goal: a spot
+        # she could not reach is not one to keep choosing.
+        visited.append(tuple(float(v) for v in mapper.pose[:2]))
+        visited.append(tuple(goal))
+        failed = 0 if leg.arrived else failed + 1
+        log.info("explore trip: tour leg to (%.2f, %.2f) %s", goal[0],
+                 goal[1], "arrived" if leg.arrived else f"gave up: {leg.why}")
+        if failed >= TOUR_MAX_FAILED_LEGS:
+            return "stuck"
+    return "time"
 
 
 async def _relocalise_when_ready(tries: int = 4, wait_s: float = 3.0):

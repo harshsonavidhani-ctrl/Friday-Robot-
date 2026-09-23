@@ -739,8 +739,15 @@ class NavController:
 
     async def _drive_to(self, goal_xy, label: str, mode: NavState,
                         mapper=None, max_attempts: int = 3,
+                        touring: bool = False,
                         **follow_kw) -> ReturnReport:
         """The engine both modes share: relocalise, plan, follow, re-plan.
+
+        `touring=True` is one leg of an explore trip's tour of the room: the
+        same engine and the same guards, but a leg that cannot be finished is
+        simply given up -- no FAILSAFE, no "I need help", no attempt logged --
+        because the tour picks another spot. FAILSAFE is kept for the drive
+        home, where giving up means she stays lost.
 
         ⚠ WHY THERE IS A RE-PLAN LOOP AT ALL. One plan followed to its end is
         a plan made against the map as it was BEFORE the drive, and the map is
@@ -794,8 +801,9 @@ class NavController:
             report.why = (f"already there: {away:.2f} m from it, inside the "
                           f"{nav_follower.ARRIVE_TOL_M:.2f} m tolerance")
             self.state = report.state
-            self.voice.say(nav_voice.arrival_key(label), label)
-            _log_attempt(report)
+            if not touring:
+                self.voice.say(nav_voice.arrival_key(label), label)
+                _log_attempt(report)
             return report
 
         robot = self.robot or nav_follower.GuardedRobot()
@@ -874,8 +882,9 @@ class NavController:
                 self.state = report.state
                 report.seconds = round(time.monotonic() - started, 1)
                 log.info("%s: arrived in %d attempt(s)", label, attempt)
-                self.voice.say(nav_voice.arrival_key(label), label)
-                _log_attempt(report)
+                if not touring:
+                    self.voice.say(nav_voice.arrival_key(label), label)
+                    _log_attempt(report)
                 return report
 
             # ---- step 11: what KIND of stop was that? ---------------------
@@ -938,6 +947,12 @@ class NavController:
         # should be true because something made it true, not because nothing
         # happened to be running.
         report.seconds = round(time.monotonic() - started, 1)
+        if touring:
+            # A tour leg that did not make it is a spot skipped, not a robot
+            # in trouble. The caller picks another spot or goes home.
+            report.state = self.state = mode
+            log.info("%s: tour leg given up — %s", label, report.why)
+            return report
         report.state = NavState.FAILSAFE
         if _is_no_route(report.why):
             self.voice.say("no_route", label)
@@ -1402,6 +1417,48 @@ def note_early_return(watch: FrontierWatch) -> dict:
         log.warning("could not note the early return: %s", exc)
     _bundle("exploration ran out of frontiers")
     return row
+
+
+# --- the explore trip's tour: where have I not been yet? --------------------
+
+# A spot counts as new only this far from everywhere she has already stood.
+TOUR_NEW_SPOT_M = 0.8
+
+
+def tour_goal(grid, pose, visited, min_away: float = TOUR_NEW_SPOT_M,
+              extra_blocked=None):
+    """The reachable spot farthest from everywhere she has been, or None.
+
+    Reachable means in the same connected piece of plannable floor as the
+    robot -- the planner's own notion, so every goal chosen here is one the
+    engine can actually plan to. Farthest-first tours a room in a few long
+    legs instead of shuffling round the spot she started on. None when every
+    reachable spot is within `min_away` of somewhere visited: the room has
+    been toured.
+    """
+    from scipy import ndimage
+
+    prep = path_planner.preprocess(grid, extra_blocked=extra_blocked)
+    plannable = prep.plannable
+    if not plannable.any():
+        return None
+    ix, iy = prep.grid.cells_of(np.array([[pose[0], pose[1]]]))
+    here, _moved = snap_goal(prep, (int(ix[0]), int(iy[0])),
+                             radius_m=1.0)
+    if here is None:
+        return None
+    labels, _count = ndimage.label(plannable)
+    region = labels[here[0], here[1]]
+    cells = [tuple(c) for c in np.argwhere(labels == region)]
+    world = path_planner.cells_to_world(cells, prep.grid)
+    seen = np.asarray([[float(v[0]), float(v[1])] for v in visited]
+                      or [[float(pose[0]), float(pose[1])]])
+    gaps = np.min(np.hypot(world[:, None, 0] - seen[None, :, 0],
+                           world[:, None, 1] - seen[None, :, 1]), axis=1)
+    best = int(np.argmax(gaps))
+    if gaps[best] < min_away:
+        return None
+    return (float(world[best, 0]), float(world[best, 1]))
 
 
 def note_explored_out(reason: str, floor_m2: float | None = None) -> dict:

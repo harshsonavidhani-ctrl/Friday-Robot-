@@ -618,3 +618,15 @@ cannot place itself on its saved map it sets it aside and starts a new one
 (tonight: 265.7 m² → 87.4 m²). The vault keeps every version; the old map was
 put back from `state/map-permanent/history/20260923-235206/` with the new one
 kept beside it. Voice exploring no longer touches that map at all.
+
+**The tour (2026-09-24 00:20).** In the hostel the LiDAR saw the whole 11 m²
+room from the start spot, the mapping explorer found no frontiers at all, and
+"explore for 2 minutes" came back after 25 cm. Now, when mapping is done early
+and time is left, `nav_tools._tour` drives to `nsm.tour_goal` — the reachable
+plannable spot farthest from everywhere she has been — again and again on the
+same tracked map, until the time is up (then "Heading to where I set off
+from.") or everywhere reachable is within 0.8 m of a visited spot (then
+"Nothing more to explore here. Heading back early."). Legs run through
+`_drive_to(..., touring=True)`: the same engine and guards, but a leg that
+fails is skipped — no FAILSAFE, no "I need help", no nav_log row. Two failed
+legs in a row end the tour; the drive home keeps its full FAILSAFE.

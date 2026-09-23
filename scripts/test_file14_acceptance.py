@@ -781,13 +781,24 @@ def twelve_explore_trip() -> None:
                 _TripRig(rig, end_pose=(2.0, 1.0, 0.5),
                          reason="no frontiers left"):
             _, back = _trip(5.0)
-            check("run out of places to explore: she heads back early",
+            legs = [c for c in world2.commands]
+            check("a room already mapped from the start spot is TOURED, not "
+                  "abandoned (2026-09-24 00:20: 25 cm and home)",
+                  _line("tour") in rig.voice.said and len(legs) > 10,
+                  f"{len(legs)} moves; said {rig.voice.said[:3]}")
+            check("once she has been everywhere, she heads back early",
                   _line("frontiers_done") in rig.voice.said
-                  and back.arrived, str(rig.voice.said))
+                  and back.arrived, str(rig.voice.said[-3:]))
+            check("and comes back to the mark",
+                  math.hypot(world2.x - 0.5, world2.y - 2.0) < 0.5,
+                  f"{math.hypot(world2.x - 0.5, world2.y - 2.0):.2f} m away")
             early = nsm.last_early_return()
             check("the early return is noted for the dashboard",
-                  early and early.get("reason") == "no frontiers left",
+                  early and early.get("reason") == "toured the whole room",
                   str(early))
+            check("tour legs are not logged as navigation trips",
+                  not any(r["destination"] == "a new spot"
+                          for r in nsm.recent_attempts(50)))
 
 
 def thirteen_try_again_after_being_moved() -> None:
