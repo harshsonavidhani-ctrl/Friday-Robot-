@@ -423,6 +423,129 @@ def test_does_not_touch_the_motors() -> None:
           any("run_sync" in c for c in calls))
 
 
+def _cast(grid, pose, max_m=6.0, step_m=0.02) -> dict[int, int]:
+    """The sweep the LiDAR would return standing at `pose` on this map."""
+    occ = grid.occupied_mask()
+    nx, ny = occ.shape
+    ox, oy = grid.origin
+    out: dict[int, int] = {}
+    for bearing in range(0, 360):
+        world = pose[2] + math.radians(bearing - config.LIDAR_FORWARD_DEG)
+        dx, dy = math.cos(world), math.sin(world)
+        r = 0.10
+        while r < max_m:
+            cx = int((pose[0] + dx * r - ox) / grid.cell)
+            cy = int((pose[1] + dy * r - oy) / grid.cell)
+            if not (0 <= cx < nx and 0 <= cy < ny):
+                break
+            if occ[cx, cy]:
+                out[bearing] = int(r * 1000)
+                break
+            r += step_m
+    return out
+
+
+def _open_run(grid, prep, length_m=0.30):
+    """A plannable pose with `length_m` of plannable floor straight ahead."""
+    cells = np.argwhere(prep.plannable)
+    for i in np.linspace(0, len(cells) - 1, 60).astype(int):
+        cx, cy = cells[i]
+        x = (cx + 0.5) * grid.cell + grid.origin[0]
+        y = (cy + 0.5) * grid.cell + grid.origin[1]
+        for heading in (0.0, math.pi / 2, math.pi, -math.pi / 2):
+            ok = True
+            for k in range(1, 8):
+                d = length_m * k / 7
+                px, py = x + d * math.cos(heading), y + d * math.sin(heading)
+                ix = int((px - grid.origin[0]) / grid.cell)
+                iy = int((py - grid.origin[1]) / grid.cell)
+                if not (0 <= ix < prep.plannable.shape[0]
+                        and 0 <= iy < prep.plannable.shape[1]
+                        and prep.plannable[ix, iy]):
+                    ok = False
+                    break
+            if ok and len(_cast(grid, (x, y, heading))) >= 120:
+                return (x, y, heading)
+    return None
+
+
+def test_moves_are_measured_by_the_map() -> None:
+    """The bug that stopped the follower driving on the real robot.
+
+    Uses the REAL saved map and the REAL `slam.mapper.Mapper` -- the fakes
+    above ignore motion priors, which is exactly why no suite saw this. Loaded
+    fresh and never saved: `Mapper.update` only changes the copy in memory.
+    """
+    print("\n— what a move did, asked of the real map (2026-09-23 fix) —")
+    import path_planner
+    from slam.grid import OccupancyGrid
+    from slam.mapper import Mapper
+
+    if not config.SLAM_MAP_FILE.exists():
+        print("    (no saved map on this machine — skipped)")
+        return
+    grid = OccupancyGrid.load(config.SLAM_MAP_FILE)
+    start = _open_run(grid, path_planner.preprocess(grid))
+    if start is None:
+        print("    (no 30 cm open run on the saved map — skipped)")
+        return
+    step = 0.30
+    moved = (start[0] + step * math.cos(start[2]),
+             start[1] + step * math.sin(start[2]), start[2])
+    turned = (start[0], start[1], start[2] + math.radians(30.0))
+
+    def fresh():
+        return Mapper(grid=OccupancyGrid.load(config.SLAM_MAP_FILE),
+                      pose=start)
+
+    check("a 30 cm step reads as a full step",
+          nf.motion_fraction(fresh(), _cast(grid, moved), step, 0.0) == 1.0)
+    check("a commanded step that did not happen reads as NO step",
+          nf.motion_fraction(fresh(), _cast(grid, start), step, 0.0) == 0.0)
+    half = (start[0] + step / 2 * math.cos(start[2]),
+            start[1] + step / 2 * math.sin(start[2]), start[2])
+    check("a step that went half as far reads as half (a slipping wheel)",
+          nf.motion_fraction(fresh(), _cast(grid, half), step, 0.0) == 0.5)
+    check("a 30° turn reads as a full turn",
+          nf.motion_fraction(fresh(), _cast(grid, turned), 0.0,
+                             math.radians(30.0)) == 1.0)
+    check("a commanded turn that did not happen reads as NO turn",
+          nf.motion_fraction(fresh(), _cast(grid, start), 0.0,
+                             math.radians(30.0)) == 0.0)
+
+    # What the follower used to do: fold the sweep with no motion at all.
+    before = fresh()
+    before.update(_cast(grid, moved))
+    lag = math.hypot(before.pose[0] - moved[0], before.pose[1] - moved[1])
+    check("WITHOUT a prior the tracker cannot see a 30 cm step (the old bug)",
+          lag > 0.15, f"placed {lag:.2f} m from the truth")
+
+    class Sweeper:
+        def __init__(self, scan):
+            self.scan = scan
+
+        async def sweep(self):
+            return self.scan
+
+    for label, truth, want in (("after a real step", moved, 1.0),
+                               ("after a stalled step", start, 0.0)):
+        mapper = fresh()
+        follower = nf.Follower(Sweeper(_cast(grid, truth)),
+                               rates=nf.RateModel(forward_cm_s=30.0,
+                                                  turn_deg_s=60.0,
+                                                  calibrated=True))
+        metres, rad = follower.odometry("forward", 1.0)
+        asyncio.run(follower._sweep_into(mapper, metres, rad))
+        err = math.hypot(mapper.pose[0] - truth[0], mapper.pose[1] - truth[1])
+        check(f"the follower places her right {label}",
+              err < 0.06 and follower.last_fraction == want,
+              f"{err * 100:.1f} cm off, fraction {follower.last_fraction}")
+
+    check("a test double without a map gets the old behaviour, unchanged",
+          nf.motion_fraction(SimpleNamespace(pose=(0, 0, 0)), {0: 1000},
+                             0.3, 0.0) == 1.0)
+
+
 def main() -> int:
     print("nav_follower.py — file 14 steps 4-5")
     test_lookahead()
@@ -435,6 +558,7 @@ def main() -> int:
     test_corrects_a_weak_drivetrain()
     test_refuses_without_a_trusted_pose()
     test_detects_a_stall()
+    test_moves_are_measured_by_the_map()
     test_honours_stop_and_budgets()
     test_reports_uncalibrated()
     test_does_not_touch_the_motors()

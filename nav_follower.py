@@ -147,9 +147,93 @@ LEARN_ALPHA = 0.3
 STALL_TICKS = 3
 STALL_RATIO = 0.25
 
+# ⚠ WHAT A MOVE ACTUALLY DID IS A QUESTION FOR THE MAP, NOT FOR THE PRIOR.
+# `Mapper.update` searches a window sized to the odometry it is told about:
+# 20% of the claimed motion, never less than 4 cm / 3 degrees. That has two
+# failure modes, and this module had the first one:
+#
+#   * Tell it NOTHING after a 30 cm step and it searches 4 cm around where she
+#     WAS. The true pose is outside the window, so she is either placed where
+#     she started (a false stall) or not placed at all ("I do not know where I
+#     am"). The follower passed no prior after any move until 2026-09-23; the
+#     test double ignores priors, so no suite could see it.
+#   * Tell it the COMMANDED motion and it searches 6 cm around where she would
+#     be IF the wheels did their job. A wedged robot is then "measured" as
+#     having moved, and a stall -- step 4's whole subject -- becomes invisible.
+#
+# So both are asked. The sweep is matched at "moved as commanded", "moved
+# half" and "did not move", each within the window the tracker itself would
+# use, then each answer is judged on the WHOLE scan (see motion_fraction for
+# why not the tracker's own score), and the best explanation is the prior the
+# mapper gets. Ties go to the commanded motion, which is what the tracker would
+# have assumed anyway. About 0.3 s per move on the Pi; a tick already costs a
+# whole LiDAR sweep.
+MOTION_HYPOTHESES = (1.0, 0.5, 0.0)
+
 
 def _wrap(radians: float) -> float:
     return (radians + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def motion_fraction(mapper, scan, moved_m: float, turned_rad: float) -> float:
+    """How much of a commanded move the map says happened: 1.0, 0.5 or 0.0.
+
+    Scores `scan` against the map at each of MOTION_HYPOTHESES, using the
+    tracker's own matcher and the window the tracker would have used for that
+    much motion, and returns the best. READ ONLY: it never calls
+    `mapper.update`, so asking costs the map nothing.
+
+    Anything that is not a real `slam.mapper.Mapper` -- a test double without
+    a likelihood field, a map too thin to match against -- gets 1.0, which is
+    exactly what the mapper would have assumed without this.
+    """
+    field_of = getattr(mapper, "_map_field", None)
+    if field_of is None:
+        return 1.0
+    try:
+        import copy
+
+        from slam.core import match_pose, points_from_scan, transform
+
+        field = field_of()
+        if field is None:
+            return 1.0
+        local = points_from_scan(scan, forward_deg=mapper.forward_deg)
+        if len(local) < config.SLAM_MATCH_MIN_BEAMS:
+            return 1.0
+        # ⚠ COMPARE WITH EVERY BEAM IN THE DENOMINATOR. The tracker's score
+        # divides by the beams that land on mapped cells, which is right for
+        # refining one pose and wrong for choosing between several: the
+        # hypothesis that points more of the scan at unmapped floor gets a
+        # smaller denominator and a flattering score (seen above 1.0).
+        # Measured on the real map, 60 poses: tracker score picked right 23/60
+        # for a full step and 0/60 for a half step; this picks 60/60 for
+        # full, half, stalled, turned and not-turned. A shallow copy, so the
+        # mapper's cached field keeps its mask.
+        fair = copy.copy(field)
+        fair.known = None
+        x, y, theta = (float(v) for v in mapper.pose)
+        best, best_score = 1.0, -1.0
+        for fraction in MOTION_HYPOTHESES:
+            m, r = moved_m * fraction, turned_rad * fraction
+            mid = theta + r / 2.0              # Mapper._predict's convention
+            prior = (x + m * math.cos(mid), y + m * math.sin(mid),
+                     _wrap(theta + r))
+            # Refined inside the window the tracker would give that much
+            # motion, then judged on the whole scan.
+            pose, _score, _sharp = match_pose(
+                field, local, prior,
+                prior_m=max(config.SLAM_ODOM_ERROR * abs(m),
+                            config.SLAM_POSE_PRIOR_FLOOR_M),
+                prior_deg=max(config.SLAM_ODOM_ERROR * abs(math.degrees(r)),
+                              config.SLAM_POSE_PRIOR_FLOOR_DEG))
+            score = fair.score(transform(local, pose[0], pose[1], pose[2]))
+            if score > best_score + 1e-6:
+                best, best_score = fraction, float(score)
+        return best
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("could not weigh what the move did: %s", exc)
+        return 1.0
 
 
 def closest_index(path: np.ndarray, xy) -> int:
@@ -437,20 +521,45 @@ class Follower:
         self.robot = robot
         self.rates = rates or RateModel.from_calibration()
         self.events: list[dict] = []
+        self.last_fraction = 1.0
 
     async def _sweep_into(self, mapper, moved_m: float = 0.0,
                           turned_rad: float = 0.0) -> bool:
         """Fold one sweep and return whether the pose can be trusted.
 
         The odometry hint is passed as a PRIOR for the matcher, which is what
-        it is for. The pose that comes out is the matched one; nothing here
-        ever uses the integrated guess as a position.
+        it is for -- after the map has been asked how much of it happened (see
+        MOTION_HYPOTHESES). The pose that comes out is the matched one;
+        nothing here ever uses the integrated guess as a position.
         """
         scan = await self.robot.sweep()
         if not scan:
             return False
-        mapper.update(scan, moved_m, turned_rad)
+        self.last_fraction = 1.0
+        if moved_m or turned_rad:
+            self.last_fraction = motion_fraction(mapper, scan, moved_m,
+                                                 turned_rad)
+        mapper.update(scan, moved_m * self.last_fraction,
+                      turned_rad * self.last_fraction)
         return bool(mapper.pose_trusted)
+
+    def odometry(self, direction: str, seconds: float) -> tuple[float, float]:
+        """What a move of `seconds` should have done: (metres, radians).
+
+        From the rate model, so it is only as good as the rates -- which is
+        why it is used as a prior to be checked, never as a position. Left is
+        counter-clockwise, the same sign `heading_error` steers by.
+        """
+        if direction in ("left", "right"):
+            rad = math.radians(self.rates.turn_deg_s * seconds)
+            return 0.0, (rad if direction == "left" else -rad)
+        metres = self.rates.forward_cm_s * seconds / 100.0
+        return (metres if direction == "forward" else -metres), 0.0
+
+    async def step(self, mapper, direction: str,
+                   seconds: float) -> "Executed":
+        """One guarded move and its measured result. See `_execute`."""
+        return await self._execute(mapper, direction, seconds)
 
     async def follow(self, mapper, path, goal_xy=None, *,
                      budget_m: float | None = None,
@@ -617,7 +726,11 @@ class Follower:
         said = await self.robot.drive_seconds(direction, seconds)
         refused = "REFUSED" in said.upper()
 
-        await self._sweep_into(mapper)
+        # A refused move did nothing, and saying otherwise would hand the
+        # matcher a motion that never happened.
+        moved_m, turned_rad = ((0.0, 0.0) if refused
+                               else self.odometry(direction, seconds))
+        await self._sweep_into(mapper, moved_m, turned_rad)
         after = tuple(float(v) for v in mapper.pose)
         moved = math.hypot(after[0] - before[0], after[1] - before[1])
         turned = math.degrees(_wrap(after[2] - before[2]))
@@ -625,6 +738,7 @@ class Follower:
         self.events.append({
             "direction": direction, "commanded_s": round(seconds, 2),
             "moved_m": round(moved, 3), "turned_deg": round(turned, 1),
+            "fraction": self.last_fraction,
             "refused": refused, "said": said,
             "rate_cm_s": round(self.rates.forward_cm_s, 1),
             "rate_deg_s": round(self.rates.turn_deg_s, 1),
