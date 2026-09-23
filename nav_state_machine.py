@@ -946,8 +946,7 @@ class NavController:
                 refused = "stop was called"
                 break
             try:
-                # The guard refuses a straight move without a fresh look.
-                await robot.observe()
+                # step() looks first, as every guarded move must.
                 done = await follower.step(mapper, direction, seconds)
             except Exception as exc:             # noqa: BLE001
                 refused = f"could not move: {exc}"

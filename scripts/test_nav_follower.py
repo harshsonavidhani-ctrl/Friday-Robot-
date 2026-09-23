@@ -546,6 +546,49 @@ def test_moves_are_measured_by_the_map() -> None:
                              0.3, 0.0) == 1.0)
 
 
+def test_looks_before_every_move() -> None:
+    """The gate the fakes above never enforced, and the robot always did.
+
+    `mcp_server/embodiment.py::check` refuses EVERY move -- turns included --
+    unless there is an observation that has not been used up by moving. On
+    2026-09-23 a real journey was refused at its first move, a turn, because
+    the follower only looked before forward steps.
+    """
+    print("\n— it looks before every move, turns included (the real gate) —")
+
+    class Gated(FakeRobot):
+        def __init__(self, world):
+            super().__init__(world)
+            self.fresh = False
+            self.refusals = 0
+
+        async def observe(self):
+            await super().observe()
+            self.fresh = True
+
+        async def drive_seconds(self, direction, seconds):
+            if not self.fresh:
+                self.refusals += 1
+                return ("REFUSED — Friday has not looked at the room yet. "
+                        "Call observe() first")
+            self.fresh = False                 # moving uses the look up
+            return await super().drive_seconds(direction, seconds)
+
+    # Facing AWAY from the goal, so the first move has to be a turn.
+    world = FakeWorld(pose=(0.0, 0.0, math.pi), cm_s=45.0, deg_s=75.0)
+    robot = Gated(world)
+    report = asyncio.run(nf.Follower(robot).follow(
+        FakeMapper(world), np.array([[0.0, 0.0], [1.5, 0.0]]),
+        max_ticks=60, arrival=nf.ArrivalMonitor((1.5, 0.0), cell_m=0.05,
+                                                dwell_s=0.0, min_samples=2)))
+    check("the first move was a turn", world.commands
+          and world.commands[0][0] in ("left", "right"),
+          str(world.commands[:3]))
+    check("no move was ever refused for not looking", robot.refusals == 0,
+          f"{robot.refusals} refusals")
+    check("and she got there", report.arrived, report.why)
+
+
 def main() -> int:
     print("nav_follower.py — file 14 steps 4-5")
     test_lookahead()
@@ -559,6 +602,7 @@ def main() -> int:
     test_refuses_without_a_trusted_pose()
     test_detects_a_stall()
     test_moves_are_measured_by_the_map()
+    test_looks_before_every_move()
     test_honours_stop_and_budgets()
     test_reports_uncalibrated()
     test_does_not_touch_the_motors()

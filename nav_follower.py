@@ -684,7 +684,6 @@ class Follower:
                     continue
                 commanded = step
                 seconds = self.rates.seconds_for(step)
-                await self.robot.observe()
                 done = await self._execute(mapper, "forward", seconds)
                 if done.refused:
                     report.why = f"refused: {done.said}"
@@ -723,6 +722,15 @@ class Follower:
         """
         seconds = float(np.clip(seconds, 0.05, config.MAX_MOVE_SECONDS))
         before = tuple(float(v) for v in mapper.pose)
+        # ⚠ LOOK BEFORE EVERY MOVE, TURNS INCLUDED. `embodiment.check` refuses
+        # ANY move with no observation, or one gone stale since she last
+        # moved -- not only forward ones. This used to observe before forward
+        # steps only, and a journey's first move is nearly always a turn to
+        # face the route, so on the robot every journey was refused before a
+        # wheel turned ("Friday has not looked at the room yet", Harsh's
+        # dashboard trip, 2026-09-23 22:43). The fakes never enforced it.
+        # Range sensors only, no camera: cheap next to the sweep that follows.
+        await self.robot.observe()
         said = await self.robot.drive_seconds(direction, seconds)
         refused = "REFUSED" in said.upper()
 
