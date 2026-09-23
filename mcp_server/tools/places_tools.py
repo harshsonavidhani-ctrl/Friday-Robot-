@@ -30,6 +30,8 @@ import json
 import logging
 import math
 
+import functools
+
 import anyio.to_thread
 
 import config
@@ -62,10 +64,42 @@ async def _placed_mapper() -> tuple[Mapper | None, str]:
                       f"{known * grid.cell ** 2:.1f} square metres, which is "
                       f"too little to place myself in. Map more first.")
 
-    # Fold sweeps in from a standstill. Mapper._locate matches each one against
-    # the map it was given; no odometry is claimed because nothing moved.
-    mapper = Mapper(grid=grid, pose=(0.0, 0.0, 0.0))
+    # ⚠ FIND HER FIRST, THEN REFINE. This used to start the Mapper at (0,0,0)
+    # and fold sweeps with no odometry, which in Mapper._locate gives a search
+    # window of SLAM_POSE_PRIOR_FLOOR_M (4 cm) with the angle pinned by
+    # SLAM_HOLD_WHEN_STILL. That is a refinement, not a search: stand her
+    # anywhere in the room and she came back at the map origin, with
+    # pose_trusted True, so nothing downstream doubted it. Observed
+    # 2026-09-22: after an evening of driving, two navigate_to calls in a row
+    # both reported pose (-0.0, -0.0, 0.0). See [[friday-cannot-find-herself]].
+    #
+    # global_localise searches the WHOLE map for the pose that best explains
+    # one sweep, and refuses when two places look alike rather than picking
+    # one. Its answer seeds the Mapper, and the settle sweeps then do what
+    # that 4 cm window is actually good at: polishing a pose that is already
+    # nearly right.
+    import global_localise
+
     robot = _Robot()
+    first = await anyio.to_thread.run_sync(_sweep_once, robot)
+    if not first:
+        return None, ("my LiDAR did not answer, so I cannot work out where I "
+                      "am standing.")
+
+    plannable = None
+    try:
+        import path_planner
+        plannable = path_planner.preprocess(grid).plannable
+    except Exception as exc:                        # noqa: BLE001
+        log.warning("could not restrict the search to plannable cells: %s", exc)
+
+    fix = await anyio.to_thread.run_sync(
+        functools.partial(global_localise.localise, grid, first,
+                          restrict_to=plannable))
+    if not fix.ok:
+        return None, (f"I cannot work out where I am standing: {fix.why}")
+
+    mapper = Mapper(grid=grid, pose=fix.pose)
     for _ in range(config.MISSION_SETTLE_SWEEPS):
         scan = await anyio.to_thread.run_sync(_sweep_once, robot)
         if scan:
@@ -75,6 +109,8 @@ async def _placed_mapper() -> tuple[Mapper | None, str]:
         return None, ("I can see the room but I cannot match it to my map, so "
                       "I do not know where I am standing. I will not drive to "
                       "a place I would only be guessing the direction of.")
+    log.info("placed at %s (global fix %s)",
+             [round(v, 2) for v in mapper.pose], fix.as_dict())
     return mapper, ""
 
 
