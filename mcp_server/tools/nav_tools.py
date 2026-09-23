@@ -179,14 +179,9 @@ def _known() -> list[str]:
 # the position where it started and like then i commanded it go to the kitchen
 # then it should go to the kitchen and return to where it started".
 #
-# ⚠ THE OUTBOUND LEG OF "GO AND EXPLORE" IS A DIFFERENT PROCESS. `explore_room`
-# and `start_exploration` hand the robot to a separate exploration run that
-# holds the hardware lease; this server does not drive during it and must not
-# try. So the return is ARMED (the start pose is written down) and a watcher
-# task fires it when the run ends. Target navigation needs none of that --
-# that leg is driven here, in one call, so the return happens inline.
-
-_WATCHER: "asyncio.Task | None" = None
+# Target navigation is driven here, in one call, so its way back happens
+# inline. Exploring and coming back is an EXPLORE TRIP (below): explored and
+# driven home by this server on one map, so the start spot is never lost.
 
 
 @tool
@@ -214,130 +209,145 @@ def set_round_trip(on: bool = True) -> str:
             "Round trip is off — I will stay where you send me.")
 
 
+# =====================================================================
+# EXPLORE TRIP — "Friday, explore" always comes back to where it started
+# =====================================================================
+# Harsh, 2026-09-24: "if it got command to explore and come back it should
+# first use lidar to save the spot it started then explore and then back to
+# the spot where it started" -- and "i say friday explore after exploring
+# should come back where it started". Asked how, he chose: track her whole
+# trip.
+#
+# ⚠ WHY NOT THE RL RUN ANY MORE. Exploring in a separate process (the RL run)
+# meant finding herself TWICE on the saved navigation map: once to note the
+# start, once afterwards to plan the way back. That map is 13 m2 from 30
+# sweeps (2026-09-19), and in the hostel room two spots on it looked alike
+# (1.11 against 1.06), so she refused to set off; and a two-minute run takes
+# her past its edge, so the way back could not be planned either.
+#
+# SO THE TRIP NEVER LETS GO OF WHERE SHE IS. slam/mission.py explores inside
+# this server with ONE Mapper tracking her the whole way, and the same Mapper
+# drives her back: the start spot is a point on the map she has been measured
+# on continuously, not something to rediscover.
+#   * On the OLD saved map when she can be placed on it (Harsh: use the old
+#     one) -- a copy in memory, grown as she explores, NEVER saved.
+#   * Otherwise the start spot is the origin of a fresh working map, also
+#     never saved. She cannot lose the origin of a map she is standing on.
+# Neither the saved navigation map nor the RL exploration map is written.
+#
+# A PERSON'S STOP ENDS THE TRIP where it is. "Stop" is never followed by a
+# drive back that nobody asked for.
+
+# A trip drives in short legs; this is a ceiling on distance, not a target.
+TRIP_METRES_PER_MINUTE = 6.0
+TRIP_DEFAULT_MINUTES = 2.0
+
+# The last trip's map, kept so "try again" after a FAILSAFE on the way back
+# can still find the start: its coordinates belong to this map only.
+_TRIP: dict = {}
+
+_EXPLORED_OUT = ("no frontiers left", "nothing reachable left")
+
+
+def _working_map():
+    """A fresh map whose origin is the spot she is standing on."""
+    from slam.mapper import Mapper
+    return Mapper(pose=(0.0, 0.0, 0.0))
+
+
+def _mission(robot):
+    from slam.mission import Mission
+    return Mission(robot)
+
+
+def _explorer_robot():
+    """The same six-call robot explore_room drives through the guard."""
+    from mcp_server.tools.explore import _Robot
+    robot = _Robot()
+    robot._trips = robot.reflex_trips()      # a baseline, not a stop
+    return robot
+
+
 @tool
 async def explore_and_return(minutes: float | None = None,
                              thinking: bool | None = None) -> str:
-    """Go and explore on my own, then come back to where I started.
+    """Explore on my own, then come back to the exact spot I started from.
 
-    Use this when Harsh says explore and come back, go look around and return,
-    map the place and come back here, or asks me to explore while round trip
-    is on. It is `start_exploration` plus a promise: I note the exact spot I
-    am standing on my map before I set off, and when the run finishes I drive
-    back to it.
-
-    I work out where I am first and REFUSE to set off if I cannot place myself
-    on my map — a start position I am not sure of is one I cannot return to.
+    What "Friday, explore" and "explore and come back" do. Returns at once
+    and runs in the background; I announce everything myself, so do not
+    repeat my reply. I first look with the LiDAR and mark this spot -- on my
+    saved map if I can place myself on it, otherwise on a fresh map of my
+    own -- then explore while tracking where I am the whole way, then drive
+    back to the mark. Say stop and I stop where I am, without coming back.
 
     Args:
-        minutes: how long to explore. Defaults to 20.
-        thinking: True to also think about where to go while I drive.
+        minutes: how long to explore before coming back. Defaults to 2.
+        thinking: ignored -- this explorer never uses a model.
     """
-    import asyncio
-
-    global _WATCHER
-
-    # FIRST, WHERE AM I -- from the LiDAR, against the saved map. This is the
-    # spot she comes back to, so a lease left over from an earlier run must
-    # not be what stops her looking.
-    _reclaim_if_run_gone()
-    mapper, why = await nsm.relocalise()
-    if mapper is None:
-        return (f"I am not setting off: {why} I would not be able to find my "
-                "way back to this spot.")
-    start = tuple(float(v) for v in mapper.pose)
-    armed = nsm.arm_return_to_start(start, why="exploration")
-    if not armed.get("armed"):
-        return f"I could not note down where I am starting from: {armed['why']}"
-
-    from mcp_server.tools import autonomy
-    said = autonomy.start_exploration(minutes=minutes, thinking=thinking)
-    if nsm.start_failed(said):
-        # Nothing set off, so there is nothing to come back from: arming a
-        # return (and a watcher) here would send her "back" after somebody
-        # else's run ended.
-        nsm.clear_pending()
-        return said
-    _note_run_clock(minutes)
-
-    if _WATCHER is None or _WATCHER.done():
-        _WATCHER = asyncio.create_task(_watch_then_return())
-    return (f"{said}\n\nI have noted where I am standing "
-            f"(x={start[0]:.2f} y={start[1]:.2f}) and I will drive back to "
-            "this spot when the run finishes.")
-
-
-async def _watch_then_return(poll_s: float = 2.0,
-                             watch: "nsm.FrontierWatch | None" = None,
-                             lease_wait_s: float = 30.0) -> None:
-    """Wait for the exploration run to end, then bring her home to her spot.
-
-    ⚠ IT WAITS FOR THE RUN TO ACTUALLY BE GONE before doing anything. The
-    exploration process holds the hardware lease, and two things driving one
-    robot is the failure this whole module is arranged to avoid. `_running()`
-    going False is the lease being back.
-
-    STEP 16: IT ALSO ENDS THE RUN EARLY when the run has genuinely run out of
-    frontiers -- the explorer's own `exhausted` flag and frontier count, read
-    from the telemetry the run already writes, held over several fresh
-    readings (`nsm.FrontierWatch`). That is the same transition the run's own
-    timer triggers, only sooner: stop the run, wait for the lease, come back.
-
-    If this server restarts mid-run the task dies with it and the return stays
-    ARMED on disk — `nav_status` reports it and `come_back()` fires it by hand.
-    That is a deliberately visible loose end rather than a silent one.
-    """
-    import asyncio
-
-    from mcp_server.tools import autonomy
-
-    watch = watch or nsm.FrontierWatch()
-    deadline = time.monotonic() + 6 * 3600.0
+    if _journey_running():
+        return _busy_reply()
     try:
-        await asyncio.sleep(poll_s)
-        while autonomy._running() and time.monotonic() < deadline:
-            if watch.update():
-                row = nsm.note_early_return(watch)
-                log.info("frontiers exhausted %s — ending the run early", row)
-                nav_voice.VOICE.say("frontiers_done")
-                said = autonomy.stop_exploration()
-                if not nsm._stopped_ok(said):
-                    log.error("could not end the run early: %s", said)
-                waited = 0.0
-                while autonomy._running() and waited < lease_wait_s:
-                    await asyncio.sleep(0.5)
-                    waited += 0.5
-                break
-            await asyncio.sleep(poll_s)
-        if autonomy._running():
-            # The run would not stop. Driving now would be two things
-            # steering one robot, so the return stays armed for come_back().
-            log.error("exploration is still running; the return stays armed")
-            return
-        if nsm.pending_return() is None:
-            return                       # somebody already brought her back
-        if _journey_running():
-            log.info("another journey is driving; the return stays armed")
-            return
-        log.info("exploration finished — returning to the start pose")
-        _claim_journey("where I set off from")
-        # ⚠ TAKE THE HARDWARE BACK FIRST. A run that ends ON ITS OWN leaves
-        # its lease behind -- only stop_exploration() returns it -- and the
-        # lease is the run's length plus a 300 s margin. 2026-09-23 23:22: the
-        # two-minute run finished, this fired, and the first sweep of the way
-        # back was refused ("the range sensors are in use by an autonomous run
-        # for another 252s"). `_running()` is False here, so the run's unit
-        # and processes are gone and nothing else holds the ports: the same
-        # reasoning stop_exploration() uses to return it.
-        _reclaim_if_run_gone()
+        minutes = float(minutes) if minutes else TRIP_DEFAULT_MINUTES
+    except (TypeError, ValueError):
+        minutes = TRIP_DEFAULT_MINUTES
+    minutes = max(0.5, min(minutes, 30.0))
+    nsm.clear_failsafe()
+    _start_journey("exploring", _explore_trip(minutes))
+    return nav_voice.VOICE.say("exploring", _minutes_phrase(minutes))
+
+
+def _minutes_phrase(minutes: float) -> str:
+    if abs(minutes - round(minutes)) < 1e-6:
+        n = int(round(minutes))
+        return f"{n} minute" + ("" if n == 1 else "s")
+    return f"{minutes:g} minutes"
+
+
+async def _explore_trip(minutes: float):
+    """Mark the spot, explore on one tracked map, come back to the mark."""
+    # 1. THE MARK. From the LiDAR, before a wheel turns.
+    # ONE look. An ambiguous room looks the same two seconds later, and the
+    # working map below is a complete answer, not a degraded one.
+    _reclaim_if_run_gone()
+    mapper = await _relocalise_when_ready(tries=1)
+    frame = "saved"
+    if mapper is None:
+        frame = "trip"
+        mapper = _working_map()
+        nav_voice.VOICE.say("working_map")
+    start = tuple(float(v) for v in mapper.pose)
+    _TRIP.clear()
+    _TRIP.update(mapper=mapper, start=start, frame=frame, at=time.time())
+    log.info("explore trip: marked %s on the %s map, exploring %.1f min",
+             [round(v, 2) for v in start], frame, minutes)
+
+    # 2. EXPLORE, tracked the whole way on the same map.
+    hardware.ABORT.clear()
+    robot = _explorer_robot()
+    report = await _mission(robot).run(
+        mapper, budget_m=max(config.MISSION_BUDGET_M,
+                             minutes * TRIP_METRES_PER_MINUTE),
+        budget_s=minutes * 60.0)
+    why = report.get("stopped_because", "")
+    log.info("explore trip: exploring ended (%s), %.2f m driven, %.1f m2",
+             why, report.get("driven_m", 0.0), report.get("floor_m2", 0.0))
+
+    # 3. A PERSON SAID STOP: stay stopped.
+    if why == "stop was called" or robot.stopped():
+        log.info("explore trip: stopped by a person — not driving back")
+        return report
+
+    # 4. BACK TO THE MARK, on the map she was tracked on.
+    if why in _EXPLORED_OUT:
+        nsm.note_explored_out(why, report.get("floor_m2"))
+        nav_voice.VOICE.say("frontiers_done")
+    else:
         nav_voice.VOICE.say("setting_off", "where I set off from")
-        mapper = await _relocalise_when_ready()
-        controller, _ = _controller()
-        report = await controller.return_to_armed_start(mapper=mapper)
-        log.info("return after exploring: %s", report.why)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:             # noqa: BLE001
-        log.error("the return after exploring failed: %s", exc)
+    controller, _ = _controller()           # a fresh stop baseline
+    controller.frame = frame
+    back = await controller.return_to(start[:2], mapper)
+    log.info("explore trip: back — %s", back.why)
+    return back
 
 
 async def _relocalise_when_ready(tries: int = 4, wait_s: float = 3.0):
@@ -356,11 +366,10 @@ async def _relocalise_when_ready(tries: int = 4, wait_s: float = 3.0):
         mapper, why = await nsm.relocalise()
         if mapper is not None:
             return mapper
-        log.info("relocalise after the run, try %d/%d: %s", attempt, tries,
-                 why)
+        log.info("relocalise, try %d/%d: %s", attempt, tries, why)
         if attempt < tries:
             await asyncio.sleep(wait_s)
-    log.warning("could not place myself after the run: %s", why)
+    log.warning("could not place myself on the saved map: %s", why)
     return None
 
 
@@ -393,7 +402,7 @@ async def come_back() -> str:
 # and the offline path gives one tool call `STAGE_TOOL_TIMEOUT_S` (25 s). So
 # each tool checks what it can check immediately (is the place known, is a
 # journey already under way), says so, and hands the drive to ONE task in this
-# server -- the same pattern as `_WATCHER`. `stop()` still ends it: ABORT is
+# server. `stop()` still ends it: ABORT is
 # what the follower checks before every move.
 #
 # ⚠ THEY SPEAK FOR THEMSELVES, through the one navigation voice, so that the
@@ -406,31 +415,11 @@ async def come_back() -> str:
 _JOURNEY: "asyncio.Task | None" = None
 _JOURNEY_LABEL = ""
 
-# When navigation itself started an exploration run, and for how long, so a
-# pause can hand back the time that was left. The run's own state file does
-# not record its length.
-_RUN_CLOCK: dict = {}
-
-
-def _note_run_clock(minutes: float | None) -> None:
-    _RUN_CLOCK.clear()
-    _RUN_CLOCK.update({"started": time.monotonic(),
-                       "minutes": float(minutes or nsm.RETURN_AFTER_MIN)})
-
-
 def _journey_running() -> str:
     """The destination of the journey under way, or "" if there is none."""
     if _JOURNEY is not None and not _JOURNEY.done():
         return _JOURNEY_LABEL
     return ""
-
-
-def _claim_journey(label: str) -> None:
-    """Mark the CURRENT task as the journey (used by the exploration watcher)."""
-    import asyncio
-
-    global _JOURNEY, _JOURNEY_LABEL
-    _JOURNEY, _JOURNEY_LABEL = asyncio.current_task(), label
 
 
 def _start_journey(label: str, coro) -> None:
@@ -441,14 +430,19 @@ def _start_journey(label: str, coro) -> None:
     _JOURNEY = asyncio.create_task(_run_journey(label, coro))
 
 
-async def _run_journey(label: str, coro) -> None:
-    """Await one journey, and make sure nothing it raises leaves the wheels on."""
+async def _run_journey(label: str, coro):
+    """Await one journey, and make sure nothing it raises leaves the wheels on.
+
+    Returns the journey's report (None if it failed), so whoever awaits the
+    task -- a test, or a later caller -- can see how it ended.
+    """
     import asyncio
 
     try:
         report = await coro
         log.info("journey to %s: %s", label,
                  getattr(report, "why", report))
+        return report
     except asyncio.CancelledError:
         raise
     except Exception as exc:                     # noqa: BLE001
@@ -476,9 +470,6 @@ async def _pause_exploration(controller) -> bool:
 
     if not autonomy._running():
         return False
-    if _RUN_CLOCK:
-        controller.timer.minutes = _RUN_CLOCK["minutes"]
-        controller.timer.started_at = _RUN_CLOCK["started"]
     out = controller.pause_exploration()
     for _ in range(60):
         if not autonomy._running():
@@ -565,6 +556,9 @@ async def _home_errand(controller):
 
 def _busy_reply() -> str:
     busy = _journey_running()
+    if busy == "exploring":
+        return (nav_voice.VOICE.say("busy_exploring")
+                or nav_voice.line("busy_exploring"))
     return nav_voice.VOICE.say("busy", busy) or nav_voice.line("busy", busy)
 
 
@@ -661,6 +655,46 @@ async def try_again() -> str:
         return nav_voice.VOICE.say("nothing_waiting")
     controller, _ = _controller()
     label = record.get("label") or "my destination"
-    _start_journey(label, controller.retry_failsafe(record))
+    if record.get("frame") == "trip":
+        # The goal is on the trip's own map, which only this process holds.
+        _start_journey(label, _retry_on_trip_map(controller, record))
+    else:
+        _start_journey(label, controller.retry_failsafe(record))
     # retry_failsafe says the "trying again" line itself, first thing.
     return nav_voice.line("try_again")
+
+
+# Standstill sweeps to re-find her on the trip's map before a retry. Few,
+# because the pose has not been lost -- only perhaps nudged by the person who
+# helped her.
+TRIP_REFRESH_SWEEPS = 3
+
+
+async def _retry_on_trip_map(controller, record):
+    """"Try again" after a FAILSAFE on an explore trip's own map.
+
+    Relocalising on the SAVED map would be wrong here: the goal is a point on
+    the map the trip built in memory. So she re-finds herself on THAT map
+    with a few sweeps; if she was carried too far for it to match, she says
+    she is lost and keeps waiting, exactly as the saved-map retry does. If
+    this server has restarted since the trip, that map is gone, and
+    retry_failsafe says so rather than guess.
+    """
+    mapper = _TRIP.get("mapper")
+    if mapper is not None:
+        for _ in range(TRIP_REFRESH_SWEEPS):
+            try:
+                scan = await controller.robot.sweep()
+            except Exception as exc:             # noqa: BLE001
+                log.warning("could not sweep before retrying: %s", exc)
+                scan = None
+            if scan:
+                mapper.update(scan)
+        if not mapper.pose_trusted:
+            controller.voice.say("lost")
+            nsm.write_failsafe(dict(record, at=time.time(),
+                                    why="I could not find myself on the map "
+                                        "of that trip."))
+            controller.voice.say("failsafe")
+            return None
+    return await controller.retry_failsafe(record, mapper=mapper)

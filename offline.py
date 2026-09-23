@@ -87,7 +87,7 @@ _RULES: list[tuple[str, str, str | None, dict, str]] = [
     # `explore` and `exploration` only. NOT "look around", which collides with
     # the "turn around" row two lines below, and not "discover", which whisper
     # produces for half a dozen unrelated phrases.
-    ("explore",   r"\b(explore|exploring|exploration)\b",     "start_exploration", {},                              "Going exploring."),
+    ("explore",   r"\b(explore|exploring|exploration)\b",     "explore_and_return", {},                             ""),
     # English "turn around" only. Romanised "peeche mudo" still resolves to
     # backward -- the go/turn verb matching above the table wins over this row
     # -- and reversing when asked to turn around is a mild wrong answer, not a
@@ -628,8 +628,11 @@ def _nav_intent(heard: str, strict: bool = False) -> Intent | None:
     words = len(text.split())
 
     # "Explore and come back" -- a run with the way back armed.
+    # Up to 20 words: "go explore for two minutes and come back to the spot
+    # where you started" is 15, and at the old limit of 12 it fell through to
+    # a plain run with no way back (2026-09-23 23:52).
     if (_EXPLORE_VERB_RE.search(text) and _NAV_BACK_TAIL_RE.search(text)
-            and words <= 12):
+            and words <= 20):
         if strict and not _looks_like_an_order(heard):
             return None
         try:
@@ -637,7 +640,7 @@ def _nav_intent(heard: str, strict: bool = False) -> Intent | None:
             minutes = exploration_mode.parse_request(text)
         except Exception:                       # noqa: BLE001
             minutes = None
-        args = {"thinking": False}              # no model steers the run
+        args = {}
         if minutes is not None:
             args["minutes"] = minutes
         return Intent(name="explore_return", tool="explore_and_return",
@@ -754,9 +757,13 @@ def _local_intent(heard: str, strict: bool = False) -> Intent | None:
         # used to be local-only, which pushed start_exploration into a spawned
         # process and put 30 s between "Friday explore" and the wheels moving.
         # main.py calls this on the session it already has, then attaches.
-        return Intent(name="explore", local="explore",
-                      tool="start_exploration", args={"minutes": minutes},
-                      say=f"Exploring for {minutes:g} minutes.")
+        # ALWAYS COMES BACK (Harsh, 2026-09-24: "i say friday explore after
+        # exploring should come back where it started"). The explore trip
+        # marks the spot, explores on one tracked map and drives back; it
+        # speaks for itself, so nothing is said here and no narrator is
+        # attached. The duration parsed from the sentence is still used.
+        return Intent(name="explore", tool="explore_and_return",
+                      args={"minutes": minutes})
     return None
 
 
@@ -973,9 +980,9 @@ _SPEAK_RESULT = frozenset({
     "distance", "battery", "status", "map_what", "screen", "alarms",
     "explore_status", "scan", "lidar", "recall", "alarm", "timer", "cancel",
     "weather", "learned", "growth",
-    # explore_and_return and remember_place answer in prose and do not speak
-    # for themselves.
-    "explore_return", "remember_place",
+    # remember_place answers in prose and does not speak for itself.
+    # (explore_and_return does, since 2026-09-24 -- it is not here.)
+    "remember_place",
 })
 
 _STRICT_MAX_WORDS = 5

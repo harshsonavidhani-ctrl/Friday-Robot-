@@ -65,8 +65,14 @@ LINES: dict[str, str] = {
     "failsafe":        "I have stopped and I need help. Say try again when I "
                        "am clear.",
     # Exploration, and coming back from it.
+    "exploring":       "Exploring for {dest}. I will come back to this spot.",
+    "working_map":     "My saved map cannot place me here. I will mark this "
+                       "spot on a fresh one.",
+    "busy_exploring":  "I am exploring right now. Say stop first.",
     "frontiers_done":  "Nothing more to explore here. Heading back early.",
     "resuming":        "Resuming exploration.",
+    "trip_map_gone":   "I no longer have the map of that trip, so I cannot "
+                       "find where I started.",
     # The way out of FAILSAFE (step 17).
     "try_again":       "Trying again. Finding myself on my map first.",
     "nothing_waiting": "There is nothing waiting to try again.",

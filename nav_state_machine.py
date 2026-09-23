@@ -322,6 +322,12 @@ class NavController:
         # clears it, and only "try again" calls that (step 17).
         self.recoveries = 0
         self._retrying = False
+        # WHICH MAP THE COORDINATES BELONG TO. "saved": state/map.npz, which
+        # any later relocalisation can find again. "trip": an in-memory map
+        # that began at the spot an exploration trip started from -- its
+        # coordinates mean nothing to the saved map, so a FAILSAFE on it must
+        # never be retried by relocalising on the saved map.
+        self.frame = "saved"
 
     def reset_recovery(self) -> None:
         """A fresh allowance of stuck-recovery attempts. Step 17 only."""
@@ -570,6 +576,17 @@ class NavController:
         report.start_pose = [round(row["x"], 3), round(row["y"], 3)]
         return report
 
+    async def return_to(self, xy, mapper, label: str = "where I set off from",
+                        **kw) -> ReturnReport:
+        """Drive back to `xy` on `mapper` -- the map she has been tracked on.
+
+        For a trip whose map is still in hand: no relocalisation, because the
+        pose has been measured continuously since the start. That is the whole
+        reason an exploration trip keeps its mapper.
+        """
+        return await self._drive_to(xy, label, NavState.RETURNING_TO_START,
+                                    mapper, **kw)
+
     async def retry_failsafe(self, record: dict | None = None, mapper=None,
                              **kw) -> ReturnReport:
         """Step 17: "Friday, try again". The ONLY way out of FAILSAFE.
@@ -602,9 +619,18 @@ class NavController:
                                 why="I could not read what I was doing before "
                                     "I stopped, so I have nothing to retry.")
         label = record.get("label") or "my destination"
+        if record.get("frame") == "trip" and mapper is None:
+            # Its goal is a coordinate on a map that only existed in memory
+            # for that trip. Relocalising on the SAVED map and driving to the
+            # same numbers would be driving to a random spot.
+            clear_failsafe()
+            self.voice.say("trip_map_gone")
+            return ReturnReport(state=NavState.FAILSAFE, destination=label,
+                                why=nav_voice.line("trip_map_gone"))
         clear_failsafe()
         self.reset_recovery()
         self._retrying = True
+        self.frame = record.get("frame") or "saved"
         self.voice.say("try_again")
         log.info("try again: %s (recovery counter reset)", record)
         if record.get("paused_exploration") or mode is NavState.EXPLORING:
@@ -951,6 +977,7 @@ class NavController:
             "paused_exploration": snap is not None,
             "resume_minutes": snap.remaining_minutes if snap else None,
             "recoveries": self.recoveries,
+            "frame": self.frame,
         })
         _log_attempt(report)
 
@@ -1374,6 +1401,25 @@ def note_early_return(watch: FrontierWatch) -> dict:
     except OSError as exc:                       # noqa: BLE001
         log.warning("could not note the early return: %s", exc)
     _bundle("exploration ran out of frontiers")
+    return row
+
+
+def note_explored_out(reason: str, floor_m2: float | None = None) -> dict:
+    """An explore trip ended because there was nothing left to explore.
+
+    The explorer's own verdict (slam/explore.py: "no frontiers left" /
+    "nothing reachable left"), read from its report and never inferred --
+    step 16's early return, for the trip that explores in this server.
+    """
+    row = {"at": time.time(), "reason": reason, "floor_m2": floor_m2}
+    try:
+        EARLY_RETURN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = EARLY_RETURN_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(row))
+        tmp.replace(EARLY_RETURN_FILE)
+    except OSError as exc:                       # noqa: BLE001
+        log.warning("could not note the early return: %s", exc)
+    _bundle(f"explored out: {reason}")
     return row
 
 

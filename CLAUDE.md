@@ -582,3 +582,39 @@ Whenever the MAP or the PLACES change, the previous pair is copied to
 archives the live one first. The folder follows `nsm.NAV_LOG`, so the test
 suites bundle into their temp dirs. `python3 nav_bundle.py status` says what
 is saved and whether it is still the map navigation is using.
+
+## The explore trip (2026-09-24): "Friday, explore" always comes back
+
+Harsh: "if it got command to explore and come back it should first use lidar
+to save the spot it started then explore and then back to the spot where it
+started", and "i say friday explore after exploring should come back where it
+started". Asked how, he chose: track her whole trip. This SUPERSEDES the
+round-trip paragraph above for exploring (the RL run + armed return + watcher
+is gone from the voice path; `start_exploration` itself is unchanged and the
+dashboard's Explore button still starts an RL run).
+
+**Why not the RL run any more.** Exploring in a separate process meant finding
+herself TWICE on the saved navigation map. That map is 13 m² from 30 sweeps
+(2026-09-19); in the hostel room two spots looked alike (1.11 against 1.06)
+so she refused to set off, and a two-minute run takes her past its edge so the
+way back could not be planned either.
+
+**`nav_tools.explore_and_return` is now the trip.** "Friday, explore",
+"explore for N minutes" and "explore and come back" (up to 20 words) all go
+there, offline, never the brain. It returns at once and runs as one background
+journey: (1) mark the spot with the LiDAR — on the OLD saved map when she can
+be placed on it, else the spot is the origin of a fresh working map; (2)
+`slam/mission.py` explores inside this server with ONE Mapper tracking her the
+whole way; (3) the same Mapper drives her back (`NavController.return_to`), no
+second relocalisation. Neither map is ever written. "Stop" (a person) ends the
+trip where it is: no drive back. "No frontiers left" from the explorer itself
+is the early return (`nsm.note_explored_out`). A FAILSAFE on a trip's working
+map is recorded with `frame: "trip"`; "try again" re-finds her on THAT map
+(`_TRIP`, in memory), and says so rather than guess if the server restarted
+and the map is gone.
+
+**The dashboard's Map is the RL map, and runs can replace it.** When an RL run
+cannot place itself on its saved map it sets it aside and starts a new one
+(tonight: 265.7 m² → 87.4 m²). The vault keeps every version; the old map was
+put back from `state/map-permanent/history/20260923-235206/` with the new one
+kept beside it. Voice exploring no longer touches that map at all.

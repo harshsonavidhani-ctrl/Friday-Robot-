@@ -412,9 +412,11 @@ async function refreshNav() {
   // Step 16: exploration that ran out of places and came back early.
   const early = n.early_return;
   $('navearly').hidden = !early;
-  if (early) $('navearly').textContent =
-    `Last early return: frontiers ran out ${ago(early.at)} ` +
-    `(${early.reads} readings in a row)`;
+  if (early) $('navearly').textContent = early.reason
+    ? `Last early return: ${early.reason} ${ago(early.at)}` +
+      (early.floor_m2 != null ? ` · ${early.floor_m2} m² mapped on the trip` : '')
+    : `Last early return: frontiers ran out ${ago(early.at)} ` +
+      `(${early.reads} readings in a row)`;
 
   // Everything navigation knows, saved permanently WITH the map it belongs to.
   const b = n.bundle || {};
