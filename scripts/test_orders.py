@@ -55,6 +55,17 @@ KEEP = [
     ("explore", "explore"), ("start exploring", "explore"),
     ("explore the room", "explore"),
     ("Friday, explore for twenty minutes", "explore"),
+    # File 14 navigation, 2026-09-23: never a brain turn.
+    ("Friday, explore for 2 minutes and come back", "explore_return"),
+    ("explore and come back", "explore_return"),
+    ("come back", "nav_come_back"), ("wapas aao", "nav_come_back"),
+    ("go home", "nav_home"), ("ghar chalo", "nav_home"),
+    ("try again", "try_again"), ("phir se try karo", "try_again"),
+    ("remember this as home", "remember_place"),
+    ("Friday, remember this place as the kitchen", "remember_place"),
+    ("save this spot as my desk", "remember_place"),
+    ("this place is the kitchen", "remember_place"),
+    ("go to the garage", "nav_go"),     # unknown: the TOOL refuses plainly
 ]
 
 REFUSE = [
@@ -80,6 +91,13 @@ REFUSE = [
     "we talked about the weather for hours",
     "whether or not you come",
     "they will explore the island in the next episode",
+    # Navigation starts journeys that last minutes, so these must not.
+    "you should come back tomorrow",
+    "don't come back",
+    "I will try again later if it doesn't work out today",
+    "remember that my exam is on Monday",
+    "remember this, the exam is on Monday",
+    "I have to go to the library later",
 ]
 
 # Stop is never refused, on any path, at any length -- see _ORDERS_ONLY.

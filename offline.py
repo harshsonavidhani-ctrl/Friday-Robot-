@@ -556,6 +556,20 @@ _NAV_BACK_TAIL_RE = re.compile(
     r"\b(?:come back|coming back|return|and back|wapas|vapas|वापस)\b",
     re.IGNORECASE | re.UNICODE)
 
+# "Remember this as the kitchen" -- saving WHERE SHE IS under a name. Without
+# it the navigation commands above could only go to places a brain had saved.
+# It must say "as" (or "is", for "this spot is the kitchen"): "remember this,
+# the exam is on Monday" is a memory note and stays with the remember rule.
+_NAV_SAVE_PLACE_RE = re.compile(
+    _NAV_LEAD + r"(?:(?:remember|save|mark|name|call)\s+"
+    r"(?:this|here|this place|this spot|this position|where (?:i|you) "
+    r"(?:am|are)(?: standing)?)\s+(?:as|is)\s+|"
+    r"this (?:place|spot) is (?:called )?|"
+    r"(?:is|yeh|ye|iss|is) jagah(?: ko)?\s+)"
+    r"(?P<name>[^,.!?]+?)"
+    r"(?:\s+(?:bolo|kaho|yaad rakho|naam do|hai|save karo))?[\s.!?]*$",
+    re.IGNORECASE | re.UNICODE)
+
 # Words that are never a place, so "go to the left" and "go to bed" stay
 # with the rules that own them.
 _NOT_A_PLACE = frozenset({
@@ -631,6 +645,13 @@ def _nav_intent(heard: str, strict: bool = False) -> Intent | None:
 
     if words <= 6 and _NAV_TRY_AGAIN_RE.search(text):
         return Intent(name="try_again", tool="try_again")
+
+    m = _NAV_SAVE_PLACE_RE.search(text)
+    if m and words <= 10:
+        name = " ".join(m.group("name").lower().split())
+        if name and len(name.split()) <= 4 and name not in _NOT_A_PLACE:
+            return Intent(name="remember_place", tool="remember_place",
+                          args={"name": name})
 
     m = _NAV_GO_TO_RE.search(text)
     if m:
@@ -824,6 +845,12 @@ def speakable(name: str, result: str) -> str:
     text = (result or "").strip()
     if not text:
         return ""
+    if name == "remember_place" and text.startswith("Saved"):
+        # "Saved “home” at x=1.23 y=0.45 on my map..." is for the log. Out
+        # loud, the coordinates are noise.
+        saved = re.search(r"“([^”]+)”", text)
+        return (f"Saved. This spot is {saved.group(1)}." if saved
+                else "Saved.")
     if not text.startswith("{"):
         # Sensor jargon in brackets is for the log, not for the room.
         return re.sub(r"\s*\([^)]*\)", "", text).strip() or text
@@ -946,8 +973,9 @@ _SPEAK_RESULT = frozenset({
     "distance", "battery", "status", "map_what", "screen", "alarms",
     "explore_status", "scan", "lidar", "recall", "alarm", "timer", "cancel",
     "weather", "learned", "growth",
-    # explore_and_return answers in prose and does not speak for itself.
-    "explore_return",
+    # explore_and_return and remember_place answer in prose and do not speak
+    # for themselves.
+    "explore_return", "remember_place",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -972,6 +1000,7 @@ _REFLEX_INTENTS = frozenset({
     # 2026-09-23). The tools announce themselves, so none of these is in
     # _SPEAK_RESULT except the one that is an existing brain-facing tool.
     "nav_go", "nav_home", "nav_come_back", "try_again", "explore_return",
+    "remember_place",
 })
 
 
