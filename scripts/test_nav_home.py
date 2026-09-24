@@ -1574,6 +1574,76 @@ def test_already_there_is_arrived() -> None:
         check("nothing is left waiting for help", nsm.failsafe_record() is None)
 
 
+def test_lost_on_the_map_looks_again() -> None:
+    print("\n— lost on the map she is driving on: search it again, carry on —")
+    from types import SimpleNamespace
+    sim = _sim()
+
+    class Flaky(sim.FakeMapper):
+        """Loses the match once, on its third look -- as after a turn that
+        did not happen the way it was commanded (2026-09-24 23:55)."""
+
+        def update(self, scan, moved_m=0.0, turned_rad=0.0, now=None):
+            out = super().update(scan, moved_m, turned_rad, now)
+            self.pose_trusted = self.updates != 3
+            return out
+
+    real = nsm.locate
+    calls = []
+
+    async def found(robot, grid=None, voice=None, allow_moves=True):
+        calls.append(grid)
+        return SimpleNamespace(pose=world.measured(), pose_trusted=True), ""
+
+    try:
+        with TempPlaces():
+            nsm.set_home((2.0, 2.0, 0.0))
+            world = sim.FakeWorld(pose=(0.5, 2.0, 0.0), cm_s=45.0, deg_s=75.0)
+            mapper = Flaky(world)
+            mapper.grid = _grid(free=True)
+            nsm.locate = found
+            voice = _quiet_voice()
+            rep = asyncio.run(nsm.NavController(
+                robot=_halting_robot(world), voice=voice).go_home(
+                mapper=mapper, max_ticks=80, arrival=_arrive((2.0, 2.0))))
+            check("she searched the SAME map again, once",
+                  len(calls) == 1 and calls[0] is mapper.grid, str(len(calls)))
+            check("and carried on home", rep.arrived, rep.why)
+            check("saying she lost her place, then found it",
+                  _in_order(voice.said, [_line("refinding"),
+                                         _line("refound", "home"),
+                                         _line("arrived_home")]),
+                  str(voice.said))
+
+            async def not_found(robot, grid=None, voice=None,
+                                allow_moves=True):
+                calls.append(grid)
+                return None, "two places on my map still look alike"
+
+            nsm.locate = not_found
+            calls.clear()
+            world2 = sim.FakeWorld(pose=(0.5, 2.0, 0.0), cm_s=45.0, deg_s=75.0)
+            mapper2 = Flaky(world2)
+            mapper2.grid = _grid(free=True)
+            robot2 = _halting_robot(world2)
+            rep2 = asyncio.run(nsm.NavController(
+                robot=robot2, voice=_quiet_voice()).go_home(
+                mapper=mapper2, max_ticks=80, arrival=_arrive((2.0, 2.0))))
+            check("if she still cannot find herself, FAILSAFE — not a guess",
+                  rep2.state is nsm.NavState.FAILSAFE and robot2.halted,
+                  rep2.why[:80])
+            check("and the search is capped",
+                  len(calls) <= nsm.MAX_REFINDS, f"{len(calls)} searches")
+            nsm.clear_failsafe()
+    finally:
+        nsm.locate = real
+
+
+def _in_order(said, lines) -> bool:
+    it = iter(said)
+    return all(any(s == line for s in it) for line in lines)
+
+
 def test_offline_tools_registered() -> None:
     print("\n— the offline navigation tools —")
     from mcp_server import registry
@@ -1633,6 +1703,7 @@ def main() -> int:
     test_frontier_watch_debounces()
     test_bundle_keeps_data_with_its_map()
     test_refused_restart_is_not_a_run()
+    test_lost_on_the_map_looks_again()
     test_already_there_is_arrived()
     test_offline_tools_registered()
     print(f"\n{'ALL PASSED' if not _failures else f'{_failures} FAILED'}")

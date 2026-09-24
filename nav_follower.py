@@ -522,6 +522,7 @@ class Follower:
         self.rates = rates or RateModel.from_calibration()
         self.events: list[dict] = []
         self.last_fraction = 1.0
+        self.last_match = ""
 
     async def _sweep_into(self, mapper, moved_m: float = 0.0,
                           turned_rad: float = 0.0) -> bool:
@@ -539,8 +540,13 @@ class Follower:
         if moved_m or turned_rad:
             self.last_fraction = motion_fraction(mapper, scan, moved_m,
                                                  turned_rad)
-        mapper.update(scan, moved_m * self.last_fraction,
-                      turned_rad * self.last_fraction)
+        info = mapper.update(scan, moved_m * self.last_fraction,
+                             turned_rad * self.last_fraction)
+        # WHY a sweep did or did not match ("score too low", "geometry
+        # ambiguous", ...). Tonight's lost trip (2026-09-24 23:55) logged only
+        # that it was lost; the reason is what says which fix it needs.
+        self.last_match = (info.get("reason", "") if isinstance(info, dict)
+                           else "")
         return bool(mapper.pose_trusted)
 
     def odometry(self, direction: str, seconds: float) -> tuple[float, float]:
@@ -617,7 +623,9 @@ class Follower:
             if not await self._sweep_into(mapper):
                 report.why = ("the sweep did not match the map, so I do not "
                               "know where I am. I will not drive on dead "
-                              "reckoning")
+                              "reckoning"
+                              + (f" ({self.last_match})" if self.last_match
+                                 else ""))
                 break
             pose = tuple(float(v) for v in mapper.pose)
             report.pose = [round(v, 3) for v in pose]

@@ -664,3 +664,31 @@ start known on the saved map (directly, or by the fit) saves that spot as
 `home` and says so. "Friday, go home" then works.
 
     ./venv/bin/python scripts/test_map_growth.py         # fit, merge, grow
+
+## The old map only (2026-09-25 00:40)
+
+Harsh: "it should not use fresh map — mapping the position as well as all the
+things in old map only". The explore trip's fresh working map is GONE.
+
+- `nsm.locate(robot, grid=None, voice)` is how she finds herself everywhere
+  now (`relocalise()` calls it with a GuardedRobot): whole-map search on the
+  saved map; if two spots look alike (`Fix.candidate` + `Fix.runner_up`, kept
+  even on refusal), `place_by_moving` drives up to three 35 cm guarded steps
+  (forward, or back if blocked), scores both candidates on every beam after
+  each, and decides only on a summed lead ≥ 0.20 that the latest step agrees
+  with. Otherwise it refuses ("I still cannot tell where I am, so I am
+  staying put.") and the trip does not set off.
+  Measured, real map, ray-cast: one step alone picked WRONG 2/20, hence three.
+  `test_map_growth.py`: 5 genuinely ambiguous starts → 4 placed, 1 refused,
+  0 wrong.
+- **Lost mid-journey** ("the sweep did not match the map"): `_drive_to` calls
+  `_refind` → `locate` on the SAME map, at most `MAX_REFINDS` (2), then
+  FAILSAFE. This is what failed at 2026-09-24 23:55: after the explorer's
+  moves every sweep failed to match (it trusts commanded turns; ~22% of
+  turns execute as stops), and the tour and the way home both refused. The
+  follower now logs WHY a sweep did not match.
+- A FAILSAFE record written on an old fresh map (`frame: "trip"`) is never
+  driven to: "try again" says the map is gone and clears it.
+
+**Not yet tried on the robot:** the tour, map growth, moving to break a tie,
+and re-finding herself mid-journey.

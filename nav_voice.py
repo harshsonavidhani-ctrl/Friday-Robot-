@@ -57,6 +57,12 @@ LINES: dict[str, str] = {
     "stuck":           "I am unable to make progress. Initiating recovery.",
     "recovered":       "Recovery successful. Continuing to {dest}.",
     "recovery_failed": "Recovery did not free me. Planning a different route.",
+    # Lost on a map she is standing on, and finding herself on it again.
+    "refinding":       "I have lost my place. Finding myself on my map again.",
+    "disambiguating":  "Two places on my map look like this. Moving a little "
+                       "to tell them apart.",
+    "cannot_tell":     "I still cannot tell where I am, so I am staying put.",
+    "refound":         "Found my place. Continuing to {dest}.",
     # How it ended.
     "arrived":         "I have arrived at {dest}.",
     "arrived_home":    "I am home.",
@@ -66,8 +72,6 @@ LINES: dict[str, str] = {
                        "am clear.",
     # Exploration, and coming back from it.
     "exploring":       "Exploring for {dest}. I will come back to this spot.",
-    "working_map":     "My saved map cannot place me here. I will mark this "
-                       "spot on a fresh one.",
     "busy_exploring":  "I am exploring right now. Say stop first.",
     # The RL explorer's own sentence for the same moment, word for word.
     "tour":            "This area has already been explored. Selecting a "
@@ -92,7 +96,7 @@ LINES: dict[str, str] = {
 # arrival is said every time it happens.
 COOLDOWN_S: dict[str, float] = {
     "blocked": 8.0, "clear": 8.0, "stuck": 8.0, "recovered": 4.0,
-    "recovery_failed": 8.0,
+    "recovery_failed": 8.0, "refinding": 8.0, "refound": 8.0,
 }
 
 

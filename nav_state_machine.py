@@ -235,25 +235,157 @@ def set_home(pose, note: str | None = None) -> dict:
 async def relocalise():
     """Where am I, really? Returns (mapper, "") or (None, why-not).
 
-    This is `places_tools._placed_mapper()`, unchanged and unwrapped: it loads
-    the saved map, folds `config.MISSION_SETTLE_SWEEPS` sweeps in from a
-    standstill, and refuses if the scan matcher cannot place her. Reused
-    rather than reimplemented so that "where am I" has exactly one answer on
-    this robot, and `go_to` and return-to-home cannot drift apart.
+    On the SAVED map, always: `locate()` searches the whole of it, and when
+    two spots look alike she moves a little and looks again rather than
+    guessing. Harsh, 2026-09-25: "it should not use fresh map -- mapping the
+    position as well as all the things in old map only". It REFUSES rather
+    than falling back on a stored pose or a new map: a stored coordinate is
+    a fact about where she WAS, and a fresh map knows nothing of the places
+    he has named.
     """
-    # ⚠ IT NEVER RAISES. A busy or silent sensor is an answer ("I cannot
-    # place myself"), not a crash: on 2026-09-23 the return after exploring
-    # hit HardwareLeased here, the exception went straight past FAILSAFE, and
-    # she neither came back nor said a word -- with the start spot already
-    # used up. Returned as (None, why), it goes through FAILSAFE like any
-    # other refusal: halted, announced, and recorded for "try again".
-    from mcp_server.tools.places_tools import _placed_mapper
+    robot = nav_follower.GuardedRobot()
+    robot.arm()
+    return await locate(robot, voice=nav_voice.VOICE)
+
+
+# --- finding her on the saved map, moving a little when it is ambiguous ---
+#
+# From some spots in the hostel room two places on the saved map look alike
+# (2026-09-24: 0.84 against 0.80), and the whole-map search rightly refuses
+# to pick one. Standing still cannot break that tie; MOVING can: a short
+# drive makes the two candidates predict different views, and the real sweep
+# matches only one of them. Measured on the real map with ray-cast sweeps,
+# ONE 35 cm move picked right 14/20 but WRONG 2/20 -- so the evidence is
+# summed over up to three moves and she decides only on a clear lead that
+# the latest move agrees with; otherwise she says she cannot tell.
+DISAMBIG_STEP_M = 0.35
+DISAMBIG_MAX_MOVES = 3
+DISAMBIG_MARGIN = 0.20
+# Room she wants ahead before stepping forward; otherwise she steps back.
+DISAMBIG_CLEAR_MM = 600.0
+
+
+async def locate(robot, grid=None, voice=None, allow_moves: bool = True):
+    """(Mapper placed on the saved map, "") or (None, why). Never a new map."""
+    import functools
+
+    import anyio.to_thread
+    import global_localise
+    from slam.grid import OccupancyGrid
+    from slam.mapper import Mapper
+
+    voice = voice or nav_voice.SILENT
+    if grid is None:
+        try:
+            grid = OccupancyGrid.load(config.SLAM_MAP_FILE)
+        except (OSError, ValueError) as exc:
+            return None, (f"I have no map saved yet ({exc}). Map a room "
+                          "first, then name places in it.")
+    known = float(grid.free_mask().sum() + grid.occupied_mask().sum())
+    if known * grid.cell ** 2 < config.GOTO_MIN_MAP_M2:
+        return None, (f"my saved map only covers {known * grid.cell ** 2:.1f} "
+                      "square metres, too little to place myself in.")
+
+    scan = await robot.sweep()
+    if not scan:
+        return None, "my LiDAR did not answer, so I cannot find myself."
     try:
-        return await _placed_mapper()
-    except Exception as exc:                     # noqa: BLE001
-        log.warning("relocalise failed: %s", exc)
-        return None, (f"my range sensors did not give me a sweep to place "
-                      f"myself with ({exc})")
+        plannable = path_planner.preprocess(grid).plannable
+    except Exception:                            # noqa: BLE001
+        plannable = None
+    fix = await anyio.to_thread.run_sync(functools.partial(
+        global_localise.localise, grid, scan, restrict_to=plannable))
+    pose = fix.pose
+    if pose is None:
+        if not (allow_moves and fix.candidate is not None
+                and fix.runner_up is not None):
+            return None, f"I cannot work out where I am standing: {fix.why}"
+        voice.say("disambiguating")
+        pose, why = await place_by_moving(robot, grid,
+                                          [fix.candidate, fix.runner_up])
+        if pose is None:
+            voice.say("cannot_tell")
+            return None, why
+
+    mapper = Mapper(grid=grid, pose=pose)
+    for _ in range(config.MISSION_SETTLE_SWEEPS):
+        scan = await robot.sweep()
+        if scan:
+            mapper.update(scan)
+    if not mapper.pose_trusted:
+        return None, ("I can see the room but I cannot match it to my map, so "
+                      "I do not know where I am standing.")
+    log.info("located on the saved map at %s",
+             [round(float(v), 2) for v in mapper.pose])
+    return mapper, ""
+
+
+async def place_by_moving(robot, grid, hyps):
+    """Tell look-alike spots apart by moving. (pose, "") or (None, why).
+
+    Each step is a guarded move (observe, then `drive_seconds`, the same path
+    every move takes). After it, each candidate predicts where she should now
+    be -- for the full step, half of it, or none, because a move the guard
+    cut short is still a move -- and the one whose prediction the new sweep
+    fits best on the WHOLE scan (every beam counted, as in
+    nav_follower.motion_fraction) collects the evidence.
+    """
+    import copy
+
+    from slam.core import LikelihoodField, match_pose, points_from_scan, transform
+
+    field = LikelihoodField.from_grid(grid)
+    fair = copy.copy(field)
+    fair.known = None
+    rates = nav_follower.RateModel.from_calibration()
+    hyps = [tuple(float(v) for v in h) for h in hyps]
+    total = [0.0] * len(hyps)
+
+    for _move in range(DISAMBIG_MAX_MOVES):
+        if robot.stopped():
+            return None, "stop was called"
+        ahead, blocked = await robot.clearance()
+        order = (("forward", 1.0), ("backward", -1.0))
+        if blocked or ahead is None or ahead < DISAMBIG_CLEAR_MM:
+            order = order[::-1]
+        step = None
+        for direction, sign in order:
+            await robot.observe()
+            said = await robot.drive_seconds(
+                direction, rates.seconds_for(DISAMBIG_STEP_M))
+            if "REFUSED" not in (said or "").upper():
+                step = sign * DISAMBIG_STEP_M
+                break
+        if step is None:
+            return None, ("two places on my map look alike and I have no room "
+                          "to move and tell them apart.")
+        scan = await robot.sweep()
+        if not scan:
+            return None, "my LiDAR did not answer while I was checking."
+        local = points_from_scan(scan, forward_deg=config.LIDAR_FORWARD_DEG)
+        last = []
+        for k, (x, y, th) in enumerate(hyps):
+            best = (-1.0, hyps[k])
+            for fraction in (1.0, 0.5, 0.0):
+                d = step * fraction
+                prior = (x + d * math.cos(th), y + d * math.sin(th), th)
+                p, _s, _sh = match_pose(field, local, prior, prior_m=0.12,
+                                        prior_deg=10.0)
+                score = fair.score(transform(local, p[0], p[1], p[2]))
+                if score > best[0]:
+                    best = (score, tuple(float(v) for v in p))
+            hyps[k] = best[1]
+            total[k] += best[0]
+            last.append(best[0])
+        ranked = sorted(range(len(hyps)), key=lambda i: total[i], reverse=True)
+        lead, second = ranked[0], ranked[1]
+        log.info("telling look-alikes apart: totals %s, last %s",
+                 [round(t, 3) for t in total], [round(v, 3) for v in last])
+        if (total[lead] - total[second] >= DISAMBIG_MARGIN
+                and last[lead] > last[second]):
+            return hyps[lead], ""
+    return None, ("even after moving, two places on my map still look alike, "
+                  "so I will not guess where I am.")
 
 
 @dataclass
@@ -808,6 +940,7 @@ class NavController:
 
         robot = self.robot or nav_follower.GuardedRobot()
         follower = nav_follower.Follower(robot)
+        refinds = 0
 
         for attempt in range(1, max_attempts + 1):
             report.attempts = attempt
@@ -937,6 +1070,25 @@ class NavController:
                 report.obstacles = self.obstacles.as_dict()
                 continue
 
+            # ---- LOST ON A MAP SHE IS STANDING ON: look again, wider ------
+            # The tracker only searches a few centimetres around where it
+            # thinks she is. After a turn that did not happen the way it was
+            # commanded (22% of turns execute as stops on this drivetrain),
+            # that guess can be just far enough out that nothing matches --
+            # 2026-09-24 23:55: the whole tour and the way home refused on
+            # their first sweep. The map is fine and she is on it, so she
+            # searches ALL of it, exactly as at the start of a journey, and
+            # carries on from the answer. It still refuses rather than guess
+            # between two places that look alike.
+            if (_is_lost(result.why) and attempt < max_attempts
+                    and refinds < MAX_REFINDS):
+                refinds += 1
+                self.voice.say("refinding")
+                if await self._refind(robot, mapper):
+                    report.pose = [round(float(v), 3) for v in mapper.pose]
+                    self.voice.say("refound", label)
+                    continue
+
             if _is_final(result.why):
                 break
 
@@ -959,6 +1111,27 @@ class NavController:
         await self._enter_failsafe(report, mode, goal_xy, label, robot)
         log.info("%s: %s", label, report.as_dict())
         return report
+
+    async def _refind(self, robot, mapper) -> bool:
+        """Find her again on the map she is driving on, and carry on.
+
+        `locate()` on this map: the whole-map search, and when two spots look
+        alike, a short move to tell them apart. The pose is written back into
+        the same mapper, so the journey continues on the same map.
+        """
+        try:
+            found, why = await locate(robot, grid=mapper.grid,
+                                      voice=self.voice)
+        except Exception as exc:                 # noqa: BLE001
+            log.warning("could not search for myself: %s", exc)
+            return False
+        if found is None:
+            log.info("refind refused: %s", why)
+            return False
+        mapper.pose = tuple(float(v) for v in found.pose)
+        mapper.pose_trusted = bool(found.pose_trusted)
+        log.info("refound at %s", [round(float(v), 2) for v in mapper.pose])
+        return bool(mapper.pose_trusted)
 
     async def _enter_failsafe(self, report: "ReturnReport", mode: NavState,
                               goal_xy, label: str, robot=None) -> None:
@@ -1245,6 +1418,15 @@ _FINAL_REASONS = ("stop was called", "refused:", "do not know where i am",
 def _is_final(why: str) -> bool:
     low = (why or "").lower()
     return any(reason in low for reason in _FINAL_REASONS)
+
+
+# Lost on the map she is driving on (the follower's refusal to move blind).
+def _is_lost(why: str) -> bool:
+    return "do not know where i am" in (why or "").lower()
+
+
+# Whole-map searches for herself per journey.
+MAX_REFINDS = 2
 
 
 # --- step 4: stuck, as opposed to blocked ----------------------------------

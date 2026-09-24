@@ -701,12 +701,11 @@ class _TripRig:
     """
 
     def __init__(self, rig, end_pose, reason="time budget",
-                 person_stopped=False, working=None):
+                 person_stopped=False):
         from mcp_server.tools import nav_tools
         self.nt, self.rig = nav_tools, rig
         self.end_pose, self.reason = end_pose, reason
         self.person_stopped = person_stopped
-        self.working = working
         self.ran = []
 
     def __enter__(self):
@@ -727,16 +726,13 @@ class _TripRig:
                 return {"stopped_because": trip.reason, "driven_m": 2.4,
                         "floor_m2": 6.5}
 
-        self.saved = (nt._mission, nt._explorer_robot, nt._working_map)
+        self.saved = (nt._mission, nt._explorer_robot)
         nt._mission = lambda robot: Mission(robot)
         nt._explorer_robot = lambda: Explorer()
-        if self.working is not None:
-            nt._working_map = lambda: trip.working
         return self
 
     def __exit__(self, *exc):
-        (self.nt._mission, self.nt._explorer_robot,
-         self.nt._working_map) = self.saved
+        (self.nt._mission, self.nt._explorer_robot) = self.saved
         return False
 
 
@@ -887,33 +883,27 @@ def thirteen_try_again_after_being_moved() -> None:
 
 
 def fourteen_trip_edge_cases() -> None:
-    item(14, "Explore trip: no mark on the saved map, a person's stop, and "
-             "\"try again\" on the trip's own map")
+    item(14, "Explore trip: the OLD map only (no fresh map), a person's stop, "
+             "and an old trip-map record")
     from mcp_server.tools import nav_tools
     with TempPlaces():
-        # 1. The saved map cannot place her (two spots look alike): the start
-        #    becomes the origin of a working map, and she still comes back.
-        world = FakeWorld(pose=(0.0, 0.0, 0.0), **_CALIBRATED)
-        working = FakeMapper(world)
-        working.grid = _grid(free=True)
-        world.x, world.y = 1.0, 1.0            # the working map's origin...
-        working.update({0: 1500})
+        # 1. She cannot be placed on the saved map even after moving to tell
+        #    two look-alike spots apart: she does NOT explore -- there is no
+        #    fresh map to fall back on any more (Harsh, 2026-09-25).
+        world = FakeWorld(pose=(1.0, 1.0, 0.0), **_CALIBRATED)
         with _ToolRig(world, None) as rig, \
-                _TripRig(rig, end_pose=(2.6, 2.2, 2.0), working=working):
-            async def ambiguous():
+                _TripRig(rig, end_pose=(2.6, 2.2, 2.0)) as trip:
+            async def cannot_tell():
                 rig.relocalised_at.append(len(world.commands))
-                return None, "I can see two places I could be"
-            nsm.relocalise = ambiguous
-            said, back = _trip(2.0)
-            check("she says she is marking the spot on a fresh map",
-                  _line("working_map") in rig.voice.said, str(rig.voice.said))
-            check("and still comes back to it",
-                  back is not None and back.arrived
-                  and math.hypot(world.x - 1.0, world.y - 1.0) < 0.5,
-                  f"{math.hypot(world.x - 1.0, world.y - 1.0):.2f} m away")
-            check("the trip's map is kept for a later \"try again\"",
-                  nav_tools._TRIP.get("frame") == "trip"
-                  and nav_tools._TRIP.get("mapper") is working)
+                return None, ("even after moving, two places on my map "
+                              "still look alike")
+            nsm.relocalise = cannot_tell
+            said, result = _trip(2.0)
+            check("she does not set off on a guess",
+                  result is None and not trip.ran and not world.commands,
+                  f"explorer ran: {bool(trip.ran)}, moves: {world.commands[:3]}")
+            check("and no fresh map exists to fall back on",
+                  not hasattr(nav_tools, "_working_map"))
 
         # 2. A person says stop while she explores: she stays stopped.
         world2 = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
@@ -931,39 +921,25 @@ def fourteen_trip_edge_cases() -> None:
                   _line("setting_off", "where I set off from")
                   not in rig.voice.said, str(rig.voice.said))
 
-        # 3. FAILSAFE on the way back, on the trip's own map; a person frees
-        #    her; "try again" uses THAT map -- never the saved one.
-        world3 = FakeWorld(pose=(0.5, 2.0, 0.0), cm_s=45.0, deg_s=75.0,
-                           dead=True, match_noise_m=0.01)
-        trip_map = FakeMapper(world3)
-        trip_map.grid = _grid(free=True)
-        with _ToolRig(world3, None) as rig, \
-                _TripRig(rig, end_pose=(2.2, 1.4, 1.0), working=trip_map):
-            async def ambiguous():
-                return None, "I can see two places I could be"
-            nsm.relocalise = ambiguous
-            _trip(2.0)
-            record = nsm.failsafe_record()
-            check("wedged on the way back: FAILSAFE, recorded on the TRIP map",
-                  record is not None and record.get("frame") == "trip"
-                  and record.get("mode") == "returning_to_start", str(record))
-            world3.dead = False                    # a person freed her
+        # 3. A FAILSAFE record left from a trip on a fresh map -- the kind the
+        #    23:55 trip on 2026-09-24 wrote. That map no longer exists, so
+        #    "try again" says so and clears it; it never drives to those
+        #    coordinates on the saved map.
+        world3 = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
+        with _ToolRig(world3, None) as rig:
+            nsm.write_failsafe({"mode": "returning_to_start",
+                                "label": "where I set off from",
+                                "goal_xy": [0.0, 0.0], "why": "lost",
+                                "at": time.time(), "frame": "trip",
+                                "paused_exploration": False,
+                                "resume_minutes": None, "recoveries": 0})
+
             async def retry():
                 await nav_tools.try_again()
                 return await nav_tools._JOURNEY
-            back = asyncio.run(retry())
-            check("\"try again\" drives back on the trip's map",
-                  back is not None and back.arrived
-                  and math.hypot(world3.x - 0.5, world3.y - 2.0) < 0.5,
-                  f"{math.hypot(world3.x - 0.5, world3.y - 2.0):.2f} m away")
-
-            # The same, after friday-mcp restarted and the trip's map is gone.
-            nsm.write_failsafe(dict(record, at=time.time()))
-            nav_tools._TRIP.clear()
-            before = len(world3.commands)
             asyncio.run(retry())
-            check("with the trip's map gone she says so and does not guess",
-                  len(world3.commands) == before
+            check("an old trip-map record is never driven to",
+                  not world3.commands
                   and rig.voice.said[-1] == _line("trip_map_gone")
                   and nsm.failsafe_record() is None, str(rig.voice.said[-2:]))
         _items.append(("Explore trip edge cases", True))

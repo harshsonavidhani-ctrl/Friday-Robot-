@@ -205,6 +205,97 @@ def test_grow_saves_and_keeps_history() -> None:
           hashlib.sha256(real.read_bytes()).hexdigest() == before_hash)
 
 
+class _SimRobot:
+    """A robot that really is somewhere on the saved map, for locate().
+
+    Sweeps are ray cast from where it truly stands; a step moves it the full
+    distance when the floor ahead (or behind) is plannable, and is REFUSED
+    otherwise, the way the guard refuses a move into something.
+    """
+
+    def __init__(self, grid, prep, pose):
+        self.grid, self.prep = grid, prep
+        self.x, self.y, self.th = pose
+        self.moves = 0
+
+    def _clear(self, dist):
+        for k in range(1, 9):
+            d = dist * k / 8
+            px = self.x + d * math.cos(self.th)
+            py = self.y + d * math.sin(self.th)
+            ix, iy = self.prep.grid.cells_of(np.array([[px, py]]))
+            nx, ny = self.prep.plannable.shape
+            if not (0 <= ix[0] < nx and 0 <= iy[0] < ny
+                    and self.prep.plannable[ix[0], iy[0]]):
+                return False
+        return True
+
+    async def sweep(self):
+        return _cast(self.grid, (self.x, self.y, self.th))
+
+    async def observe(self):
+        pass
+
+    async def clearance(self):
+        return (2000.0, False) if self._clear(0.5) else (300.0, True)
+
+    async def drive_seconds(self, direction, seconds):
+        import nav_state_machine as n
+        d = n.DISAMBIG_STEP_M * (1 if direction == "forward" else -1)
+        if not self._clear(d):
+            return "REFUSED: something is in the way"
+        self.x += d * math.cos(self.th)
+        self.y += d * math.sin(self.th)
+        self.moves += 1
+        return f"moved {direction}"
+
+    def stopped(self):
+        return False
+
+
+def test_locate_moves_to_break_a_tie() -> None:
+    print("\n— two spots look alike: she moves a little, on the OLD map only —")
+    import asyncio
+
+    import global_localise
+    saved = OccupancyGrid.load(config.SLAM_MAP_FILE)
+    prep = path_planner.preprocess(saved)
+    rng = np.random.default_rng(5)
+    cells = np.argwhere(prep.plannable)
+    placed, refused, wrong, tried = 0, 0, 0, 0
+    for i in rng.choice(len(cells), 300, replace=False):
+        if tried >= 5:
+            break
+        x, y = path_planner.cells_to_world([tuple(cells[i])], prep.grid)[0]
+        th = float(rng.uniform(-math.pi, math.pi))
+        if len(_cast(saved, (x, y, th))) < 100:
+            continue
+        first = global_localise.localise(saved, _cast(saved, (x, y, th)),
+                                         restrict_to=prep.plannable)
+        if first.ok or first.candidate is None:
+            continue                          # only the genuinely ambiguous
+        tried += 1
+        robot = _SimRobot(OccupancyGrid.load(config.SLAM_MAP_FILE), prep,
+                          (x, y, th))
+        mapper, why = asyncio.run(nsm.locate(
+            robot, grid=OccupancyGrid.load(config.SLAM_MAP_FILE)))
+        if mapper is None:
+            refused += 1
+            continue
+        err = math.hypot(mapper.pose[0] - robot.x, mapper.pose[1] - robot.y)
+        if err < 0.3:
+            placed += 1
+        else:
+            wrong += 1
+            print(f"    WRONG by {err:.2f} m after {robot.moves} moves")
+    check("found look-alike start spots on the real map to test",
+          tried >= 3, f"{tried} tried")
+    check("NEVER placed in the wrong spot", wrong == 0,
+          f"{placed} placed, {refused} refused, {wrong} wrong")
+    check("and moving placed her at least some of the time", placed >= 1,
+          f"{placed}/{tried}")
+
+
 def main() -> int:
     print("map_growth.py — the saved map grows with every explore trip")
     if not config.SLAM_MAP_FILE.exists():
@@ -213,6 +304,7 @@ def main() -> int:
     test_fit_recovers_the_start()
     test_merge_keeps_the_frame()
     test_grow_saves_and_keeps_history()
+    test_locate_moves_to_break_a_tie()
     print(f"\n{'ALL PASSED' if not _failures else f'{_failures} FAILED'}")
     return 1 if _failures else 0
 

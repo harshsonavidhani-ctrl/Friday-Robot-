@@ -121,6 +121,11 @@ class Fix:
     margin: float = 0.0
     why: str = ""
     candidates: list = _field(default_factory=list)
+    # The best pose found, KEPT EVEN WHEN REFUSING. A refusal means "two
+    # places fit"; `candidate` and `runner_up` are those two, so something
+    # that can move and look again can tell them apart (nav_state_machine.
+    # place_by_moving) instead of starting over.
+    candidate: tuple[float, float, float] | None = None
 
     @property
     def ok(self) -> bool:
@@ -338,7 +343,7 @@ def localise_points(grid, local: np.ndarray,
 
     margin = score - rival_score if rival else score
     fix = Fix(score=score, runner_up=rival, runner_up_score=rival_score,
-              margin=margin)
+              margin=margin, candidate=pose)
     if rival is not None and margin < AMBIGUITY_MARGIN:
         fix.why = (f"I can see two places I could be — ({pose[0]:.1f}, "
                    f"{pose[1]:.1f}) and ({rival[0]:.1f}, {rival[1]:.1f}) — and "

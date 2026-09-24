@@ -220,3 +220,4 @@ state/dashboard_events.jsonl
 state/memory.db.bak-*
 state/memory-deleted-*.json
 logs/*.wav
+.claude-scratch/

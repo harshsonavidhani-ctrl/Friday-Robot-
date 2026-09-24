@@ -229,15 +229,15 @@ def set_round_trip(on: bool = True) -> str:
 # this server with ONE Mapper tracking her the whole way, and the same Mapper
 # drives her back: the start spot is a point on the map she has been measured
 # on continuously, not something to rediscover.
-#   * On the OLD saved map when she can be placed on it (Harsh: use the old
-#     one) -- a copy in memory, grown as she explores.
-#   * Otherwise the start spot is the origin of a fresh working map. She
-#     cannot lose the origin of a map she is standing on.
+#   * ALWAYS on the OLD saved map (Harsh, 2026-09-25: "it should not use
+#     fresh map -- mapping the position as well as all the things in old map
+#     only"). A copy in memory, grown as she explores. When two spots on it
+#     look alike she moves a little to tell them apart (nsm.locate); when
+#     she still cannot, she does not set off.
 # AND THE SAVED MAP GROWS (Harsh, 2026-09-24: "map grows while exploring and
-# it should use the map"): after the trip, map_growth folds the trip's map
-# into state/map.npz -- the copy directly, or the working map fitted onto it
-# first -- keeping every earlier version in the navigation bundle's history.
-# The RL exploration map is never written.
+# it should use the map"): after the trip, map_growth saves the grown copy
+# over state/map.npz, keeping every earlier version in the navigation
+# bundle's history. The RL exploration map is never written.
 #
 # A PERSON'S STOP ENDS THE TRIP where it is. "Stop" is never followed by a
 # drive back that nobody asked for.
@@ -246,17 +246,7 @@ def set_round_trip(on: bool = True) -> str:
 TRIP_METRES_PER_MINUTE = 6.0
 TRIP_DEFAULT_MINUTES = 2.0
 
-# The last trip's map, kept so "try again" after a FAILSAFE on the way back
-# can still find the start: its coordinates belong to this map only.
-_TRIP: dict = {}
-
 _EXPLORED_OUT = ("no frontiers left", "nothing reachable left")
-
-
-def _working_map():
-    """A fresh map whose origin is the spot she is standing on."""
-    from slam.mapper import Mapper
-    return Mapper(pose=(0.0, 0.0, 0.0))
 
 
 def _mission(robot):
@@ -279,10 +269,11 @@ async def explore_and_return(minutes: float | None = None,
 
     What "Friday, explore" and "explore and come back" do. Returns at once
     and runs in the background; I announce everything myself, so do not
-    repeat my reply. I first look with the LiDAR and mark this spot -- on my
-    saved map if I can place myself on it, otherwise on a fresh map of my
-    own -- then explore while tracking where I am the whole way, then drive
-    back to the mark. Say stop and I stop where I am, without coming back.
+    repeat my reply. I first look with the LiDAR and mark this spot on my
+    saved map -- moving a little if two places on it look alike, and not
+    setting off at all if I still cannot tell -- then explore while tracking
+    where I am the whole way, drive back to the mark, and add what I saw to
+    my saved map. Say stop and I stop where I am, without coming back.
 
     Args:
         minutes: how long to explore before coming back. Defaults to 2.
@@ -309,21 +300,20 @@ def _minutes_phrase(minutes: float) -> str:
 
 async def _explore_trip(minutes: float):
     """Mark the spot, explore on one tracked map, come back to the mark."""
-    # 1. THE MARK. From the LiDAR, before a wheel turns.
-    # ONE look. An ambiguous room looks the same two seconds later, and the
-    # working map below is a complete answer, not a degraded one.
+    # 1. THE MARK. From the LiDAR, before a wheel turns, ON THE OLD MAP ONLY
+    # (Harsh, 2026-09-25: "it should not use fresh map"). If two spots on it
+    # look alike she moves a little to tell them apart (nsm.locate); if she
+    # still cannot tell, she does not explore at all -- a trip whose start is
+    # a guess is a trip that comes back to the wrong place.
     _reclaim_if_run_gone()
-    mapper = await _relocalise_when_ready(tries=1)
-    frame = "saved"
+    mapper, why = await nsm.relocalise()
     if mapper is None:
-        frame = "trip"
-        mapper = _working_map()
-        nav_voice.VOICE.say("working_map")
+        log.info("explore trip: not setting off — %s", why)
+        return None
+    frame = "saved"
     start = tuple(float(v) for v in mapper.pose)
-    _TRIP.clear()
-    _TRIP.update(mapper=mapper, start=start, frame=frame, at=time.time())
-    log.info("explore trip: marked %s on the %s map, exploring %.1f min",
-             [round(v, 2) for v in start], frame, minutes)
+    log.info("explore trip: marked %s on the saved map, exploring %.1f min",
+             [round(v, 2) for v in start], minutes)
 
     # 2. EXPLORE, tracked the whole way on the same map.
     deadline = time.monotonic() + minutes * 60.0
@@ -468,29 +458,6 @@ async def _tour(controller, mapper, start, deadline: float) -> str:
         if failed >= TOUR_MAX_FAILED_LEGS:
             return "stuck"
     return "time"
-
-
-async def _relocalise_when_ready(tries: int = 4, wait_s: float = 3.0):
-    """Relocalise once the range sensors are answering again. Mapper or None.
-
-    Straight after a run hands the hardware back, the LiDAR reopens lazily on
-    first use and its first sweep can come back empty. A few short retries
-    cover that; if it still cannot place her, None goes to the engine, which
-    tries once more and then stops in FAILSAFE with the start spot recorded
-    -- so "try again" can still bring her back.
-    """
-    import asyncio
-
-    why = ""
-    for attempt in range(1, tries + 1):
-        mapper, why = await nsm.relocalise()
-        if mapper is not None:
-            return mapper
-        log.info("relocalise, try %d/%d: %s", attempt, tries, why)
-        if attempt < tries:
-            await asyncio.sleep(wait_s)
-    log.warning("could not place myself on the saved map: %s", why)
-    return None
 
 
 @tool
@@ -775,46 +742,6 @@ async def try_again() -> str:
         return nav_voice.VOICE.say("nothing_waiting")
     controller, _ = _controller()
     label = record.get("label") or "my destination"
-    if record.get("frame") == "trip":
-        # The goal is on the trip's own map, which only this process holds.
-        _start_journey(label, _retry_on_trip_map(controller, record))
-    else:
-        _start_journey(label, controller.retry_failsafe(record))
+    _start_journey(label, controller.retry_failsafe(record))
     # retry_failsafe says the "trying again" line itself, first thing.
     return nav_voice.line("try_again")
-
-
-# Standstill sweeps to re-find her on the trip's map before a retry. Few,
-# because the pose has not been lost -- only perhaps nudged by the person who
-# helped her.
-TRIP_REFRESH_SWEEPS = 3
-
-
-async def _retry_on_trip_map(controller, record):
-    """"Try again" after a FAILSAFE on an explore trip's own map.
-
-    Relocalising on the SAVED map would be wrong here: the goal is a point on
-    the map the trip built in memory. So she re-finds herself on THAT map
-    with a few sweeps; if she was carried too far for it to match, she says
-    she is lost and keeps waiting, exactly as the saved-map retry does. If
-    this server has restarted since the trip, that map is gone, and
-    retry_failsafe says so rather than guess.
-    """
-    mapper = _TRIP.get("mapper")
-    if mapper is not None:
-        for _ in range(TRIP_REFRESH_SWEEPS):
-            try:
-                scan = await controller.robot.sweep()
-            except Exception as exc:             # noqa: BLE001
-                log.warning("could not sweep before retrying: %s", exc)
-                scan = None
-            if scan:
-                mapper.update(scan)
-        if not mapper.pose_trusted:
-            controller.voice.say("lost")
-            nsm.write_failsafe(dict(record, at=time.time(),
-                                    why="I could not find myself on the map "
-                                        "of that trip."))
-            controller.voice.say("failsafe")
-            return None
-    return await controller.retry_failsafe(record, mapper=mapper)
