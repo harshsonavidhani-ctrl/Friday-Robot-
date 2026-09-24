@@ -230,10 +230,14 @@ def set_round_trip(on: bool = True) -> str:
 # drives her back: the start spot is a point on the map she has been measured
 # on continuously, not something to rediscover.
 #   * On the OLD saved map when she can be placed on it (Harsh: use the old
-#     one) -- a copy in memory, grown as she explores, NEVER saved.
-#   * Otherwise the start spot is the origin of a fresh working map, also
-#     never saved. She cannot lose the origin of a map she is standing on.
-# Neither the saved navigation map nor the RL exploration map is written.
+#     one) -- a copy in memory, grown as she explores.
+#   * Otherwise the start spot is the origin of a fresh working map. She
+#     cannot lose the origin of a map she is standing on.
+# AND THE SAVED MAP GROWS (Harsh, 2026-09-24: "map grows while exploring and
+# it should use the map"): after the trip, map_growth folds the trip's map
+# into state/map.npz -- the copy directly, or the working map fitted onto it
+# first -- keeping every earlier version in the navigation bundle's history.
+# The RL exploration map is never written.
 #
 # A PERSON'S STOP ENDS THE TRIP where it is. "Stop" is never followed by a
 # drive back that nobody asked for.
@@ -333,9 +337,11 @@ async def _explore_trip(minutes: float):
     log.info("explore trip: exploring ended (%s), %.2f m driven, %.1f m2",
              why, report.get("driven_m", 0.0), report.get("floor_m2", 0.0))
 
-    # 3. A PERSON SAID STOP: stay stopped.
+    # 3. A PERSON SAID STOP: stay stopped. What she mapped is still kept.
     if why == "stop was called" or robot.stopped():
         log.info("explore trip: stopped by a person — not driving back")
+        await _grow_map(mapper, frame,
+                        trusted=bool(getattr(mapper, "pose_trusted", False)))
         return report
 
     # 4. THE ROOM IS ALREADY MAPPED, BUT HE ASKED FOR MINUTES: tour it.
@@ -352,6 +358,8 @@ async def _explore_trip(minutes: float):
         outcome = await _tour(controller, mapper, start, deadline)
         if outcome == "stopped":
             log.info("explore trip: stopped by a person — not driving back")
+            await _grow_map(mapper, frame, trusted=bool(
+                getattr(mapper, "pose_trusted", False)))
             return report
         toured_out = outcome == "toured"
 
@@ -367,7 +375,54 @@ async def _explore_trip(minutes: float):
     controller.frame = frame
     back = await controller.return_to(start[:2], mapper)
     log.info("explore trip: back — %s", back.why)
+
+    # 6. THE MAP GROWS (Harsh, 2026-09-24: "map grows while exploring and it
+    # should use the map"). Only from a trip that knows where it is: home
+    # safely, or at least still matched.
+    grown = await _grow_map(mapper, frame, trusted=bool(
+        back.arrived or getattr(mapper, "pose_trusted", False)))
+
+    # 7. A HOME TO RETURN TO. The prompt's return-to-home goes to "the stored
+    # home / boot pose", and none had ever been stored. The first exploration
+    # that knows where its start is ON THE SAVED MAP makes that spot home --
+    # never a spot on a throw-away working map that did not fit.
+    if back.arrived and nsm.home_place() is None:
+        where = None
+        if frame == "saved":
+            where = start
+        elif grown and grown.get("grew") and grown.get("fitted"):
+            where = tuple(grown["fitted"]["pose"])
+        if where is not None:
+            nsm.set_home((float(where[0]), float(where[1]), 0.0),
+                         note="where my first exploration started")
+            nav_voice.VOICE.say("home_set")
     return back
+
+
+async def _grow_map(mapper, frame: str, trusted: bool):
+    """Fold the trip's map into the saved one, off the event loop.
+
+    The fit is a whole-map search (a few seconds on the Pi), so it runs on a
+    worker thread: `stop()` must still be answerable while it thinks.
+    """
+    import anyio.to_thread
+    import map_growth
+
+    try:
+        out = await anyio.to_thread.run_sync(map_growth.grow, mapper.grid,
+                                             frame, trusted)
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("explore trip: the map did not grow: %s", exc)
+        return None
+    log.info("explore trip: map %s", out)
+    added = float(out.get("added_m2") or 0.0)
+    if out.get("grew") and added >= 0.5:
+        n = max(1, int(round(added)))
+        nav_voice.VOICE.say("map_grew",
+                            f"{n} square metre" + ("" if n == 1 else "s"))
+    elif out.get("fitted") is False:
+        nav_voice.VOICE.say("map_not_fitted")
+    return out
 
 
 # A tour leg needs at least this long to be worth starting: a sweep per step

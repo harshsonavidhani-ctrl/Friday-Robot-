@@ -76,6 +76,11 @@ LINES: dict[str, str] = {
     "resuming":        "Resuming exploration.",
     "trip_map_gone":   "I no longer have the map of that trip, so I cannot "
                        "find where I started.",
+    # The map growing with each trip (map_growth.py).
+    "map_grew":        "My map grew by {dest}.",
+    "map_not_fitted":  "What I saw does not fit my saved map, so I kept it as "
+                       "it was.",
+    "home_set":        "I have saved the spot I started from as home.",
     # The way out of FAILSAFE (step 17).
     "try_again":       "Trying again. Finding myself on my map first.",
     "nothing_waiting": "There is nothing waiting to try again.",

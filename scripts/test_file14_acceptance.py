@@ -59,6 +59,13 @@ nsm.NAV_MODE_FILE = Path(_LOG_DIR.name) / "nav_mode.json"
 nsm.PENDING_FILE = Path(_LOG_DIR.name) / "nav_round_trip.json"
 nsm.FAILSAFE_FILE = Path(_LOG_DIR.name) / "nav_failsafe.json"
 nsm.EARLY_RETURN_FILE = Path(_LOG_DIR.name) / "nav_early_return.json"
+# ⚠ AN EXPLORE TRIP NOW GROWS THE SAVED MAP (map_growth.py). Every trip here
+# must grow a scratch copy, never state/map.npz.
+import shutil                                           # noqa: E402
+_REAL_MAP = Path(config.SLAM_MAP_FILE)
+config.SLAM_MAP_FILE = Path(_LOG_DIR.name) / "map.npz"
+if _REAL_MAP.exists():
+    shutil.copy2(_REAL_MAP, config.SLAM_MAP_FILE)
 
 PASS, FAIL = "  ok  ", " FAIL "
 _failures = 0
@@ -549,6 +556,12 @@ def _line(key, dest=""):
     return nav_voice.line(key, dest)
 
 
+def _in_order(said, lines) -> bool:
+    """`lines` appear in `said` in this order (other lines may come between)."""
+    it = iter(said)
+    return all(any(s == line for s in it) for line in lines)
+
+
 def ten_offline_voice_errand() -> None:
     item(10, "Offline: \"go to the kitchen and tell me the time and come "
              "back\" with no model at all")
@@ -767,9 +780,18 @@ def twelve_explore_trip() -> None:
             check("without finding herself again: one map, tracked all along",
                   len(rig.relocalised_at) == 1, str(rig.relocalised_at))
             check("she said so",
-                  rig.voice.said[-2:] ==
-                  [_line("setting_off", "where I set off from"),
-                   _line("arrived_start")], str(rig.voice.said))
+                  _in_order(rig.voice.said,
+                            [_line("setting_off", "where I set off from"),
+                             _line("arrived_start")]), str(rig.voice.said))
+            check("and the trip's map was kept: the saved map grew",
+                  any(t.startswith("My map grew by") for t in rig.voice.said),
+                  str(rig.voice.said[-1:]))
+            home = nsm.home_place()
+            check("with no home stored, the start spot became home (the "
+                  "prompt's boot pose), and she said so",
+                  home is not None
+                  and math.hypot(home["x"] - 0.5, home["y"] - 2.0) < 0.3
+                  and _line("home_set") in rig.voice.said, str(home))
         _items.append(("Explore trip comes back",
                        back is not None and back.arrived))
 

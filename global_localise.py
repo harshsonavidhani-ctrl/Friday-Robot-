@@ -169,7 +169,8 @@ def _cell_to_world(field: LikelihoodField, ix: int, iy: int, theta: float
             float((theta + math.pi) % (2 * math.pi) - math.pi))
 
 
-def _score_all_translations(field: LikelihoodField, rotated: np.ndarray
+def _score_all_translations(field: LikelihoodField, rotated: np.ndarray,
+                            min_coverage: float = MIN_COVERAGE
                             ) -> np.ndarray:
     """Score EVERY position on the map for one heading, in one correlation.
 
@@ -204,7 +205,7 @@ def _score_all_translations(field: LikelihoodField, rotated: np.ndarray
     # is most of them -- and the bias points AWAY from the open parts of the
     # room, which is precisely where she usually is.
     need = max(float(config.SLAM_MATCH_MIN_BEAMS),
-               MIN_COVERAGE * float(len(rotated)))
+               min_coverage * float(len(rotated)))
     with np.errstate(divide="ignore", invalid="ignore"):
         out = np.where(seen >= need, hits / np.maximum(seen, 1e-9), 0.0)
     return (out / field._perfect).astype(np.float32)
@@ -236,6 +237,32 @@ def localise(grid, scan: dict[int, int], forward_deg: float | None = None,
     local = points_from_scan(scan, forward_deg=forward_deg)
     if len(local) < config.SLAM_MATCH_MIN_BEAMS:
         return Fix(why=f"only {len(local)} usable beams in that sweep")
+    return localise_points(grid, local, coarse_step_deg=coarse_step_deg,
+                           beams=beams, restrict_to=restrict_to)
+
+
+def localise_points(grid, local: np.ndarray,
+                    coarse_step_deg: float = COARSE_STEP_DEG,
+                    beams: int = COARSE_BEAMS,
+                    restrict_to: np.ndarray | None = None,
+                    min_coverage: float = MIN_COVERAGE) -> Fix:
+    """Where a set of points, given relative to one origin, sits in `grid`.
+
+    One sweep is the usual case (`localise`). The other is a whole MAP: the
+    occupied cells of a map an explore trip built from scratch are points
+    relative to the spot the trip started from, and the fix returned is where
+    that spot is on `grid` -- so the trip's map can be merged into the saved
+    one (map_growth.py). A room's worth of walls is far more distinctive than
+    one sweep, which is exactly why it can succeed where the start-of-trip
+    fix refused.
+
+    `min_coverage` is the fraction of the points that must land on cells
+    `grid` has an opinion about. A trip that explored past the saved map's
+    edge legitimately has points nothing can judge, so map fitting passes a
+    lower value than a single sweep does.
+    """
+    if len(local) < config.SLAM_MATCH_MIN_BEAMS:
+        return Fix(why=f"only {len(local)} points to place")
     try:
         field = LikelihoodField.from_grid(grid)
     except (ValueError, AttributeError) as exc:
@@ -252,7 +279,8 @@ def localise(grid, scan: dict[int, int], forward_deg: float | None = None,
     stack = []                       # (score, ix, iy, theta), best per heading
     for step in np.arange(0.0, 360.0, coarse_step_deg):
         theta = math.radians(step)
-        scores = _score_all_translations(field, _rotate(coarse, theta))
+        scores = _score_all_translations(field, _rotate(coarse, theta),
+                                         min_coverage)
         if allowed is not None:
             scores = np.where(allowed, scores, 0.0)
         flat = int(np.argmax(scores))
@@ -274,7 +302,8 @@ def localise(grid, scan: dict[int, int], forward_deg: float | None = None,
         for delta in np.arange(-FINE_SPAN_DEG, FINE_SPAN_DEG + 1e-9,
                                FINE_STEP_DEG):
             theta = btheta + math.radians(delta)
-            scores = _score_all_translations(field, _rotate(local, theta))
+            scores = _score_all_translations(field, _rotate(local, theta),
+                                             min_coverage)
             if allowed is not None:
                 scores = np.where(allowed, scores, 0.0)
             # Only near the candidate: a different peak elsewhere is a

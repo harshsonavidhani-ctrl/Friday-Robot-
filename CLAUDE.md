@@ -630,3 +630,37 @@ from.") or everywhere reachable is within 0.8 m of a visited spot (then
 `_drive_to(..., touring=True)`: the same engine and guards, but a leg that
 fails is skipped — no FAILSAFE, no "I need help", no nav_log row. Two failed
 legs in a row end the tour; the drive home keeps its full FAILSAFE.
+
+## The map grows with every trip (2026-09-24 evening)
+
+Harsh: "it uses map like map growes while exploring and it should use the
+map and i want this return to home and home exploration mode like the prompt
+i gave". This REVERSES "the map is read, never written, by navigation" above
+— for the explore trip only (go_to/navigate_to still never save).
+
+`map_growth.grow(trip_grid, frame, trusted)` runs after every explore trip
+(and after a person's stop, if she still knew where she was):
+- frame "saved" — the trip explored on a copy of state/map.npz, so the copy is
+  saved back.
+- frame "trip" — the trip began a fresh map at the start spot. Its walls are
+  points relative to that spot, so `global_localise.localise_points` (the
+  single-sweep search, generalised) finds the spot on the saved map, the
+  tracker's `match_pose` polishes it, and `merge()` adds the trip's evidence
+  cell by cell, resampled from the target side so no pinholes appear in open
+  floor. A trip that does not fit leaves the map untouched and is kept in the
+  bundle's history (`*-trip-not-fitted`).
+- Never from a trip that ended lost (`trusted=False`), never if the map would
+  shrink below 90%, and the old map always goes into the navigation bundle's
+  history first. Places stay valid: both paths keep the saved map's frame.
+
+Measured on the real map with ray-cast trips: 7/10 fitted, 3 refused as
+genuinely ambiguous, none wrong (worst 16 cm — the ray cast's near-face bias,
+same as test_global_localise; merge with the true pose puts 210/210 trip
+walls within 10 cm of a known wall).
+
+**Home.** The prompt's return-to-home goes to "the stored home / boot pose",
+and none had ever been stored. The first trip that ends home safely with its
+start known on the saved map (directly, or by the fit) saves that spot as
+`home` and says so. "Friday, go home" then works.
+
+    ./venv/bin/python scripts/test_map_growth.py         # fit, merge, grow
