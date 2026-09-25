@@ -89,6 +89,10 @@ class _Hypothesis:
         self.total = 0.0
         self.recent: list[float] = []
         self.unmatched = 0
+        # Verified by the last sweep, and how many sweeps in a row the
+        # sweep-to-sweep measurement alone has carried it (see fold).
+        self.held = True
+        self.scan_only = 0
 
 
 class TripTracker:
@@ -229,10 +233,27 @@ class TripTracker:
                         h.mapper, scan, moved, turned)
                 use_m, use_r = moved * fraction, turned * fraction
             info = h.mapper.update(scan, use_m, use_r)
+            # THE FOLLOWER'S OWN RULES FOR WHEN A POSE STILL COUNTS, so the
+            # map handed over at the end is judged the way the follower will
+            # judge it. 2026-09-25 23:47: the tracker's last sweep was
+            # "geometry ambiguous" standing still, it handed over an
+            # untrusted pose, and every tour leg and the turn to face the
+            # start refused on their first look.
+            trusted = bool(h.mapper.pose_trusted)
+            if trusted:
+                h.scan_only = 0
+            elif h.held and not evidence:
+                trusted = True               # nothing moved: nothing changed
+            elif (h.held and use_scan and est.strong
+                  and h.scan_only < nav_follower.SCAN_ONLY_MAX):
+                trusted = True               # measured against the last sweep
+                h.scan_only += 1
             if not h.mapper.pose_trusted:
                 h.unmatched += 1
-                log.info("trip tracker (%s): sweep did not match (%s)",
-                         h.name, info.get("reason", ""))
+                log.info("trip tracker (%s): the map did not match (%s)%s",
+                         h.name, info.get("reason", ""),
+                         "; pose kept" if trusted else "")
+            h.mapper.pose_trusted = h.held = trusted
             if evidence and len(self.hyps) > 1:
                 local = points_from_scan(scan,
                                          forward_deg=h.mapper.forward_deg)

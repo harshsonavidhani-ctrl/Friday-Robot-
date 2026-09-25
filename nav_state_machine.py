@@ -928,10 +928,16 @@ class NavController:
         # her stop and ask for help instead of saying she is back.
         away = math.hypot(float(mapper.pose[0]) - float(goal_xy[0]),
                           float(mapper.pose[1]) - float(goal_xy[1]))
-        if away <= nav_follower.ARRIVE_TOL_M:
+        # A caller's own arrival test sets what "there" means here too: the
+        # explore trip's way back asks for 12 cm, and an "already there" judged
+        # at 28 cm had her announce she was back without moving (2026-09-25).
+        arrival = follow_kw.get("arrival")
+        tolerance = (arrival.tolerance if arrival is not None
+                     else nav_follower.ARRIVE_TOL_M)
+        if away <= tolerance:
             report.arrived, report.state = True, NavState.ARRIVED
             report.why = (f"already there: {away:.2f} m from it, inside the "
-                          f"{nav_follower.ARRIVE_TOL_M:.2f} m tolerance")
+                          f"{tolerance:.2f} m tolerance")
             self.state = report.state
             if not touring:
                 self.voice.say(nav_voice.arrival_key(label), label)
@@ -990,7 +996,13 @@ class NavController:
 
             cells, prep = path_planner.plan(prep, (int(ix[0]), int(iy[0])),
                                             goal_cell)
-            if len(cells) < 2:
+            here = (float(mapper.pose[0]), float(mapper.pose[1]))
+            short = math.hypot(here[0] - goal_xy[0], here[1] - goal_xy[1])
+            if len(cells) < 2 and 0.0 < short <= SHORT_HOP_M:
+                # Same or next cell, but outside a tight tolerance: nothing to
+                # plan around at this range, so the last hop is a straight one.
+                cells = None
+            if cells is not None and len(cells) < 2:
                 report.why = (f"I can see where {label} is but nothing "
                               "passable connects here to it on the map as it "
                               "stands. I am not going to drive in its general "
@@ -999,7 +1011,9 @@ class NavController:
                     break
                 continue
 
-            world = path_planner.cells_to_world(cells, prep.grid)
+            world = (np.array([here, (float(goal_xy[0]), float(goal_xy[1]))])
+                     if cells is None
+                     else path_planner.cells_to_world(cells, prep.grid))
             report.waypoints = len(world)
             report.planned_m = float(np.sum(np.hypot(np.diff(world[:, 0]),
                                                      np.diff(world[:, 1]))))
@@ -1249,6 +1263,11 @@ class NavController:
             if not blocked:
                 return False, clearance
         return True, clearance
+
+
+# At or under this, a goal the planner puts in the same cell is driven to
+# straight (see _drive_to); well under a body length, so nothing fits between.
+SHORT_HOP_M = 0.20
 
 
 def start_failed(said: str) -> bool:

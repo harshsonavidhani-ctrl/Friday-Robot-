@@ -51,6 +51,7 @@ its distances as measured ones.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
@@ -813,6 +814,20 @@ class Follower:
             if state.arrived:
                 report.arrived, report.why = True, state.why
                 break
+
+            # ---- 2b. INSIDE THE TOLERANCE: HOLD STILL ----------------------
+            # Arrival needs quiet ticks. Within a few centimetres of the goal
+            # the bearing TO it swings with every centimetre of pose noise, so
+            # aiming at it is a pivot left, a pivot right, forever: 68 ticks
+            # of it, 3 cm from the spot, once the explore trip's way back
+            # asked for 12 cm (2026-09-25). Turning to a heading, if one is
+            # wanted, is the caller's job after arrival.
+            if state.distance_m <= state.tolerance_m:
+                commanded = 0.0
+                # A held tick is a pause, so the dwell is real time spent
+                # still, however fast the sweeps come back.
+                await asyncio.sleep(ARRIVE_DWELL_S / max(1, ARRIVE_MIN_SAMPLES))
+                continue
 
             # ---- 3. WHAT TO AIM AT -----------------------------------------
             final = state.distance_m <= FINAL_APPROACH_M

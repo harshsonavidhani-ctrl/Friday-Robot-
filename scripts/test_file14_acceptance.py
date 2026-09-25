@@ -858,6 +858,22 @@ def twelve_explore_trip() -> None:
         _items.append(("Explore trip comes back",
                        back is not None and back.arrived))
 
+        # Harsh, 2026-09-25: "the place where Friday stops she assumes her
+        # starting position". Ending 20 cm off -- inside the general 28 cm
+        # tolerance -- she must still drive back, not announce she is back.
+        worldn = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
+        mappern = FakeMapper(worldn)
+        mappern.grid = _grid(free=True)
+        with _ToolRig(worldn, mappern) as rig, \
+                _TripRig(rig, end_pose=(0.70, 2.0, 1.2)):
+            _, back = _trip(2.0)
+            off = math.hypot(worldn.x - 0.5, worldn.y - 2.0)
+            check("20 cm off the start is NOT 'already there': she drives "
+                  "back to the spot",
+                  back is not None and back.arrived
+                  and not back.why.startswith("already there") and off <= 0.13,
+                  f"{off * 100:.0f} cm from the start; {back.why[:60] if back else ''}")
+
         # Nothing left to explore: back early, and says why.
         world2 = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
         mapper2 = FakeMapper(world2)

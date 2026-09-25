@@ -445,7 +445,12 @@ async def _trip_body(minutes: float, robot, tracker):
         nav_voice.VOICE.say("setting_off", "where I set off from")
     controller, _ = _controller()           # a fresh baseline for the way home
     controller.frame = frame
-    back = await controller.return_to(start[:2], mapper)
+    import nav_follower
+    back = await controller.return_to(start[:2], mapper,
+                                      arrival=nav_follower.ArrivalMonitor(
+                                          start[:2],
+                                          tolerance_m=TRIP_RETURN_TOL_M,
+                                          loose_m=TRIP_RETURN_LOOSE_M))
     log.info("explore trip: back — %s", back.why)
     if back.arrived:
         faced = await _face(controller, mapper, float(start[2]))
@@ -484,6 +489,14 @@ async def _trip_body(minutes: float, robot, tracker):
             nav_voice.VOICE.say("home_set")
     return back
 
+
+# "Back where I started" means THE spot. Harsh, 2026-09-25: "the place where
+# Friday stops she assumes her starting position" -- the trips ended about
+# 0.14 m off and turned, inside the general 0.28 m arrival tolerance, so she
+# announced she was back without moving. The tracker holds her to ~5-12 cm,
+# so the way back asks for 12 cm, relaxing to 20 cm only if it cannot settle.
+TRIP_RETURN_TOL_M = 0.12
+TRIP_RETURN_LOOSE_M = 0.20
 
 # Back on the spot, she turns to face the way she set off: Harsh, 2026-09-25,
 # watched her say "I am back where I started" at a spot that did not look like
