@@ -241,6 +241,100 @@ def motion_fraction(mapper, scan, moved_m: float, turned_rad: float) -> float:
         return 1.0
 
 
+# ⚠ WHAT A MOVE DID IS BEST ASKED OF THE LAST SWEEP, NOT THE SAVED MAP.
+# motion_fraction asks the map, and where the map is thin that answer is
+# wrong: 2026-09-25 23:18 a 60 degree right turn really happened (the sweep
+# before against the sweep after: 0.62 at -58 deg, 0.12 at 0) but after it
+# she faced a part of the hostel room the 09-19 map barely holds, so "no
+# turn" fitted the map better and was chosen. Two real sweeps a second apart
+# agree with each other far better than either agrees with a six-day-old map.
+# So the sweep is first registered against the previous one, searching from
+# "none of it happened" to a little more than all of it; a strong answer is
+# the motion. This is LiDAR measurement, not dead reckoning.
+SCAN_MOTION_CELL_M = 0.02
+SCAN_MOTION_BLUR_M = 0.05
+# Fair score (every beam counted) a sweep-to-sweep match needs to be believed.
+# Measured on the recordings: true motion 0.58-0.82, a wrong one under 0.2.
+SCAN_MOTION_MIN_SCORE = 0.40
+# While the saved map cannot confirm her (facing somewhere it does not hold),
+# measured sweep-to-sweep motion carries the pose for at most this many
+# sweeps in a row. Each one adds a little drift; past this she is lost.
+SCAN_ONLY_MAX = 8
+
+
+@dataclass
+class ScanMotion:
+    forward_m: float
+    turn_rad: float
+    score: float
+
+    @property
+    def strong(self) -> bool:
+        return self.score >= SCAN_MOTION_MIN_SCORE
+
+
+def scan_motion(prev_scan: dict, scan: dict, moved_m: float = 0.0,
+                turned_rad: float = 0.0,
+                forward_deg: float | None = None) -> ScanMotion | None:
+    """How she moved between two sweeps, measured by registering them.
+
+    match_pose refines locally, so one wide window can miss the answer (it
+    did on the recordings). The search starts from several guesses instead:
+    none, a quarter, half, three quarters, all and 120% of a commanded turn;
+    none, half and all of a commanded step, each also 10 degrees either way,
+    because this chassis veers about that much driving straight (measured on
+    the 2026-09-25 recordings). The best-scoring answer, every beam counted,
+    is the motion. None when either sweep is too thin to register.
+    """
+    try:
+        from slam.core import (LikelihoodField, match_pose, points_from_scan,
+                               transform)
+
+        fwd = config.LIDAR_FORWARD_DEG if forward_deg is None else forward_deg
+        a = points_from_scan(prev_scan, forward_deg=fwd)
+        b = points_from_scan(scan, forward_deg=fwd)
+        if (len(a) < config.SLAM_MATCH_MIN_BEAMS
+                or len(b) < config.SLAM_MATCH_MIN_BEAMS):
+            return None
+        field = LikelihoodField(a, cell_m=SCAN_MOTION_CELL_M,
+                                blur_m=SCAN_MOTION_BLUR_M)
+        seeds = []
+        if turned_rad:
+            window_deg = max(6.0, 0.15 * abs(math.degrees(turned_rad)))
+            for f in (0.0, 0.25, 0.5, 0.75, 1.0, 1.2):
+                seeds.append(((0.0, 0.0, turned_rad * f), 0.04, window_deg))
+        if moved_m:
+            window_m = max(0.04, 0.25 * abs(moved_m))
+            for f in (0.0, 0.5, 1.0):
+                for veer in (-10.0, 0.0, 10.0):
+                    seeds.append(((moved_m * f, 0.0, math.radians(veer)),
+                                  window_m, 6.0))
+        if not seeds:
+            seeds.append(((0.0, 0.0, 0.0), 0.04, 4.0))
+        best = None
+        for prior, window_m, window_deg in seeds:
+            pose, _s, _sh = match_pose(field, b, prior, prior_m=window_m,
+                                       prior_deg=window_deg)
+            score = float(field.score(transform(b, pose[0], pose[1],
+                                                pose[2])))
+            if best is None or score > best[0]:
+                best = (score, pose)
+        score, pose = best
+        return ScanMotion(float(pose[0]), float(_wrap(pose[2])), score)
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("could not register the sweep against the last: %s", exc)
+        return None
+
+
+# Below this a sweep-to-sweep answer is too weak even to steer the map
+# matcher's search; the map is asked instead (motion_fraction).
+SCAN_MOTION_PRIOR_SCORE = 0.20
+# The most one pivot turns. Consecutive sweeps must still see mostly the same
+# room to be registered: on the recordings, turns up to ~40 degrees scored
+# 0.5-0.98 and 60-90 degree turns 0.1-0.4.
+PIVOT_MAX_DEG = 35.0
+
+
 def closest_index(path: np.ndarray, xy) -> int:
     """Index of the path segment the robot is nearest to.
 
@@ -530,6 +624,10 @@ class Follower:
         self.last_match = ""
         # Whether the pose was verified by the last sweep (see _sweep_into).
         self._held_trust = False
+        # The previous sweep, for measuring each move sweep-to-sweep, and how
+        # many sweeps in a row that measurement alone has carried the pose.
+        self._prev_scan: dict | None = None
+        self._scan_only = 0
 
     async def _sweep_into(self, mapper, moved_m: float = 0.0,
                           turned_rad: float = 0.0) -> bool:
@@ -543,16 +641,33 @@ class Follower:
         scan = await self.robot.sweep()
         if not scan:
             return False
+        prev, self._prev_scan = self._prev_scan, scan
+        est = None
+        if prev is not None and hasattr(mapper, "_map_field"):
+            est = scan_motion(prev, scan, moved_m, turned_rad,
+                              getattr(mapper, "forward_deg", None))
         self.last_fraction = 1.0
-        if moved_m or turned_rad:
-            self.last_fraction = motion_fraction(mapper, scan, moved_m,
-                                                 turned_rad)
-        info = mapper.update(scan, moved_m * self.last_fraction,
-                             turned_rad * self.last_fraction)
+        if (est is not None and (moved_m or turned_rad)
+                and est.score >= SCAN_MOTION_PRIOR_SCORE):
+            # Measured against the last sweep: that is the motion.
+            use_m, use_r = est.forward_m, est.turn_rad
+            asked = turned_rad if turned_rad else moved_m
+            got = use_r if turned_rad else use_m
+            self.last_fraction = round(got / asked, 2) if asked else 0.0
+        else:
+            if moved_m or turned_rad:
+                self.last_fraction = motion_fraction(mapper, scan, moved_m,
+                                                     turned_rad)
+            use_m = moved_m * self.last_fraction
+            use_r = turned_rad * self.last_fraction
+        info = mapper.update(scan, use_m, use_r)
         if isinstance(info, dict):
             import trip_recorder
             trip_recorder.note(
                 "match", src="follower", moved=moved_m, turned=turned_rad,
+                est=(None if est is None else
+                     [round(est.forward_m, 3), round(est.turn_rad, 4),
+                      round(est.score, 3)]),
                 fraction=self.last_fraction, reason=info.get("reason"),
                 score=info.get("score"), sharpness=info.get("sharpness"),
                 pose=[round(float(v), 4) for v in mapper.pose])
@@ -576,6 +691,24 @@ class Follower:
                 and self._held_trust):
             mapper.pose_trusted = trusted = True
             self.last_match = "held: nothing moved since the last match"
+        # ⚠ WHERE THE SAVED MAP CANNOT CONFIRM HER, THE LAST SWEEP CAN. Facing
+        # a part of the room the 09-19 map barely holds, even the TRUE pose
+        # scores "too low" (2026-09-25 23:18: 0.12 at the real -58 degrees).
+        # A strong sweep-to-sweep registration from a verified pose is a
+        # measurement, not dead reckoning: the mapper has already put her at
+        # the prior, which IS that measured motion. It carries the pose for at
+        # most SCAN_ONLY_MAX sweeps in a row, since each adds a little drift;
+        # a map match resets the count. Standing still adds none.
+        elif (not trusted and est is not None and est.strong
+              and self._held_trust and self._scan_only < SCAN_ONLY_MAX):
+            mapper.pose_trusted = trusted = True
+            if moved_m or turned_rad:
+                self._scan_only += 1
+            self.last_match = (f"carried by the last sweep "
+                               f"({self._scan_only}/{SCAN_ONLY_MAX}, "
+                               f"{est.score:.2f}; map: {self.last_match})")
+        elif trusted:
+            self._scan_only = 0
         self._held_trust = trusted
         return trusted
 
@@ -619,6 +752,8 @@ class Follower:
         # A mapper handed over already verified (the trip tracker's) starts
         # trusted: its first standstill sweep need not re-earn it.
         self._held_trust = bool(getattr(mapper, "pose_trusted", False))
+        self._prev_scan = None
+        self._scan_only = 0
 
         started = time.monotonic()
         commanded = 0.0
@@ -693,8 +828,8 @@ class Follower:
                 # it settles instead of oscillating across the tolerance.
                 if final:
                     degrees *= 0.6
-                degrees = float(np.clip(degrees, -config.MAX_INCREMENT_DEGREES,
-                                        config.MAX_INCREMENT_DEGREES))
+                cap = min(PIVOT_MAX_DEG, config.MAX_INCREMENT_DEGREES)
+                degrees = float(np.clip(degrees, -cap, cap))
                 seconds = self.rates.seconds_for_turn(degrees)
                 commanded = STEP_MAX_M      # "still correcting", for arrival
                 done = await self._execute(

@@ -462,7 +462,12 @@ async def _trip_body(minutes: float, robot, tracker):
     # home / boot pose", and none had ever been stored. The first exploration
     # that knows where its start is ON THE SAVED MAP makes that spot home --
     # never a spot on a throw-away working map that did not fit.
-    if back.arrived and certain and nsm.home_place() is None:
+    # ⚠ Only from a start the whole-map search was sure of ON ITS OWN, never
+    # one the trip's evidence settled: replayed, the 23:14 trip called itself
+    # certain of the WRONG look-alike, and the next trip, starting where it
+    # ended, was placed confidently at the other one.
+    if (back.arrived and getattr(tracker, "started_certain", False)
+            and nsm.home_place() is None):
         where = None
         if frame == "saved":
             where = start
@@ -502,12 +507,24 @@ async def _watch_objects(seen) -> None:
         await asyncio.sleep(config.SCENE_BRIDGE_POLL_S)
 
 
+# ⚠ OFF (2026-09-25 23:2x). Twice in one evening a trip grew state/map.npz
+# and made it WORSE: at 22:43 from a wrong heading (11.5 m2 of rotated walls)
+# and at 23:18 from a trip that was certain and got back (+8.5 m2, after which
+# 0 of 4 trip start sweeps could be placed on it, against 2 of 4 before). Both
+# were undone from the bundle history. Harsh, the same evening: "the map saved
+# should be used ... not change the map". The code stays; this is the switch.
+GROW_SAVED_MAP = False
+
+
 async def _grow_map(mapper, frame: str, trusted: bool):
     """Fold the trip's map into the saved one, off the event loop.
 
     The fit is a whole-map search (a few seconds on the Pi), so it runs on a
     worker thread: `stop()` must still be answerable while it thinks.
     """
+    if not GROW_SAVED_MAP:
+        log.info("explore trip: the saved map is kept exactly as it is")
+        return {"grew": False, "why": "the saved map is not changed by trips"}
     import anyio.to_thread
     import map_growth
 

@@ -582,6 +582,7 @@ class _FakeTracker:
     def __init__(self, mapper):
         self.mapper = mapper
         self.start = tuple(float(v) for v in mapper.pose)
+        self.started_certain = True
 
     def explorer_mapper(self):
         return self.mapper
@@ -833,8 +834,10 @@ def twelve_explore_trip() -> None:
                   _in_order(rig.voice.said,
                             [_line("setting_off", "where I set off from"),
                              _line("arrived_start")]), str(rig.voice.said))
-            check("and the trip's map was kept: the saved map grew",
-                  any(t.startswith("My map grew by") for t in rig.voice.said),
+            check("and the saved map is NOT changed by the trip (growth is "
+                  "off since 2026-09-25: it made the map worse twice)",
+                  not any(t.startswith("My map grew by")
+                          for t in rig.voice.said),
                   str(rig.voice.said[-1:]))
             home = nsm.home_place()
             check("with no home stored, the start spot became home (the "

@@ -114,6 +114,7 @@ class TripTracker:
         self._still_folded = 0
         self.sweeps = 0
         self.skipped = 0
+        self._prev_scan: dict | None = None
         self._queue: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
 
@@ -211,12 +212,23 @@ class TripTracker:
 
         self.sweeps += 1
         evidence = bool(moved or turned)
+        # Measured against the last sweep first (nav_follower.scan_motion):
+        # the motion is the robot's, the same under every hypothesis.
+        prev, self._prev_scan = self._prev_scan, scan
+        est = (nav_follower.scan_motion(prev, scan, moved, turned)
+               if prev is not None and evidence else None)
+        use_scan = (est is not None
+                    and est.score >= nav_follower.SCAN_MOTION_PRIOR_SCORE)
         for h in self.hyps:
-            fraction = 1.0
-            if evidence:
-                fraction = nav_follower.motion_fraction(h.mapper, scan, moved,
-                                                        turned)
-            info = h.mapper.update(scan, moved * fraction, turned * fraction)
+            if use_scan:
+                use_m, use_r = est.forward_m, est.turn_rad
+            else:
+                fraction = 1.0
+                if evidence:
+                    fraction = nav_follower.motion_fraction(
+                        h.mapper, scan, moved, turned)
+                use_m, use_r = moved * fraction, turned * fraction
+            info = h.mapper.update(scan, use_m, use_r)
             if not h.mapper.pose_trusted:
                 h.unmatched += 1
                 log.info("trip tracker (%s): sweep did not match (%s)",
