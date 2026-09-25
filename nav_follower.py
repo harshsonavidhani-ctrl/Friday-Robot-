@@ -1003,8 +1003,15 @@ class GuardedRobot:
 
         import trip_recorder
         from mcp_server.tools import movement
-        said = await anyio.to_thread.run_sync(movement.move, direction,
-                                              float(seconds))
+        try:
+            said = await anyio.to_thread.run_sync(movement.move, direction,
+                                                  float(seconds))
+        except Exception as exc:                 # noqa: BLE001
+            # A lost reply from the motor board (a USB reset, 2026-09-26
+            # 00:06). guarded_move has already stopped the wheels; as a
+            # refusal the drive ends the way it ends for any refusal.
+            log.warning("a move went unanswered: %s", exc)
+            said = f"REFUSED — the motor board did not answer ({exc})"
         trip_recorder.note("move", src="follower", direction=direction,
                            seconds=float(seconds), said=said)
         return said
