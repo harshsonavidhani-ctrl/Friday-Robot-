@@ -41,6 +41,7 @@ ABORT = threading.Event()
 # set by an exception.
 MOVING = threading.Event()
 
+
 # Speed is a percentage rather than raw PWM because the brain should not know
 # or care about PWM, and because it lets config.MAX_SPEED_PERCENT cap it in one
 # place.
@@ -152,9 +153,65 @@ def motors() -> Motors:
             return _motors
         drive = Motors()
         drive.connect()                     # raises MotorError if not ours
-        _motors = drive
+        _motors = _Commanded(drive)
         log.info("motors connected: %s on %s", drive.firmware, drive.port)
         return _motors
+
+
+# --- which way the wheels were last told to go ------------------------------
+#
+# The reflex needs it. Every sensor it reads looks FORWARD, so a box 15 cm
+# ahead is a reason to stop driving at it and no reason at all to stop backing
+# away from it or turning to face elsewhere (2026-09-25 22:43: pinned 15 cm
+# from a box, twenty turns and reverses in a row were killed after 0.2 s).
+# Read off the command itself, because that is what the wheels are doing --
+# and safety.py and motor.py stay byte-for-byte as they are. Cleared on every
+# stop, so between moves, and in the instant before a move's first command,
+# the direction is UNKNOWN, and unknown gets the full forward checks.
+
+_last_drive: tuple[float, float] | None = None
+
+
+def moving_direction() -> str:
+    """"forward", "backward", "left", "right", or "" when not known."""
+    command = _last_drive
+    if command is None:
+        return ""
+    left, right = command
+    if left > 0 and right > 0:
+        return "forward"
+    if left < 0 and right < 0:
+        return "backward"
+    if left > 0 > right:
+        return "right"
+    if right > 0 > left:
+        return "left"
+    return ""
+
+
+class _Commanded:
+    """The motor board, remembering the last command it was given.
+
+    Everything passes straight through to motor.Motors; the only addition is
+    noting (left, right) on drive() -- before the wiring inversion, so
+    positive is that side forward -- and forgetting it on stop().
+    """
+
+    def __init__(self, inner: Motors) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    def drive(self, left: float, right: float) -> None:
+        global _last_drive
+        _last_drive = (float(left), float(right))
+        return self._inner.drive(left, right)
+
+    def stop(self) -> None:
+        global _last_drive
+        _last_drive = None
+        return self._inner.stop()
 
 
 def motors_if_present() -> Motors | None:

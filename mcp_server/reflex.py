@@ -17,7 +17,8 @@ does not ask the brain, does not tell the brain first, and cannot be overruled
 by it. There is no argument, no tool, and no config flag that turns this off,
 because a safety system Friday can talk her way out of is not a safety system.
 
-WHAT IT WATCHES, at config.REFLEX_HZ, whenever the wheels are turning:
+WHAT IT WATCHES, at config.REFLEX_HZ, whenever the wheels are driving her
+FORWARD (or in a direction it was not told):
 
   obstacle   forward clearance inside config.SAFETY_STOP_MM
   cliff      the ToF's bottom rows stop seeing floor -- the floor ENDED. This
@@ -31,6 +32,16 @@ SAFETY_POLL_S from inside its own loop. This is a SECOND, INDEPENDENT watcher
 in its own thread, and the duplication is the point: if the move loop wedges on
 a slow serial write, blocks, or throws somewhere unexpected, the thing that
 stops the motors must not be inside it. Two loops, one job, no shared failure.
+
+⚠ NOT WHEN SHE IS BACKING AWAY OR TURNING. Every sensor here looks ahead, so
+every hazard here is a hazard to driving forward -- the rule safety.py has
+always stated ("turning and reversing are not blocked by the forward
+clearance ... refusing to turn would leave it stuck there forever"). Until
+2026-09-25 this loop fired on ANY motion: parked 15 cm from a box, every turn
+and every reverse was killed after 0.2 s, twenty in a row, and she sat there
+asking for help with clear floor behind her. Reverse stays time-capped
+(MAX_REVERSE_SECONDS) and LiDAR-bump-guarded in guarded_move. The direction
+comes from the motor command itself (hardware.moving_direction).
 
 HONEST ABOUT WHAT IT CANNOT SEE. Backward has no sensor at all on this robot,
 so reversing is time-limited rather than watched (see safety.py). The reflex
@@ -80,8 +91,19 @@ def _cliff_gap_mm() -> int | None:
         return None
 
 
-def _hazard() -> tuple[str, str] | None:
-    """(reason, detail) if the wheels must stop now, else None."""
+# Moves the forward-looking checks do not apply to. See the module docstring.
+AWAY_FROM_AHEAD = ("backward", "left", "right")
+
+
+def _hazard(direction: str = "") -> tuple[str, str] | None:
+    """(reason, detail) if the wheels must stop now, else None.
+
+    `direction` is the way the wheels were last told to go
+    (hardware.moving_direction()). Empty -- not known, or the instant before a
+    move's first command -- is treated as forward: unknown gets the checks.
+    """
+    if direction in AWAY_FROM_AHEAD:
+        return None
     # 1. A drop ahead. Checked first: it is the only hazard that is invisible
     #    to every other layer, and the most expensive to get wrong.
     if config.CLIFF_DROP_MM:
@@ -141,7 +163,7 @@ def _run() -> None:
     while not _stop.is_set():
         try:
             if hardware.MOVING.is_set():
-                hazard = _hazard()
+                hazard = _hazard(hardware.moving_direction())
                 if hazard:
                     _fire(*hazard)
         except Exception as exc:                # noqa: BLE001

@@ -589,6 +589,47 @@ def test_looks_before_every_move() -> None:
     check("and she got there", report.arrived, report.why)
 
 
+def test_a_cut_short_move_counts_what_ran() -> None:
+    """2026-09-25 22:43: a 1.2 s turn stopped after 0.2 s was folded as 90°."""
+    print("\n— a move the guard cut short counts only what ran —")
+
+    class Stub:
+        pose = (0.0, 0.0, 0.0)
+        pose_trusted = True
+
+        def __init__(self):
+            self.calls = []
+
+        def update(self, scan, moved=0.0, turned=0.0):
+            self.calls.append((moved, turned))
+            return {"reason": "matched"}
+
+    class Cut:
+        def __init__(self, said):
+            self.said = said
+
+        async def observe(self):
+            pass
+
+        async def drive_seconds(self, direction, seconds):
+            return self.said
+
+        async def sweep(self):
+            return {0: 1000}
+
+    rates = nf.RateModel(forward_cm_s=30.0, turn_deg_s=60.0, calibrated=True)
+    for said, want_deg in (
+            ("right STOPPED after 0.2s of 1.2s — stop was called", -12.0),
+            ("right for 1.2s", -72.0),
+            ("REFUSED — Friday has not looked at the room yet", 0.0)):
+        mapper = Stub()
+        follower = nf.Follower(Cut(said), rates=rates)
+        asyncio.run(follower._execute(mapper, "right", 1.2))
+        got = math.degrees(mapper.calls[-1][1])
+        check(f"{said[:34]!r} folds as {want_deg:+.0f}°",
+              abs(got - want_deg) < 0.5, f"{got:+.1f}°")
+
+
 def main() -> int:
     print("nav_follower.py — file 14 steps 4-5")
     test_lookahead()
@@ -603,6 +644,7 @@ def main() -> int:
     test_detects_a_stall()
     test_moves_are_measured_by_the_map()
     test_looks_before_every_move()
+    test_a_cut_short_move_counts_what_ran()
     test_honours_stop_and_budgets()
     test_reports_uncalibrated()
     test_does_not_touch_the_motors()

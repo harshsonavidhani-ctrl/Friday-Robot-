@@ -306,19 +306,26 @@ class ListeningRobot:
         return getattr(self._inner, name)
 
     async def turn(self, degrees: float) -> str:
+        import trip_recorder
         said = await self._inner.turn(degrees)
+        trip_recorder.note("turn", src="explorer", degrees=float(degrees),
+                           said=said)
         if "REFUSED" not in (said or "").upper():
             self._tracker.commanded(turned_rad=math.radians(float(degrees)))
         return said
 
     async def forward(self, cm: float) -> str:
+        import trip_recorder
         said = await self._inner.forward(cm)
+        trip_recorder.note("forward", src="explorer", cm=float(cm), said=said)
         if "REFUSED" not in (said or "").upper():
             self._tracker.commanded(moved_m=float(cm) / 100.0)
         return said
 
     async def sweep(self) -> dict[int, int]:
+        import trip_recorder
         scan = await self._inner.sweep()
+        trip_recorder.note("sweep", src="explorer", scan=scan)
         try:
             self._tracker.note_sweep(scan)
         except Exception as exc:                 # noqa: BLE001

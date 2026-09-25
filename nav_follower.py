@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -169,6 +170,10 @@ STALL_RATIO = 0.25
 # have assumed anyway. About 0.3 s per move on the Pi; a tick already costs a
 # whole LiDAR sweep.
 MOTION_HYPOTHESES = (1.0, 0.5, 0.0)
+
+# How long a guarded move really ran, from its own words: safety.MoveResult
+# says "right STOPPED after 0.2s of 1.2s — stop was called".
+_RAN_FOR = re.compile(r"STOPPED after ([0-9.]+)s of")
 
 
 def _wrap(radians: float) -> float:
@@ -542,6 +547,13 @@ class Follower:
                                                  turned_rad)
         info = mapper.update(scan, moved_m * self.last_fraction,
                              turned_rad * self.last_fraction)
+        if isinstance(info, dict):
+            import trip_recorder
+            trip_recorder.note(
+                "match", src="follower", moved=moved_m, turned=turned_rad,
+                fraction=self.last_fraction, reason=info.get("reason"),
+                score=info.get("score"), sharpness=info.get("sharpness"),
+                pose=[round(float(v), 4) for v in mapper.pose])
         # WHY a sweep did or did not match ("score too low", "geometry
         # ambiguous", ...). Tonight's lost trip (2026-09-24 23:55) logged only
         # that it was lost; the reason is what says which fix it needs.
@@ -743,9 +755,16 @@ class Follower:
         refused = "REFUSED" in said.upper()
 
         # A refused move did nothing, and saying otherwise would hand the
-        # matcher a motion that never happened.
-        moved_m, turned_rad = ((0.0, 0.0) if refused
-                               else self.odometry(direction, seconds))
+        # matcher a motion that never happened. A move CUT SHORT did only the
+        # part it ran for: 2026-09-25 22:43 a 1.2 s turn stopped after 0.2 s
+        # was handed to the matcher as the full 90 degrees, the thin map
+        # accepted it, and her heading was 75 degrees out from then on.
+        ran = seconds if not refused else 0.0
+        cut = _RAN_FOR.search(said or "")
+        if cut and not refused:
+            ran = min(seconds, float(cut.group(1)))
+        moved_m, turned_rad = ((0.0, 0.0) if ran <= 0.0
+                               else self.odometry(direction, ran))
         await self._sweep_into(mapper, moved_m, turned_rad)
         after = tuple(float(v) for v in mapper.pose)
         moved = math.hypot(after[0] - before[0], after[1] - before[1])
@@ -804,9 +823,19 @@ class GuardedRobot:
     async def drive_seconds(self, direction: str, seconds: float) -> str:
         import anyio.to_thread
 
+        import trip_recorder
         from mcp_server.tools import movement
-        return await anyio.to_thread.run_sync(movement.move, direction,
+        said = await anyio.to_thread.run_sync(movement.move, direction,
                                               float(seconds))
+        trip_recorder.note("move", src="follower", direction=direction,
+                           seconds=float(seconds), said=said)
+        return said
+
+    async def sweep(self) -> dict[int, int]:
+        import trip_recorder
+        scan = await self._inner.sweep()
+        trip_recorder.note("sweep", src="follower", scan=scan)
+        return scan
 
     async def clearance(self) -> tuple[float | None, bool]:
         """(millimetres ahead, is it blocking). READ ONLY — moves nothing.

@@ -68,6 +68,17 @@ def main() -> int:
           hazard is not None and hazard[0] == "obstacle",
           hazard[1] if hazard else "")
 
+    # --- 3b. but only for driving AT it (2026-09-25 22:43) ----------------
+    # Pinned 15 cm from a box, every turn and reverse was killed after 0.2 s.
+    for away in ("backward", "left", "right"):
+        check(f"a box ahead does not stop her going {away}",
+              reflex._hazard(away) is None)
+    check("it still stops her driving forward into it",
+          (reflex._hazard("forward") or ("",))[0] == "obstacle")
+    check("and an unknown direction still gets the full checks",
+          (reflex._hazard("") or ("",))[0] == "obstacle"
+          and (reflex._hazard("sideways") or ("",))[0] == "obstacle")
+
     # --- 4. UNKNOWN IS NOT CLEAR -------------------------------------------
     hardware.ranges = lambda: _FakeRanges(None)
     hazard = reflex._hazard()
@@ -89,6 +100,54 @@ def main() -> int:
           f"ABORT={hardware.ABORT.is_set()}")
     check("and it stopped the motors", fake.stops > before,
           f"stop() called {fake.stops - before} time(s)")
+
+    # --- 5b. the running loop lets her back away ----------------------------
+    hardware.ranges = lambda: _FakeRanges(config.SAFETY_STOP_MM - 50)
+    reflex._cliff_gap_mm = lambda: 120
+    hardware.ABORT.clear()
+    backing = fake.stops
+    hardware._last_drive = (-120.0, -120.0)     # both wheels backward
+    hardware.MOVING.set()
+    time.sleep(0.4)
+    hardware.MOVING.clear()
+    check("the running loop leaves a reverse away from the box alone",
+          not hardware.ABORT.is_set() and fake.stops == backing)
+    hardware._last_drive = (120.0, 120.0)       # both wheels forward
+    hardware.MOVING.set()
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and not hardware.ABORT.is_set():
+        time.sleep(0.02)
+    hardware.MOVING.clear()
+    check("and stops a forward move into it", hardware.ABORT.is_set())
+    hardware._last_drive = None
+
+    # The direction is read off the command, pre-inversion.
+    for command, want in (((120, 120), "forward"), ((-120, -120), "backward"),
+                          ((120, -120), "right"), ((-120, 120), "left"),
+                          ((0, 120), ""), (None, "")):
+        hardware._last_drive = command
+        check(f"command {command} reads as {want or 'unknown'}",
+              hardware.moving_direction() == want)
+    hardware._last_drive = None
+
+    class Board:
+        def __init__(self):
+            self.calls = []
+        def drive(self, left, right):
+            self.calls.append(("drive", left, right))
+        def stop(self):
+            self.calls.append(("stop",))
+        serial = "port"
+    board = Board()
+    wrapped = hardware._Commanded(board)
+    wrapped.drive(-100, -100)
+    check("the wrapper passes the command through and remembers it",
+          board.calls == [("drive", -100, -100)]
+          and hardware.moving_direction() == "backward"
+          and wrapped.serial == "port")
+    wrapped.stop()
+    check("and forgets it on stop, so the next move starts as unknown",
+          board.calls[-1] == ("stop",) and hardware.moving_direction() == "")
 
     # --- 6. it does NOT act while parked -----------------------------------
     hardware.ABORT.clear()

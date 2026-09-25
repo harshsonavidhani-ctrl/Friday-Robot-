@@ -305,11 +305,15 @@ async def _trip_start(robot):
         grid = OccupancyGrid.load(config.SLAM_MAP_FILE)
     except (OSError, ValueError) as exc:
         return None, f"I have no saved map ({exc})"
+    import trip_recorder
+
     scan = await robot.sweep()
+    trip_recorder.note("sweep", src="start", scan=scan)
     if not scan:
         return None, "my LiDAR did not answer"
     hyps, certain, why = await anyio.to_thread.run_sync(
         trip_tracker.start_hypotheses, grid, scan)
+    trip_recorder.note("start", hypotheses=hyps, certain=certain, why=why)
     if not hyps:
         return None, f"nothing on my map fits what I see: {why}"
     log.info("explore trip: on the saved map at %s%s",
@@ -334,6 +338,21 @@ async def _explore_trip(minutes: float):
     # refuses nor shuffles about first; trip_tracker follows both, and the
     # explorer's own moves tell them apart.
     _reclaim_if_run_gone()
+    import trip_recorder
+
+    trip_recorder.start(_recordings_dir())
+    try:
+        return await _recorded_trip(minutes)
+    finally:
+        trip_recorder.stop()
+
+
+def _recordings_dir():
+    """Next to the nav log, so the test suites record into their temp dirs."""
+    return nsm.NAV_LOG.parent / "trip_recordings"
+
+
+async def _recorded_trip(minutes: float):
     import asyncio
 
     hardware.ABORT.clear()
@@ -360,6 +379,7 @@ async def _explore_trip(minutes: float):
 
 async def _trip_body(minutes: float, robot, tracker):
     """Explore, tour, come back to the mark, grow the map, save home."""
+    import trip_recorder
     import trip_tracker
 
     frame = "saved"
@@ -383,6 +403,7 @@ async def _trip_body(minutes: float, robot, tracker):
         tracker.close()
     mapper, start, certain = tracker.best()
     log.info("explore trip: tracked %s", tracker.as_dict())
+    trip_recorder.note("tracked", report=report, tracker=tracker.as_dict())
 
     # 3. A PERSON SAID STOP: stay stopped. What she mapped is still kept.
     if why == "stop was called" or robot.stopped():
@@ -428,8 +449,11 @@ async def _trip_body(minutes: float, robot, tracker):
     # safely, or at least still matched.
     # Never from a trip whose start stayed a look-alike: its map would be
     # merged into the saved one at whichever spot it happened to follow.
-    grown = await _grow_map(mapper, frame, trusted=certain and bool(
-        back.arrived or getattr(mapper, "pose_trusted", False)))
+    # And only from one that GOT BACK: "the last sweep still matched" let a
+    # trip that ended stuck, its heading 75 degrees out after a cut-short
+    # turn, add 11.5 m2 of rotated walls (2026-09-25 22:43, undone).
+    grown = await _grow_map(mapper, frame,
+                            trusted=certain and bool(back.arrived))
 
     # 7. A HOME TO RETURN TO. The prompt's return-to-home goes to "the stored
     # home / boot pose", and none had ever been stored. The first exploration
