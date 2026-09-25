@@ -686,11 +686,18 @@ class Follower:
         # mapper keeps the prior, which IS the last verified pose, so that
         # trust carries over. Only with no motion, only on this one reason,
         # only after a verified pose: after any move the rule is unchanged.
+        #
+        # And not only on that reason. 2026-09-25 23:38: facing a part of the
+        # room the saved map does not hold, the standstill check sweep after a
+        # step scored "too low" against the map AND just under the sweep-to-
+        # sweep bar against the step's own (motion-blurred) sweep, and the leg
+        # was abandoned by a robot that had not moved. With no motion there is
+        # nothing to be wrong about: the pose is the last verified one.
         if (not trusted and not moved_m and not turned_rad
-                and self.last_match == "geometry ambiguous"
                 and self._held_trust):
             mapper.pose_trusted = trusted = True
-            self.last_match = "held: nothing moved since the last match"
+            self.last_match = (f"held: nothing moved since the last verified "
+                               f"pose (map: {self.last_match})")
         # ⚠ WHERE THE SAVED MAP CANNOT CONFIRM HER, THE LAST SWEEP CAN. Facing
         # a part of the room the 09-19 map barely holds, even the TRUE pose
         # scores "too low" (2026-09-25 23:18: 0.12 at the real -58 degrees).

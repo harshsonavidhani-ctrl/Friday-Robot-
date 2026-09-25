@@ -1580,12 +1580,24 @@ def test_lost_on_the_map_looks_again() -> None:
     sim = _sim()
 
     class Flaky(sim.FakeMapper):
-        """Loses the match once, on its third look -- as after a turn that
-        did not happen the way it was commanded (2026-09-24 23:55)."""
+        """Loses the match once, on its first look AFTER A MOVE -- as after a
+        turn that did not happen the way it was commanded (2026-09-24 23:55).
+        After a move, not standing still: since 2026-09-25 a standstill sweep
+        keeps the last verified pose, because nothing moved."""
+
+        lost_for = None
 
         def update(self, scan, moved_m=0.0, turned_rad=0.0, now=None):
             out = super().update(scan, moved_m, turned_rad, now)
-            self.pose_trusted = self.updates != 3
+            # Lost on the sweep after the move AND the look after it: a
+            # post-move miss the next look confirms is merely a fresh fix.
+            if (moved_m or turned_rad) and self.lost_for is None:
+                self.lost_for = 2
+            if self.lost_for:
+                self.lost_for -= 1
+                self.pose_trusted = False
+            else:
+                self.pose_trusted = True
             return out
 
     real = nsm.locate

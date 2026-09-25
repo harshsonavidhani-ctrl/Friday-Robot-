@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 
 import config
@@ -446,6 +447,10 @@ async def _trip_body(minutes: float, robot, tracker):
     controller.frame = frame
     back = await controller.return_to(start[:2], mapper)
     log.info("explore trip: back — %s", back.why)
+    if back.arrived:
+        faced = await _face(controller, mapper, float(start[2]))
+        log.info("explore trip: %s the way she set off",
+                 "facing" if faced else "could not turn to face")
 
     # 6. THE MAP GROWS (Harsh, 2026-09-24: "map grows while exploring and it
     # should use the map"). Only from a trip that knows where it is: home
@@ -478,6 +483,36 @@ async def _trip_body(minutes: float, robot, tracker):
                          note="where my first exploration started")
             nav_voice.VOICE.say("home_set")
     return back
+
+
+# Back on the spot, she turns to face the way she set off: Harsh, 2026-09-25,
+# watched her say "I am back where I started" at a spot that did not look like
+# the start -- within the 0.28 m arrival tolerance, facing somewhere else.
+FACE_TOLERANCE_DEG = 15.0
+FACE_MAX_PIVOTS = 8
+
+
+async def _face(controller, mapper, heading: float) -> bool:
+    """Pivot, measured, until she faces `heading` (map radians). True if so."""
+    import nav_follower
+
+    robot = controller.robot
+    follower = nav_follower.Follower(robot)
+    follower._held_trust = bool(getattr(mapper, "pose_trusted", False))
+    for _ in range(FACE_MAX_PIVOTS):
+        if robot.stopped():
+            return False
+        error = math.degrees(nav_follower._wrap(heading
+                                                - float(mapper.pose[2])))
+        if abs(error) <= FACE_TOLERANCE_DEG:
+            return True
+        step = max(-nav_follower.PIVOT_MAX_DEG,
+                   min(nav_follower.PIVOT_MAX_DEG, error))
+        done = await follower.step(mapper, "left" if step > 0 else "right",
+                                   follower.rates.seconds_for_turn(step))
+        if done.refused or not getattr(mapper, "pose_trusted", False):
+            return False
+    return False
 
 
 def _sightings():

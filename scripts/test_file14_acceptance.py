@@ -845,6 +845,12 @@ def twelve_explore_trip() -> None:
                   home is not None
                   and math.hypot(home["x"] - 0.5, home["y"] - 2.0) < 0.3
                   and _line("home_set") in rig.voice.said, str(home))
+            check("and back on the spot she turns to face the way she set "
+                  "off (Harsh: it said it was back where it started, facing "
+                  "elsewhere)",
+                  abs(math.degrees((world.theta - 0.0 + math.pi)
+                                   % (2 * math.pi) - math.pi)) <= 20.0,
+                  f"facing {math.degrees(world.theta):+.0f}°, set off at +0°")
             check("and the LAST thing she says is what she saw (this rig "
                   "has no camera, so she says that rather than 'nothing')",
                   rig.voice.said[-1].startswith("My camera did not give me")

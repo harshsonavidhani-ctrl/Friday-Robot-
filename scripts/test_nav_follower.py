@@ -656,13 +656,15 @@ def test_standing_still_ambiguous_is_not_lost() -> None:
         return asyncio.run(f._sweep_into(mapper, moved, turned)), mapper
 
     ok, m = once(True)
-    check("no motion, verified before, only sharpness: still trusted",
+    check("no motion, verified before, map unsure: still trusted",
           ok and m.pose_trusted and m.pose == (1.0, 2.0, 0.5))
     check("but not after a move (that would be dead reckoning)",
           not once(True, moved=0.2)[0] and not once(True, turned=0.3)[0])
     check("nor when the pose was never verified", not once(False)[0])
-    check("nor when the scan does not fit at all (score too low)",
-          not once(True, reason="score too low")[0])
+    check("standing still, even a poor map fit keeps it: nothing moved",
+          once(True, reason="score too low")[0])
+    check("but a poor fit after a move does not",
+          not once(True, turned=0.3, reason="score too low")[0])
 
 
 def main() -> int:
