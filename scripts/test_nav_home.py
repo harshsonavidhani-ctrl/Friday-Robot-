@@ -1668,6 +1668,45 @@ def test_offline_tools_registered() -> None:
            "explore_and_return"} <= set(config.COMMAND_FRESH_TOOLS))
 
 
+def test_home_check() -> None:
+    """The saved map corrects the tracked pose at the end of a trip (09-26)."""
+    print("\n— back at the mark, the saved map checks her —")
+    from types import SimpleNamespace
+    from mcp_server.tools import nav_tools as nt
+
+    real = nt._home_fix
+    start = (1.0, 1.0, 0.5)
+
+    def run(fix, certain=True, tracked=(1.05, 1.0, 0.5)):
+        async def fake(_robot):
+            return fix
+        nt._home_fix = fake
+        mapper = SimpleNamespace(pose=tracked, pose_trusted=True)
+        again = asyncio.run(nt._check_home(
+            SimpleNamespace(robot=None), mapper, start,
+            SimpleNamespace(started_certain=certain)))
+        return again, mapper.pose
+
+    try:
+        again, pose = run((1.30, 1.0, 1.3))
+        check("a sure fix that agrees corrects the pose, heading included",
+              pose == (1.30, 1.0, 1.3), str(pose))
+        check("and 30 cm off the mark means drive again", again)
+        again, pose = run((1.05, 1.02, 0.1))
+        check("a correction that leaves her on the mark needs no drive",
+              not again and pose == (1.05, 1.02, 0.1))
+        again, pose = run((2.0, 2.0, 0.5))
+        check("a fix far from where she thinks she is is a look-alike: "
+              "ignored", not again and pose == (1.05, 1.0, 0.5), str(pose))
+        again, pose = run((1.30, 1.0, 1.3), certain=False)
+        check("from a start that was a look-alike, no check at all",
+              not again and pose == (1.05, 1.0, 0.5))
+        again, pose = run(None)
+        check("no sure fix, no change", not again and pose == (1.05, 1.0, 0.5))
+    finally:
+        nt._home_fix = real
+
+
 def main() -> int:
     print("nav_state_machine.py + landmarks.py + nav_tools.py — file 14 steps 6-11")
     test_timer()
@@ -1716,6 +1755,7 @@ def main() -> int:
     test_bundle_keeps_data_with_its_map()
     test_refused_restart_is_not_a_run()
     test_lost_on_the_map_looks_again()
+    test_home_check()
     test_already_there_is_arrived()
     test_offline_tools_registered()
     print(f"\n{'ALL PASSED' if not _failures else f'{_failures} FAILED'}")

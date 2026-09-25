@@ -514,7 +514,7 @@ class _ToolRig:
         self.sightings = None
         self.saved = (nt._controller, nsm.relocalise, self.nav_voice.VOICE,
                       a._running, a.stop_exploration, a.start_exploration,
-                      nt._trip_start, nt._sightings)
+                      nt._trip_start, nt._sightings, nt._home_fix)
         robot = FakeRobot(self.world)
 
         async def halt():
@@ -555,9 +555,13 @@ class _ToolRig:
                 remember=self.remembered.append, report_file=None)
             return self.sightings
 
+        async def home_fix(_robot):
+            return None               # no saved map in the rig to check with
+
         nt._controller = controller
         nt._trip_start = trip_start
         nt._sightings = sightings
+        nt._home_fix = home_fix
         nsm.relocalise = relocalise
         self.nav_voice.VOICE = self.voice
         a._running = lambda: self.running
@@ -568,7 +572,7 @@ class _ToolRig:
         a, nt = self.autonomy, self.nav_tools
         (nt._controller, nsm.relocalise, self.nav_voice.VOICE,
          a._running, a.stop_exploration, a.start_exploration,
-         nt._trip_start, nt._sightings) = self.saved
+         nt._trip_start, nt._sightings, nt._home_fix) = self.saved
         return False
 
 

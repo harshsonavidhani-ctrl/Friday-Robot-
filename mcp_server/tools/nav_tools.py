@@ -452,6 +452,16 @@ async def _trip_body(minutes: float, robot, tracker):
                                           tolerance_m=TRIP_RETURN_TOL_M,
                                           loose_m=TRIP_RETURN_LOOSE_M))
     log.info("explore trip: back — %s", back.why)
+    if back.arrived and await _check_home(controller, mapper, start, tracker):
+        # The saved map says she is not quite there: one more short drive.
+        controller, _ = _controller()
+        controller.frame = frame
+        back = await controller.return_to(
+            start[:2], mapper, arrival=nav_follower.ArrivalMonitor(
+                start[:2], tolerance_m=TRIP_RETURN_TOL_M,
+                loose_m=TRIP_RETURN_LOOSE_M))
+        log.info("explore trip: back, after the map's correction — %s",
+                 back.why)
     if back.arrived:
         faced = await _face(controller, mapper, float(start[2]))
         log.info("explore trip: %s the way she set off",
@@ -497,6 +507,62 @@ async def _trip_body(minutes: float, robot, tracker):
 # so the way back asks for 12 cm, relaxing to 20 cm only if it cannot settle.
 TRIP_RETURN_TOL_M = 0.12
 TRIP_RETURN_LOOSE_M = 0.20
+
+# ⚠ HER TRACKER DRIFTS OVER A TRIP, THE SAVED MAP DOES NOT. Trip 2026-09-26
+# 00:09 came back 13 cm from the mark by her own reckoning; a sure whole-map
+# fix afterwards put her 18 cm off and facing 48 degrees away from the way
+# she set off, so "facing the way she set off" faced somewhere else. When the
+# start was placed on the saved map with no look-alike, the same whole-map
+# search is asked again on arrival, and a sure answer that agrees with the
+# tracker to within HOME_CHECK_MAX_JUMP_M (so a look-alike cannot hijack it)
+# replaces the tracked pose before the last correction and the turn.
+HOME_CHECK_MAX_JUMP_M = 0.60
+
+
+async def _check_home(controller, mapper, start, tracker) -> bool:
+    """Correct the pose from the saved map. True if she should drive again."""
+    if not getattr(tracker, "started_certain", False):
+        return False
+    fix = await _home_fix(controller.robot)
+    if fix is None:
+        return False
+    jump = math.hypot(fix[0] - float(mapper.pose[0]),
+                      fix[1] - float(mapper.pose[1]))
+    turn = math.degrees(abs((fix[2] - float(mapper.pose[2]) + math.pi)
+                            % (2 * math.pi) - math.pi))
+    if jump > HOME_CHECK_MAX_JUMP_M:
+        log.info("explore trip: the map places her %.2f m from where she "
+                 "thinks she is -- a look-alike, not a correction", jump)
+        return False
+    log.info("explore trip: the map corrects her by %.2f m and %.0f deg",
+             jump, turn)
+    mapper.pose = tuple(float(v) for v in fix)
+    mapper.pose_trusted = True
+    away = math.hypot(fix[0] - float(start[0]), fix[1] - float(start[1]))
+    return away > TRIP_RETURN_TOL_M
+
+
+async def _home_fix(robot):
+    """A sure whole-map fix of where she stands, or None. Moves nothing."""
+    import anyio.to_thread
+    import global_localise
+    import path_planner
+    from slam.grid import OccupancyGrid
+
+    try:
+        grid = OccupancyGrid.load(config.SLAM_MAP_FILE)
+        scan = await robot.sweep()
+        if not scan:
+            return None
+        plannable = path_planner.preprocess(grid).plannable
+        fix = await anyio.to_thread.run_sync(
+            lambda: global_localise.localise(grid, scan,
+                                             restrict_to=plannable))
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("explore trip: could not check home on the map: %s", exc)
+        return None
+    return tuple(float(v) for v in fix.pose) if fix.pose is not None else None
+
 
 # Back on the spot, she turns to face the way she set off: Harsh, 2026-09-25,
 # watched her say "I am back where I started" at a spot that did not look like
