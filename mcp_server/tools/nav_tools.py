@@ -334,7 +334,7 @@ async def _explore_trip(minutes: float):
     # refuses nor shuffles about first; trip_tracker follows both, and the
     # explorer's own moves tell them apart.
     _reclaim_if_run_gone()
-    import trip_tracker
+    import asyncio
 
     hardware.ABORT.clear()
     robot = _explorer_robot()
@@ -343,6 +343,25 @@ async def _explore_trip(minutes: float):
         log.info("explore trip: not setting off — %s", why)
         nav_voice.VOICE.say("lost")
         return None
+
+    # WHAT SHE SAW (Harsh, 2026-09-25: "remember the objects it saw and ...
+    # speak what all it saw during exploration"). The camera watcher,
+    # scene.py, keeps running through the trip; this collects what it names,
+    # remembers it and says it at the very end -- however the trip ends:
+    # back at the mark, stopped by a person, or stuck and asking for help.
+    seen = _sightings()
+    watcher = asyncio.create_task(_watch_objects(seen))
+    try:
+        return await _trip_body(minutes, robot, tracker)
+    finally:
+        watcher.cancel()
+        nav_voice.VOICE.say_text(seen.finish())
+
+
+async def _trip_body(minutes: float, robot, tracker):
+    """Explore, tour, come back to the mark, grow the map, save home."""
+    import trip_tracker
+
     frame = "saved"
 
     # 2. EXPLORE. The explorer runs exactly as it always has, on its own
@@ -427,6 +446,33 @@ async def _explore_trip(minutes: float):
                          note="where my first exploration started")
             nav_voice.VOICE.say("home_set")
     return back
+
+
+def _sightings():
+    """What she sees on this trip: read from scene.py's file, never the camera."""
+    import trip_objects
+    return trip_objects.TripSightings(
+        camera_reason=_camera_reason,
+        report_file=nsm.NAV_LOG.parent / "trip_objects.json")
+
+
+def _camera_reason():
+    import scene
+    return scene._why_not_now()
+
+
+async def _watch_objects(seen) -> None:
+    """Collect every new frame the camera watcher names, until cancelled."""
+    import asyncio
+
+    quiet_since = time.monotonic()
+    while True:
+        if seen.poll():
+            quiet_since = time.monotonic()
+        elif time.monotonic() - quiet_since > 2.5 * config.SCENE_PERIOD_S:
+            # Ask why WHILE it is quiet: afterwards the reason may be gone.
+            seen.note_camera()
+        await asyncio.sleep(config.SCENE_BRIDGE_POLL_S)
 
 
 async def _grow_map(mapper, frame: str, trusted: bool):

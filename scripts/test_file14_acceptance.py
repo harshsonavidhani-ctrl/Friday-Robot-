@@ -510,9 +510,11 @@ class _ToolRig:
 
     def __enter__(self):
         a, nt = self.autonomy, self.nav_tools
+        self.remembered: list[str] = []
+        self.sightings = None
         self.saved = (nt._controller, nsm.relocalise, self.nav_voice.VOICE,
                       a._running, a.stop_exploration, a.start_exploration,
-                      nt._trip_start)
+                      nt._trip_start, nt._sightings)
         robot = FakeRobot(self.world)
 
         async def halt():
@@ -545,8 +547,17 @@ class _ToolRig:
             return (None, why) if mapper is None else (_FakeTracker(mapper),
                                                        "")
 
+        def sightings():
+            # Never the real scene.json, never the real memory.db.
+            import trip_objects
+            self.sightings = trip_objects.TripSightings(
+                scene_json=Path(_LOG_DIR.name) / "no_scene.json",
+                remember=self.remembered.append, report_file=None)
+            return self.sightings
+
         nt._controller = controller
         nt._trip_start = trip_start
+        nt._sightings = sightings
         nsm.relocalise = relocalise
         self.nav_voice.VOICE = self.voice
         a._running = lambda: self.running
@@ -557,7 +568,7 @@ class _ToolRig:
         a, nt = self.autonomy, self.nav_tools
         (nt._controller, nsm.relocalise, self.nav_voice.VOICE,
          a._running, a.stop_exploration, a.start_exploration,
-         nt._trip_start) = self.saved
+         nt._trip_start, nt._sightings) = self.saved
         return False
 
 
@@ -831,6 +842,10 @@ def twelve_explore_trip() -> None:
                   home is not None
                   and math.hypot(home["x"] - 0.5, home["y"] - 2.0) < 0.3
                   and _line("home_set") in rig.voice.said, str(home))
+            check("and the LAST thing she says is what she saw (this rig "
+                  "has no camera, so she says that rather than 'nothing')",
+                  rig.voice.said[-1].startswith("My camera did not give me")
+                  and rig.sightings is not None, str(rig.voice.said[-1:]))
         _items.append(("Explore trip comes back",
                        back is not None and back.arrived))
 

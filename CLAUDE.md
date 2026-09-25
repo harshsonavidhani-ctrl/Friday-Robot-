@@ -737,3 +737,24 @@ never the explorer's.
 
 **Not yet tried on the robot.** Still open: `_refind` during the drive home
 searches the whole map and can pick the other look-alike.
+
+## What she saw on the trip (2026-09-25 22:3x)
+
+Harsh: "the offline model uses cameras to see objects and remember the
+objects it saw and also report and speak what all it saw during
+exploration". `trip_objects.py`, offline, no model: during an explore trip
+`nav_tools._watch_objects` polls `state/scene.json` (scene.py's detector on
+the up camera, every SCENE_PERIOD_S) and collects every NEW frame taken after
+the trip began. A thing counts once named in 2+ pictures or once at score
+≥ 0.80 (the detector has said "stop sign" and "aeroplane" in this room); how
+many = the most in ONE picture. At the very end of the trip — however it
+ends — she says one built sentence ("On this trip I saw a chair and two
+bottles."), `memory.remember(..., kind="exploration_sighting")` keeps one
+note per trip, and `state/trip_objects.json` holds the details.
+
+⚠ scene.py skips every tick while the DASHBOARD streams the up camera, so a
+trip with the camera open on his phone sees nothing — she says so ("the
+dashboard was showing it") instead of "I saw nothing". The acceptance rig
+fakes `nt._sightings` (temp scene file, list for memory).
+
+    ./venv/bin/python scripts/test_trip_objects.py       # seconds
