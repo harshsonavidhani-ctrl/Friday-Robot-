@@ -172,6 +172,23 @@ STALL_RATIO = 0.25
 # whole LiDAR sweep.
 MOTION_HYPOTHESES = (1.0, 0.5, 0.0)
 
+def unanswered(direction: str, exc) -> str:
+    """What a move says when the motor board's reply was lost or garbled.
+
+    ⚠ NOT A REFUSAL. 2026-09-26 00:42: the board replied 'O' instead of 'OK'
+    to a right turn -- it had RECEIVED the command, and she turned about 25
+    degrees before guarded_move stopped her. Read as "refused, nothing moved",
+    the tracker kept the old heading and she announced she was back where she
+    started, turned. So the move is treated as asked for, and the sweep after
+    it (scan_motion searches none .. 120% of it) says what really happened.
+    Lost bytes on this link come with the motors' current kicks on a tired
+    battery ('' 00:06, 'K' 00:34, 'O' 00:42).
+    """
+    log.warning("a move's reply was lost: %s", exc)
+    return (f"{direction} — the motor board's reply was lost ({exc}); what "
+            f"the move did is measured from the sweeps instead")
+
+
 # How long a guarded move really ran, from its own words: safety.MoveResult
 # says "right STOPPED after 0.2s of 1.2s — stop was called".
 _RAN_FOR = re.compile(r"STOPPED after ([0-9.]+)s of")
@@ -1007,11 +1024,7 @@ class GuardedRobot:
             said = await anyio.to_thread.run_sync(movement.move, direction,
                                                   float(seconds))
         except Exception as exc:                 # noqa: BLE001
-            # A lost reply from the motor board (a USB reset, 2026-09-26
-            # 00:06). guarded_move has already stopped the wheels; as a
-            # refusal the drive ends the way it ends for any refusal.
-            log.warning("a move went unanswered: %s", exc)
-            said = f"REFUSED — the motor board did not answer ({exc})"
+            said = unanswered(direction, exc)
         trip_recorder.note("move", src="follower", direction=direction,
                            seconds=float(seconds), said=said)
         return said

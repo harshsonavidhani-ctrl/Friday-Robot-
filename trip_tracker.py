@@ -360,21 +360,19 @@ def reported_motion(kind: str, said: str) -> tuple[float, float] | None:
     return sign * float(got.group(1)) / 100.0, 0.0
 
 
-async def _unanswered_is_refused(move) -> str:
-    """A move whose motor command went unanswered reads as a refusal.
+async def _unanswered_is_measured(move, what: str) -> str:
+    """A move whose reply was lost is measured, not refused.
 
-    2026-09-26 00:06: a USB reset on the hub swallowed one reply from the
-    motor board ("drive(-216, -216) -> ''"); guarded_move stopped the wheels
-    as always, but the exception ended the whole trip with "I need help".
-    As a refusal, the explorer stops the way it stops for any refusal and
-    the trip still tries the drive home -- which refuses in turn, and ends in
-    FAILSAFE, if the board really has gone.
+    See nav_follower.unanswered: the board had received the command and she
+    moved. The words carry no "Turned about"/"Travelled about", so the
+    listener falls back on the planned motion as the range to search, and
+    the explorer -- which verifies its own turns against the sweeps -- goes
+    on exploring instead of ending the trip.
     """
     try:
         return await move
     except Exception as exc:                     # noqa: BLE001
-        log.warning("a move went unanswered: %s", exc)
-        return f"REFUSED — the motor board did not answer ({exc})"
+        return nav_follower.unanswered(what, exc)
 
 
 class PlannerTurns:
@@ -422,7 +420,7 @@ class ListeningRobot:
 
     async def turn(self, degrees: float) -> str:
         import trip_recorder
-        said = await _unanswered_is_refused(self._inner.turn(degrees))
+        said = await _unanswered_is_measured(self._inner.turn(degrees), "turn")
         got = reported_motion("turn", said)
         if got is None:                  # words not understood: the plan
             got = (0.0, math.radians(float(degrees)))
@@ -434,7 +432,8 @@ class ListeningRobot:
 
     async def forward(self, cm: float) -> str:
         import trip_recorder
-        said = await _unanswered_is_refused(self._inner.forward(cm))
+        said = await _unanswered_is_measured(self._inner.forward(cm),
+                                             "forward")
         got = reported_motion("forward", said)
         if got is None:
             got = (float(cm) / 100.0, 0.0)

@@ -667,6 +667,42 @@ def test_standing_still_ambiguous_is_not_lost() -> None:
           not once(True, turned=0.3, reason="score too low")[0])
 
 
+def test_a_lost_reply_is_measured_not_refused() -> None:
+    """2026-09-26 00:42: 'O' for 'OK', and she had turned about 25 degrees."""
+    print("\n— a move whose reply was lost is measured, not refused —")
+    said = nf.unanswered("right", RuntimeError("drive(170, 170) -> 'O'"))
+    check("it does not read as a refusal", "REFUSED" not in said.upper(), said)
+
+    class Stub:
+        pose = (0.0, 0.0, 0.0)
+        pose_trusted = True
+
+        def __init__(self):
+            self.calls = []
+
+        def update(self, scan, moved=0.0, turned=0.0):
+            self.calls.append((moved, turned))
+            return {"reason": "matched"}
+
+    class Lost:
+        async def observe(self):
+            pass
+
+        async def drive_seconds(self, direction, seconds):
+            return said
+
+        async def sweep(self):
+            return {0: 1000}
+
+    mapper = Stub()
+    follower = nf.Follower(Lost(), rates=nf.RateModel(30.0, 60.0, True))
+    done = asyncio.run(follower._execute(mapper, "right", 1.0))
+    check("the drive goes on (not refused)", not done.refused)
+    check("and the move is searched for as asked, not assumed to be nothing",
+          abs(math.degrees(mapper.calls[-1][1]) + 60.0) < 0.5,
+          f"{math.degrees(mapper.calls[-1][1]):+.1f}°")
+
+
 def main() -> int:
     print("nav_follower.py — file 14 steps 4-5")
     test_lookahead()
@@ -683,6 +719,7 @@ def main() -> int:
     test_looks_before_every_move()
     test_a_cut_short_move_counts_what_ran()
     test_standing_still_ambiguous_is_not_lost()
+    test_a_lost_reply_is_measured_not_refused()
     test_honours_stop_and_budgets()
     test_reports_uncalibrated()
     test_does_not_touch_the_motors()
