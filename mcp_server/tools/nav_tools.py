@@ -525,6 +525,8 @@ async def _check_home(controller, mapper, start, tracker) -> bool:
         return False
     fix = await _home_fix(controller.robot)
     if fix is None:
+        log.info("explore trip: the saved map is not sure where she is at the "
+                 "mark, so her own tracking stands")
         return False
     jump = math.hypot(fix[0] - float(mapper.pose[0]),
                       fix[1] - float(mapper.pose[1]))
@@ -569,6 +571,9 @@ async def _home_fix(robot):
 # the start -- within the 0.28 m arrival tolerance, facing somewhere else.
 FACE_TOLERANCE_DEG = 15.0
 FACE_MAX_PIVOTS = 8
+# A pivot measured under this turned nothing; this many in a row, stop.
+FACE_IDLE_DEG = 3.0
+FACE_IDLE_PIVOTS = 2
 
 
 async def _face(controller, mapper, heading: float) -> bool:
@@ -578,6 +583,7 @@ async def _face(controller, mapper, heading: float) -> bool:
     robot = controller.robot
     follower = nav_follower.Follower(robot)
     follower._held_trust = bool(getattr(mapper, "pose_trusted", False))
+    idle = 0
     for _ in range(FACE_MAX_PIVOTS):
         if robot.stopped():
             return False
@@ -590,6 +596,13 @@ async def _face(controller, mapper, heading: float) -> bool:
         done = await follower.step(mapper, "left" if step > 0 else "right",
                                    follower.rates.seconds_for_turn(step))
         if done.refused or not getattr(mapper, "pose_trusted", False):
+            return False
+        # Pivots that do not move her are humming, not turning (2026-09-26
+        # 00:35: -26, -17, -16, -9, -7, -7, 0, 0, 0 degrees as the motor
+        # battery ran down). Two in a row and she stops asking.
+        idle = idle + 1 if abs(done.turned_deg) < FACE_IDLE_DEG else 0
+        if idle >= FACE_IDLE_PIVOTS:
+            log.info("explore trip: the wheels are not turning her any more")
             return False
     return False
 
