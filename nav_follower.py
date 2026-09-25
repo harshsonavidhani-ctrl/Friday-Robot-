@@ -528,6 +528,8 @@ class Follower:
         self.events: list[dict] = []
         self.last_fraction = 1.0
         self.last_match = ""
+        # Whether the pose was verified by the last sweep (see _sweep_into).
+        self._held_trust = False
 
     async def _sweep_into(self, mapper, moved_m: float = 0.0,
                           turned_rad: float = 0.0) -> bool:
@@ -559,7 +561,23 @@ class Follower:
         # that it was lost; the reason is what says which fix it needs.
         self.last_match = (info.get("reason", "") if isinstance(info, dict)
                            else "")
-        return bool(mapper.pose_trusted)
+        trusted = bool(mapper.pose_trusted)
+        # ⚠ STANDING STILL, "GEOMETRY AMBIGUOUS" IS NOT "LOST". Parked, the
+        # matcher searches 4 cm / 3 degrees, and sharpness is the peak over the
+        # MEDIAN of that window -- where every candidate is nearly right, so a
+        # correct match can fall under the gate. 2026-09-25 23:14: every tour
+        # leg gave up on its first sweep, score 0.58-0.61 (floor 0.15),
+        # sharpness 1.33 (gate 1.4), nothing having moved. With no motion the
+        # mapper keeps the prior, which IS the last verified pose, so that
+        # trust carries over. Only with no motion, only on this one reason,
+        # only after a verified pose: after any move the rule is unchanged.
+        if (not trusted and not moved_m and not turned_rad
+                and self.last_match == "geometry ambiguous"
+                and self._held_trust):
+            mapper.pose_trusted = trusted = True
+            self.last_match = "held: nothing moved since the last match"
+        self._held_trust = trusted
+        return trusted
 
     def odometry(self, direction: str, seconds: float) -> tuple[float, float]:
         """What a move of `seconds` should have done: (metres, radians).
@@ -598,6 +616,9 @@ class Follower:
         max_ticks = config.GOTO_MAX_LEGS if max_ticks is None else int(max_ticks)
         monitor = arrival or ArrivalMonitor(goal, cell_m=mapper.grid.cell)
         report.tolerance_m = monitor.tolerance
+        # A mapper handed over already verified (the trip tracker's) starts
+        # trusted: its first standstill sweep need not re-earn it.
+        self._held_trust = bool(getattr(mapper, "pose_trusted", False))
 
         started = time.monotonic()
         commanded = 0.0

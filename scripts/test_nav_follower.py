@@ -630,6 +630,41 @@ def test_a_cut_short_move_counts_what_ran() -> None:
               abs(got - want_deg) < 0.5, f"{got:+.1f}°")
 
 
+def test_standing_still_ambiguous_is_not_lost() -> None:
+    """2026-09-25 23:14: tour legs quit on a good standstill match (1.33)."""
+    print("\n— standing still, a soft match keeps the verified pose —")
+
+    class Soft:
+        def __init__(self, trusted):
+            self.pose = (1.0, 2.0, 0.5)
+            self.pose_trusted = trusted
+            self.reason = "geometry ambiguous"
+
+        def update(self, scan, moved=0.0, turned=0.0):
+            self.pose_trusted = False
+            return {"reason": self.reason}
+
+    class Sweeper:
+        async def sweep(self):
+            return {0: 1000}
+
+    def once(start_trusted, moved=0.0, turned=0.0, reason="geometry ambiguous"):
+        mapper = Soft(start_trusted)
+        mapper.reason = reason
+        f = nf.Follower(Sweeper(), rates=nf.RateModel(30.0, 60.0, True))
+        f._held_trust = start_trusted
+        return asyncio.run(f._sweep_into(mapper, moved, turned)), mapper
+
+    ok, m = once(True)
+    check("no motion, verified before, only sharpness: still trusted",
+          ok and m.pose_trusted and m.pose == (1.0, 2.0, 0.5))
+    check("but not after a move (that would be dead reckoning)",
+          not once(True, moved=0.2)[0] and not once(True, turned=0.3)[0])
+    check("nor when the pose was never verified", not once(False)[0])
+    check("nor when the scan does not fit at all (score too low)",
+          not once(True, reason="score too low")[0])
+
+
 def main() -> int:
     print("nav_follower.py — file 14 steps 4-5")
     test_lookahead()
@@ -645,6 +680,7 @@ def main() -> int:
     test_moves_are_measured_by_the_map()
     test_looks_before_every_move()
     test_a_cut_short_move_counts_what_ran()
+    test_standing_still_ambiguous_is_not_lost()
     test_honours_stop_and_budgets()
     test_reports_uncalibrated()
     test_does_not_touch_the_motors()
