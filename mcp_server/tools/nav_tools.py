@@ -291,6 +291,33 @@ async def explore_and_return(minutes: float | None = None,
     return nav_voice.VOICE.say("exploring", _minutes_phrase(minutes))
 
 
+async def _trip_start(robot):
+    """(TripTracker, "") or (None, why): where she is, from one look.
+
+    On the saved map only. Two look-alike spots are both kept and followed;
+    only a map that fits nowhere at all stops the trip before it starts.
+    """
+    import anyio.to_thread
+    import trip_tracker
+    from slam.grid import OccupancyGrid
+
+    try:
+        grid = OccupancyGrid.load(config.SLAM_MAP_FILE)
+    except (OSError, ValueError) as exc:
+        return None, f"I have no saved map ({exc})"
+    scan = await robot.sweep()
+    if not scan:
+        return None, "my LiDAR did not answer"
+    hyps, certain, why = await anyio.to_thread.run_sync(
+        trip_tracker.start_hypotheses, grid, scan)
+    if not hyps:
+        return None, f"nothing on my map fits what I see: {why}"
+    log.info("explore trip: on the saved map at %s%s",
+             [[round(float(v), 2) for v in h] for h in hyps],
+             "" if certain else " (two look-alikes; following both)")
+    return trip_tracker.TripTracker(grid, hyps, certain), ""
+
+
 def _minutes_phrase(minutes: float) -> str:
     if abs(minutes - round(minutes)) < 1e-6:
         n = int(round(minutes))
@@ -300,38 +327,49 @@ def _minutes_phrase(minutes: float) -> str:
 
 async def _explore_trip(minutes: float):
     """Mark the spot, explore on one tracked map, come back to the mark."""
-    # 1. THE MARK. From the LiDAR, before a wheel turns, ON THE OLD MAP ONLY
-    # (Harsh, 2026-09-25: "it should not use fresh map"). If two spots on it
-    # look alike she moves a little to tell them apart (nsm.locate); if she
-    # still cannot tell, she does not explore at all -- a trip whose start is
-    # a guess is a trip that comes back to the wrong place.
+    # 1. THE MARK. She looks with the LiDAR, before a wheel turns, ON THE OLD
+    # MAP ONLY (Harsh, 2026-09-25: "it should not use fresh map"), and sets
+    # off: "it just sees, it should explore". Where two spots on the map look
+    # alike -- most of the hostel room, measured 2026-09-25 -- she neither
+    # refuses nor shuffles about first; trip_tracker follows both, and the
+    # explorer's own moves tell them apart.
     _reclaim_if_run_gone()
-    mapper, why = await nsm.relocalise()
-    if mapper is None:
-        log.info("explore trip: not setting off — %s", why)
-        return None
-    frame = "saved"
-    start = tuple(float(v) for v in mapper.pose)
-    log.info("explore trip: marked %s on the saved map, exploring %.1f min",
-             [round(v, 2) for v in start], minutes)
+    import trip_tracker
 
-    # 2. EXPLORE, tracked the whole way on the same map.
-    deadline = time.monotonic() + minutes * 60.0
     hardware.ABORT.clear()
     robot = _explorer_robot()
-    report = await _mission(robot).run(
-        mapper, budget_m=max(config.MISSION_BUDGET_M,
-                             minutes * TRIP_METRES_PER_MINUTE),
+    tracker, why = await _trip_start(robot)
+    if tracker is None:
+        log.info("explore trip: not setting off — %s", why)
+        nav_voice.VOICE.say("lost")
+        return None
+    frame = "saved"
+
+    # 2. EXPLORE. The explorer runs exactly as it always has, on its own
+    # copy of the saved map; the tracker only listens to its moves and sweeps.
+    deadline = time.monotonic() + minutes * 60.0
+    report = await _mission(trip_tracker.ListeningRobot(robot, tracker)).run(
+        tracker.explorer_mapper(),
+        budget_m=max(config.MISSION_BUDGET_M,
+                     minutes * TRIP_METRES_PER_MINUTE),
         budget_s=minutes * 60.0)
     why = report.get("stopped_because", "")
     log.info("explore trip: exploring ended (%s), %.2f m driven, %.1f m2",
              why, report.get("driven_m", 0.0), report.get("floor_m2", 0.0))
+    # From here on she drives on the TRACKER's map, back to its mark -- once
+    # it has caught up with every sweep the explorer took.
+    try:
+        await tracker.drain()
+    finally:
+        tracker.close()
+    mapper, start, certain = tracker.best()
+    log.info("explore trip: tracked %s", tracker.as_dict())
 
     # 3. A PERSON SAID STOP: stay stopped. What she mapped is still kept.
     if why == "stop was called" or robot.stopped():
         log.info("explore trip: stopped by a person — not driving back")
-        await _grow_map(mapper, frame,
-                        trusted=bool(getattr(mapper, "pose_trusted", False)))
+        await _grow_map(mapper, frame, trusted=certain and bool(
+            getattr(mapper, "pose_trusted", False)))
         return report
 
     # 4. THE ROOM IS ALREADY MAPPED, BUT HE ASKED FOR MINUTES: tour it.
@@ -369,14 +407,16 @@ async def _explore_trip(minutes: float):
     # 6. THE MAP GROWS (Harsh, 2026-09-24: "map grows while exploring and it
     # should use the map"). Only from a trip that knows where it is: home
     # safely, or at least still matched.
-    grown = await _grow_map(mapper, frame, trusted=bool(
+    # Never from a trip whose start stayed a look-alike: its map would be
+    # merged into the saved one at whichever spot it happened to follow.
+    grown = await _grow_map(mapper, frame, trusted=certain and bool(
         back.arrived or getattr(mapper, "pose_trusted", False)))
 
     # 7. A HOME TO RETURN TO. The prompt's return-to-home goes to "the stored
     # home / boot pose", and none had ever been stored. The first exploration
     # that knows where its start is ON THE SAVED MAP makes that spot home --
     # never a spot on a throw-away working map that did not fit.
-    if back.arrived and nsm.home_place() is None:
+    if back.arrived and certain and nsm.home_place() is None:
         where = None
         if frame == "saved":
             where = start

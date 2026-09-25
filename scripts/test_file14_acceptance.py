@@ -511,7 +511,8 @@ class _ToolRig:
     def __enter__(self):
         a, nt = self.autonomy, self.nav_tools
         self.saved = (nt._controller, nsm.relocalise, self.nav_voice.VOICE,
-                      a._running, a.stop_exploration, a.start_exploration)
+                      a._running, a.stop_exploration, a.start_exploration,
+                      nt._trip_start)
         robot = FakeRobot(self.world)
 
         async def halt():
@@ -537,7 +538,15 @@ class _ToolRig:
             self.running = True
             return f"exploring for {minutes} minutes"
 
+        async def trip_start(_robot):
+            # Through nsm.relocalise, looked up at call time, so a test that
+            # swaps in a refusal still refuses the trip.
+            mapper, why = await nsm.relocalise()
+            return (None, why) if mapper is None else (_FakeTracker(mapper),
+                                                       "")
+
         nt._controller = controller
+        nt._trip_start = trip_start
         nsm.relocalise = relocalise
         self.nav_voice.VOICE = self.voice
         a._running = lambda: self.running
@@ -547,8 +556,42 @@ class _ToolRig:
     def __exit__(self, *exc):
         a, nt = self.autonomy, self.nav_tools
         (nt._controller, nsm.relocalise, self.nav_voice.VOICE,
-         a._running, a.stop_exploration, a.start_exploration) = self.saved
+         a._running, a.stop_exploration, a.start_exploration,
+         nt._trip_start) = self.saved
         return False
+
+
+class _FakeTracker:
+    """trip_tracker.TripTracker's shape over a FakeMapper, sure of its start.
+
+    The real tracker, on the real Mapper and the real map, is tested in
+    scripts/test_trip_tracker.py; this rig tests the TRIP around it.
+    """
+
+    def __init__(self, mapper):
+        self.mapper = mapper
+        self.start = tuple(float(v) for v in mapper.pose)
+
+    def explorer_mapper(self):
+        return self.mapper
+
+    def commanded(self, moved_m=0.0, turned_rad=0.0):
+        pass
+
+    def note_sweep(self, scan):
+        pass
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        pass
+
+    def best(self):
+        return self.mapper, self.start, True
+
+    def as_dict(self):
+        return {"fake": True}
 
 
 def _line(key, dest=""):

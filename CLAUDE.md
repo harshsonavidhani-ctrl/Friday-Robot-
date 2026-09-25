@@ -692,3 +692,48 @@ things in old map only". The explore trip's fresh working map is GONE.
 
 **Not yet tried on the robot:** the tour, map growth, moving to break a tie,
 and re-finding herself mid-journey.
+
+## The trip tracker (2026-09-25 evening): the way back, with exploring untouched
+
+Harsh: "it just sees, it should explore ... uses the offline model which is
+built already and the map saved should be used ... no changes in behaviour
+... just add this feature". Nothing she did in the whole trip had worked on
+the robot, and a no-motion probe from the hostel room (lidar_sweep only)
+showed why:
+
+1. **The saved map cannot tell two spots apart from there**: 4/4 sweeps
+   refused, (0.02, -0.02) against (3.38, -0.73), 84° apart, margins
+   0.001-0.043. The trip either refused at the start or began the unproven
+   move-to-disambiguate dance.
+2. **"matched, trusted" is no evidence**: the tracker said it at BOTH spots
+   (scores 1.34 and 1.05 against a 0.15 floor).
+3. **The explorer loses her.** `slam/mission.py` checks a turn happened at
+   all, but tells its matcher the full COMMANDED angle; a half turn is
+   outside the 20% window. Simulated on the real map with slipping turns:
+   the explorer's own pose ended 1.3-2.5 m and 65-85° out.
+
+**`trip_tracker.py` fixes the way back without touching the explorer.**
+`ListeningRobot` wraps the robot the explorer drives: every call goes
+through unchanged and returns at once; moves are noted and sweeps queued to
+ONE worker thread (a fold costs 0.4-1.4 s on the Pi, and inline that would
+have made a two-minute trip explore a third less). The worker folds them
+into its own Mapper(s) on copies of the saved map with
+`nav_follower.motion_fraction` priors: 5-12 cm in the same simulation. The
+tour and the drive home then run on the TRACKER's map (`tracker.best()`),
+never the explorer's.
+
+- **Look-alike starts are both followed**, not refused and not shuffled
+  apart first. Only sweeps AFTER A MOVE are evidence (standing still summed
+  one small difference into a "clear lead" on the real sweeps); certain =
+  summed fair-score lead ≥ 0.20 AND the last 3 evidence sweeps all agree.
+  Each hypothesis drives back to its own start, so the way home is right
+  whichever one it followed.
+- **An uncertain trip never grows map.npz and never saves home.**
+- `nav_tools._trip_start(robot)` is the seam (the acceptance rig fakes it
+  through `nsm.relocalise`). A start that fits nowhere at all still does not
+  set off.
+
+    ./venv/bin/python scripts/test_trip_tracker.py       # real map, real Mapper, ~10 min
+
+**Not yet tried on the robot.** Still open: `_refind` during the drive home
+searches the whole map and can pick the other look-alike.
