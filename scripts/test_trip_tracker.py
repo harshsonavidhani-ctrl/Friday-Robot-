@@ -96,13 +96,23 @@ class SimRobot:
         self.calls.append("observe")
 
     async def turn(self, degrees):
+        """movement.turn_degrees, as the REAL tool behaves: negative is LEFT.
+
+        The fake used to share the planner's convention (positive = left),
+        which is exactly how the mirrored explorer turns went unseen until
+        the robot's own recordings showed them (2026-09-25).
+        """
         self.calls.append("turn")
         f = self._next(self.turn_plan, self.turns)
         self.turns += 1
+        side = "left" if degrees < 0 else "right"
+        ccw = abs(degrees) if side == "left" else -abs(degrees)
         x, y, th = self.truth
-        th = (th + math.radians(degrees) * f + math.pi) % (2 * math.pi) - math.pi
+        th = (th + math.radians(ccw) * f + math.pi) % (2 * math.pi) - math.pi
         self.truth = (x, y, th)
-        return f"turned {degrees:+.0f} degrees"
+        # Timed, not measured: the tool reports what it asked the wheels for.
+        return (f"{side} for 0.5s. Turned about {abs(degrees):g} degrees "
+                f"(realistically ... — timed, not measured).")
 
     async def forward(self, cm):
         self.calls.append("forward")
@@ -119,7 +129,8 @@ class SimRobot:
                 break
             went += 0.02
         self.truth = (x + went * math.cos(th), y + went * math.sin(th), th)
-        return f"moved forward about {cm:.0f} cm"
+        return (f"forward for 0.6s. Travelled about {cm:g} cm "
+                f"(realistically ... — timed, not measured).")
 
     def say(self, text):
         pass
@@ -184,7 +195,7 @@ def test_passes_everything_through() -> None:
     start = _open_spot(grid, rng)
     inner = SimRobot(grid, start)
     tracker = tt.TripTracker(grid, [start], certain=True)
-    robot = tt.ListeningRobot(inner, tracker)
+    robot = tt.ListeningRobot(tt.PlannerTurns(inner), tracker)
 
     async def go():
         a = await robot.turn(30)
@@ -192,17 +203,40 @@ def test_passes_everything_through() -> None:
         s = await robot.sweep()
         return a, b, s
 
+    before = inner.truth
     a, b, s = asyncio.run(go())
     asyncio.run(tracker.drain())
     tracker.close()
     check("turn and forward return exactly what the robot said",
-          a == "turned +30 degrees" and b == "moved forward about 20 cm")
+          a.startswith("left for") and "Turned about 30 degrees" in a
+          and "Travelled about 20 cm" in b, f"{a[:40]} / {b[:40]}")
+    turned = math.degrees((inner.truth[2] - before[2] + math.pi)
+                          % (2 * math.pi) - math.pi)
+    check("a planned +30 (left, the map's way) is driven LEFT, not mirrored",
+          abs(turned - 30.0) < 0.5, f"turned {turned:+.1f}°")
     check("the sweep handed on is the robot's own sweep", len(s) > 100)
     check("stopped / reflex_trips / say go straight through",
           robot.stopped() is False and robot.reflex_trips() == 0)
     check("it commands nothing of its own",
           inner.calls == ["turn", "forward", "sweep"], str(inner.calls))
     check("and the sweep was folded", tracker.sweeps == 1)
+
+    print("\n— what a move did, read from the tool's own words —")
+    rm = tt.reported_motion
+    check("a capped turn is what it did (asked 142, got 90), left positive",
+          abs(rm("turn", "left for 1.2s. Turned about 90 degrees (x)")[1]
+              - math.radians(90)) < 1e-9)
+    check("a right turn cut short is the part that ran, negative",
+          abs(rm("turn", "right STOPPED after 0.2s of 0.8s — stop was called."
+                 " Turned about 15 degrees (x) of the 60 asked for.")[1]
+              + math.radians(15)) < 1e-9)
+    check("a forward move stopped at once went nowhere",
+          rm("forward", "forward STOPPED after 0.0s of 0.6s — something is "
+             "108 mm ahead. Got about 0 cm (x) of the 25 cm asked for.")
+          == (0.0, 0.0))
+    check("a refusal moved nothing; words it cannot read are not guessed",
+          rm("turn", "REFUSED — look first") == (0.0, 0.0)
+          and rm("turn", "cannot do angles yet") is None)
 
 
 def test_half_turns_do_not_lose_her() -> None:
@@ -216,7 +250,7 @@ def test_half_turns_do_not_lose_her() -> None:
         inner = SimRobot(grid, start, turn_plan=(1.0, 1.0, 0.5, 1.0, 0.0, 0.5),
                          drive_plan=(1.0, 0.8, 1.0), seed=seed)
         tracker = tt.TripTracker(grid, [start], certain=True)
-        robot = tt.ListeningRobot(inner, tracker)
+        robot = tt.ListeningRobot(tt.PlannerTurns(inner), tracker)
         mission = Mapper(grid=copy.deepcopy(grid), pose=start)
         asyncio.run(_drive(robot, MOVES, mission))
         asyncio.run(tracker.drain())
@@ -283,7 +317,7 @@ def test_look_alike_starts() -> None:
         inner = SimRobot(grid, pose, turn_plan=(1.0, 0.5, 1.0),
                          seed=int(abs(pose[0]) * 100))
         tracker = tt.TripTracker(grid, hyps, certain=False)
-        robot = tt.ListeningRobot(inner, tracker)
+        robot = tt.ListeningRobot(tt.PlannerTurns(inner), tracker)
         asyncio.run(_drive(robot, MOVES))
         asyncio.run(tracker.drain())
         tracker.close()

@@ -387,7 +387,10 @@ async def _trip_body(minutes: float, robot, tracker):
     # 2. EXPLORE. The explorer runs exactly as it always has, on its own
     # copy of the saved map; the tracker only listens to its moves and sweeps.
     deadline = time.monotonic() + minutes * 60.0
-    report = await _mission(trip_tracker.ListeningRobot(robot, tracker)).run(
+    # PlannerTurns: the explorer plans left as positive and the turn tool
+    # takes left as negative, so without it every turn was driven mirrored.
+    report = await _mission(trip_tracker.ListeningRobot(
+        trip_tracker.PlannerTurns(robot), tracker)).run(
         tracker.explorer_mapper(),
         budget_m=max(config.MISSION_BUDGET_M,
                      minutes * TRIP_METRES_PER_MINUTE),

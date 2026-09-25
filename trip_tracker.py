@@ -58,6 +58,7 @@ import copy
 import logging
 import math
 import queue
+import re
 import threading
 
 import config
@@ -289,6 +290,70 @@ def start_hypotheses(grid, scan) -> tuple[list, bool, str]:
     return [], False, fix.why
 
 
+# --- what a move really did, in the tool's own words -------------------------
+#
+# The tools say what they did: "left for 1.2s. Turned about 90 degrees ...",
+# "right STOPPED after 0.2s of 0.8s — ... Turned about 15 degrees ... of the 60
+# asked for", "forward STOPPED after 0.0s of 0.6s — something is 108 mm
+# ahead ... Got about 0 cm of the 25 cm asked for". That is the best estimate
+# there is of what happened, and it is NOT what was asked for: a turn is cut
+# at MAX_MOVE_SECONDS (the explorer asked for 142 degrees and got 90, trip
+# 2026-09-25 22:54) and the guard stops forward moves short.
+
+_SIDE = re.compile(r"^\s*(left|right|forward|backward)\b")
+_TURNED = re.compile(r"Turned about ([0-9.]+) degrees")
+_TRAVELLED = re.compile(r"(?:Travelled|Got) about ([0-9.]+) cm")
+
+
+def reported_motion(kind: str, said: str) -> tuple[float, float] | None:
+    """(metres, radians) the tool says it moved, map frame (left = +).
+
+    (0, 0) for a refusal; None when the words do not say.
+    """
+    said = said or ""
+    if "REFUSED" in said.upper():
+        return 0.0, 0.0
+    side = _SIDE.search(said)
+    if kind == "turn":
+        got = _TURNED.search(said)
+        if not (side and got and side.group(1) in ("left", "right")):
+            return None
+        sign = 1.0 if side.group(1) == "left" else -1.0
+        return 0.0, sign * math.radians(float(got.group(1)))
+    got = _TRAVELLED.search(said)
+    if not (side and got and side.group(1) in ("forward", "backward")):
+        return None
+    sign = 1.0 if side.group(1) == "forward" else -1.0
+    return sign * float(got.group(1)) / 100.0, 0.0
+
+
+class PlannerTurns:
+    """The explorer's turns, the way round it planned them.
+
+    ⚠ THE EXPLORER AND THE TURN TOOL COUNT OPPOSITE WAYS. slam/plan.py plans
+    `turn = want - theta`: positive is counter-clockwise, LEFT, the map's own
+    convention. movement.turn_degrees takes "negative turns left, positive
+    turns right". explore.py's _Robot hands one straight to the other, so
+    every turn the explorer planned was driven MIRRORED -- 11 of 11 turns in
+    the two recorded trips of 2026-09-25 matched the mirror image, none the
+    plan -- and then folded into its map the way it had planned it. That is
+    the "every sweep after the explorer's moves failed to match" of 09-24.
+
+    slam/ and explore.py are read-only (CLAUDE.md PART 5), so the trip fixes
+    it here, between them: the planner's degrees are handed to the tool with
+    the sign the tool expects. Nothing else passes through changed.
+    """
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    async def turn(self, degrees: float) -> str:
+        return await self._inner.turn(-float(degrees))
+
+
 class ListeningRobot:
     """The explorer's robot, untouched, with the trip tracker listening in.
 
@@ -308,18 +373,25 @@ class ListeningRobot:
     async def turn(self, degrees: float) -> str:
         import trip_recorder
         said = await self._inner.turn(degrees)
+        got = reported_motion("turn", said)
+        if got is None:                  # words not understood: the plan
+            got = (0.0, math.radians(float(degrees)))
         trip_recorder.note("turn", src="explorer", degrees=float(degrees),
-                           said=said)
-        if "REFUSED" not in (said or "").upper():
-            self._tracker.commanded(turned_rad=math.radians(float(degrees)))
+                           said=said, reported_rad=got[1])
+        if got[1]:
+            self._tracker.commanded(turned_rad=got[1])
         return said
 
     async def forward(self, cm: float) -> str:
         import trip_recorder
         said = await self._inner.forward(cm)
-        trip_recorder.note("forward", src="explorer", cm=float(cm), said=said)
-        if "REFUSED" not in (said or "").upper():
-            self._tracker.commanded(moved_m=float(cm) / 100.0)
+        got = reported_motion("forward", said)
+        if got is None:
+            got = (float(cm) / 100.0, 0.0)
+        trip_recorder.note("forward", src="explorer", cm=float(cm), said=said,
+                           reported_m=got[0])
+        if got[0]:
+            self._tracker.commanded(moved_m=got[0])
         return said
 
     async def sweep(self) -> dict[int, int]:
