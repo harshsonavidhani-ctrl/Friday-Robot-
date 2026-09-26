@@ -4550,9 +4550,12 @@ def build_sensors(cfg: RobotConfig, args) -> tuple[dict[str, SensorSlot], list[S
                                   getattr(args, "ld19_ignore_crc", False),
                                   cfg.self_mask_deg))
         # The way back's 1-degree sweep (rl/way_back.py). Not critical: without
-        # it the way back matches the 72 bins instead.
-        slots["lidar_fine"] = SensorSlot("lidar_fine", cfg.lidar_deadline, critical=False)
-        threads[-1].fine_slot = slots["lidar_fine"]
+        # it the way back matches the 72 bins instead. Not attached at all with
+        # --no-way-back, which is then the old run exactly.
+        if not getattr(args, "no_way_back", False):
+            slots["lidar_fine"] = SensorSlot("lidar_fine", cfg.lidar_deadline,
+                                             critical=False)
+            threads[-1].fine_slot = slots["lidar_fine"]
     else:
         threads.append(RPLidarThread(slots["lidar"], cfg, args.lidar_port,
                                      args.lidar_offset_deg, baud))
