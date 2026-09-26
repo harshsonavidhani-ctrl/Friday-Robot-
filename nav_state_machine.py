@@ -1122,13 +1122,21 @@ class NavController:
                         # The goal moves only if it was set in a frame never
                         # anchored to the map; once anchored, a mismatch is
                         # drift and the goal is already in the map's frame.
-                        if not getattr(self, "frame_anchored", True):
+                        # The frame's state lives on the MAPPER, which the
+                        # tour and the way home share: 2026-09-26 17:44 a
+                        # tour leg re-anchored (-131 deg), a fresh
+                        # controller drove home, and the start mark -- never
+                        # told -- was still in the old frame.
+                        if not getattr(mapper, "frame_anchored", True):
                             goal_xy = apply_delta(delta, goal_xy)[:2]
                             arrival = follow_kw.get("arrival")
                             if arrival is not None:
                                 arrival.goal = (float(goal_xy[0]),
                                                 float(goal_xy[1]))
-                            self.frame_anchored = True
+                            mapper.frame_deltas = (
+                                list(getattr(mapper, "frame_deltas", []))
+                                + [delta])
+                            mapper.frame_anchored = True
                         found = True
                 if found:
                     report.pose = [round(float(v), 3) for v in mapper.pose]

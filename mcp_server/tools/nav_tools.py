@@ -436,6 +436,11 @@ async def _trip_body(minutes: float, robot, tracker):
     # now, says yes; then a later loss is drift and the mark stays put.
     anchored = bool(getattr(tracker, "started_certain", True)) or (
         fix is not None if getattr(tracker, "hyps", None) else True)
+    # On the mapper, which the tour legs and the way home share (see
+    # NavController._drive_to): a later re-anchor of an unanchored frame
+    # records its correction there, for the start mark to follow.
+    mapper.frame_anchored = anchored
+    mapper.frame_deltas = []
     trip_recorder.note("tracked", report=report, tracker=tracker.as_dict())
 
     # 3. A PERSON SAID STOP: stay stopped. What she mapped is still kept.
@@ -454,7 +459,6 @@ async def _trip_body(minutes: float, robot, tracker):
     # room has been toured.
     controller, _ = _controller()           # a fresh stop baseline
     controller.frame = frame
-    controller.frame_anchored = anchored
     toured_out = False
     if why in _EXPLORED_OUT and time.monotonic() < deadline - TOUR_MIN_LEG_S:
         outcome = await _tour(controller, mapper, start, deadline)
@@ -473,9 +477,15 @@ async def _trip_body(minutes: float, robot, tracker):
         nav_voice.VOICE.say("frontiers_done")
     else:
         nav_voice.VOICE.say("setting_off", "where I set off from")
+    # A tour leg that re-anchored an unanchored frame moved her into the
+    # saved map's frame; the start mark, set in the old one, follows.
+    for delta in getattr(mapper, "frame_deltas", []) or []:
+        start = nsm.apply_delta(delta, start)
+        log.info("explore trip: the start mark follows the re-anchor to %s",
+                 [round(float(v), 2) for v in start])
+    mapper.frame_deltas = []
     controller, _ = _controller()           # a fresh baseline for the way home
     controller.frame = frame
-    controller.frame_anchored = anchored
     import nav_follower
     # Harsh, 2026-09-26: "when it says heading back early then it should go
     # where it started... then stop". On 17:39 she re-found herself on the
@@ -493,7 +503,6 @@ async def _trip_body(minutes: float, robot, tracker):
         # The saved map says she is not quite there: one more short drive.
         controller, _ = _controller()
         controller.frame = frame
-        controller.frame_anchored = anchored
         back = await controller.return_to(
             start[:2], mapper, arrival=nav_follower.ArrivalMonitor(
                 start[:2], tolerance_m=TRIP_RETURN_TOL_M,
