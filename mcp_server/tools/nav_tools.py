@@ -458,7 +458,7 @@ async def _trip_body(minutes: float, robot, tracker):
     controller, _ = _controller()           # a fresh baseline for the way home
     controller.frame = frame
     import nav_follower
-    back = await controller.return_to(start[:2], mapper,
+    back = await controller.return_to(start[:2], mapper, refind_near=True,
                                       arrival=nav_follower.ArrivalMonitor(
                                           start[:2],
                                           tolerance_m=TRIP_RETURN_TOL_M,
@@ -714,7 +714,7 @@ async def _tour(controller, mapper, start, deadline: float) -> str:
             announced = True
         leg = await controller._drive_to(
             goal, "a new spot", nsm.NavState.EXPLORING, mapper,
-            max_attempts=1, touring=True,
+            max_attempts=2, touring=True, refind_near=True,
             budget_s=max(TOUR_MIN_LEG_S, deadline - time.monotonic()))
         if leg.why == "stop was called" or controller.robot.stopped():
             return "stopped"

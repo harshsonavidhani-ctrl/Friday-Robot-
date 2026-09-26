@@ -871,7 +871,7 @@ class NavController:
 
     async def _drive_to(self, goal_xy, label: str, mode: NavState,
                         mapper=None, max_attempts: int = 3,
-                        touring: bool = False,
+                        touring: bool = False, refind_near: bool = False,
                         **follow_kw) -> ReturnReport:
         """The engine both modes share: relocalise, plan, follow, re-plan.
 
@@ -1098,7 +1098,9 @@ class NavController:
                     and refinds < MAX_REFINDS):
                 refinds += 1
                 self.voice.say("refinding")
-                if await self._refind(robot, mapper):
+                found = (await self._refind_near(robot, mapper) if refind_near
+                         else await self._refind(robot, mapper))
+                if found:
                     report.pose = [round(float(v), 3) for v in mapper.pose]
                     self.voice.say("refound", label)
                     continue
@@ -1125,6 +1127,48 @@ class NavController:
         await self._enter_failsafe(report, mode, goal_xy, label, robot)
         log.info("%s: %s", label, report.as_dict())
         return report
+
+    async def _refind_near(self, robot, mapper) -> bool:
+        """Find her again NEAR where she was, on the map she is driving on.
+
+        ⚠ FOR AN EXPLORE TRIP, NEVER THE WHOLE MAP. 2026-09-26 16:14 in the
+        hostel room the whole-map search gave two SURE answers 3 m apart ten
+        seconds apart; taking the second put her on the other look-alike, and
+        the start mark -- in the first one's frame -- became unreachable. The
+        trip's map already holds everything she saw since setting off, so a
+        search within REFIND_NEAR_M / REFIND_NEAR_DEG of the tracked pose, from
+        several headings, keeps her and the mark in ONE frame -- which is all
+        coming back needs.
+        """
+        import copy as _copy
+
+        from slam.core import match_pose, points_from_scan, transform
+
+        field_of = getattr(mapper, "_map_field", None)
+        field = field_of() if field_of is not None else None
+        scan = await robot.sweep()
+        if field is None or not scan:
+            return False
+        fair = _copy.copy(field)
+        fair.known = None
+        local = points_from_scan(scan, forward_deg=mapper.forward_deg)
+        x, y, th = (float(v) for v in mapper.pose)
+        best = None
+        for off in (0.0, 25.0, -25.0, 50.0, -50.0):
+            prior = (x, y, th + math.radians(off))
+            pose, _s, sharp = match_pose(field, local, prior,
+                                         prior_m=REFIND_NEAR_M, prior_deg=15.0)
+            score = float(fair.score(transform(local, *pose)))
+            if best is None or score > best[0]:
+                best = (score, pose, sharp)
+        score, pose, sharp = best
+        log.info("refind near: score %.2f sharpness %.2f at %s", score, sharp,
+                 [round(float(v), 2) for v in pose])
+        if score < REFIND_NEAR_MIN_SCORE:
+            return False
+        mapper.pose = tuple(float(v) for v in pose)
+        mapper.pose_trusted = True
+        return True
 
     async def _refind(self, robot, mapper) -> bool:
         """Find her again on the map she is driving on, and carry on.
@@ -1264,6 +1308,11 @@ class NavController:
                 return False, clearance
         return True, clearance
 
+
+# A trip's re-search stays this close to the tracked pose (see _refind_near),
+# and believes only a fit this good with every beam counted.
+REFIND_NEAR_M = 0.40
+REFIND_NEAR_MIN_SCORE = 0.35
 
 # At or under this, a goal the planner puts in the same cell is driven to
 # straight (see _drive_to); well under a body length, so nothing fits between.
