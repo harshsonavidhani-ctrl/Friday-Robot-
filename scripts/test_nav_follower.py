@@ -703,6 +703,45 @@ def test_a_lost_reply_is_measured_not_refused() -> None:
           f"{math.degrees(mapper.calls[-1][1]):+.1f}°")
 
 
+def test_a_guarded_stop_is_blocked_not_stuck() -> None:
+    """2026-09-26 16:07: six forward steps stopped at 0.0 s read as a stall."""
+    print("\n— a forward step the guard stops is BLOCKED, not stuck —")
+    import nav_state_machine as nsm
+
+    words = ("forward STOPPED after 0.0s of 0.8s — something is 87 mm ahead, "
+             "inside the 200 mm stop distance (ToF + LiDAR)")
+
+    class Mapper:
+        pose = (0.0, 0.0, 0.0)
+        pose_trusted = True
+        grid = SimpleNamespace(cell=config.SLAM_CELL_M)
+
+        def update(self, scan, moved=0.0, turned=0.0):
+            return {"reason": "matched"}
+
+    class Wall:
+        async def observe(self):
+            pass
+
+        async def drive_seconds(self, direction, seconds):
+            return words if direction == "forward" else f"{direction} for 0.3s"
+
+        async def sweep(self):
+            return {0: 1000}
+
+        def stopped(self):
+            return False
+
+    follower = nf.Follower(Wall(), rates=nf.RateModel(30.0, 60.0, True))
+    rep = asyncio.run(follower.follow(Mapper(), np.array([[0.0, 0.0],
+                                                          [1.0, 0.0]])))
+    check("the leg ends as blocked", rep.why.startswith("blocked:"), rep.why[:60])
+    check("which the drive handles as a block, not a stall",
+          nsm.is_block(rep.why) and not nsm.is_stuck(rep.why))
+    check("a step the wheels did not deliver is still a stall's business",
+          not nf.stopped_by_guard("forward for 0.6s"))
+
+
 def main() -> int:
     print("nav_follower.py — file 14 steps 4-5")
     test_lookahead()
@@ -720,6 +759,7 @@ def main() -> int:
     test_a_cut_short_move_counts_what_ran()
     test_standing_still_ambiguous_is_not_lost()
     test_a_lost_reply_is_measured_not_refused()
+    test_a_guarded_stop_is_blocked_not_stuck()
     test_honours_stop_and_budgets()
     test_reports_uncalibrated()
     test_does_not_touch_the_motors()

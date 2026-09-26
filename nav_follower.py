@@ -181,6 +181,13 @@ STALL_RATIO = 0.25
 # whole LiDAR sweep.
 MOTION_HYPOTHESES = (1.0, 0.5, 0.0)
 
+def stopped_by_guard(said: str) -> bool:
+    """Did the guard stop this move for something close, not the wheels?"""
+    low = (said or "").lower()
+    return ("stopped after" in low
+            and ("stop distance" in low or "bump guard" in low))
+
+
 def unanswered(direction: str, exc) -> str:
     """What a move says when the motor board's reply was lost or garbled.
 
@@ -911,6 +918,16 @@ class Follower:
                 done = await self._execute(mapper, "forward", seconds)
                 if done.refused:
                     report.why = f"refused: {done.said}"
+                    break
+                if (stopped_by_guard(done.said)
+                        and abs(done.moved_m) < STEP_MIN_M):
+                    # BLOCKED, NOT STUCK. 2026-09-26 16:07: something low
+                    # 36-123 mm ahead that only the bumper saw stopped six
+                    # forward steps at 0.0 s; counted as moves that
+                    # "delivered nothing", they read as dead wheels, and the
+                    # stuck recovery ran instead of the block handling that
+                    # marks the thing and plans around it.
+                    report.why = f"blocked: {done.said}"
                     break
                 self.rates.observe_drive(seconds, done.moved_m)
                 report.driven_m += done.moved_m
