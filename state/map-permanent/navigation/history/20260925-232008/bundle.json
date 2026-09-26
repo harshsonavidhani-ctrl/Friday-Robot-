@@ -1,0 +1,24 @@
+{
+  "saved_at": "2026-09-25T23:18:22+0530",
+  "at": 1790358502.2986088,
+  "reason": "home saved",
+  "map_file": "/home/harsh/friday/state/map.npz",
+  "map_sha256": "8e81ddbd0ced26d4b30e8211877af5f8da5f0c611687e38bafe2df88dd23fee1",
+  "places_key": "bc98c7dd37a13517ce11c751bc1f1b8b9bdddec18c6f5ae5de1b4bbe0572742d",
+  "places": [
+    "home",
+    "the desk",
+    "the kitchen"
+  ],
+  "trips_logged": 11,
+  "files": [
+    "map.npz",
+    "map_session.json",
+    "nav_early_return.json",
+    "nav_log.jsonl",
+    "nav_mode.json",
+    "places.json"
+  ],
+  "history": 5,
+  "archived_previous": "/home/harsh/friday/state/map-permanent/navigation/history/20260925-231822-2"
+}

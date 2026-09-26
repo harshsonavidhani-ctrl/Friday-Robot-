@@ -1,0 +1,1 @@
+grown at 22:43:25 from a trip whose heading was ~75 deg wrong after a cut-short turn; start sweep ambiguous on it (0.99 vs 0.98). Restored the 09-19 map.

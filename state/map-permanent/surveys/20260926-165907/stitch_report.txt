@@ -1,0 +1,6 @@
+spot 0: the frame, 334 wall cells
+spot 1: LEFT OUT, only 32% of its walls fit
+spot 2: merged, 70% of its walls on the map's (fit moved it 0 cm, 0 deg from the drive)
+spot 3: merged, 74% of its walls on the map's (fit moved it 5 cm, 1 deg from the drive)
+spot 4: merged, 58% of its walls on the map's (fit moved it 12 cm, 8 deg from the drive)
+stitched: free 10.9 m2, walls 1.61 m2

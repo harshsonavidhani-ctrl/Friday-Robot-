@@ -1,0 +1,25 @@
+{
+  "saved_at": "2026-09-26T16:26:33+0530",
+  "at": 1790420193.3282757,
+  "reason": "trip to where I set off from: failsafe",
+  "map_file": "/home/harsh/friday/state/map.npz",
+  "map_sha256": "4378563edc745674193271010e856525366d21e8abfa9cd8f4f61fcbc1465a35",
+  "places_key": "bc98c7dd37a13517ce11c751bc1f1b8b9bdddec18c6f5ae5de1b4bbe0572742d",
+  "places": [
+    "home",
+    "the desk",
+    "the kitchen"
+  ],
+  "trips_logged": 20,
+  "files": [
+    "map.npz",
+    "map_session.json",
+    "nav_early_return.json",
+    "nav_failsafe.json",
+    "nav_log.jsonl",
+    "nav_mode.json",
+    "places.json"
+  ],
+  "history": 7,
+  "archived_previous": null
+}

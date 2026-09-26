@@ -1,0 +1,38 @@
+{
+  "map_sha256": "4378563edc745674193271010e856525366d21e8abfa9cd8f4f61fcbc1465a35",
+  "places": [
+    {
+      "name": "home",
+      "x": 2.525,
+      "y": -0.2749999999999999,
+      "radius_m": 0.75,
+      "kind": "home",
+      "note": "where my first exploration started",
+      "created_at": null,
+      "last_seen": 1790358502.262834,
+      "visits": 0
+    },
+    {
+      "name": "the desk",
+      "x": -1.2,
+      "y": 3.0,
+      "radius_m": 0.75,
+      "kind": "place",
+      "note": null,
+      "created_at": null,
+      "last_seen": 1787772574.1476972,
+      "visits": 0
+    },
+    {
+      "name": "the kitchen",
+      "x": 2.6,
+      "y": 1.0,
+      "radius_m": 0.75,
+      "kind": "place",
+      "note": null,
+      "created_at": null,
+      "last_seen": 1787772574.1566732,
+      "visits": 0
+    }
+  ]
+}
