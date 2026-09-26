@@ -788,3 +788,12 @@ the bumper ToF read 4-7 mm (she was pressed into low clutter, and after the
 run the server measured 32-41 mm clearance on three sides), so 885 of 961
 way-back ticks were REFLEX_STOP and she ended 1.43 m out. The drive home is
 only as good as the exploring's ability not to wedge itself.
+
+⚠ THAT RUN ALSO COLLIDED TWICE, AND THE WAY BACK CAUSED IT. The tracker
+matched on a thread inside the run: 262 control-deadline overruns (35 the run
+before), sensor reads 10 -> 31 ms a tick, because every fold held the GIL the
+control loop and the ToF reflex needed. Fixed in cec972f: the matching runs
+in a niced child process (`way_back.py --serve`), the thread only pipes to
+it. Simulated on the Pi: 60.4 ms/tick with the way back, 61.3 without. ANY
+new per-tick work in pi_deploy must be measured against its "measured inside
+tick()" and "overruns" lines before it goes on the robot.
