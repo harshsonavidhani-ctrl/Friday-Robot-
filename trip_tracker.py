@@ -240,6 +240,9 @@ class TripTracker:
             # untrusted pose, and every tour leg and the turn to face the
             # start refused on their first look.
             trusted = bool(h.mapper.pose_trusted)
+            if (not trusted and info.get("reason") == "geometry ambiguous"
+                    and nav_follower.soft_correct(h.mapper, scan, use_m, use_r)):
+                trusted = True
             if trusted:
                 h.scan_only = 0
             elif h.held and not evidence:

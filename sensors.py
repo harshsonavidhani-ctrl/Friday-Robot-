@@ -402,8 +402,13 @@ class ToF(_Poller):
         treated as clear.
         """
         now = time.monotonic()
+        # A COPY: the reader thread appends to _recent while this runs, and
+        # iterating the live deque raised "deque mutated during iteration"
+        # out of scan_environment (2026-09-26, several times in one survey).
+        # list() of a deque copies in C without releasing the GIL.
         answers = [self._forward_from_frame(frame)
-                   for frame, at in self._recent if now - at <= max_age_s]
+                   for frame, at in list(self._recent)
+                   if now - at <= max_age_s]
         if not answers:
             return None
         # None means "cannot see" and must not be averaged away, so if that is

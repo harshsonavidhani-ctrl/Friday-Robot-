@@ -360,6 +360,57 @@ def scan_motion(prev_scan: dict, scan: dict, moved_m: float = 0.0,
         return None
 
 
+# Pivoting with less than this ahead backs off CLOSE_BACKOFF_M first.
+CLOSE_PIVOT_MM = 250
+CLOSE_BACKOFF_M = 0.10
+
+# A map correction rejected ONLY for sharpness still counts when it lands
+# within these of the sweep-to-sweep estimate, at a decent score. 2026-09-26
+# 17:03: corrections at sharpness 1.34-1.38 (gate 1.4) were thrown away three
+# times running, the pose ran on estimates alone, and she was lost 90 s later.
+SOFT_AGREE_M = 0.06
+SOFT_AGREE_DEG = 5.0
+SOFT_MIN_SCORE = 0.30
+SOFT_MIN_SHARPNESS = 1.25
+
+
+def soft_correct(mapper, scan, moved_m: float, turned_rad: float) -> bool:
+    """Take the map's own correction when it agrees with the measured motion.
+
+    Called after `mapper.update` said "geometry ambiguous", which kept the
+    prior (the measured motion) as the pose. Re-runs the tracker's match in the
+    tracker's own window; a result close to that prior with a decent score is
+    the map confirming it, so it becomes the pose. Never moves far: disagreeing
+    answers are not taken.
+    """
+    field_of = getattr(mapper, "_map_field", None)
+    if field_of is None:
+        return False
+    try:
+        from slam.core import match_pose, points_from_scan
+        field = field_of()
+        if field is None:
+            return False
+        local = points_from_scan(scan, forward_deg=mapper.forward_deg)
+        prior = tuple(float(v) for v in mapper.pose)
+        pose, score, sharp = match_pose(
+            field, local, prior,
+            prior_m=max(config.SLAM_ODOM_ERROR * abs(moved_m),
+                        config.SLAM_POSE_PRIOR_FLOOR_M),
+            prior_deg=max(config.SLAM_ODOM_ERROR * abs(math.degrees(turned_rad)),
+                          config.SLAM_POSE_PRIOR_FLOOR_DEG))
+        near = math.hypot(pose[0] - prior[0], pose[1] - prior[1])
+        turn = abs(math.degrees(_wrap(pose[2] - prior[2])))
+        if (score >= SOFT_MIN_SCORE and sharp >= SOFT_MIN_SHARPNESS
+                and near <= SOFT_AGREE_M and turn <= SOFT_AGREE_DEG):
+            mapper.pose = tuple(float(v) for v in pose)
+            mapper.pose_trusted = True
+            return True
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("could not try the soft correction: %s", exc)
+    return False
+
+
 # Below this a sweep-to-sweep answer is too weak even to steer the map
 # matcher's search; the map is asked instead (motion_fraction).
 SCAN_MOTION_PRIOR_SCORE = 0.20
@@ -711,6 +762,11 @@ class Follower:
         self.last_match = (info.get("reason", "") if isinstance(info, dict)
                            else "")
         trusted = bool(mapper.pose_trusted)
+        if (not trusted and self.last_match == "geometry ambiguous"
+                and soft_correct(mapper, scan, use_m, use_r)):
+            trusted = True
+            self._scan_only = 0
+            self.last_match = "matched (soft: agrees with the measured motion)"
         # ⚠ STANDING STILL, "GEOMETRY AMBIGUOUS" IS NOT "LOST". Parked, the
         # matcher searches 4 cm / 3 degrees, and sharpness is the peak over the
         # MEDIAN of that window -- where every candidate is nearly right, so a
@@ -886,6 +942,20 @@ class Follower:
                 cap = min(PIVOT_MAX_DEG, config.MAX_INCREMENT_DEGREES)
                 degrees = float(np.clip(degrees, -cap, cap))
                 seconds = max(PIVOT_MIN_S, self.rates.seconds_for_turn(degrees))
+                # ⚠ BACK OFF BEFORE PIVOTING CLOSE TO SOMETHING. 2026-09-26
+                # 17:03-17:04: pivots within ~13-20 cm of an obstacle turned
+                # 0.3 / 0.1 / 0.0 rad of 0.61 -- the chassis catches -- and
+                # every 15 cm back-off gave full turns again.
+                clear = getattr(self.robot, "clearance", None)
+                if clear is not None:
+                    ahead, _blocked = await clear()
+                    if ahead is not None and ahead < CLOSE_PIVOT_MM:
+                        back = await self._execute(
+                            mapper, "backward",
+                            self.rates.seconds_for(CLOSE_BACKOFF_M))
+                        if back.refused:
+                            report.why = f"refused: {back.said}"
+                            break
                 commanded = STEP_MAX_M      # "still correcting", for arrival
                 done = await self._execute(
                     mapper, "left" if degrees > 0 else "right", seconds)

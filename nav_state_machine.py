@@ -1673,6 +1673,11 @@ def note_early_return(watch: FrontierWatch) -> dict:
 
 # A spot counts as new only this far from everywhere she has already stood.
 TOUR_NEW_SPOT_M = 0.8
+# A tour goal is somewhere mapped (at most this share unknown within
+# TOUR_UNKNOWN_RADIUS_M) and within reach of one leg.
+TOUR_MAX_UNKNOWN = 0.40
+TOUR_UNKNOWN_RADIUS_M = 1.0
+TOUR_MAX_M = 2.5
 
 
 def tour_goal(grid, pose, visited, min_away: float = TOUR_NEW_SPOT_M,
@@ -1705,6 +1710,18 @@ def tour_goal(grid, pose, visited, min_away: float = TOUR_NEW_SPOT_M,
                       or [[float(pose[0]), float(pose[1])]])
     gaps = np.min(np.hypot(world[:, None, 0] - seen[None, :, 0],
                            world[:, None, 1] - seen[None, :, 1]), axis=1)
+    # ⚠ NOT AT THE MAP'S EDGE, NOT ACROSS THE FLAT. 2026-09-26 17:03: the
+    # first leg's goal had 73% unknown within 1.5 m -- floor seen through a
+    # doorway -- and the leg hit things at 47 and 197 mm getting there.
+    far = np.hypot(world[:, 0] - pose[0], world[:, 1] - pose[1])
+    unknown = ndimage.uniform_filter(
+        prep.grid.unknown_mask().astype(np.float32),
+        size=max(3, int(round(2 * TOUR_UNKNOWN_RADIUS_M / prep.grid.cell)) | 1))
+    cix, ciy = prep.grid.cells_of(world)
+    ok = (far <= TOUR_MAX_M) & (unknown[cix, ciy] <= TOUR_MAX_UNKNOWN)
+    if not ok.any():
+        return None
+    gaps = np.where(ok, gaps, -1.0)
     best = int(np.argmax(gaps))
     if gaps[best] < min_away:
         return None
