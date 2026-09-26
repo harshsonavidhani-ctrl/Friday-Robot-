@@ -418,11 +418,17 @@ async def _trip_body(minutes: float, robot, tracker):
         fix = await nsm.two_sure_fixes(robot)
         picked = None
         if fix is not None and getattr(tracker, "started_certain", False):
-            picked = tracker.confirmed_by(fix)
+            # Two agreeing SURE fixes are the safeguard, not the distance:
+            # 17:48 they agreed at margin 1.67 that she was 0.7 m off after
+            # 0.5 m of exploring, and a 0.6 m cap refused them silently.
+            picked = tracker.confirmed_by(fix, max_jump_m=DRIFT_FIX_MAX_M)
             if picked is not None:
                 mapper, start = picked
                 log.info("explore trip: the saved map corrects her to %s",
                          [round(float(v), 2) for v in mapper.pose])
+            else:
+                log.info("explore trip: the saved map puts her over %.1f m "
+                         "from her tracking; not taken", DRIFT_FIX_MAX_M)
         elif fix is not None:
             mapper, start = tracker.reanchor(fix)
             log.info("explore trip: re-anchored on the saved map at %s; the "
@@ -553,6 +559,8 @@ async def _trip_body(minutes: float, robot, tracker):
 # announced she was back without moving. The tracker holds her to ~5-12 cm,
 # so the way back asks for 12 cm, relaxing to 20 cm only if it cannot settle.
 TRIP_RETURN_TOL_M = 0.12
+# After a SURE start, how far two agreeing sure fixes may move her pose.
+DRIFT_FIX_MAX_M = 1.5
 TRIP_HOME_ATTEMPTS = 6
 TRIP_HOME_REFINDS = 4
 TRIP_RETURN_LOOSE_M = 0.20
