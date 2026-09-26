@@ -758,3 +758,33 @@ dashboard was showing it") instead of "I saw nothing". The acceptance rig
 fakes `nt._sightings` (temp scene file, list for memory).
 
     ./venv/bin/python scripts/test_trip_objects.py       # seconds
+
+## The way back is in the old exploration now (2026-09-26, 75eb9d9)
+
+Harsh: "same old behaviour just adding the feature where it knows where it
+started ... return to starting position immediately after exploration", then
+"joint both of them in the old exploration model code". He approved editing
+rl/ for this (it overrides the read-only rule above for this feature only).
+The explore trip (slam/mission.py + tour) and the armed return + watcher are
+no longer on the voice path; `explore_and_return` only starts the RL run.
+
+- `rl/way_back.py` `StartTracker`: every sweep (the LD19 thread's new
+  1-degree `lidar_fine` slot) is matched against the START SPOT's first sweep,
+  which cannot drift, with a loose prior (15 cm / 10 deg) and a window wide
+  enough for turns that did not happen. Fair score: every beam counts
+  (`known = None`). Simulated 2-minute slipping runs on the real room: 7-28 cm
+  from the true start; dead reckoning 1-4 m.
+- When `--duration` ends, `ControlLoop.run` keeps ticking EXACTLY as it
+  explored, with `ExplorationPlanner.go_home(start)` as the target and a
+  stronger heading pull, until within 0.25 m ("I am back where I started.")
+  or 120 s ("I could not get all the way back. I am about N metres ...").
+  Frontiers exhausted for 8 s (after 20 s) starts it early. SIGINT (a
+  person's stop, stop_exploration) stops her where she is. `--no-way-back`.
+
+    ./venv/bin/python rl/tests/test_way_back.py          # ~1 min
+
+First real run, 22:44: the tracker matched 553/634 sweeps, but from 55 s on
+the bumper ToF read 4-7 mm (she was pressed into low clutter, and after the
+run the server measured 32-41 mm clearance on three sides), so 885 of 961
+way-back ticks were REFLEX_STOP and she ended 1.43 m out. The drive home is
+only as good as the exploring's ability not to wedge itself.
