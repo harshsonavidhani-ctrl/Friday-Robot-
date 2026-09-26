@@ -266,21 +266,31 @@ def _explorer_robot():
 @tool
 async def explore_and_return(minutes: float | None = None,
                              thinking: bool | None = None) -> str:
-    """Explore on my own, then come back to the exact spot I started from.
+    """Explore on my own the usual way, then drive back to where I started.
 
-    What "Friday, explore" and "explore and come back" do. Returns at once
-    and runs in the background; I announce everything myself, so do not
-    repeat my reply. I first look with the LiDAR and mark this spot on my
-    saved map -- moving a little if two places on it look alike, and not
-    setting off at all if I still cannot tell -- then explore while tracking
-    where I am the whole way, drive back to the mark, and add what I saw to
-    my saved map. Say stop and I stop where I am, without coming back.
+    What "Friday, explore" and "explore and come back" do. Returns at once;
+    I announce everything myself, so do not repeat my reply. I mark where I
+    am standing on my saved map, explore exactly as start_exploration does,
+    and the moment that run ends -- its time is up, or it has nowhere left to
+    go -- I drive back to the mark and turn to face the way I set off. Say
+    stop and the run stops; I then come back only if the mark was noted.
 
     Args:
         minutes: how long to explore before coming back. Defaults to 2.
-        thinking: ignored -- this explorer never uses a model.
+        thinking: True to also think about where to go while exploring.
     """
-    if _journey_running():
+    import asyncio
+
+    global _WATCHER
+    from mcp_server.tools import autonomy
+
+    # ⚠ THE EXPLORING IS THE OLD ONE, UNCHANGED (Harsh, 2026-09-26: "the
+    # behaviour changed of exploration, it should be actively exploring, same
+    # old behaviour, just adding the feature where it knows where it started
+    # ... return to starting position immediately after exploration"). From
+    # 2026-09-24 this ran slam/mission.py plus a tour instead of the RL run;
+    # the RL run is back, and the only addition is the mark and the drive home.
+    if _journey_running() or autonomy._running():
         return _busy_reply()
     try:
         minutes = float(minutes) if minutes else TRIP_DEFAULT_MINUTES
@@ -288,8 +298,158 @@ async def explore_and_return(minutes: float | None = None,
         minutes = TRIP_DEFAULT_MINUTES
     minutes = max(0.5, min(minutes, 30.0))
     nsm.clear_failsafe()
-    _start_journey("exploring", _explore_trip(minutes))
+    _reclaim_if_run_gone()
+    # A person's "stop" during the run shows up here as ABORT (movement.stop
+    # sets it, then ends the run); a stale one from before must not.
+    hardware.ABORT.clear()
+
+    start = await _mark_start()
+    armed = False
+    if start is not None:
+        armed = bool(nsm.arm_return_to_start(start, why="exploration")
+                     .get("armed"))
+    said = autonomy.start_exploration(minutes=minutes, thinking=thinking)
+    if nsm.start_failed(said):
+        if armed:
+            nsm.clear_pending()           # nothing set off: nothing to return from
+        return nav_voice.VOICE.say_text(f"I could not start exploring. {said}")
+    if not armed:
+        return nav_voice.VOICE.say_text(
+            f"Exploring for {_minutes_phrase(minutes)}. I could not place "
+            "myself on my map here, so I may not find my way back to this "
+            "spot.")
+    if _WATCHER is None or _WATCHER.done():
+        _WATCHER = asyncio.create_task(_watch_then_return())
     return nav_voice.VOICE.say("exploring", _minutes_phrase(minutes))
+
+
+_WATCHER = None
+
+
+async def _mark_start():
+    """Where she stands on the saved map, from a few standing looks. Or None.
+
+    No moving about to tell look-alikes apart: she marks the spot from where
+    she is ("it just sees, it should explore"). A sure fix settled by the
+    standstill sweeps (nsm.locate, allow_moves=False), up to three tries.
+    """
+    import asyncio
+
+    for attempt in range(1, START_MARK_TRIES + 1):
+        mapper, why = await nsm.relocalise(allow_moves=False)
+        if mapper is not None:
+            start = tuple(float(v) for v in mapper.pose)
+            log.info("explore: marked the start at %s",
+                     [round(v, 2) for v in start])
+            return start
+        log.info("explore: marking the start, try %d/%d: %s", attempt,
+                 START_MARK_TRIES, why)
+        await asyncio.sleep(1.0)
+    return None
+
+
+START_MARK_TRIES = 3
+
+
+async def _watch_then_return(poll_s: float = 2.0,
+                             watch: "nsm.FrontierWatch | None" = None,
+                             lease_wait_s: float = 30.0) -> None:
+    """Wait for the exploration run to end, then bring her back to the mark.
+
+    ⚠ IT WAITS FOR THE RUN TO ACTUALLY BE GONE before doing anything: the
+    run is a separate process holding the hardware lease, and two things
+    driving one robot is the failure this module is arranged to avoid.
+
+    It also ends the run early when the explorer itself reports it has run
+    out of frontiers (nsm.FrontierWatch) -- the same transition as the run's
+    timer, only sooner. If the server restarts mid-run the return stays ARMED
+    on disk; come_back() fires it by hand.
+    """
+    import asyncio
+
+    from mcp_server.tools import autonomy
+
+    watch = watch or nsm.FrontierWatch()
+    deadline = time.monotonic() + 6 * 3600.0
+    try:
+        await asyncio.sleep(poll_s)
+        while autonomy._running() and time.monotonic() < deadline:
+            if watch.update():
+                row = nsm.note_early_return(watch)
+                log.info("frontiers exhausted %s — ending the run early", row)
+                nav_voice.VOICE.say("frontiers_done")
+                said = autonomy.stop_exploration()
+                if not nsm._stopped_ok(said):
+                    log.error("could not end the run early: %s", said)
+                waited = 0.0
+                while autonomy._running() and waited < lease_wait_s:
+                    await asyncio.sleep(0.5)
+                    waited += 0.5
+                break
+            await asyncio.sleep(poll_s)
+        if autonomy._running():
+            log.error("exploration is still running; the return stays armed")
+            return
+        if hardware.ABORT.is_set():
+            # A PERSON SAID STOP (movement.stop: ABORT, then the run ends).
+            # Driving off afterwards is the last thing "stop" means.
+            nsm.clear_pending()
+            log.info("exploration was stopped by a person — not driving back")
+            return
+        if nsm.pending_return() is None:
+            return                       # somebody already brought her back
+        if _journey_running():
+            log.info("another journey is driving; the return stays armed")
+            return
+        log.info("exploration finished — returning to the start")
+        _claim_journey("where I set off from")
+        # A run that ends on its own leaves its lease behind; its processes
+        # are gone (_running() is False), so take the hardware back.
+        _reclaim_if_run_gone()
+        nav_voice.VOICE.say("setting_off", "where I set off from")
+        heading = float((nsm.pending_return() or {}).get("theta", 0.0))
+        mapper = await _relocalise_when_ready()
+        controller, _ = _controller()
+        report = await controller.return_to_armed_start(
+            mapper=mapper, max_attempts=TRIP_HOME_ATTEMPTS,
+            max_refinds=TRIP_HOME_REFINDS)
+        log.info("return after exploring: %s", report.why)
+        if report.arrived and mapper is not None:
+            faced = await _face(controller, mapper, heading)
+            log.info("explore: %s the way she set off",
+                     "facing" if faced else "could not turn to face")
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:             # noqa: BLE001
+        log.error("the return after exploring failed: %s", exc)
+
+
+def _claim_journey(label: str) -> None:
+    """Mark the CURRENT task as the journey (the exploration watcher's)."""
+    import asyncio
+
+    global _JOURNEY, _JOURNEY_LABEL
+    _JOURNEY, _JOURNEY_LABEL = asyncio.current_task(), label
+
+
+async def _relocalise_when_ready(tries: int = 4, wait_s: float = 3.0):
+    """Find her on the saved map once the sensors answer again. Mapper or None.
+
+    Straight after a run hands the hardware back the LiDAR's first sweep can
+    come back empty; a few short retries cover that. None goes to the engine,
+    which tries once more and otherwise stops in FAILSAFE with the mark kept,
+    so "try again" can still bring her back.
+    """
+    import asyncio
+
+    for attempt in range(1, tries + 1):
+        mapper, why = await nsm.relocalise()
+        if mapper is not None:
+            return mapper
+        log.info("relocalise after the run, try %d/%d: %s", attempt, tries,
+                 why)
+        await asyncio.sleep(wait_s)
+    return None
 
 
 async def _trip_start(robot):

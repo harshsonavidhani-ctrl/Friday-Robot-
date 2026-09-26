@@ -232,7 +232,7 @@ def set_home(pose, note: str | None = None) -> dict:
     return row
 
 
-async def relocalise():
+async def relocalise(allow_moves: bool = True):
     """Where am I, really? Returns (mapper, "") or (None, why-not).
 
     On the SAVED map, always: `locate()` searches the whole of it, and when
@@ -245,7 +245,7 @@ async def relocalise():
     """
     robot = nav_follower.GuardedRobot()
     robot.arm()
-    return await locate(robot, voice=nav_voice.VOICE)
+    return await locate(robot, voice=nav_voice.VOICE, allow_moves=allow_moves)
 
 
 # --- finding her on the saved map, moving a little when it is ambiguous ---

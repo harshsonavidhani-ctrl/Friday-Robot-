@@ -526,7 +526,7 @@ class _ToolRig:
         def controller():
             return _SimController(robot=robot, voice=self.voice), robot
 
-        async def relocalise():
+        async def relocalise(**_kw):
             self.relocalised_at.append(len(self.world.commands))
             return self.mapper, ""
 
@@ -806,104 +806,93 @@ def _trip(minutes=2.0):
 
 
 def twelve_explore_trip() -> None:
-    item(12, "\"Friday, explore\": mark the spot with the LiDAR, explore on "
-             "ONE tracked map, come back to the mark")
+    item(12, "\"Friday, explore for 2 minutes\": the SAME old exploration "
+             "run, and the moment it ends she drives back to where she started")
     import offline
-    with TempPlaces():
-        world = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
-        mapper = FakeMapper(world)
-        mapper.grid = _grid(free=True)
-        intent = offline.understand("Friday, explore for 2 minutes",
-                                    strict=True)
-        check("plain \"explore\" is the trip that comes back, offline",
-              intent is not None and intent.tool == "explore_and_return"
-              and intent.name in offline._REFLEX_INTENTS
-              and not intent.local, str(intent and (intent.name, intent.tool)))
-        with _ToolRig(world, mapper) as rig, \
-                _TripRig(rig, end_pose=(2.3, 1.2, 1.0)) as trip:
-            said, back = _trip(2.0)
-            check("she says she is exploring and will come back",
-                  said == _line("exploring", "2 minutes"), said)
-            check("she marked the spot BEFORE exploring",
-                  rig.relocalised_at[:1] == [0], str(rig.relocalised_at))
-            check("the explorer got a time limit from the command",
-                  trip.ran and trip.ran[0][1] == 120.0, str(trip.ran))
-            check("and she came back to the mark",
-                  back is not None and back.arrived
-                  and math.hypot(world.x - 0.5, world.y - 2.0) < 0.5,
-                  f"{math.hypot(world.x - 0.5, world.y - 2.0):.2f} m away")
-            check("without finding herself again: one map, tracked all along",
-                  len(rig.relocalised_at) == 1, str(rig.relocalised_at))
-            check("she said so",
-                  _in_order(rig.voice.said,
-                            [_line("setting_off", "where I set off from"),
-                             _line("arrived_start")]), str(rig.voice.said))
-            check("and the saved map is NOT changed by the trip (growth is "
-                  "off since 2026-09-25: it made the map worse twice)",
-                  not any(t.startswith("My map grew by")
-                          for t in rig.voice.said),
-                  str(rig.voice.said[-1:]))
-            home = nsm.home_place()
-            check("with no home stored, the start spot became home (the "
-                  "prompt's boot pose), and she said so",
-                  home is not None
-                  and math.hypot(home["x"] - 0.5, home["y"] - 2.0) < 0.3
-                  and _line("home_set") in rig.voice.said, str(home))
-            check("and back on the spot she turns to face the way she set "
-                  "off (Harsh: it said it was back where it started, facing "
-                  "elsewhere)",
-                  abs(math.degrees((world.theta - 0.0 + math.pi)
-                                   % (2 * math.pi) - math.pi)) <= 20.0,
-                  f"facing {math.degrees(world.theta):+.0f}°, set off at +0°")
-            check("and the LAST thing she says is what she saw (this rig "
-                  "has no camera, so she says that rather than 'nothing')",
-                  rig.voice.said[-1].startswith("My camera did not give me")
-                  and rig.sightings is not None, str(rig.voice.said[-1:]))
-        _items.append(("Explore trip comes back",
-                       back is not None and back.arrived))
+    from mcp_server import hardware
+    from mcp_server.tools import nav_tools
 
-        # Harsh, 2026-09-25: "the place where Friday stops she assumes her
-        # starting position". Ending 20 cm off -- inside the general 28 cm
-        # tolerance -- she must still drive back, not announce she is back.
-        worldn = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
-        mappern = FakeMapper(worldn)
-        mappern.grid = _grid(free=True)
-        with _ToolRig(worldn, mappern) as rig, \
-                _TripRig(rig, end_pose=(0.70, 2.0, 1.2)):
-            _, back = _trip(2.0)
-            off = math.hypot(worldn.x - 0.5, worldn.y - 2.0)
-            check("20 cm off the start is NOT 'already there': she drives "
-                  "back to the spot",
-                  back is not None and back.arrived
-                  and not back.why.startswith("already there") and off <= 0.13,
-                  f"{off * 100:.0f} cm from the start; {back.why[:60] if back else ''}")
+    tmp = tempfile.TemporaryDirectory()
+    saved_lease = hardware.LEASE_FILE
+    hardware.LEASE_FILE = Path(tmp.name) / "hardware.lease"
+    try:
+        with TempPlaces():
+            nsm.clear_pending()
+            world = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
+            mapper = FakeMapper(world)
+            mapper.grid = _grid(free=True)
+            with _ToolRig(world, mapper) as rig:
+                async def relocalise(**_kw):
+                    rig.relocalised_at.append(len(rig.world.commands))
+                    left = hardware.lease_active()
+                    if left > 0.0:
+                        raise hardware.HardwareLeased(
+                            f"the range sensors are in use by an autonomous "
+                            f"run for another {left:.0f}s")
+                    rig.mapper.update({0: 1500})
+                    return rig.mapper, ""
 
-        # Nothing left to explore: back early, and says why.
-        world2 = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
-        mapper2 = FakeMapper(world2)
-        mapper2.grid = _grid(free=True)
-        with _ToolRig(world2, mapper2) as rig, \
-                _TripRig(rig, end_pose=(2.0, 1.0, 0.5),
-                         reason="no frontiers left"):
-            _, back = _trip(5.0)
-            legs = [c for c in world2.commands]
-            check("a room already mapped from the start spot is TOURED, not "
-                  "abandoned (2026-09-24 00:20: 25 cm and home)",
-                  _line("tour") in rig.voice.said and len(legs) > 10,
-                  f"{len(legs)} moves; said {rig.voice.said[:3]}")
-            check("once she has been everywhere, she heads back early",
-                  _line("frontiers_done") in rig.voice.said
-                  and back.arrived, str(rig.voice.said[-3:]))
-            check("and comes back to the mark",
-                  math.hypot(world2.x - 0.5, world2.y - 2.0) < 0.5,
-                  f"{math.hypot(world2.x - 0.5, world2.y - 2.0):.2f} m away")
-            early = nsm.last_early_return()
-            check("the early return is noted for the dashboard",
-                  early and early.get("reason") == "toured the whole room",
-                  str(early))
-            check("tour legs are not logged as navigation trips",
-                  not any(r["destination"] == "a new spot"
-                          for r in nsm.recent_attempts(50)))
+                nsm.relocalise = relocalise
+
+                def start(minutes=None, thinking=None):
+                    rig.calls.append(("start_exploration", minutes))
+                    hardware.lease_out((minutes or 20) * 60 + 300,
+                                       holder="test-run")
+                    rig.running = True
+                    return json.dumps({"started": True, "minutes": minutes})
+
+                rig.autonomy.start_exploration = start
+                intent = offline.understand("Friday, explore for 2 minutes",
+                                            strict=True)
+                check("plain \"explore\" is explore-and-come-back, offline",
+                      intent is not None
+                      and intent.tool == "explore_and_return"
+                      and intent.name in offline._REFLEX_INTENTS,
+                      str(intent and (intent.name, intent.tool)))
+
+                async def run():
+                    said = await nav_tools.explore_and_return(**intent.args)
+                    armed = nsm.pending_return()
+                    started = [c for c in rig.calls
+                               if isinstance(c, tuple)
+                               and c[0] == "start_exploration"]
+                    # She explores and ends up somewhere else entirely.
+                    world.x, world.y, world.theta = (2.2, 1.4, 1.0)
+                    await asyncio.sleep(0.2)
+                    rig.running = False          # the timer ended the run...
+                    lease_left = hardware.lease_active()  # ...lease left behind
+                    await nav_tools._watch_then_return(
+                        poll_s=0.05, watch=nsm.FrontierWatch(
+                            path=Path(tmp.name) / "none.json"))
+                    return said, armed, started, lease_left
+
+                said, armed, started, lease_left = asyncio.run(run())
+                check("she says she is exploring and will come back",
+                      said == _line("exploring", "2 minutes"), said)
+                check("she marked the spot with the LiDAR BEFORE exploring",
+                      rig.relocalised_at[:1] == [0] and armed is not None
+                      and abs(armed["x"] - 0.5) < 0.1, str(armed))
+                check("the exploring is the old run, with the minutes she "
+                      "was given (Harsh: 'same old behaviour')",
+                      started == [("start_exploration", 2.0)], str(started))
+                check("the run left its lease behind, as the real one does",
+                      lease_left > 60, f"{lease_left:.0f}s left")
+                check("she took the hardware back once the run was gone",
+                      hardware.lease_active() == 0.0)
+                check("she drove back to the spot she started from",
+                      math.hypot(world.x - 0.5, world.y - 2.0) < 0.5,
+                      f"{math.hypot(world.x - 0.5, world.y - 2.0):.2f} m away")
+                check("and said so",
+                      _in_order(rig.voice.said,
+                                [_line("setting_off", "where I set off from"),
+                                 _line("arrived_start")]),
+                      str(rig.voice.said))
+                check("the armed return is used up", nsm.pending_return() is None)
+                _items.append(("Explore, then straight back to the start",
+                               math.hypot(world.x - 0.5, world.y - 2.0) < 0.5))
+    finally:
+        hardware.LEASE_FILE = saved_lease
+        tmp.cleanup()
 
 
 def thirteen_try_again_after_being_moved() -> None:
@@ -970,66 +959,108 @@ def thirteen_try_again_after_being_moved() -> None:
 
 
 def fourteen_trip_edge_cases() -> None:
-    item(14, "Explore trip: the OLD map only (no fresh map), a person's stop, "
-             "and an old trip-map record")
+    item(14, "Explore edge cases: a person's stop means stay, a start she "
+             "cannot place still explores, frontiers running out come home "
+             "early")
+    from mcp_server import hardware
     from mcp_server.tools import nav_tools
-    with TempPlaces():
-        # 1. She cannot be placed on the saved map even after moving to tell
-        #    two look-alike spots apart: she does NOT explore -- there is no
-        #    fresh map to fall back on any more (Harsh, 2026-09-25).
-        world = FakeWorld(pose=(1.0, 1.0, 0.0), **_CALIBRATED)
-        with _ToolRig(world, None) as rig, \
-                _TripRig(rig, end_pose=(2.6, 2.2, 2.0)) as trip:
-            async def cannot_tell():
-                rig.relocalised_at.append(len(world.commands))
-                return None, ("even after moving, two places on my map "
-                              "still look alike")
-            nsm.relocalise = cannot_tell
-            said, result = _trip(2.0)
-            check("she does not set off on a guess",
-                  result is None and not trip.ran and not world.commands,
-                  f"explorer ran: {bool(trip.ran)}, moves: {world.commands[:3]}")
-            check("and no fresh map exists to fall back on",
-                  not hasattr(nav_tools, "_working_map"))
 
-        # 2. A person says stop while she explores: she stays stopped.
-        world2 = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
-        mapper2 = FakeMapper(world2)
-        mapper2.grid = _grid(free=True)
-        with _ToolRig(world2, mapper2) as rig, \
-                _TripRig(rig, end_pose=(2.2, 1.4, 1.0),
-                         reason="stop was called", person_stopped=True):
-            _, result = _trip(2.0)
-            check("after \"stop\" she does NOT drive back",
-                  not world2.commands
-                  and math.hypot(world2.x - 2.2, world2.y - 1.4) < 0.1,
-                  str(world2.commands[:3]))
-            check("and says nothing about coming back",
-                  _line("setting_off", "where I set off from")
-                  not in rig.voice.said, str(rig.voice.said))
+    tmp = tempfile.TemporaryDirectory()
+    saved_lease, saved_auto = hardware.LEASE_FILE, nsm.AUTONOMY_FILE
+    hardware.LEASE_FILE = Path(tmp.name) / "hardware.lease"
+    telemetry = Path(tmp.name) / "rl_autonomy.json"
+    nsm.AUTONOMY_FILE = telemetry
+    try:
+        # 1. A person says stop during the run: she does NOT drive back.
+        with TempPlaces():
+            nsm.clear_pending()
+            world = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
+            mapper = FakeMapper(world)
+            mapper.grid = _grid(free=True)
+            with _ToolRig(world, mapper) as rig:
+                async def run():
+                    await nav_tools.explore_and_return(minutes=2)
+                    world.x, world.y = 2.2, 1.4
+                    hardware.ABORT.set()         # movement.stop()...
+                    rig.running = False          # ...then the run ends
+                    await nav_tools._watch_then_return(
+                        poll_s=0.05, watch=nsm.FrontierWatch(
+                            path=Path(tmp.name) / "none.json"))
+                asyncio.run(run())
+                hardware.ABORT.clear()
+                check("after a person's stop she does NOT drive back",
+                      math.hypot(world.x - 2.2, world.y - 1.4) < 0.05
+                      and nsm.pending_return() is None,
+                      f"at ({world.x:.2f}, {world.y:.2f})")
+                check("and says nothing about coming back",
+                      _line("setting_off", "where I set off from")
+                      not in rig.voice.said, str(rig.voice.said))
 
-        # 3. A FAILSAFE record left from a trip on a fresh map -- the kind the
-        #    23:55 trip on 2026-09-24 wrote. That map no longer exists, so
-        #    "try again" says so and clears it; it never drives to those
-        #    coordinates on the saved map.
-        world3 = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
-        with _ToolRig(world3, None) as rig:
-            nsm.write_failsafe({"mode": "returning_to_start",
-                                "label": "where I set off from",
-                                "goal_xy": [0.0, 0.0], "why": "lost",
-                                "at": time.time(), "frame": "trip",
-                                "paused_exploration": False,
-                                "resume_minutes": None, "recoveries": 0})
+        # 2. She cannot place herself: she still explores, nothing armed.
+        with TempPlaces():
+            nsm.clear_pending()
+            world = FakeWorld(pose=(1.0, 1.0, 0.0), **_CALIBRATED)
+            with _ToolRig(world, None) as rig:
+                async def cannot_tell(**_kw):
+                    return None, "two places on my map look alike"
+                nsm.relocalise = cannot_tell
+                saved_tries = nav_tools.START_MARK_TRIES
+                nav_tools.START_MARK_TRIES = 1
+                try:
+                    said = asyncio.run(nav_tools.explore_and_return(minutes=2))
+                finally:
+                    nav_tools.START_MARK_TRIES = saved_tries
+                check("a start she cannot place still sets off exploring "
+                      "(the old behaviour), and she says she may not find "
+                      "her way back",
+                      ("start_exploration", 2.0) in rig.calls
+                      and "may not find my way back" in said, said)
+                check("with nothing armed to drive to",
+                      nsm.pending_return() is None)
+                rig.running = False
 
-            async def retry():
-                await nav_tools.try_again()
-                return await nav_tools._JOURNEY
-            asyncio.run(retry())
-            check("an old trip-map record is never driven to",
-                  not world3.commands
-                  and rig.voice.said[-1] == _line("trip_map_gone")
-                  and nsm.failsafe_record() is None, str(rig.voice.said[-2:]))
-        _items.append(("Explore trip edge cases", True))
+        # 3. The run runs out of frontiers: ended early, then home.
+        with TempPlaces():
+            world = FakeWorld(pose=(2.0, 2.0, 0.0), **_CALIBRATED)
+            mapper = FakeMapper(world)
+            mapper.grid = _grid(free=True)
+            nsm.arm_return_to_start((0.5, 2.0, 0.0), why="exploration")
+            with _ToolRig(world, mapper, running=True) as rig:
+                script = ([(14, False)] * 3 + [(0, True)] + [(9, False)] * 3
+                          + [(0, True)] * 40)
+
+                async def fake_run():
+                    for tick, (frontiers, exhausted) in enumerate(script):
+                        if not rig.running:
+                            return
+                        telemetry.write_text(json.dumps({
+                            "TICK": tick * 5, "EXPLORATION_TARGET": {
+                                "frontiers": frontiers,
+                                "exhausted": exhausted, "error": ""}}))
+                        await asyncio.sleep(0.05)
+
+                async def run():
+                    writer = asyncio.create_task(fake_run())
+                    await nav_tools._watch_then_return(
+                        poll_s=0.05, watch=nsm.FrontierWatch(
+                            path=telemetry, reads=4, min_s=0.3),
+                        lease_wait_s=2.0)
+                    writer.cancel()
+
+                asyncio.run(run())
+                early = nsm.last_early_return()
+                check("out of frontiers: she ended the run herself, not on "
+                      "a single zero reading",
+                      "stop_exploration" in rig.calls and early is not None
+                      and early["tick"] >= 7 * 5, str(early))
+                check("and came straight back to where she set off from",
+                      math.hypot(world.x - 0.5, world.y - 2.0) < 0.5
+                      and _line("arrived_start") in rig.voice.said,
+                      f"{math.hypot(world.x - 0.5, world.y - 2.0):.2f} m away")
+        _items.append(("Explore edge cases", True))
+    finally:
+        hardware.LEASE_FILE, nsm.AUTONOMY_FILE = saved_lease, saved_auto
+        tmp.cleanup()
 
 
 def main() -> int:
