@@ -78,7 +78,16 @@ LOOKAHEAD_MIN_M = 0.25
 # Below this the heading error is not worth a pivot: this chassis fails to
 # execute 22% of its turns ([[friday-drivetrain-execution-floors]]), so a
 # needless small turn is not free, it is a coin flip that can end the run.
-TURN_DEADBAND_DEG = config.MISSION_MIN_TURN_DEG          # 10.0
+#
+# ⚠ AND SHORT PIVOTS DO NOT HAPPEN. Every move from rest starts with a 150 ms
+# kick, so a pivot of under ~0.25 s is mostly kick: measured 2026-09-26 on a
+# full battery at 100% speed, 18.6 / 15 / 12.2 degrees asked turned 3.7 / 2.7 /
+# 3.1, while 35 degrees (0.41 s) turned 26. Three of those tiny turns in a row
+# read as a stall and ended a trip in FAILSAFE. So heading errors under 20
+# degrees get no pivot at all -- the forward steps re-aim every tick -- and
+# any pivot gets at least PIVOT_MIN_S of power.
+TURN_DEADBAND_DEG = 20.0
+PIVOT_MIN_S = 0.30
 
 # One forward step, capped where the mission code caps it. Short steps are
 # what make a one-hertz loop safe.
@@ -869,7 +878,7 @@ class Follower:
                     degrees *= 0.6
                 cap = min(PIVOT_MAX_DEG, config.MAX_INCREMENT_DEGREES)
                 degrees = float(np.clip(degrees, -cap, cap))
-                seconds = self.rates.seconds_for_turn(degrees)
+                seconds = max(PIVOT_MIN_S, self.rates.seconds_for_turn(degrees))
                 commanded = STEP_MAX_M      # "still correcting", for arrival
                 done = await self._execute(
                     mapper, "left" if degrees > 0 else "right", seconds)

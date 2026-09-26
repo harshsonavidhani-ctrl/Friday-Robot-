@@ -287,6 +287,32 @@ class TripTracker:
         start = lead.start or tuple(float(v) for v in lead.mapper.pose)
         return lead.mapper, start, self.settled()
 
+    def confirmed_by(self, fix, max_jump_m: float = 0.6):
+        """(mapper, start) of the hypothesis a sure map fix lands on, or None.
+
+        ⚠ THE LEADER CAN BE THE WRONG LOOK-ALIKE. 2026-09-26 15:54: the trip
+        handed over its leading guess, whose very first sweep scored 0.076
+        against the map; the whole-map search then placed her confidently at
+        the OTHER one, where every sweep matched at 0.8-1.1. After exploring
+        she stands somewhere new, where the look-alikes may no longer look
+        alike -- so a sure fix within `max_jump_m` of one hypothesis's current
+        pose picks it, and corrects it. A sure fix near none is a third
+        look-alike, not an answer.
+        """
+        best = None
+        for h in self.hyps:
+            jump = math.hypot(fix[0] - float(h.mapper.pose[0]),
+                              fix[1] - float(h.mapper.pose[1]))
+            if jump <= max_jump_m and (best is None or jump < best[0]):
+                best = (jump, h)
+        if best is None:
+            return None
+        h = best[1]
+        h.mapper.pose = tuple(float(v) for v in fix)
+        h.mapper.pose_trusted = h.held = True
+        start = h.start or tuple(float(v) for v in fix)
+        return h.mapper, start
+
     def as_dict(self) -> dict:
         return {
             "sweeps": self.sweeps,

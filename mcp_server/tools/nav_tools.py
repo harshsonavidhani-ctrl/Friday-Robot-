@@ -407,6 +407,18 @@ async def _trip_body(minutes: float, robot, tracker):
         tracker.close()
     mapper, start, certain = tracker.best()
     log.info("explore trip: tracked %s", tracker.as_dict())
+    if not certain and len(getattr(tracker, "hyps", ())) > 1:
+        # Two look-alikes still: ask the saved map from where she stands now.
+        fix = await _home_fix(robot)
+        picked = tracker.confirmed_by(fix) if fix is not None else None
+        if picked is not None:
+            mapper, start = picked
+            log.info("explore trip: the saved map settles the look-alikes: "
+                     "she is at %s", [round(float(v), 2) for v in mapper.pose])
+        else:
+            log.info("explore trip: the saved map cannot settle the "
+                     "look-alikes from here (%s); keeping the leading one",
+                     "not sure" if fix is None else "sure, but near neither")
     trip_recorder.note("tracked", report=report, tracker=tracker.as_dict())
 
     # 3. A PERSON SAID STOP: stay stopped. What she mapped is still kept.
@@ -594,7 +606,8 @@ async def _face(controller, mapper, heading: float) -> bool:
         step = max(-nav_follower.PIVOT_MAX_DEG,
                    min(nav_follower.PIVOT_MAX_DEG, error))
         done = await follower.step(mapper, "left" if step > 0 else "right",
-                                   follower.rates.seconds_for_turn(step))
+                                   max(nav_follower.PIVOT_MIN_S,
+                                       follower.rates.seconds_for_turn(step)))
         if done.refused or not getattr(mapper, "pose_trusted", False):
             return False
         # Pivots that do not move her are humming, not turning (2026-09-26
