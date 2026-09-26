@@ -401,6 +401,10 @@ def soft_correct(mapper, scan, moved_m: float, turned_rad: float) -> bool:
                           config.SLAM_POSE_PRIOR_FLOOR_DEG))
         near = math.hypot(pose[0] - prior[0], pose[1] - prior[1])
         turn = abs(math.degrees(_wrap(pose[2] - prior[2])))
+        import trip_recorder
+        trip_recorder.note("soft", near_m=round(near, 3), turn_deg=round(turn, 1),
+                           score=round(float(score), 3),
+                           sharpness=round(float(sharp), 2))
         if (score >= SOFT_MIN_SCORE and sharp >= SOFT_MIN_SHARPNESS
                 and near <= SOFT_AGREE_M and turn <= SOFT_AGREE_DEG):
             mapper.pose = tuple(float(v) for v in pose)

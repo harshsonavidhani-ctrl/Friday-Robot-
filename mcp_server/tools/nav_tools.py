@@ -407,18 +407,35 @@ async def _trip_body(minutes: float, robot, tracker):
         tracker.close()
     mapper, start, certain = tracker.best()
     log.info("explore trip: tracked %s", tracker.as_dict())
-    if not certain and len(getattr(tracker, "hyps", ())) > 1:
-        # Two look-alikes still: ask the saved map from where she stands now.
-        fix = await _home_fix(robot)
-        picked = tracker.confirmed_by(fix) if fix is not None else None
-        if picked is not None:
-            mapper, start = picked
-            log.info("explore trip: the saved map settles the look-alikes: "
-                     "she is at %s", [round(float(v), 2) for v in mapper.pose])
-        else:
-            log.info("explore trip: the saved map cannot settle the "
-                     "look-alikes from here (%s); keeping the leading one",
-                     "not sure" if fix is None else "sure, but near neither")
+    if getattr(tracker, "hyps", None):
+        # ASK THE SAVED MAP BEFORE THE TOUR, certain or not: on 2026-09-26
+        # 17:19 the tracker was "certain" and 0.7 m out in position (heading
+        # right) from the hand-over on. Two agreeing sure fixes either pick
+        # a look-alike (near one) or re-anchor the leader's whole frame --
+        # its pose AND the start mark -- onto the map's.
+        # A SURE start: a mismatch now is drift, so only her pose moves. A
+        # look-alike start: the whole frame may be off, so the mark moves too.
+        fix = await nsm.two_sure_fixes(robot)
+        picked = None
+        if fix is not None and getattr(tracker, "started_certain", False):
+            picked = tracker.confirmed_by(fix)
+            if picked is not None:
+                mapper, start = picked
+                log.info("explore trip: the saved map corrects her to %s",
+                         [round(float(v), 2) for v in mapper.pose])
+        elif fix is not None:
+            mapper, start = tracker.reanchor(fix)
+            log.info("explore trip: re-anchored on the saved map at %s; the "
+                     "start mark moves with her to %s",
+                     [round(float(v), 2) for v in mapper.pose],
+                     [round(float(v), 2) for v in start])
+        if fix is None:
+            log.info("explore trip: the saved map is not sure where she is "
+                     "here; keeping the trip's own tracking")
+    # Is the trip's frame the saved map's? A sure start, or a re-anchor just
+    # now, says yes; then a later loss is drift and the mark stays put.
+    anchored = bool(getattr(tracker, "started_certain", True)) or (
+        fix is not None if getattr(tracker, "hyps", None) else True)
     trip_recorder.note("tracked", report=report, tracker=tracker.as_dict())
 
     # 3. A PERSON SAID STOP: stay stopped. What she mapped is still kept.
@@ -437,6 +454,7 @@ async def _trip_body(minutes: float, robot, tracker):
     # room has been toured.
     controller, _ = _controller()           # a fresh stop baseline
     controller.frame = frame
+    controller.frame_anchored = anchored
     toured_out = False
     if why in _EXPLORED_OUT and time.monotonic() < deadline - TOUR_MIN_LEG_S:
         outcome = await _tour(controller, mapper, start, deadline)
@@ -457,6 +475,7 @@ async def _trip_body(minutes: float, robot, tracker):
         nav_voice.VOICE.say("setting_off", "where I set off from")
     controller, _ = _controller()           # a fresh baseline for the way home
     controller.frame = frame
+    controller.frame_anchored = anchored
     import nav_follower
     back = await controller.return_to(start[:2], mapper, refind_near=True,
                                       arrival=nav_follower.ArrivalMonitor(
@@ -468,6 +487,7 @@ async def _trip_body(minutes: float, robot, tracker):
         # The saved map says she is not quite there: one more short drive.
         controller, _ = _controller()
         controller.frame = frame
+        controller.frame_anchored = anchored
         back = await controller.return_to(
             start[:2], mapper, arrival=nav_follower.ArrivalMonitor(
                 start[:2], tolerance_m=TRIP_RETURN_TOL_M,

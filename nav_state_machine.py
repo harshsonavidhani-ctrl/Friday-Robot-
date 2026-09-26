@@ -308,10 +308,21 @@ async def locate(robot, grid=None, voice=None, allow_moves: bool = True):
             return None, why
 
     mapper = Mapper(grid=grid, pose=pose)
+    reasons = []
     for _ in range(config.MISSION_SETTLE_SWEEPS):
         scan = await robot.sweep()
         if scan:
-            mapper.update(scan)
+            reasons.append(str(mapper.update(scan).get("reason", "")))
+    # ⚠ STANDING STILL, "GEOMETRY AMBIGUOUS" IS NOT A REFUSAL. 2026-09-26
+    # 17:2x: a SURE whole-map fix (1.44 against 1.18) settled with 5 sweeps
+    # matched and then 3 at sharpness 1.35-1.37 (gate 1.4) -- and because only
+    # the LAST sweep's verdict was read, "remember this as home" refused four
+    # times. Nothing moved: if any sweep matched and every other one failed
+    # only on sharpness, the fix stands.
+    failed = [r for r in reasons if not r.startswith("matched")]
+    if (not mapper.pose_trusted and len(failed) < len(reasons)
+            and all(r == "geometry ambiguous" for r in failed)):
+        mapper.pose_trusted = True
     if not mapper.pose_trusted:
         return None, ("I can see the room but I cannot match it to my map, so "
                       "I do not know where I am standing.")
@@ -1100,6 +1111,23 @@ class NavController:
                 self.voice.say("refinding")
                 found = (await self._refind_near(robot, mapper) if refind_near
                          else await self._refind(robot, mapper))
+                if not found and refind_near:
+                    # Near failed: her whole frame may be off (2026-09-26
+                    # 17:19: a constant ~0.7 m). Re-anchor from the saved map,
+                    # and move the goal WITH her frame -- it was set in it.
+                    delta = await self._reanchor(robot, mapper)
+                    if delta is not None:
+                        # The goal moves only if it was set in a frame never
+                        # anchored to the map; once anchored, a mismatch is
+                        # drift and the goal is already in the map's frame.
+                        if not getattr(self, "frame_anchored", True):
+                            goal_xy = apply_delta(delta, goal_xy)[:2]
+                            arrival = follow_kw.get("arrival")
+                            if arrival is not None:
+                                arrival.goal = (float(goal_xy[0]),
+                                                float(goal_xy[1]))
+                            self.frame_anchored = True
+                        found = True
                 if found:
                     report.pose = [round(float(v), 3) for v in mapper.pose]
                     self.voice.say("refound", label)
@@ -1127,6 +1155,23 @@ class NavController:
         await self._enter_failsafe(report, mode, goal_xy, label, robot)
         log.info("%s: %s", label, report.as_dict())
         return report
+
+    async def _reanchor(self, robot, mapper):
+        """Re-anchor her whole frame from two agreeing SURE whole-map fixes.
+
+        Returns the correction (tx, ty, dtheta) that was applied to her pose,
+        for the caller to apply to its goal as well -- the goal was set in the
+        same (shifted) frame -- or None. See reanchor_delta.
+        """
+        fix = await two_sure_fixes(robot)
+        if fix is None:
+            return None
+        delta = reanchor_delta(mapper.pose, fix)
+        mapper.pose = tuple(float(v) for v in fix)
+        mapper.pose_trusted = True
+        log.info("re-anchored on the saved map: %s -> %s",
+                 [round(float(v), 2) for v in fix], delta)
+        return delta
 
     async def _refind_near(self, robot, mapper) -> bool:
         """Find her again NEAR where she was, on the map she is driving on.
@@ -1307,6 +1352,78 @@ class NavController:
             if not blocked:
                 return False, clearance
         return True, clearance
+
+
+# --- sure fixes and re-anchoring (2026-09-26) ---------------------------------
+#
+# On the re-surveyed map the whole-map search gives SURE, consistent answers
+# where it can (margins 1.1-1.2 through a whole tour), and on the 17:19 trip
+# they all said the same thing: her heading was right but her POSITION was
+# ~0.7 m off from the hand-over on -- a constant offset, not drift. A near
+# search cannot reach that, and correcting only her pose would leave the start
+# mark in the old frame. So: two consecutive sure fixes that agree give ONE
+# rigid correction, applied to her pose AND to whatever she is driving to.
+FIX_AGREE_M = 0.15
+FIX_AGREE_DEG = 10.0
+
+
+async def sure_fix(robot):
+    """A SURE whole-map fix on the saved map from one sweep, or None."""
+    import anyio.to_thread
+    import global_localise
+    from slam.grid import OccupancyGrid
+
+    try:
+        grid = OccupancyGrid.load(config.SLAM_MAP_FILE)
+        scan = await robot.sweep()
+        if not scan:
+            return None
+        plannable = path_planner.preprocess(grid).plannable
+        fix = await anyio.to_thread.run_sync(
+            lambda: global_localise.localise(grid, scan, restrict_to=plannable))
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("could not take a whole-map fix: %s", exc)
+        return None
+    return tuple(float(v) for v in fix.pose) if fix.pose is not None else None
+
+
+async def two_sure_fixes(robot):
+    """Two consecutive sure fixes that agree, or None. Standing still."""
+    first = await sure_fix(robot)
+    if first is None:
+        return None
+    second = await sure_fix(robot)
+    if second is None:
+        return None
+    apart = math.hypot(first[0] - second[0], first[1] - second[1])
+    turn = abs(math.degrees(_wrap_rad(first[2] - second[2])))
+    if apart > FIX_AGREE_M or turn > FIX_AGREE_DEG:
+        log.info("two whole-map fixes disagree (%.2f m, %.0f deg): no re-anchor",
+                 apart, turn)
+        return None
+    return second
+
+
+def _wrap_rad(a: float) -> float:
+    return (a + math.pi) % (2 * math.pi) - math.pi
+
+
+def reanchor_delta(pose, fix):
+    """The rigid correction (tx, ty, dth) taking `pose` onto `fix`."""
+    dth = _wrap_rad(float(fix[2]) - float(pose[2]))
+    c, s = math.cos(dth), math.sin(dth)
+    tx = float(fix[0]) - (c * float(pose[0]) - s * float(pose[1]))
+    ty = float(fix[1]) - (s * float(pose[0]) + c * float(pose[1]))
+    return (tx, ty, dth)
+
+
+def apply_delta(delta, p):
+    """Apply a correction to an (x, y) or (x, y, theta) in the old frame."""
+    tx, ty, dth = delta
+    c, s = math.cos(dth), math.sin(dth)
+    x, y = float(p[0]), float(p[1])
+    out = (c * x - s * y + tx, s * x + c * y + ty)
+    return out + ((_wrap_rad(float(p[2]) + dth),) if len(p) > 2 else ())
 
 
 # A trip's re-search stays this close to the tracked pose (see _refind_near),

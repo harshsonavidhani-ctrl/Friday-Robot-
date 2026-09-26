@@ -316,6 +316,33 @@ class TripTracker:
         start = h.start or tuple(float(v) for v in fix)
         return h.mapper, start
 
+    def reanchor(self, fix):
+        """(mapper, start): the leader's whole frame moved onto the saved map's.
+
+        One rigid correction takes the leader's pose onto `fix`; the same one
+        moves its start mark, which was set in the same frame. The mapper is
+        rebuilt on a clean copy of the saved map at `fix`: the trip's own
+        sweeps were drawn in the old frame and would be wrong in the new one.
+        """
+        import nav_state_machine as nsm
+        from slam.mapper import Mapper
+
+        # The hypothesis the fix is closest to, heading counted: on 17:19 the
+        # nearer look-alike by position faced 154 degrees the other way.
+        def cost(h):
+            p = h.mapper.pose
+            turn = abs(nsm._wrap_rad(float(fix[2]) - float(p[2])))
+            return (math.hypot(float(fix[0]) - float(p[0]),
+                               float(fix[1]) - float(p[1])) + 0.5 * turn)
+        lead = min(self.hyps, key=cost)
+        delta = nsm.reanchor_delta(lead.mapper.pose, fix)
+        start = nsm.apply_delta(delta, lead.start or lead.mapper.pose)
+        lead.mapper = Mapper(grid=copy.deepcopy(self._grid),
+                             pose=tuple(float(v) for v in fix))
+        lead.mapper.pose_trusted = lead.held = True
+        lead.start = tuple(float(v) for v in start)
+        return lead.mapper, lead.start
+
     def as_dict(self) -> dict:
         return {
             "sweeps": self.sweeps,
