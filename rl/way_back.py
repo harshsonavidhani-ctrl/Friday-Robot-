@@ -112,8 +112,56 @@ def scan_to_dict(scan_m: np.ndarray, max_range: float,
     return out
 
 
+class _Folder:
+    """The fold itself: where the robot is relative to the start. Pure state.
+
+    Runs in the tracker's own PROCESS on the robot (see StartTracker), and
+    in-process in the tests.
+    """
+
+    def __init__(self, max_range: float) -> None:
+        self.max_range = float(max_range)
+        self.matcher: "_StartMatcher | None" = None
+        self.last_rl: tuple[float, float, float] | None = None
+
+    def fold(self, scan_m, rl: tuple, blind, start_rl) -> dict | None:
+        # A full-resolution sweep ({deg: mm}, robot frame) when the LiDAR thread
+        # publishes one; the 72 bins otherwise.
+        scan = (scan_m if isinstance(scan_m, dict)
+                else scan_to_dict(scan_m, self.max_range, blind))
+        if len(scan) < 12:
+            return None
+        t0 = time.perf_counter()
+        if self.matcher is None:
+            # The start: the run's own first pose, whatever frame the RL map put
+            # it in, is (0, 0, 0) here.
+            self.matcher = _StartMatcher(scan)
+            rl0 = start_rl or rl
+            if rl != rl0:
+                # The run moved before the first fold: count that motion.
+                self.matcher.pose = _compose(_inverse(rl0), rl)
+            reason = "matched"
+        else:
+            d = _compose(_inverse(self.last_rl), rl)
+            moved, turned = math.copysign(math.hypot(d[0], d[1]), d[0]), d[2]
+            reason = self.matcher.update(scan, moved_m=moved,
+                                         turned_rad=turned).get("reason", "")
+        self.last_rl = rl
+        return {"pose": tuple(float(v) for v in self.matcher.pose),
+                "reason": reason, "ms": (time.perf_counter() - t0) * 1000.0}
+
+
 class StartTracker(threading.Thread):
-    """A scan-matched pose relative to where the run started. Steers nothing."""
+    """A scan-matched pose relative to where the run started. Steers nothing.
+
+    ⚠ THE MATCHING RUNS IN ITS OWN PROCESS. The first version matched on a
+    thread inside the run, and the first real run with it (2026-09-26 22:44)
+    missed the 100 ms control deadline 262 times against 35 the run before,
+    sensor reads went 10 -> 31 ms a tick, and she collided twice: every fold
+    held the GIL the control loop and the ToF reflex needed. Now a child
+    process (niced) does the matching on another core, and this thread only
+    hands it sweeps and waits on a pipe, which holds no lock at all.
+    """
 
     def __init__(self, max_range: float, hz: float = TRACK_HZ) -> None:
         super().__init__(name="way-back", daemon=True)
@@ -121,14 +169,15 @@ class StartTracker(threading.Thread):
         self.period = 1.0 / hz
         self._stop_evt = threading.Event()
         self._lock = threading.Lock()
-        self._pending: tuple[np.ndarray, tuple, Any] | None = None
-        self.mapper = None
+        self._first: tuple | None = None
+        self._pending: tuple | None = None
+        self._folder = _Folder(max_range)            # in-process: tests only
+        self._proc = None
         self.start_rl: tuple[float, float, float] | None = None
         # The latest fix: the tracker's pose (start frame) and the run's
         # dead-reckoned pose at the same instant.
         self._fix_t: tuple[float, float, float] | None = None
         self._fix_rl: tuple[float, float, float] | None = None
-        self._last_rl: tuple[float, float, float] | None = None
         self.updates = 0
         self.matched = 0
         self.last_reason = ""
@@ -139,57 +188,83 @@ class StartTracker(threading.Thread):
     def submit(self, scan_m: np.ndarray, rl_pose, blind=None) -> None:
         """From the control loop. Copies and returns at once."""
         rl = tuple(float(v) for v in rl_pose)
+        job = (dict(scan_m) if isinstance(scan_m, dict)
+               else np.asarray(scan_m, np.float32).copy(), rl, blind)
         with self._lock:
             if self.start_rl is None:
                 self.start_rl = rl
-            self._pending = (dict(scan_m) if isinstance(scan_m, dict)
-                             else np.asarray(scan_m, np.float32).copy(), rl, blind)
+                # Kept apart: the start's own sweep must be the first fold even
+                # if the tracker process is still importing when she sets off.
+                self._first = job
+            else:
+                self._pending = job
 
     def stop(self) -> None:
         self._stop_evt.set()
+        proc = self._proc
+        if proc is not None:
+            try:
+                proc.stdin.close()
+                proc.wait(timeout=2.0)
+            except Exception:                             # noqa: BLE001
+                proc.kill()
+
+    def _next_job(self):
+        with self._lock:
+            if self._first is not None:
+                job, self._first = self._first, None
+            else:
+                job, self._pending = self._pending, None
+        return job
 
     def run(self) -> None:
+        import pickle
+        import subprocess
+        try:
+            self._proc = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "--serve",
+                 str(self.max_range)],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        except Exception as exc:                          # noqa: BLE001
+            # Never takes the run down: without fixes, home_rl() is the
+            # dead-reckoned start.
+            self.error = f"tracker process did not start: {exc}"
+            return
         while not self._stop_evt.is_set():
-            with self._lock:
-                job, self._pending = self._pending, None
+            job = self._next_job()
             if job is not None:
                 try:
-                    self._fold(*job)
+                    pickle.dump((*job, self.start_rl), self._proc.stdin, protocol=4)
+                    self._proc.stdin.flush()
+                    out = pickle.load(self._proc.stdout)
                 except Exception as exc:                  # noqa: BLE001
-                    # Never takes the run down: without fixes, home_rl() falls
-                    # back to the dead-reckoned start, which is the old behaviour.
-                    self.error = f"{type(exc).__name__}: {exc}"
+                    if not self._stop_evt.is_set():
+                        self.error = f"tracker process: {type(exc).__name__}: {exc}"
+                    return
+                if isinstance(out, dict) and "error" in out:
+                    self.error = out["error"]
+                elif out:
+                    self._apply(out, job[1])
             self._stop_evt.wait(self.period)
 
     def _fold(self, scan_m, rl: tuple, blind) -> None:
-        # A full-resolution sweep ({deg: mm}, robot frame) when the LiDAR thread
-        # publishes one; the 72 bins otherwise.
-        scan = (scan_m if isinstance(scan_m, dict)
-                else scan_to_dict(scan_m, self.max_range, blind))
-        if len(scan) < 12:
-            return
-        t0 = time.perf_counter()
-        if self.mapper is None:
-            # The start: the run's own first pose, whatever frame the RL map put
-            # it in, is (0, 0, 0) here.
-            self.mapper = _StartMatcher(scan)
-            rl0 = self.start_rl or rl
-            if rl != rl0:
-                # The run moved before the first fold: count that motion.
-                self.mapper.pose = _compose(_inverse(rl0), rl)
-            res = {"reason": "matched"}
-        else:
-            d = _compose(_inverse(self._last_rl), rl)
-            moved, turned = math.copysign(math.hypot(d[0], d[1]), d[0]), d[2]
-            res = self.mapper.update(scan, moved_m=moved, turned_rad=turned)
-        self.last_ms = (time.perf_counter() - t0) * 1000.0
-        self._last_rl = rl
+        """In-process fold, for the tests."""
+        out = self._folder.fold(scan_m, rl, blind, self.start_rl)
+        if out:
+            self._apply(out, rl)
+
+    @property
+    def mapper(self):
+        return self._folder.matcher
+
+    def _apply(self, out: dict, rl: tuple) -> None:
+        self.last_ms = float(out["ms"])
         self.updates += 1
-        self.last_reason = res.get("reason", "")
+        self.last_reason = out["reason"]
         if self.last_reason.startswith("matched"):
             self.matched += 1
         with self._lock:
-            self._fix_t = tuple(float(v) for v in self.mapper.pose)
+            self._fix_t = tuple(out["pose"])
             self._fix_rl = rl
 
     # ------------------------------------------------------------- answers ----
@@ -209,6 +284,28 @@ class StartTracker(threading.Thread):
         return {"updates": self.updates, "matched": self.matched,
                 "reason": self.last_reason, "fold_ms": round(self.last_ms, 1),
                 "error": self.error, "home_rl": self.home_rl()}
+
+
+def _serve(max_range: float) -> int:
+    """The tracker process: pickled jobs on stdin, pickled fixes on stdout."""
+    import os
+    import pickle
+    os.nice(10)                     # the control loop always wins the CPU
+    out = os.fdopen(os.dup(1), "wb")
+    os.dup2(2, 1)                   # a stray print must not corrupt the pipe
+    inp = sys.stdin.buffer
+    folder = _Folder(max_range)
+    while True:
+        try:
+            scan, rl, blind, start_rl = pickle.load(inp)
+        except (EOFError, OSError):
+            return 0
+        try:
+            res = folder.fold(scan, rl, blind, start_rl)
+        except Exception as exc:                          # noqa: BLE001
+            res = {"error": f"{type(exc).__name__}: {exc}"}
+        pickle.dump(res, out, protocol=4)
+        out.flush()
 
 
 def _match(field, local: np.ndarray, centre, window_m: float, window_deg: float,
@@ -386,3 +483,7 @@ class WayBack:
                 "distance_m": (None if self.distance_m is None
                                else round(self.distance_m, 2)),
                 "tracker": self.tracker.snapshot()}
+
+
+if __name__ == "__main__" and len(sys.argv) >= 3 and sys.argv[1] == "--serve":
+    sys.exit(_serve(float(sys.argv[2])))

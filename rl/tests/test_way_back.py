@@ -206,6 +206,28 @@ check("the planner was steering for the start when she stopped",
       timed.planner is not None and timed.planner.home is not None
       and timed.planner.target.approach == (15.0, 12.0))
 
+# 5b. On the robot the matching runs in its OWN PROCESS: on a thread it took
+#     the GIL from the control loop and the reflex (262 overruns, two
+#     collisions, 2026-09-26 22:44).
+tr = wb.StartTracker(8.0, hz=20.0)
+tr.start()
+room = {d: 1500 + 400 * int(60 <= d < 150) for d in range(0, 360)}
+deadline = time.monotonic() + 30.0
+while tr.updates < 3 and time.monotonic() < deadline and not tr.error:
+    tr.submit(room, (1.0, 2.0, 0.0))      # the loop submits every tick
+    time.sleep(0.1)
+check("the tracker process folds sweeps and reports fixes",
+      tr.updates >= 3 and not tr.error, str(tr.snapshot()))
+check("...and a robot that never moved is at its start",
+      tr.home_rl() is not None and math.hypot(tr.home_rl()[0] - 1.0,
+                                              tr.home_rl()[1] - 2.0) < 0.06,
+      str(tr.home_rl()))
+check("the matching is not in this process",
+      tr._folder.matcher is None and tr._proc is not None)
+tr.stop()
+tr.join(timeout=5.0)
+check("stopping ends the process", tr._proc.poll() is not None)
+
 # 6. The tracker on the real room, with this drivetrain's slips.
 try:
     import path_planner
@@ -272,9 +294,7 @@ if grid is not None:
             dead[2] = wb._wrap(dead[2] + om * dt)
             if k % 3 == 0:
                 tr.submit(sweep(truth, rng), dead)
-                with tr._lock:
-                    job, tr._pending = tr._pending, None
-                tr._fold(*job)
+                tr._fold(*tr._next_job())
         rel_true = wb._compose(wb._inverse(tuple(truth)), start)
         rel_est = wb._compose(wb._inverse(tuple(dead)), tr.home_rl())
         rel_dead = wb._compose(wb._inverse(tuple(dead)), (0.0, 0.0, 0.0))
