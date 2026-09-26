@@ -100,10 +100,21 @@ async def _placed_mapper() -> tuple[Mapper | None, str]:
         return None, (f"I cannot work out where I am standing: {fix.why}")
 
     mapper = Mapper(grid=grid, pose=fix.pose)
+    reasons = []
     for _ in range(config.MISSION_SETTLE_SWEEPS):
         scan = await anyio.to_thread.run_sync(_sweep_once, robot)
         if scan:
-            mapper.update(scan)
+            reasons.append(str(mapper.update(scan).get("reason", "")))
+
+    # Standing still, "geometry ambiguous" is the sharpness gate's false alarm
+    # (peak over the median of a 4 cm window), not a failure to match: a SURE
+    # fix (1.44 against 1.18) refused "remember this as home" four times on
+    # 2026-09-26 because only the LAST settle sweep was read. Same rule as
+    # nav_state_machine.locate().
+    failed = [r for r in reasons if not r.startswith("matched")]
+    if (not mapper.pose_trusted and len(failed) < len(reasons)
+            and all(r == "geometry ambiguous" for r in failed)):
+        mapper.pose_trusted = True
 
     if not mapper.pose_trusted:
         return None, ("I can see the room but I cannot match it to my map, so "
