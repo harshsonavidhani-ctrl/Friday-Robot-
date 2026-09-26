@@ -801,6 +801,26 @@ async def api_map_meta(request: web.Request) -> web.Response:
     return web.json_response(meta)
 
 
+async def api_maps(request: web.Request) -> web.Response:
+    """Every navigation map she has: in use, earlier versions, surveys. READ-ONLY."""
+    from dashboard import maps_gallery
+    try:
+        return web.json_response({"ok": True, "maps":
+                                  await asyncio.to_thread(maps_gallery.listing)})
+    except Exception as exc:                     # noqa: BLE001
+        return web.json_response({"ok": False, "why": str(exc)})
+
+
+async def api_maps_png(request: web.Request) -> web.Response:
+    """One listed map's picture. Takes an id FROM THE LISTING, never a path."""
+    from dashboard import maps_gallery
+    png = await asyncio.to_thread(maps_gallery.png, request.query.get("id", ""))
+    if not png:
+        raise web.HTTPNotFound(text="no such map")
+    return web.Response(body=png, content_type="image/png",
+                        headers={"Cache-Control": "no-store"})
+
+
 async def api_explore_get(request: web.Request) -> web.Response:
     return web.json_response(_explore_state())
 
@@ -1057,6 +1077,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/nav", api_nav_post)
     app.router.add_get("/api/map.png", api_map_png)
     app.router.add_get("/api/map", api_map_meta)
+    app.router.add_get("/api/maps", api_maps)
+    app.router.add_get("/api/maps/png", api_maps_png)
     app.router.add_post("/api/explore", api_explore_post)
 
     async def index(request: web.Request) -> web.StreamResponse:

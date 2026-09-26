@@ -832,3 +832,14 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
 .navgo { background: none; border: none; color: #ff8a3d; cursor: pointer;
          font-size: 12px; padding: 0 0 0 2px; }
 .navgo:hover { text-decoration: underline; }
+
+/* Maps panel (dashboard/maps_gallery.py): every navigation map, read-only. */
+.mapslist { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.mapsgroup { width: 100%; margin: 10px 0 2px; font-size: 0.85rem; opacity: 0.8; }
+.mapcard { display: flex; flex-direction: column; gap: 4px; width: 132px;
+  padding: 4px; border-radius: 8px; border: 1px solid rgba(127,127,127,0.35);
+  background: transparent; color: inherit; font: inherit; text-align: left;
+  cursor: pointer; }
+.mapcard img { width: 100%; aspect-ratio: 1; object-fit: contain;
+  background: #969696; border-radius: 4px; }
+.mapcard span { font-size: 0.7rem; line-height: 1.25; overflow-wrap: anywhere; }

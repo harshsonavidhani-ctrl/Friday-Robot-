@@ -502,6 +502,47 @@ async function refreshMap() {
     (m.running ? ' · updates when this run ends' : '');
 }
 
+// ---- Maps: every navigation map she has (read-only) ----------------------
+let mapsKey = null;
+async function refreshMaps() {
+  if (!$('mapslist')) return;
+  let r;
+  try { r = await (await fetch('/api/maps')).json(); } catch { return; }
+  if (!r.ok) { $('mapsnow').textContent = 'unavailable'; return; }
+  const key = r.maps.map(m => m.id + ':' + m.version).join('|');
+  $('mapsnow').textContent = r.maps.length + ' maps';
+  if (key === mapsKey) return;             // redraw only when something changed
+  mapsKey = key;
+  const list = $('mapslist');
+  list.textContent = '';
+  let group = null;
+  for (const m of r.maps) {
+    if (m.group !== group) {
+      group = m.group;
+      const h = document.createElement('h3');
+      h.className = 'mapsgroup';
+      h.textContent = group;
+      list.appendChild(h);
+    }
+    const card = document.createElement('button');
+    card.className = 'mapcard';
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = m.label;
+    img.src = '/api/maps/png?id=' + encodeURIComponent(m.id) + '&v=' + m.version;
+    const cap = document.createElement('span');
+    cap.textContent = `${m.label} · ${ago(m.saved_at)}` +
+      (m.walls_m2 !== undefined ? ` · walls ${m.walls_m2} m² · free ${m.free_m2} m²` : '');
+    card.append(img, cap);
+    card.onclick = () => {
+      $('mapsbig').src = img.src;
+      $('mapsbig').hidden = false;
+      $('mapsbignote').textContent = `${m.group}: ${cap.textContent}`;
+    };
+    list.appendChild(card);
+  }
+}
+
 async function refreshExplore() {
   try { paintExplore(await (await fetch('/api/explore')).json()); }
   catch { /* the dashboard is stopped during a run; the panel keeps its text */ }
@@ -1209,6 +1250,7 @@ async function heartbeat() {
   paintLane(s.people);           // ...and Memory Lane
   refreshExplore();               // cheap, and the panel must not go stale
   refreshMap();                   // one stat() server-side until the map changes
+  refreshMaps();
   refreshNav();                   // landmarks + the attempt log, one read
   if ($('navroundtrip')) $('navroundtrip').onchange = (e) =>
     navSend({ action: 'round_trip', on: e.target.checked },
@@ -1273,6 +1315,7 @@ function showPane(id) {
   buildExplore();
   await refreshExplore();
   refreshMap();
+  refreshMaps();
   refreshNav();
   buildGrowth();
   buildStudy();
