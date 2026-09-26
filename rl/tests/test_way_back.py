@@ -125,6 +125,44 @@ check("the pull toward the start is labelled as the way back",
       str(ctx.get("reason", "")).startswith("way back"), f"{ctx.get('reason')}")
 check("the state published for the dashboard carries it",
       (loop.autonomy_state() or {}).get("way_back", {}).get("phase") == "returning")
+
+# 3b. The way back drives HOME, not wherever the policy fancies: on the robot
+#     (23:12) the policy reversed on 34% of the way back and she never got there.
+class WheelsObey(NullMotorDriver):
+    """Does what it is told, so dead reckoning moves (the null driver never does)."""
+
+    def drive(self, v, omega):
+        super().drive(v, omega)
+        self.last_executed = (float(v), float(omega))
+
+
+loop3, slots3 = make_loop(True)
+loop3.motors = WheelsObey(cfg)
+p0 = np.array(loop3.map.pose, float)
+goal = (float(p0[0]) + 1.2, float(p0[1]) + 0.9, 0.0)
+loop3.way_back = wb.WayBack(FakeTracker(goal), budget_s=60.0)
+loop3._begin_way_back("time")
+d0 = loop3.way_back.distance(loop3.map.pose)
+reversed_ticks = 0
+for i in range(150):
+    slots3["lidar"].publish(np.full(cfg.n_beams, 3.0, np.float32))
+    loop3._steer_home()
+    row = loop3.tick()
+    reversed_ticks += row["v"] < -1e-6
+    if loop3.way_back.check(loop3.map.pose) is not None:
+        break
+check("in open space she turns to the start and drives to it",
+      loop3.way_back.outcome == "arrived",
+      f"{d0:.2f} m -> {loop3.way_back.distance(loop3.map.pose):.2f} m in {i + 1} ticks")
+check("...without reversing on the way", reversed_ticks == 0, f"{reversed_ticks} ticks")
+check("far off to one side: turn in place first",
+      wb.homing_command(math.radians(120), 2.0, 1.6)[:2] == (0.0, 1.6))
+check("roughly facing it: drive, steering toward it",
+      wb.homing_command(math.radians(-20), 2.0, 1.6)[0] > 0.2
+      and wb.homing_command(math.radians(-20), 2.0, 1.6)[1] < 0)
+check("while exploring there is no homing command at all",
+      make_loop(True)[0].way_back.phase == "exploring")
+
 check("still far away: keep driving", loop.way_back.check((0.0, 0.0, 0.0)) is None)
 check("within tolerance: arrived",
       loop.way_back.check((0.9, -0.9, 0.0)) == "arrived")

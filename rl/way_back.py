@@ -56,10 +56,43 @@ RETURN_BUDGET_S = 120.0
 # the map is still arriving.
 EXHAUSTED_HOLD_S = 8.0
 EXHAUSTED_MIN_RUN_S = 20.0
-# While going home the start pulls harder than a frontier did: a frontier only has
-# to be SEEN, the start has to be reached.
-HOME_ALIGN_TOL_RAD = math.radians(12.0)
-HOME_MAX_BIAS_FRACTION = 0.9
+# THE WAY BACK'S OWN COMMAND. The first real runs steered home with the
+# exploring's heading nudge alone, and the policy -- which has no idea where the
+# start is -- kept the speed: on 2026-09-26 23:12 it reversed on 34% of the way
+# back and drove forward on 18%, the heading error never fell below ~45 deg, and
+# she ended 1.05 m out after 120 s. So on the way back only, this replaces the
+# POLICY's request (turn to face the start, then drive at it). Everything after
+# it is unchanged and still has the last word: the arc planner, the governor,
+# escape turns, the recovery controller (backing off, "I am stalled"), the rear
+# gate, the ToF reflex and the rate limiter.
+HOME_PIVOT_DEG = 50.0          # further off than this: turn in place first
+HOME_CRUISE_MPS = 0.30         # = nav_speed_authority 0.6 x v_max, the exploring cruise
+HOME_NEAR_M = 0.6
+HOME_NEAR_MPS = 0.20
+HOME_TURN_GAIN = 1.5           # rad/s of turn per rad of heading error
+HOME_OMEGA_MAX = 1.2
+
+
+def homing_command(err_rad: float | None, distance_m: float | None,
+                   omega_max: float, v_floor: float = 0.0
+                   ) -> tuple[float, float, str] | None:
+    """(v, omega, why) toward the start, or None when there is no bearing."""
+    if err_rad is None:
+        return None
+    side = "left" if err_rad > 0 else "right"
+    if abs(err_rad) > math.radians(HOME_PIVOT_DEG):
+        return (0.0, math.copysign(omega_max, err_rad),
+                f"way back: turning to face the start, "
+                f"{math.degrees(abs(err_rad)):.0f} deg {side}")
+    v = HOME_CRUISE_MPS
+    if distance_m is not None and distance_m < HOME_NEAR_M:
+        v = max(HOME_NEAR_MPS, v_floor)
+    omega = max(-HOME_OMEGA_MAX, min(HOME_OMEGA_MAX, HOME_TURN_GAIN * err_rad))
+    return (v, omega, f"way back: driving at the start, "
+                      f"{math.degrees(abs(err_rad)):.0f} deg {side}"
+                      + ("" if distance_m is None else f", {distance_m:.2f} m"))
+
+
 # Tracker rate. A fold of 72 beams on a small fresh map is cheap, and smaller
 # motion between folds keeps each match inside the matcher's window.
 TRACK_HZ = 4.0

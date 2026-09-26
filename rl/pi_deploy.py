@@ -3606,13 +3606,19 @@ class ControlLoop:
         if self.planner is not None:
             err = self.planner.bearing_error(self.map.pose)
             target_bearing = err
+            home_cmd = None
             if self.way_back is not None and self.way_back.phase == "returning":
-                # A frontier only has to be SEEN; the start has to be REACHED.
-                bias, why = steering_bias(
-                    err, omega_pol, c.omega_max,
-                    align_tol=_way_back.HOME_ALIGN_TOL_RAD,
-                    max_fraction=_way_back.HOME_MAX_BIAS_FRACTION)
-                why = f"way back: {why}"
+                # The way back REPLACES the policy's request (it has no idea
+                # where the start is); every stage below still has the last
+                # word. See way_back.homing_command.
+                home_cmd = _way_back.homing_command(
+                    err, self.way_back.distance(self.map.pose), c.omega_max,
+                    self.motors.min_speed_mps())
+            if home_cmd is not None:
+                v_pol, omega_pol, why = home_cmd
+                bias = 0.0
+                gate = "planner"
+                rec.add("planner", v_pol, omega_pol, why)
             else:
                 bias, why = steering_bias(err, omega_pol, c.omega_max)
             planner_ctx = {"bearing_error": err, "bias": bias, "reason": why}
