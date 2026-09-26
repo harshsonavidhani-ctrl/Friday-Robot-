@@ -123,6 +123,10 @@ class ExplorationPlanner(threading.Thread):
         # Targets that could not be reached. Keyed coarsely by `Frontier.key()` so the
         # same place is recognised between cycles even as its cells shift.
         self.blacklist: set = set()
+        # THE WAY BACK (rl/way_back.py). Once set, the target is the start and
+        # nothing here replaces it: no frontier search, no abandoning, no
+        # retiring on arrival -- the control loop decides when she is back.
+        self.home: Any = None
 
     # ------------------------------------------------------------------ state ---
     def snapshot(self) -> dict[str, Any]:
@@ -175,6 +179,19 @@ class ExplorationPlanner(threading.Thread):
         return math.hypot(t.approach[0] - float(pose[0]),
                           t.approach[1] - float(pose[1]))
 
+    def go_home(self, target: Any) -> None:
+        """Steer for `target` (the start) from now on, instead of a frontier.
+
+        Called again whenever the start's estimate moves; the same object may be
+        passed each time. Everything downstream -- the steering bias, the local
+        navigator -- reads the target exactly as it read a frontier.
+        """
+        with self._lock:
+            if self.home is not target:
+                self.target_since = time.monotonic()
+            self.home = target
+            self.target = target
+
     # --------------------------------------------------------------- lifecycle --
     def stop(self) -> None:
         self._stop.set()
@@ -186,6 +203,8 @@ class ExplorationPlanner(threading.Thread):
         be noticed at control rate, not on the next 2 s planning cycle, or the robot
         keeps steering toward somewhere it is already standing.
         """
+        if self.home is not None:
+            return
         d = self.distance_to_target(pose)
         if d is not None and d <= self.reached_m:
             with self._lock:
@@ -194,6 +213,8 @@ class ExplorationPlanner(threading.Thread):
                     self.target = None
 
     def _plan_once(self) -> None:
+        if self.home is not None:
+            return
         grid = self.world.grid_snapshot()
         if grid is None or grid.shape == (1, 1):
             return
@@ -221,6 +242,8 @@ class ExplorationPlanner(threading.Thread):
         self.frontier_count = len(options)
 
         with self._lock:
+            if self.home is not None:
+                return                  # go_home() landed while this cycle planned
             current = self.target
             self.exhausted = not options
 

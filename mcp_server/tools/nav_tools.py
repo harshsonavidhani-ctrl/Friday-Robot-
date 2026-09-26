@@ -269,27 +269,27 @@ async def explore_and_return(minutes: float | None = None,
     """Explore on my own the usual way, then drive back to where I started.
 
     What "Friday, explore" and "explore and come back" do. Returns at once;
-    I announce everything myself, so do not repeat my reply. I mark where I
-    am standing on my saved map, explore exactly as start_exploration does,
-    and the moment that run ends -- its time is up, or it has nowhere left to
-    go -- I drive back to the mark and turn to face the way I set off. Say
-    stop and the run stops; I then come back only if the mark was noted.
+    I announce everything myself, so do not repeat my reply. The run notes
+    where I am standing from its first LiDAR sweep, explores exactly as
+    start_exploration does, and the moment its time is up (or it has nowhere
+    left to go) it keeps driving the same way to that spot and stops there.
+    Say stop and I stop where I am.
 
     Args:
         minutes: how long to explore before coming back. Defaults to 2.
         thinking: True to also think about where to go while exploring.
     """
-    import asyncio
-
-    global _WATCHER
     from mcp_server.tools import autonomy
 
-    # ⚠ THE EXPLORING IS THE OLD ONE, UNCHANGED (Harsh, 2026-09-26: "the
-    # behaviour changed of exploration, it should be actively exploring, same
-    # old behaviour, just adding the feature where it knows where it started
-    # ... return to starting position immediately after exploration"). From
-    # 2026-09-24 this ran slam/mission.py plus a tour instead of the RL run;
-    # the RL run is back, and the only addition is the mark and the drive home.
+    # ⚠ THE WAY BACK LIVES IN THE RUN NOW (Harsh, 2026-09-26: "joint both of
+    # them in the old exploration model code"). rl/way_back.py tracks the
+    # start from the run's own first sweep and, when the timer ends, the SAME
+    # control loop -- policy, navigator, reflexes, backing off, narration --
+    # drives to it and stops. Until then this tool marked the start on the
+    # saved map (refused in the hostel room: look-alikes), armed a return,
+    # and a watcher drove back with the nav engine after the run: a second
+    # relocalisation, pivot-and-step at ~1 Hz, and she looked stopped.
+    # `_watch_then_return` and the armed return stay for come_back().
     if _journey_running() or autonomy._running():
         return _busy_reply()
     try:
@@ -299,27 +299,10 @@ async def explore_and_return(minutes: float | None = None,
     minutes = max(0.5, min(minutes, 30.0))
     nsm.clear_failsafe()
     _reclaim_if_run_gone()
-    # A person's "stop" during the run shows up here as ABORT (movement.stop
-    # sets it, then ends the run); a stale one from before must not.
     hardware.ABORT.clear()
-
-    start = await _mark_start()
-    armed = False
-    if start is not None:
-        armed = bool(nsm.arm_return_to_start(start, why="exploration")
-                     .get("armed"))
     said = autonomy.start_exploration(minutes=minutes, thinking=thinking)
     if nsm.start_failed(said):
-        if armed:
-            nsm.clear_pending()           # nothing set off: nothing to return from
         return nav_voice.VOICE.say_text(f"I could not start exploring. {said}")
-    if not armed:
-        return nav_voice.VOICE.say_text(
-            f"Exploring for {_minutes_phrase(minutes)}. I could not place "
-            "myself on my map here, so I may not find my way back to this "
-            "spot.")
-    if _WATCHER is None or _WATCHER.done():
-        _WATCHER = asyncio.create_task(_watch_then_return())
     return nav_voice.VOICE.say("exploring", _minutes_phrase(minutes))
 
 

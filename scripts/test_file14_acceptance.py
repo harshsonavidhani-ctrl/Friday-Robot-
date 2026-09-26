@@ -852,44 +852,37 @@ def twelve_explore_trip() -> None:
 
                 async def run():
                     said = await nav_tools.explore_and_return(**intent.args)
-                    armed = nsm.pending_return()
                     started = [c for c in rig.calls
                                if isinstance(c, tuple)
                                and c[0] == "start_exploration"]
-                    # She explores and ends up somewhere else entirely.
-                    world.x, world.y, world.theta = (2.2, 1.4, 1.0)
-                    await asyncio.sleep(0.2)
-                    rig.running = False          # the timer ended the run...
-                    lease_left = hardware.lease_active()  # ...lease left behind
-                    await nav_tools._watch_then_return(
-                        poll_s=0.05, watch=nsm.FrontierWatch(
-                            path=Path(tmp.name) / "none.json"))
-                    return said, armed, started, lease_left
+                    return said, started
 
-                said, armed, started, lease_left = asyncio.run(run())
+                said, started = asyncio.run(run())
                 check("she says she is exploring and will come back",
                       said == _line("exploring", "2 minutes"), said)
-                check("she marked the spot with the LiDAR BEFORE exploring",
-                      rig.relocalised_at[:1] == [0] and armed is not None
-                      and abs(armed["x"] - 0.5) < 0.1, str(armed))
                 check("the exploring is the old run, with the minutes she "
                       "was given (Harsh: 'same old behaviour')",
                       started == [("start_exploration", 2.0)], str(started))
-                check("the run left its lease behind, as the real one does",
-                      lease_left > 60, f"{lease_left:.0f}s left")
-                check("she took the hardware back once the run was gone",
-                      hardware.lease_active() == 0.0)
-                check("she drove back to the spot she started from",
-                      math.hypot(world.x - 0.5, world.y - 2.0) < 0.5,
-                      f"{math.hypot(world.x - 0.5, world.y - 2.0):.2f} m away")
-                check("and said so",
-                      _in_order(rig.voice.said,
-                                [_line("setting_off", "where I set off from"),
-                                 _line("arrived_start")]),
-                      str(rig.voice.said))
-                check("the armed return is used up", nsm.pending_return() is None)
+                # The way back is the RUN's now (rl/way_back.py, tested in
+                # rl/tests/test_way_back.py): nothing here may take the LiDAR
+                # before the run, arm a second return, or watch to drive back.
+                check("the server does not take the LiDAR first (the run "
+                      "marks its own start)", rig.relocalised_at == [],
+                      str(rig.relocalised_at))
+                check("and arms no second return of its own",
+                      nsm.pending_return() is None)
+                check("and starts no watcher that would drive after the run",
+                      nav_tools._WATCHER is None or nav_tools._WATCHER.done())
+                mode = (ROOT / "rl" / "modes" / "explore.sh").read_text()
+                env = (ROOT / "rl" / "modes"
+                       / "confident_explore.env").read_text()
+                check("the run the voice starts comes back by itself (the "
+                      "mode never passes --no-way-back)",
+                      "--no-way-back" not in mode + env)
+                rig.running = False
                 _items.append(("Explore, then straight back to the start",
-                               math.hypot(world.x - 0.5, world.y - 2.0) < 0.5))
+                               started == [("start_exploration", 2.0)]
+                               and nsm.pending_return() is None))
     finally:
         hardware.LEASE_FILE = saved_lease
         tmp.cleanup()
@@ -971,53 +964,10 @@ def fourteen_trip_edge_cases() -> None:
     telemetry = Path(tmp.name) / "rl_autonomy.json"
     nsm.AUTONOMY_FILE = telemetry
     try:
-        # 1. A person says stop during the run: she does NOT drive back.
-        with TempPlaces():
-            nsm.clear_pending()
-            world = FakeWorld(pose=(0.5, 2.0, 0.0), **_CALIBRATED)
-            mapper = FakeMapper(world)
-            mapper.grid = _grid(free=True)
-            with _ToolRig(world, mapper) as rig:
-                async def run():
-                    await nav_tools.explore_and_return(minutes=2)
-                    world.x, world.y = 2.2, 1.4
-                    hardware.ABORT.set()         # movement.stop()...
-                    rig.running = False          # ...then the run ends
-                    await nav_tools._watch_then_return(
-                        poll_s=0.05, watch=nsm.FrontierWatch(
-                            path=Path(tmp.name) / "none.json"))
-                asyncio.run(run())
-                hardware.ABORT.clear()
-                check("after a person's stop she does NOT drive back",
-                      math.hypot(world.x - 2.2, world.y - 1.4) < 0.05
-                      and nsm.pending_return() is None,
-                      f"at ({world.x:.2f}, {world.y:.2f})")
-                check("and says nothing about coming back",
-                      _line("setting_off", "where I set off from")
-                      not in rig.voice.said, str(rig.voice.said))
-
-        # 2. She cannot place herself: she still explores, nothing armed.
-        with TempPlaces():
-            nsm.clear_pending()
-            world = FakeWorld(pose=(1.0, 1.0, 0.0), **_CALIBRATED)
-            with _ToolRig(world, None) as rig:
-                async def cannot_tell(**_kw):
-                    return None, "two places on my map look alike"
-                nsm.relocalise = cannot_tell
-                saved_tries = nav_tools.START_MARK_TRIES
-                nav_tools.START_MARK_TRIES = 1
-                try:
-                    said = asyncio.run(nav_tools.explore_and_return(minutes=2))
-                finally:
-                    nav_tools.START_MARK_TRIES = saved_tries
-                check("a start she cannot place still sets off exploring "
-                      "(the old behaviour), and she says she may not find "
-                      "her way back",
-                      ("start_exploration", 2.0) in rig.calls
-                      and "may not find my way back" in said, said)
-                check("with nothing armed to drive to",
-                      nsm.pending_return() is None)
-                rig.running = False
+        # 1-2. A person's stop, and a start she cannot place, are the RUN's
+        # business now (rl/way_back.py): SIGINT ends it where she is, and the
+        # start is its own first sweep, so there is nothing to place.
+        # rl/tests/test_way_back.py covers both.
 
         # 3. The run runs out of frontiers: ended early, then home.
         with TempPlaces():

@@ -101,7 +101,8 @@ import telemetry as tlm  # noqa: E402
 from explorer import ExplorationPlanner, steering_bias  # noqa: E402
 import cameras as _cameras  # noqa: E402
 from dwa import DynamicWindowPlanner  # noqa: E402
-from narrator import Narrator  # noqa: E402
+from narrator import P_RECOVERY, Narrator  # noqa: E402
+import way_back as _way_back  # noqa: E402
 from navigator import Navigator  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
@@ -753,6 +754,13 @@ class LD19Thread(SensorThread):
         self._ser = None
         self._buf = bytearray()
         self._bins = np.full(cfg.n_beams, np.inf, np.float32)
+        # THE WAY BACK'S SWEEP (rl/way_back.py). 72 bins are too sparse to match
+        # against -- measured, a scan matcher fed them never had enough walls to
+        # match at all -- so the same good returns also go, at 1 degree, into a
+        # {deg: mm} sweep published to `fine_slot` when one is attached. Nothing
+        # else reads it; the 72 bins, the mask and the publish rule are unchanged.
+        self.fine_slot: SensorSlot | None = None
+        self._fine = np.zeros(360, np.float32)
         self._prev_start: float | None = None
         self._have_full_rev = False
         self._frames = self._crc_ok = self._scans = self._reconnects = 0
@@ -939,12 +947,19 @@ class LD19Thread(SensorThread):
         if good.any():
             idx = (angles[good] / 360.0 * self.cfg.n_beams).astype(np.int32) % self.cfg.n_beams
             np.minimum.at(self._bins, idx, dist_m[good])
+            if self.fine_slot is not None:
+                deg = angles[good].astype(np.int32) % 360
+                self._fine[deg] = dist_m[good]
 
         # A wrap past 0 deg means one full revolution is complete -> publish it.
         if self._prev_start is not None and start_deg < self._prev_start - 180.0:
             if self._have_full_rev:
                 scan = np.where(np.isinf(self._bins), self.cfg.lidar_max_range, self._bins)
                 self.slot.publish(np.clip(scan, 0.0, self.cfg.lidar_max_range).astype(np.float32))
+                if self.fine_slot is not None:
+                    hit = np.nonzero(self._fine > 0.0)[0]
+                    self.fine_slot.publish({int(d): int(self._fine[d] * 1000.0)
+                                            for d in hit})
                 self._scans += 1
                 if self._scans % 100 == 0:
                     LOGGER.debug("LD19: %d scans, CRC pass %.1f%%",
@@ -971,6 +986,7 @@ class LD19Thread(SensorThread):
                              "(%d/%d bins never swept)",
                              int(np.isinf(self._bins).sum()), self.cfg.n_beams)
             self._bins[:] = np.inf
+            self._fine[:] = 0.0
         self._prev_start = start_deg
 
     def _teardown(self) -> None:
@@ -2955,6 +2971,13 @@ class ControlLoop:
         self.map_enabled = True
         self.planner: ExplorationPlanner | None = None
         self.planner_enabled = True
+        # THE WAY BACK (Harsh, 2026-09-26). When the time is up she keeps going
+        # EXACTLY as she explored -- policy, navigator, reflexes, recovery,
+        # narration -- with the start as the planner's target instead of a
+        # frontier, then stops there. See rl/way_back.py.
+        self.way_back: "_way_back.WayBack | None" = None
+        self.way_back_enabled = True
+        self._home_target: "_way_back.HomeTarget | None" = None
         # LOCAL NAVIGATION. The planner says WHERE (a frontier, at 0.5 Hz); this says
         # HOW to get there right now, by simulating candidate arcs against the live
         # scan at full control rate. It sits between the policy and the governor and,
@@ -3583,7 +3606,15 @@ class ControlLoop:
         if self.planner is not None:
             err = self.planner.bearing_error(self.map.pose)
             target_bearing = err
-            bias, why = steering_bias(err, omega_pol, c.omega_max)
+            if self.way_back is not None and self.way_back.phase == "returning":
+                # A frontier only has to be SEEN; the start has to be REACHED.
+                bias, why = steering_bias(
+                    err, omega_pol, c.omega_max,
+                    align_tol=_way_back.HOME_ALIGN_TOL_RAD,
+                    max_fraction=_way_back.HOME_MAX_BIAS_FRACTION)
+                why = f"way back: {why}"
+            else:
+                bias, why = steering_bias(err, omega_pol, c.omega_max)
             planner_ctx = {"bearing_error": err, "bias": bias, "reason": why}
             if bias != 0.0:
                 omega_pol = float(np.clip(omega_pol + bias, -c.omega_max, c.omega_max))
@@ -3968,6 +3999,15 @@ class ControlLoop:
         if self.mapper is not None:
             self.world.set_pose(*(float(x) for x in self.map.pose))
             self.mapper.submit(scan, self.map.pose, self.map.blind_beams)
+        # The way back's tracker: the same pose, and the 1-degree sweep when the
+        # LiDAR thread publishes one. Copies and returns at once.
+        if self.way_back is not None:
+            fine_slot = self.slots.get("lidar_fine")
+            fine, fine_age = (fine_slot.read() if fine_slot is not None
+                              else (None, float("inf")))
+            self.way_back.tracker.submit(
+                fine if (fine and fine_age <= c.lidar_deadline) else scan,
+                self.map.pose, self.map.blind_beams)
 
         # NOTE: loop_ms deliberately stops here, because the black box row below has
         # to carry it. The telemetry tail after this point is charged to the stage
@@ -4095,15 +4135,38 @@ class ControlLoop:
                 LOGGER.info("Frontier planner running every %.1f s "
                             "(heading bias only, capped at %.0f%% of omega_max)",
                             2.0, 100 * 0.55)
+                if self.way_back_enabled:
+                    tracker = _way_back.StartTracker(self.cfg.lidar_max_range)
+                    tracker.start()
+                    self.way_back = _way_back.WayBack(tracker)
+                    LOGGER.info("Way back ON: the start is tracked from the first "
+                                "sweep; when the time is up she drives back to it "
+                                "(within %.2f m, up to %.0f s).",
+                                self.way_back.reached_m, self.way_back.budget_s)
 
         period = self.cfg.dt
         next_tick = time.monotonic()
-        t_end = None if duration is None else time.monotonic() + duration
+        t_start = time.monotonic()
+        t_end = None if duration is None else t_start + duration
         LOGGER.info("Control loop starting at %.0f Hz. Ctrl+C to stop.", self.cfg.control_hz)
 
         try:
             while not self._stop.is_set():
-                if t_end is not None and time.monotonic() >= t_end:
+                now = time.monotonic()
+                wb = self.way_back
+                if wb is not None and wb.phase == "exploring":
+                    if t_end is not None and now >= t_end:
+                        self._begin_way_back("time")
+                    elif (self.planner is not None and wb.exhausted_long_enough(
+                            self.planner.exhausted, now - t_start, now)):
+                        self._begin_way_back("explored")
+                if wb is not None and wb.phase == "returning":
+                    self._steer_home()
+                    outcome = wb.check(self.map.pose, now)
+                    if outcome is not None:
+                        self._finish_way_back(outcome)
+                        break
+                elif t_end is not None and now >= t_end:
                     break
                 row = self.tick()
                 # Full status block first: when both are on, the one-liner reads as a
@@ -4150,6 +4213,49 @@ class ControlLoop:
         finally:
             self.shutdown()
 
+    # ---------------------------------------------------------------- way back ---
+    def _begin_way_back(self, why: str) -> None:
+        wb = self.way_back
+        wb.begin(why)
+        home = wb.home()
+        self._home_target = _way_back.HomeTarget(home[:2] if home else (0.0, 0.0))
+        self._steer_home()
+        d = wb.distance(self.map.pose)
+        LOGGER.info("WAY BACK (%s): heading to where I started, %s away by the start "
+                    "tracker (%s).", why,
+                    "?" if d is None else f"{d:.2f} m", wb.tracker.snapshot())
+        self.narrator.say("way_back",
+                          "Nothing more to explore here. Heading back early."
+                          if why == "explored"
+                          else "Heading back to where I started.", P_RECOVERY)
+
+    def _steer_home(self) -> None:
+        home = self.way_back.home()
+        if home is not None and self._home_target is not None:
+            self._home_target.approach = (float(home[0]), float(home[1]))
+        if self.planner is not None and self._home_target is not None:
+            self.planner.go_home(self._home_target)
+
+    def _finish_way_back(self, outcome: str) -> None:
+        wb = self.way_back
+        self.motors.drive(0.0, 0.0)
+        d = wb.distance_m
+        took = time.monotonic() - (wb.started_at or time.monotonic())
+        LOGGER.info("WAY BACK %s after %.0f s, %s from the start (%s).",
+                    outcome.upper(), took, "?" if d is None else f"{d:.2f} m",
+                    wb.tracker.snapshot())
+        said = self.narrator.spoken
+        if self.narrator.say(
+                "way_back_done",
+                "I am back where I started." if outcome == "arrived" else
+                (f"I could not get all the way back. I am about {d:.1f} metres "
+                 "from where I started." if d is not None else
+                 "I could not get all the way back."), P_RECOVERY):
+            # Let the line be heard before shutdown stops the narrator.
+            deadline = time.monotonic() + 8.0
+            while self.narrator.spoken == said and time.monotonic() < deadline:
+                time.sleep(0.1)
+
     def shutdown(self) -> None:
         self._stop.set()
         self.motors.emergency_stop()
@@ -4163,6 +4269,9 @@ class ControlLoop:
         except Exception:                              # noqa: BLE001
             pass
         self.narrator.stop()
+        if self.way_back is not None:
+            self.way_back.tracker.stop()
+            LOGGER.info("Way back: %s", self.way_back.snapshot())
         if self.planner is not None:
             self.planner.stop()
             self.planner.join(timeout=3.0)
@@ -4203,7 +4312,9 @@ class ControlLoop:
                   if self.planner is not None else "AUTONOMOUS (RL policy only)"),
             planner=self.planner.snapshot() if self.planner is not None else None,
             recovery=self.recovery.snapshot() if self.recovery_enabled else None,
-            objective=self._objective(), stats=self.stats)
+            objective=self._objective(), stats=self.stats) | (
+                {"way_back": self.way_back.snapshot()}
+                if self.way_back is not None else {})
 
     def _publish_state(self) -> None:
         self._publish_state_dict(self.autonomy_state())
@@ -4239,6 +4350,10 @@ class ControlLoop:
         r = self.last_record
         if r is None:
             return "not started"
+        if self.way_back is not None and self.way_back.phase == "returning":
+            d = self.way_back.distance_m
+            return ("going back to where the run started"
+                    + ("" if d is None else f", {d:.2f} m away by the start tracker"))
         if not self.cfg.use_frontier_rays:
             return "no frontier channel in this observation -- reactive navigation only"
         if not r.frontier_live:
@@ -4434,6 +4549,10 @@ def build_sensors(cfg: RobotConfig, args) -> tuple[dict[str, SensorSlot], list[S
                                   baud, getattr(args, "lidar_invert", False),
                                   getattr(args, "ld19_ignore_crc", False),
                                   cfg.self_mask_deg))
+        # The way back's 1-degree sweep (rl/way_back.py). Not critical: without
+        # it the way back matches the 72 bins instead.
+        slots["lidar_fine"] = SensorSlot("lidar_fine", cfg.lidar_deadline, critical=False)
+        threads[-1].fine_slot = slots["lidar_fine"]
     else:
         threads.append(RPLidarThread(slots["lidar"], cfg, args.lidar_port,
                                      args.lidar_offset_deg, baud))
@@ -5428,6 +5547,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "governor, exactly as before. Use it to A/B the thing it was "
                         "built to fix: turning per metre, and what fraction of ticks "
                         "end in a safety override.")
+    p.add_argument("--no-way-back", action="store_true",
+                   help="Do not drive back to where the run started when it ends. "
+                        "By default a run with the map and planner on keeps going "
+                        "after --duration, exactly as it explored, with the start "
+                        "as its target (rl/way_back.py). Ctrl+C / SIGINT always "
+                        "stops her where she is.")
     p.add_argument("--no-planner", action="store_true",
                    help="Disable frontier target selection. The RL policy then drives "
                         "alone, exactly as before Phase 3 -- useful for an A/B of "
@@ -5771,6 +5896,7 @@ def main(argv: list[str] | None = None) -> int:
         loop.status_every = max(0, int(args.status_every))
         loop.map_enabled = not args.no_map
         loop.planner_enabled = not args.no_planner
+        loop.way_back_enabled = not args.no_way_back
         loop.navigator_enabled = not args.no_navigator
         cfg.nav_speed_authority = float(args.navigator_speed_authority)
         loop.recovery_enabled = not args.no_recovery
