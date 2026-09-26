@@ -477,7 +477,13 @@ async def _trip_body(minutes: float, robot, tracker):
     controller.frame = frame
     controller.frame_anchored = anchored
     import nav_follower
+    # Harsh, 2026-09-26: "when it says heading back early then it should go
+    # where it started... then stop". On 17:39 she re-found herself on the
+    # saved map and drove on, then ran out of attempts after one stall. The
+    # drive home now has room for more: a whole-map re-anchor costs ~5 s.
     back = await controller.return_to(start[:2], mapper, refind_near=True,
+                                      max_attempts=TRIP_HOME_ATTEMPTS,
+                                      max_refinds=TRIP_HOME_REFINDS,
                                       arrival=nav_follower.ArrivalMonitor(
                                           start[:2],
                                           tolerance_m=TRIP_RETURN_TOL_M,
@@ -538,6 +544,8 @@ async def _trip_body(minutes: float, robot, tracker):
 # announced she was back without moving. The tracker holds her to ~5-12 cm,
 # so the way back asks for 12 cm, relaxing to 20 cm only if it cannot settle.
 TRIP_RETURN_TOL_M = 0.12
+TRIP_HOME_ATTEMPTS = 6
+TRIP_HOME_REFINDS = 4
 TRIP_RETURN_LOOSE_M = 0.20
 
 # ⚠ HER TRACKER DRIFTS OVER A TRIP, THE SAVED MAP DOES NOT. Trip 2026-09-26

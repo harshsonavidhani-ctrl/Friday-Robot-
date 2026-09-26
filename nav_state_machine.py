@@ -883,6 +883,7 @@ class NavController:
     async def _drive_to(self, goal_xy, label: str, mode: NavState,
                         mapper=None, max_attempts: int = 3,
                         touring: bool = False, refind_near: bool = False,
+                        max_refinds: int | None = None,
                         **follow_kw) -> ReturnReport:
         """The engine both modes share: relocalise, plan, follow, re-plan.
 
@@ -1106,7 +1107,8 @@ class NavController:
             # carries on from the answer. It still refuses rather than guess
             # between two places that look alike.
             if (_is_lost(result.why) and attempt < max_attempts
-                    and refinds < MAX_REFINDS):
+                    and refinds < (MAX_REFINDS if max_refinds is None
+                                   else max_refinds)):
                 refinds += 1
                 self.voice.say("refinding")
                 found = (await self._refind_near(robot, mapper) if refind_near
