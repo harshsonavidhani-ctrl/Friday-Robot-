@@ -1384,7 +1384,25 @@ async def sure_fix(robot):
     except Exception as exc:                     # noqa: BLE001
         log.warning("could not take a whole-map fix: %s", exc)
         return None
-    return tuple(float(v) for v in fix.pose) if fix.pose is not None else None
+    if fix.pose is None:
+        log.info("whole-map fix not sure: %s", fix.why)
+        return None
+    # POLISHED: the search answers on a coarse lattice, so two fixes from the
+    # same spot came back 0.21 m apart (2026-09-26 17:32) and the agreement
+    # check refused a real correction. The tracker's own fine matcher,
+    # started from the search's answer, brings them within ~2 cm (measured
+    # on that trip's standing sweeps).
+    try:
+        from slam.core import LikelihoodField, match_pose, points_from_scan
+        local = points_from_scan(scan, forward_deg=config.LIDAR_FORWARD_DEG)
+        pose, score, _sharp = await anyio.to_thread.run_sync(
+            lambda: match_pose(LikelihoodField.from_grid(grid), local,
+                               fix.pose, prior_m=0.25, prior_deg=8.0))
+        if score >= config.SLAM_MIN_SCORE:
+            return tuple(float(v) for v in pose)
+    except Exception as exc:                     # noqa: BLE001
+        log.warning("could not polish the whole-map fix: %s", exc)
+    return tuple(float(v) for v in fix.pose)
 
 
 async def two_sure_fixes(robot):

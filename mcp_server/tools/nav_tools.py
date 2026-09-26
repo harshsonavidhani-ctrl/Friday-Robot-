@@ -577,25 +577,8 @@ async def _check_home(controller, mapper, start, tracker) -> bool:
 
 
 async def _home_fix(robot):
-    """A sure whole-map fix of where she stands, or None. Moves nothing."""
-    import anyio.to_thread
-    import global_localise
-    import path_planner
-    from slam.grid import OccupancyGrid
-
-    try:
-        grid = OccupancyGrid.load(config.SLAM_MAP_FILE)
-        scan = await robot.sweep()
-        if not scan:
-            return None
-        plannable = path_planner.preprocess(grid).plannable
-        fix = await anyio.to_thread.run_sync(
-            lambda: global_localise.localise(grid, scan,
-                                             restrict_to=plannable))
-    except Exception as exc:                     # noqa: BLE001
-        log.warning("explore trip: could not check home on the map: %s", exc)
-        return None
-    return tuple(float(v) for v in fix.pose) if fix.pose is not None else None
+    """A sure, polished whole-map fix of where she stands, or None."""
+    return await nsm.sure_fix(robot)
 
 
 # Back on the spot, she turns to face the way she set off: Harsh, 2026-09-25,
