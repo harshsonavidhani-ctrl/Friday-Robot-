@@ -300,6 +300,7 @@ async def explore_and_return(minutes: float | None = None,
     nsm.clear_failsafe()
     _reclaim_if_run_gone()
     hardware.ABORT.clear()
+    await _note_run_start()
     said = autonomy.start_exploration(minutes=minutes, thinking=thinking)
     if nsm.start_failed(said):
         return nav_voice.VOICE.say_text(f"I could not start exploring. {said}")
@@ -1111,7 +1112,43 @@ async def _face_home_heading() -> str:
         return f"not turning: {type(exc).__name__}: {exc}"
 
 
-async def _home_after_explore(controller):
+def _run_start_file():
+    return config.ROOT / "state" / "run_start_fix.json"
+
+
+async def _note_run_start() -> None:
+    """Where the run starts, on the saved map, from ONE standing look (home_dock).
+    Kept only if the fix is sure; otherwise the old note is removed. Never
+    raises, never moves."""
+    path = _run_start_file()
+    try:
+        mapper, why = await nsm.relocalise(allow_moves=False)
+    except Exception as exc:                     # noqa: BLE001
+        mapper, why = None, f"{type(exc).__name__}: {exc}"
+    if mapper is None:
+        path.unlink(missing_ok=True)
+        log.info("run start not noted: %s", why)
+        return
+    pose = [round(float(v), 4) for v in mapper.pose]
+    path.write_text(json.dumps({"pose": pose, "at": time.time()}))
+    log.info("run start noted at %s", pose)
+
+
+def _run_start_prior(way_back_arrived: bool):
+    """(x, y, radius) if the run's own way-back arrived at a noted start."""
+    if not way_back_arrived:
+        return None
+    try:
+        note = json.loads(_run_start_file().read_text())
+    except (OSError, ValueError):
+        return None
+    if time.time() - float(note.get("at") or 0) > 3 * 3600:
+        return None
+    x, y = note["pose"][0], note["pose"][1]
+    return (x, y, float(getattr(config, "HOME_START_PRIOR_M", 0.6)))
+
+
+async def _home_after_explore(controller, prior=None):
     """The rest of the way home after a run ended on its own (home_dock).
 
     Already within HOME_ARRIVE_M: say so and face the saved heading. Else the
@@ -1131,7 +1168,7 @@ async def _home_after_explore(controller):
     for attempt in range(tries):
         await asyncio.sleep(float(getattr(config, "HOME_AFTER_EXPLORE_SETTLE_S",
                                           5.0)) if attempt == 0 else 3.0)
-        mapper, why = await nsm.relocalise(allow_moves=False)
+        mapper, why = await nsm.relocalise(allow_moves=False, prior=prior)
         if mapper is not None:
             break
         log.info("after exploring: placing myself, try %d/%d — %s",
@@ -1172,7 +1209,7 @@ def _sensor_trouble(why: str) -> bool:
 
 
 @tool
-async def return_home_after_explore() -> str:
+async def return_home_after_explore(way_back_arrived: bool = False) -> str:
     """Internal: finish an exploration by driving home with the path planner.
 
     Called by the environment watch when an exploration run ENDS ON ITS OWN
@@ -1192,8 +1229,10 @@ async def return_home_after_explore() -> str:
     nsm.clear_failsafe()
     _reclaim_if_run_gone()
     controller, _ = _controller()
-    _start_journey("home", _home_after_explore(controller))
-    return "finishing the way home with the path planner"
+    prior = _run_start_prior(bool(way_back_arrived))
+    _start_journey("home", _home_after_explore(controller, prior=prior))
+    return ("finishing the way home with the path planner"
+            + (" (placing myself near where the run started)" if prior else ""))
 
 
 def _busy_reply() -> str:

@@ -232,7 +232,7 @@ def set_home(pose, note: str | None = None) -> dict:
     return row
 
 
-async def relocalise(allow_moves: bool = True):
+async def relocalise(allow_moves: bool = True, prior=None):
     """Where am I, really? Returns (mapper, "") or (None, why-not).
 
     On the SAVED map, always: `locate()` searches the whole of it, and when
@@ -245,7 +245,8 @@ async def relocalise(allow_moves: bool = True):
     """
     robot = nav_follower.GuardedRobot()
     robot.arm()
-    return await locate(robot, voice=nav_voice.VOICE, allow_moves=allow_moves)
+    return await locate(robot, voice=nav_voice.VOICE, allow_moves=allow_moves,
+                        prior=prior)
 
 
 # --- finding her on the saved map, moving a little when it is ambiguous ---
@@ -265,8 +266,15 @@ DISAMBIG_MARGIN = 0.20
 DISAMBIG_CLEAR_MM = 600.0
 
 
-async def locate(robot, grid=None, voice=None, allow_moves: bool = True):
-    """(Mapper placed on the saved map, "") or (None, why). Never a new map."""
+async def locate(robot, grid=None, voice=None, allow_moves: bool = True,
+                 prior=None):
+    """(Mapper placed on the saved map, "") or (None, why). Never a new map.
+
+    `prior` = (x, y, radius_m): where she SHOULD be, from evidence outside the
+    map match (home_dock: the run started here and its own way-back arrived).
+    Of the look-alike candidates, the one inside that radius wins; none inside
+    -> exactly the old behaviour. Default None changes nothing for anyone else.
+    """
     import functools
 
     import anyio.to_thread
@@ -296,6 +304,9 @@ async def locate(robot, grid=None, voice=None, allow_moves: bool = True):
     fix = await anyio.to_thread.run_sync(functools.partial(
         global_localise.localise, grid, scan, restrict_to=plannable))
     pose = fix.pose
+    near = _near_prior(fix, prior)
+    if near is not None:
+        pose = near
     if pose is None:
         if not (allow_moves and fix.candidate is not None
                 and fix.runner_up is not None):
@@ -329,6 +340,33 @@ async def locate(robot, grid=None, voice=None, allow_moves: bool = True):
     log.info("located on the saved map at %s",
              [round(float(v), 2) for v in mapper.pose])
     return mapper, ""
+
+
+def _near_prior(fix, prior):
+    """The candidate pose within prior's radius (nearest), or None.
+
+    Live 2026-09-27 21:39: after a run whose own way-back arrived 0.12 m from
+    its start, the whole-map fix chose a look-alike 1 m away (1.18 vs 1.04);
+    the runner-up was 0.12 m from the start. Driving home from the wrong one
+    ran her into clutter and FAILSAFE.
+    """
+    if prior is None:
+        return None
+    import math
+    px, py, radius = (float(v) for v in prior)
+    options = [tuple(float(v) for v in c) for c in
+               (fix.pose, fix.candidate, fix.runner_up) if c is not None]
+    inside = sorted((math.hypot(c[0] - px, c[1] - py), c) for c in options
+                    if math.hypot(c[0] - px, c[1] - py) <= radius)
+    if not inside:
+        return None
+    chosen = inside[0][1]
+    if fix.pose is None or tuple(fix.pose) != chosen:
+        log.info("locate: chose the look-alike %.2f m from where I started "
+                 "(%s), not the top score %s", inside[0][0],
+                 [round(v, 2) for v in chosen],
+                 [round(float(v), 2) for v in (fix.pose or fix.candidate or ())])
+    return chosen
 
 
 async def place_by_moving(robot, grid, hyps):

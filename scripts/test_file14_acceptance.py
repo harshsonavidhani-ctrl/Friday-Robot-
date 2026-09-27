@@ -866,8 +866,13 @@ def twelve_explore_trip() -> None:
                 # The way back is the RUN's now (rl/way_back.py, tested in
                 # rl/tests/test_way_back.py): nothing here may take the LiDAR
                 # before the run, arm a second return, or watch to drive back.
-                check("the server does not take the LiDAR first (the run "
-                      "marks its own start)", rig.relocalised_at == [],
+                # 2026-09-27 (Harsh: after exploring, the path planner brings
+                # her home): ONE standing look before the run notes where it
+                # starts on the saved map, so the hand-over can tell
+                # look-alikes apart afterwards (home_dock). Never more, never
+                # a moving one -- the run still marks its own start.
+                check("the server takes at most ONE standing look first "
+                      "(home_dock's start note)", len(rig.relocalised_at) <= 1,
                       str(rig.relocalised_at))
                 check("and arms no second return of its own",
                       nsm.pending_return() is None)

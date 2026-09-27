@@ -124,7 +124,7 @@ def wants_home_after(status: dict, log_tail: str = "") -> tuple[bool, str]:
     return True, "the run ended on its own"
 
 
-def request_home_after_explore() -> str:
+def request_home_after_explore(way_back_arrived: bool = False) -> str:
     """From the environment watch's thread: ask the MCP server to go home.
 
     Through an MCP client session like every other caller (brain.mcp_session),
@@ -135,7 +135,9 @@ def request_home_after_explore() -> str:
     async def ask() -> str:
         import brain
         async with brain.mcp_session() as session:
-            result = await session.call_tool("return_home_after_explore", {})
+            result = await session.call_tool(
+                "return_home_after_explore",
+                {"way_back_arrived": bool(way_back_arrived)})
             return " ".join(getattr(p, "text", "") or ""
                             for p in (result.content or []))
     try:

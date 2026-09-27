@@ -457,6 +457,7 @@ EXPLORE_ENDS_AT_HOME = True          # a run that ended ON ITS OWN drives home
 HOME_ARRIVE_M = 0.45                 # this close to home: already there
 HOME_AFTER_EXPLORE_SETTLE_S = 5.0    # the run just released the LiDAR: let it settle
 HOME_AFTER_EXPLORE_TRIES = 5         # standing looks before giving up (sensor trouble only)
+HOME_START_PRIOR_M = 0.6              # after a way-back that arrived: the look-alike this near the run's start wins
 HOME_FACE_HEADING = True             # on arrival, turn to the saved heading
 HOME_FACE_TOLERANCE_DEG = 25.0       # closer than this: leave it
 HOME_FACE_MAX_S = 2.4                # one pivot, at most this long (~180°)

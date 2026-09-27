@@ -168,7 +168,7 @@ class FakeController:
 answers = [(None, "my LiDAR did not answer, so I cannot find myself."),
            (None, "only 31 usable beams in that sweep"),
            (FakeMapper(2.0, 0.0), "")]
-nsm.relocalise = lambda allow_moves=True: _pop()
+nsm.relocalise = lambda allow_moves=True, prior=None: _pop()
 
 
 async def _pop():
@@ -202,6 +202,39 @@ report = asyncio.run(nav_tools._home_after_explore(ctl))
 check("already within HOME_ARRIVE_M: 'I'm home', no drive",
       ctl.got == "not called" and report.arrived and "I'm home." in said_lines)
 asyncio.sleep = orig_sleep
+
+# ---------------------------------------------------------------------------
+print("\nlook-alikes: the one near where the run started wins (live 21:39)")
+
+
+class Fix:
+    def __init__(self, pose, runner_up, candidate=None):
+        self.pose, self.runner_up, self.candidate = pose, runner_up, candidate
+
+
+live = Fix((-1.125, 1.075, -0.384), (-0.225, 0.775, 2.862))
+start = (-0.175, 0.675, 0.6)
+check("21:39's fix: the runner-up 0.11 m from the start is chosen",
+      nsm._near_prior(live, start) == (-0.225, 0.775, 2.862))
+check("no prior: the top score, exactly as before",
+      nsm._near_prior(live, None) is None)
+check("neither near the start: no override",
+      nsm._near_prior(Fix((3, 3, 0), (4, 4, 0)), start) is None)
+check("the top score IS near: kept",
+      nsm._near_prior(Fix((-0.2, 0.7, 0.1), (3, 3, 0)), start) == (-0.2, 0.7, 0.1))
+check("an ambiguous fix (no pose) still offers its candidates",
+      nsm._near_prior(Fix(None, (5, 5, 0), candidate=(-0.1, 0.6, 1.0)), start)
+      == (-0.1, 0.6, 1.0))
+start_file = TMP / "run_start_fix.json"
+nav_tools._run_start_file = lambda: start_file
+import time as _t                                      # noqa: E402
+start_file.write_text(json.dumps({"pose": [-0.175, 0.675, 0.2], "at": _t.time()}))
+check("way-back arrived + a fresh start note -> a prior",
+      nav_tools._run_start_prior(True) == (-0.175, 0.675, config.HOME_START_PRIOR_M))
+check("way-back did NOT arrive -> no prior (she may be anywhere)",
+      nav_tools._run_start_prior(False) is None)
+start_file.write_text(json.dumps({"pose": [0, 0, 0], "at": _t.time() - 5 * 3600}))
+check("a start note hours old -> no prior", nav_tools._run_start_prior(True) is None)
 
 # ---------------------------------------------------------------------------
 print("\nfacing the saved heading on arrival")

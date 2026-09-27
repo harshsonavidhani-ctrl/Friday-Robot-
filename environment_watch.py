@@ -140,7 +140,11 @@ class Watch:
             go, why = home_dock.wants_home_after(status, tail)
             log.info("after the run: %s", why)
             if go:
-                home_dock.request_home_after_explore()
+                # The run's own way-back arrived at its start: then she is near
+                # the start the MCP server noted, and that settles look-alikes.
+                arrived = ("WAY BACK ARRIVED" in tail
+                           or "'outcome': 'arrived'" in tail)
+                home_dock.request_home_after_explore(way_back_arrived=arrived)
         except Exception as exc:                    # noqa: BLE001
             log.warning("home after exploring skipped: %s: %s",
                         type(exc).__name__, exc)
