@@ -878,3 +878,21 @@ halves the false ones and misses half of him). So the floor stays at
   `WAKE_UNCERTAIN_SILENT = False` puts every wake back to beeping.
 
     ./venv/bin/python scripts/test_uncertain_wake.py   # 24 cases
+
+**From further away (91370f1).** Harsh: "it ignores the hey friday" from a
+distance. His quiet takes (peak -14 to -23 dBFS) scored 0.00 in openWakeWord
+at any threshold, and the mic is maxed in hardware. `WAKE_SCORE_GAIN` = 2.0 is
+a FIXED boost on the scoring path only (`wake_word.score_gain`; saved clips,
+the capture and last_rms stay raw) — unlike the ramping `WAKE_AUTO_GAIN` it
+cannot tilt the phrase. Because uncertain wakes are silent, the verifier
+floor could drop 0.6 → 0.4. Replayed, first-accept as live: his close takes
+32 → 34/40, far takes 11 → 13/14, this week's real commands 23 → 26/29; false
+wakes that BEEP 5 → 3/84 (silent ones 59 → 70/84, each a transcription and a
+~$0.0003 yes/no).
+- ⚠ A verifier RETRAINED on x2 audio failed `ship_verifier`'s own gate (lost
+  a take and a far take at every level), so nothing was written and the 09-19
+  model (md5 f62a91a7) is live. `train_verifier` caches per gain
+  (`state/verifier_features.gain2.npz`, 1159 clips streamed), so the next try
+  starts there. What would move it: more real far/quiet takes as positives.
+- ⚠ `ship_verifier` rewrites `WAKE_VERIFY_THRESHOLD` in config.py with its
+  own pick when it ships; pick from the replay table instead.
