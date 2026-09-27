@@ -1,8 +1,8 @@
-"""File 20's tools: research done properly on Harsh's laptop, or notes saved there.
+"""File 20's tools: Friday uses Harsh's laptop -- a search on his screen, or notes.
 
-delegate_to_laptop returns AT ONCE (a research run outlasts the 25 s tool
-limit); the result is said between turns when it arrives. See
-laptop_research.py for the flow and the fallback.
+The laptop ONLY: when it cannot be reached she says so and does nothing else.
+laptop_notes returns AT ONCE (research outlasts the 25 s tool limit); the
+result is said between turns when it is saved. See laptop_research.py.
 """
 
 from __future__ import annotations
@@ -10,68 +10,85 @@ from __future__ import annotations
 import laptop_research as lr
 from mcp_server.registry import tool
 
+NOT_AVAILABLE = "My laptop isn't available right now."
+
+
+def _up() -> bool:
+    return lr.configured() and lr.available()[0]
+
 
 @tool
-def delegate_to_laptop(query: str, mode: str = "answer") -> str:
-    """Research something PROPERLY on Harsh's laptop (deep, multi-source web
-    research), or write notes about it into a file there.
-
-    Use this for multi-part questions, "explain thoroughly", broad or
-    open-ended topics, comparisons, anything where a quick search would be
-    shallow -- and ALWAYS when he says "properly research", "research this in
-    depth" or "notes on ...". For a quick fact, use your own web search.
-
-    Answer mode returns at once; the laptop works for a minute or two and you
-    will be told the result later -- just tell him you're on it. If the laptop
-    is not available, this answers directly from a quick search instead: say
-    that the laptop wasn't available, then give the answer.
+def laptop_search(query: str, site: str = "web", play: bool = False) -> str:
+    """Search on Harsh's LAPTOP screen: a Google search, a YouTube search, or
+    play the top YouTube video. Use whenever he asks to search, google or look
+    something up on his laptop, or to search or play something on YouTube.
+    It only opens the search in his browser -- you do not see the results, so
+    do not describe them.
 
     Args:
-        query: the question or topic, fully stated (he will not be asked again).
-        mode: "answer" (say what was found) or "notes" (save a notes file on
-            the laptop and say where).
+        query: the words to search for (not a URL).
+        site: "web" (Google) or "youtube".
+        play: YouTube only -- true to play the top video instead of listing.
     """
     query = (query or "").strip()
-    mode = (mode or "answer").strip().lower()
+    site = (site or "web").strip().lower()
     if not query:
-        return "What should I research?"
-    if mode not in ("answer", "notes"):
-        mode = "answer"
+        return "What should I search for?"
+    if site not in ("web", "youtube"):
+        site = "web"
     import rate_limit
-    ok, why = rate_limit.allow("laptop_research")
+    ok, why = rate_limit.allow("laptop_open")
     if not ok:
-        return f"I've sent a lot of research to the laptop already — {why}."
-    up, why = lr.available() if lr.configured() else (False, "not set up")
-    if not up:
-        if mode == "notes":
-            return ("My laptop isn't available right now, so I can't save "
-                    "notes there.")
-        answer, fail = lr.fallback_answer(query)
-        if not answer:
-            return (f"My laptop isn't available, and I couldn't look it up "
-                    f"myself either ({fail}).")
-        return f"My laptop isn't available, so here's the direct answer. {answer}"
-    rate_limit.used("laptop_research")
-    lr.start(query, mode)
-    if mode == "notes":
-        return (f"I'm researching {query} on your laptop and I'll save notes "
-                f"there — I'll tell you where when they're ready.")
-    return (f"I'm researching {query} properly on your laptop — I'll tell you "
-            f"what I find in a minute or two.")
+        return f"I've opened a lot on your laptop already — {why}."
+    if not _up():
+        return NOT_AVAILABLE
+    rate_limit.used("laptop_open")
+    opened, why = lr.open_search(query, site, bool(play) and site == "youtube")
+    if not opened:
+        return f"I couldn't open that on your laptop ({why})."
+    if site == "youtube":
+        return (f"Playing {query} on YouTube on your laptop." if play
+                else f"Searching YouTube for {query} on your laptop.")
+    return f"Searching for {query} on your laptop."
+
+
+@tool
+def laptop_notes(topic: str) -> str:
+    """Research a topic on the web and put notes about it on Harsh's LAPTOP,
+    opened on his screen. Use for "make notes on X", "notes about X",
+    "properly research X", "research X in depth". Returns at once; the notes
+    take a minute and you will be told when they are saved -- just tell him
+    you're on it.
+
+    Args:
+        topic: the topic, fully stated (he will not be asked again).
+    """
+    topic = (topic or "").strip()
+    if not topic:
+        return "What should I make notes on?"
+    import rate_limit
+    ok, why = rate_limit.allow("laptop_notes")
+    if not ok:
+        return f"I've made a lot of notes already — {why}."
+    if not _up():
+        return f"{NOT_AVAILABLE} I can't put notes there."
+    rate_limit.used("laptop_notes")
+    lr.start_notes(topic)
+    return (f"I'm researching {topic} and I'll put the notes on your laptop — "
+            f"I'll tell you when they're open.")
 
 
 @tool
 def research_detail(query: str = "") -> str:
-    """The fuller detail of research the laptop did, when Harsh asks for more
-    ("tell me more about that", "what else did you find out about X").
+    """What the notes Friday made say, when Harsh asks for more ("tell me more
+    about that", "what did you find out about X").
 
     Args:
-        query: words from the topic; empty for the most recent research.
+        query: words from the topic; empty for the most recent notes.
     """
     job = lr.latest(query)
     if job is None:
-        return "I haven't researched anything like that yet."
+        return "I haven't made notes on anything like that yet."
     detail = (job.get("detail") or job.get("summary") or "").strip()
-    where = f" The notes are on your laptop at {job['path']}." \
-        if job.get("path") else ""
-    return (f"On {job['query']}: {detail[:1500]}{where}")
+    return (f"On {job['query']}: {detail[:1500]} The notes are on your laptop "
+            f"at {job['path']}.")

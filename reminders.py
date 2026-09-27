@@ -691,25 +691,19 @@ class ReminderWatch(WakeSource):
 
 
 def research_words(job: dict) -> str:
-    """What she says when a laptop research job ends (file 20)."""
+    """What she says when notes for the laptop are done or failed (file 20)."""
     query = job.get("query") or "that"
-    status = job.get("status")
     summary = (job.get("summary") or "").strip()
-    if status == "done" and job.get("mode") == "notes":
-        parts = [p for p in re.split(r"[\\/]", str(job.get("path") or "")) if p]
-        if len(parts) >= 2:
-            return (f"Your notes on {query} are saved on your laptop, in the "
-                    f"{parts[-2]} folder, as {parts[-1]}.")
-        return f"Your notes on {query} are saved on your laptop."
-    if status == "done":
-        return f"About {query}: {summary}"
-    if status == "fallback" and summary:
-        return (f"My laptop didn't finish researching {query}, so here's the "
-                f"direct answer. {summary}")
-    if job.get("mode") == "notes":
-        return f"My laptop didn't finish the notes on {query}."
-    return (f"My laptop didn't finish researching {query}, and I couldn't "
-            f"look it up myself either.")
+    if job.get("status") == "done":
+        name = [p for p in re.split(r"[\\/]", str(job.get("path") or ""))
+                if p][-1:] or ["a new file"]
+        words = (f"Your notes on {query} are open on your laptop, saved in "
+                 f"Friday Notes as {name[0]}.")
+        return f"{words} In short: {summary}" if summary else words
+    if job.get("stage") == "save":
+        return (f"I researched {query}, but my laptop went away before I "
+                f"could save the notes.")
+    return f"I couldn't research {query} just now, so there are no notes."
 
 
 def parse_trigger(trigger: str) -> dict | None:

@@ -760,32 +760,52 @@ def _third_person(fact: str) -> str:
     return fact
 
 
-_RESEARCH_RE = re.compile(
-    r"^(?:please\s+)?(?:(?:properly|deeply|thoroughly)\s+research"
+_LAPTOP = r"(?:my|the)\s+(?:laptop|lap top|computer)"
+_YT = r"(?:youtube|you tube)"
+# (pattern, site, play) -- first match wins; the query is group "q".
+_LAPTOP_SEARCH = [
+    (rf"^(?:play|put on)\s+(?P<q>.+?)\s+on\s+{_YT}(?:\s+on\s+{_LAPTOP})?$",
+     "youtube", True),
+    (rf"^(?:open\s+)?{_YT}\s+(?:and\s+)?play\s+(?P<q>.+?)(?:\s+on\s+{_LAPTOP})?$",
+     "youtube", True),
+    (rf"^(?:search|look up|find)\s+(?:for\s+)?(?P<q>.+?)\s+on\s+{_YT}"
+     rf"(?:\s+on\s+{_LAPTOP})?$", "youtube", False),
+    (rf"^(?:open\s+)?{_YT}\s+(?:and\s+)?(?:search|look up|find)\s+(?:for\s+)?"
+     rf"(?P<q>.+?)(?:\s+on\s+{_LAPTOP})?$", "youtube", False),
+    (rf"^(?:search|google|look up)\s+(?:for\s+)?(?P<q>.+?)\s+on\s+{_LAPTOP}$",
+     "web", False),
+    (rf"^on\s+{_LAPTOP},?\s+(?:search|google|look up)\s+(?:for\s+)?(?P<q>.+)$",
+     "web", False),
+    (r"^google\s+(?:for\s+)?(?P<q>.+)$", "web", False),
+]
+_LAPTOP_SEARCH = [(re.compile(p, re.IGNORECASE), site, play)
+                  for p, site, play in _LAPTOP_SEARCH]
+_NOTES_RE = re.compile(
+    r"^(?:please\s+)?(?:(?:(?:make|take|write|prepare|create)\s+(?:me\s+)?"
+    r"(?:some\s+)?notes|notes)\s+(?:on|about)"
+    r"|(?:properly|deeply|thoroughly)\s+research"
     r"|(?:do|run)\s+(?:a\s+|some\s+)?(?:deep|proper|full|thorough)\s+research"
     r"\s+(?:on|into|about)|deep\s+research\s+(?:on|into|about))"
-    r"\s*[:,]?\s*(?P<q>.{3,})$", re.IGNORECASE)
-_RESEARCH_TAIL_RE = re.compile(
-    r"^research\s+(?P<q>.{3,}?)[,\s]+(?:properly|in depth|thoroughly)$",
-    re.IGNORECASE)
-_NOTES_RE = re.compile(
-    r"^(?:please\s+)?(?:(?:make|take|write|prepare|create)\s+(?:me\s+)?"
-    r"(?:some\s+)?notes|notes)\s+(?:on|about)\s+(?P<q>.{3,})$",
-    re.IGNORECASE)
+    rf"\s*[:,]?\s*(?P<q>.{{3,}}?)(?:\s+on\s+{_LAPTOP})?$", re.IGNORECASE)
+_NOTES_TAIL_RE = re.compile(
+    rf"^research\s+(?P<q>.{{3,}}?)(?:[,\s]+(?:properly|in depth|thoroughly)"
+    rf"|\s+on\s+{_LAPTOP})$", re.IGNORECASE)
 
 
-def _research_intent(heard: str) -> Intent | None:
-    """File 20's explicit override: "properly research X" / "notes on X"."""
+def _laptop_intent(heard: str) -> Intent | None:
+    """File 20: his laptop -- a search on its screen, or notes put there."""
     text = _ADDRESS_RE.sub("", heard).strip(" .!?")
-    for pattern, mode in ((_NOTES_RE, "notes"), (_RESEARCH_RE, "answer"),
-                          (_RESEARCH_TAIL_RE, "answer")):
+    for pattern in (_NOTES_RE, _NOTES_TAIL_RE):
         match = pattern.match(text)
-        if match:
-            query = match.group("q").strip(" ,.?")
-            if len(query) >= 3:
-                return Intent(name="research_notes" if mode == "notes"
-                              else "research", tool="delegate_to_laptop",
-                              args={"query": query, "mode": mode})
+        if match and len(match.group("q").strip(" ,.?")) >= 3:
+            return Intent(name="laptop_notes", tool="laptop_notes",
+                          args={"topic": match.group("q").strip(" ,.?")})
+    for pattern, site, play in _LAPTOP_SEARCH:
+        match = pattern.match(text)
+        if match and match.group("q").strip(" ,.?"):
+            return Intent(name="laptop_search", tool="laptop_search",
+                          args={"query": match.group("q").strip(" ,.?"),
+                                "site": site, "play": play})
     return None
 
 
@@ -1253,7 +1273,7 @@ _SPEAK_RESULT = frozenset({
     "reminder_add", "todo_add", "reminder_done", "reminder_list", "routine",
     "briefing", "calendar_add", "calendar_ask", "calendar_remove",
     "remember_forever", "forget", "forget_answer",
-    "research", "research_notes",
+    "laptop_search", "laptop_notes",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -1288,7 +1308,7 @@ _REFLEX_INTENTS = frozenset({
     # File 19
     "env_new", "env_switch", "env_name",
     # File 20
-    "research", "research_notes",
+    "laptop_search", "laptop_notes",
 })
 
 
@@ -1342,8 +1362,9 @@ def _match(text: str, strict: bool) -> Intent | None:
     if day is not None:
         return day
 
-    # FILE 20: "properly research X" / "notes on X" -- the explicit override.
-    asked = _research_intent(text.strip())
+    # FILE 20: his laptop -- "search X on my laptop", "play X on YouTube",
+    # "notes on X". Before the stop rule: "play stop motion on youtube".
+    asked = _laptop_intent(text.strip())
     if asked is not None:
         return asked
 

@@ -1,27 +1,27 @@
-"""laptop_research.py — File 20: deep research and notes, done on Harsh's laptop.
+"""laptop_research.py — File 20: Friday uses Harsh's laptop, on his word.
 
-    laptop_research.available()          is the laptop agent up? (one quick look)
-    laptop_research.start(query, mode)   send it off; returns at once
-    laptop_research.fallback_answer(q)   her own Haiku + web search answer
-    laptop_research.finished()           done jobs not yet announced
-    laptop_research.latest(q)            the newest finished job (for detail)
+    laptop_research.available()             is the laptop helper up? (one look)
+    laptop_research.open_search(q, site, play)  Google / YouTube on his screen
+    laptop_research.start_notes(topic)      research + notes; returns at once
+    laptop_research.finished()              notes jobs not yet announced
+    laptop_research.latest(q)               the newest finished job (for detail)
 
-WHY ASYNCHRONOUS. A real multi-source research run takes a minute or more,
-and every MCP tool call has STAGE_TOOL_TIMEOUT_S (25 s). So delegate_to_laptop
-checks the laptop is up (LAPTOP_HEALTH_TIMEOUT_S), starts the job on a thread
-in the MCP server, and returns at once ("researching it on your laptop"). The
-job waits ONE LAPTOP_RESEARCH_TIMEOUT_S -- never retries -- and writes
-state/research/<id>.json. ReminderWatch (reminders.py) says the result between
-turns, through the same may-she-speak gate as reminders.
+Harsh, 2026-09-27: "just access my laptop and search the web or any like
+youtube and the friday brain will control when voice command received", and
+"search the web in laptop only". The laptop side is
+laptop/friday_laptop_agent.py, a small helper in HIS Windows login (it starts
+at login) that only opens a Google/YouTube search it builds itself and saves
+notes files. Nothing here can send it a URL, a file name or a command.
 
-FALLBACK (spec step 4). Laptop not up: an "answer" is answered at once from her
-own Haiku + web search, with a spoken note that the laptop wasn't available.
-Laptop failed or timed out mid-job: the same fallback, announced later. A
-"notes" request is NEVER written locally -- notes were asked for on the laptop;
-she says plainly that it wasn't available.
+THE LAPTOP ONLY. There is no fallback on the Pi: laptop not reachable -> she
+says so and nothing else happens (no search, no notes written anywhere).
 
-MEMORY (step 6): every finished job is remembered as kind "research" (query,
-summary, date, notes path) so "what did you find out about X" works later.
+NOTES ARE ASYNCHRONOUS. Writing them (Haiku + web search, her key, under the
+daily cap) outlasts STAGE_TOOL_TIMEOUT_S, so laptop_notes checks the laptop
+is up, starts the job on a thread in the MCP server and returns at once. The
+job makes ONE model call chain and ONE save -- never a retry -- and writes
+state/research/<id>.json; ReminderWatch (reminders.py) says the result
+between turns. Every saved note is remembered as kind "research".
 
 SECRETS: secrets/laptop_agent.json {url, token} -- gitignored, never in code.
 """
@@ -36,13 +36,21 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 import config
 
 log = logging.getLogger("friday.laptop_research")
 
 KIND = "research"
+
+NOTES_SYSTEM = (
+    "You write study notes for Harsh, researched on the web. Search several "
+    "reliable sources first. Then reply in EXACTLY this shape:\n\n"
+    "SUMMARY:\n<at most 40 words, plain spoken English -- it is read aloud: "
+    "no URLs, no markdown>\n\n"
+    "NOTES:\n<Markdown notes: a # title, short sections with ## headings, "
+    "bullet points, key numbers and dates, caveats, and a ## Sources list of "
+    "the pages you used>")
 
 
 def _settings() -> dict | None:
@@ -60,10 +68,10 @@ def configured() -> bool:
 
 
 def _request(path: str, body: dict | None, timeout: float) -> dict:
-    """One HTTP call to the laptop agent. Raises on any failure."""
+    """One HTTP call to the laptop helper. Raises on any failure."""
     s = _settings()
     if s is None:
-        raise ConnectionError("the laptop agent is not set up "
+        raise ConnectionError("the laptop is not set up "
                               "(secrets/laptop_agent.json)")
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(
@@ -76,19 +84,28 @@ def _request(path: str, body: dict | None, timeout: float) -> dict:
 
 
 def available() -> tuple[bool, str]:
-    """Is the agent up and accepting our token? One quick look, no retry."""
+    """Is the helper up and accepting our token? One quick look, no retry."""
     try:
         got = _request("/health", None, float(config.LAPTOP_HEALTH_TIMEOUT_S))
     except urllib.error.HTTPError as exc:
-        return False, f"the laptop agent refused us ({exc.code})"
+        return False, f"the laptop refused us ({exc.code})"
     except Exception as exc:                        # noqa: BLE001
         return False, f"{type(exc).__name__}: {str(exc)[:80]}"
-    if got.get("busy"):
-        return False, "the laptop is busy with another research"
     return bool(got.get("ok")), ""
 
 
-# --- jobs -------------------------------------------------------------------------
+def open_search(query: str, site: str = "web",
+                play: bool = False) -> tuple[bool, str]:
+    """Google or YouTube on his screen. (opened?, why not)."""
+    try:
+        got = _request("/open", {"site": site, "query": query, "play": play},
+                       float(config.LAPTOP_OPEN_TIMEOUT_S))
+    except Exception as exc:                        # noqa: BLE001
+        return False, f"{type(exc).__name__}: {str(exc)[:80]}"
+    return bool(got.get("ok")), got.get("error", "")
+
+
+# --- notes jobs -------------------------------------------------------------------
 
 def _dir() -> Path:
     path = Path(config.RESEARCH_DIR)
@@ -102,8 +119,7 @@ def _write(job: dict) -> None:
     tmp.write_text(json.dumps(job))
     tmp.replace(path)
     # BOUNDED (file 09's rule): keep the newest RESEARCH_KEEP jobs.
-    jobs = sorted(_dir().glob("*.json"))
-    for old in jobs[:-int(config.RESEARCH_KEEP)]:
+    for old in sorted(_dir().glob("*.json"))[:-int(config.RESEARCH_KEEP)]:
         old.unlink(missing_ok=True)
 
 
@@ -118,8 +134,8 @@ def jobs() -> list[dict]:
 
 
 def finished() -> list[dict]:
-    """Jobs that ended (done / fallback / failed) and were not said yet."""
-    return [j for j in jobs() if j.get("status") in ("done", "fallback", "failed")
+    """Jobs that ended (done / failed) and were not said yet."""
+    return [j for j in jobs() if j.get("status") in ("done", "failed")
             and not j.get("announced_at")]
 
 
@@ -131,8 +147,8 @@ def mark_announced(job_id: str) -> None:
 
 
 def latest(query: str = "") -> dict | None:
-    """The newest finished job, or the newest whose query shares words."""
-    done = [j for j in jobs() if j.get("status") in ("done", "fallback")]
+    """The newest saved notes, or the newest whose topic shares words."""
+    done = [j for j in jobs() if j.get("status") == "done"]
     if query.strip():
         want = set(re.findall(r"\w{3,}", query.lower()))
         done = [j for j in done
@@ -143,94 +159,95 @@ def latest(query: str = "") -> dict | None:
 def _remember(job: dict) -> None:
     try:
         import memory
-        text = (f"Research ({time.strftime('%Y-%m-%d', time.localtime(job['at']))})"
-                f" on {job['query']}: {job.get('summary', '').strip()}")
-        if job.get("path"):
-            text += f" Notes saved on the laptop at {job['path']}."
-        memory.remember(text, kind=KIND,
-                        source="laptop" if job["status"] == "done" else "fallback")
+        text = (f"Notes ({time.strftime('%Y-%m-%d', time.localtime(job['at']))})"
+                f" on {job['query']}: {job.get('summary', '').strip()} Saved "
+                f"on the laptop at {job['path']}.")
+        memory.remember(text, kind=KIND, source="laptop")
     except Exception as exc:                        # noqa: BLE001
-        log.warning("research not remembered: %s", exc)
+        log.warning("notes not remembered: %s", exc)
 
 
-def start(query: str, mode: str = "answer") -> dict:
-    """Send it to the laptop on a thread. The job record is returned at once."""
-    job = {"id": f"{int(time.time() * 1000)}", "query": query.strip(),
-           "mode": mode, "status": "running", "at": time.time()}
+def start_notes(topic: str) -> dict:
+    """Research + save on a thread. The job record is returned at once."""
+    job = {"id": f"{int(time.time() * 1000)}", "query": topic.strip(),
+           "mode": "notes", "status": "running", "at": time.time()}
     _write(job)
-    threading.Thread(target=_run, args=(job,), name="laptop-research",
+    threading.Thread(target=_run, args=(job,), name="laptop-notes",
                      daemon=True).start()
     return job
 
 
 def _run(job: dict) -> None:
-    try:
-        got = _request("/research", {"query": job["query"], "mode": job["mode"]},
-                       float(config.LAPTOP_RESEARCH_TIMEOUT_S))
-        if not got.get("ok"):
-            raise RuntimeError(got.get("error") or "the laptop said no")
-        job.update(status="done", summary=got.get("summary", ""),
-                   detail=got.get("detail", ""), path=got.get("path"),
-                   sources=got.get("sources") or [],
-                   seconds=got.get("seconds"))
-    except Exception as exc:                        # noqa: BLE001
-        why = f"{type(exc).__name__}: {str(exc)[:120]}"
-        log.info("laptop research failed (%s) — one try, no retry", why)
-        if job["mode"] == "notes":
-            job.update(status="failed", why=why)
-        else:
-            summary, _ = fallback_answer(job["query"])
-            job.update(status="fallback", why=why, summary=summary,
-                       detail=summary)
+    result, why = compose_notes(job["query"])
+    if result is None:
+        job.update(status="failed", stage="research", why=why)
+    else:
+        try:
+            got = _request("/notes", {"title": job["query"],
+                                      "markdown": result["notes"]},
+                           float(config.LAPTOP_SAVE_TIMEOUT_S))
+            if not got.get("ok"):
+                raise RuntimeError(got.get("error") or "the laptop said no")
+            job.update(status="done", summary=result["summary"],
+                       detail=result["notes"], path=got.get("path"))
+        except Exception as exc:                    # noqa: BLE001
+            job.update(status="failed", stage="save",
+                       why=f"{type(exc).__name__}: {str(exc)[:120]}",
+                       summary=result["summary"], detail=result["notes"])
     job["ended"] = time.time()
     # Remembered BEFORE the record says it ended, so the moment she can
     # announce it, "what did you find out about X" already finds it too.
-    if job["status"] in ("done", "fallback"):
+    if job["status"] == "done":
         _remember(job)
     _write(job)
-    log.info("research %s: %s (%s)", job["id"], job["status"], job["query"][:60])
+    log.info("notes %s: %s (%s) %s", job["id"], job["status"],
+             job["query"][:60], job.get("why", ""))
 
 
-# --- her own answer: Haiku + web search -------------------------------------------
+def _split(text: str) -> tuple[str, str]:
+    found = re.search(r"SUMMARY:\s*(.*?)\s*NOTES:\s*(.*)$", text, re.S | re.I)
+    if found:
+        return found.group(1).strip(), found.group(2).strip()
+    return " ".join(text.split()[:40]), text.strip()
 
-def fallback_answer(query: str) -> tuple[str, str]:
-    """(answer, "") or ("", why). Haiku 4.5 + the basic web search tool."""
+
+def compose_notes(topic: str) -> tuple[dict | None, str]:
+    """({summary, notes}, "") or (None, why). Haiku 4.5 + the web search tool."""
     try:
         import anthropic
 
         import brain
-        import rate_limit
         import scene_describe
         key = scene_describe._api_key()
         if not key:
-            return "", "no API key"
+            return None, "no API key"
         if brain.spent_today() >= config.DAILY_SPEND_CAP_USD:
-            return "", "over the daily spend cap"
-        ok, why = rate_limit.allow("research_fallback")
-        if not ok:
-            return "", why
+            return None, "over the daily spend cap"
+        model = config.LAPTOP_NOTES_MODEL
         client = anthropic.Anthropic(api_key=key,
-                                     timeout=float(config.RESEARCH_FALLBACK_TIMEOUT_S))
-        messages = [{"role": "user", "content": query}]
+                                     timeout=float(config.LAPTOP_NOTES_TIMEOUT_S))
+        messages = [{"role": "user", "content": f"Make notes on: {topic}"}]
         reply = None
         for _ in range(3):
             reply = client.messages.create(
-                model=config.MODEL_FAST, max_tokens=600,
-                system=("Answer for a home robot to say out loud: search the "
-                        "web if needed, then give the answer in at most 3 "
-                        "short spoken sentences. No URLs, no lists."),
+                model=model, max_tokens=int(config.LAPTOP_NOTES_MAX_TOKENS),
+                system=NOTES_SYSTEM,
                 tools=[{"type": "web_search_20250305", "name": "web_search",
-                        "max_uses": 3}],
+                        "max_uses": int(config.LAPTOP_NOTES_MAX_SEARCHES)}],
                 messages=messages)
-            brain._record_spend(config.MODEL_FAST, reply.usage,
-                                brain._cost_usd(config.MODEL_FAST, reply.usage))
+            brain._record_spend(model, reply.usage,
+                                brain._cost_usd(model, reply.usage))
             if reply.stop_reason != "pause_turn":
                 break
-            messages = [{"role": "user", "content": query},
+            messages = [messages[0],
                         {"role": "assistant", "content": reply.content}]
-        rate_limit.used("research_fallback")
+        if reply.stop_reason == "refusal":
+            return None, "the model would not research that"
         text = "".join(b.text for b in reply.content
                        if getattr(b, "type", "") == "text").strip()
-        return (text, "") if text else ("", "no answer came back")
+        if not text:
+            return None, "no notes came back"
+        summary, notes = _split(text)
+        return {"summary": summary, "notes": notes}, ""
     except Exception as exc:                        # noqa: BLE001
-        return "", f"{type(exc).__name__}: {str(exc)[:100]}"
+        return None, f"{type(exc).__name__}: {str(exc)[:100]}"

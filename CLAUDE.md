@@ -1209,65 +1209,68 @@ the pose + `sure`; create_new gives a new place its home), `nav_tools.py`
 
 ---
 
-# PART 11 — What file 20 added (2026-09-27): deep research on Harsh's laptop
+# PART 11 — What file 20 became (2026-09-27): Friday uses Harsh's laptop
 
-Additive. New files: `laptop/friday_laptop_agent.py` (runs on the LAPTOP),
+Harsh, correcting the first build (7280eef, a research agent he started by
+hand with a Pi-side fallback): "just the pi access my laptop when I ask
+friday a topic to search and provide notes and search the web in laptop
+only", then "just access my laptop and search the web or any like youtube and
+the friday brain will control when voice command received". His laptop is
+WINDOWS. Files: `laptop/friday_laptop_agent.py` (runs on the LAPTOP),
 `laptop_research.py`, `mcp_server/tools/research_tools.py`,
-`scripts/test_file20.py`; hooks in `reminders.py` (the announcement),
-`offline.py` (voice), `config.py`, `memory_governance.TYPES` ("research").
+`scripts/test_file20.py`; hooks in `reminders.py`, `offline.py`,
+`config.py`, `memory_governance.TYPES` ("research").
 
-**The laptop agent is a separate program, started by hand.** Nothing on the
-Pi installs, starts or reaches into the laptop; nothing on the laptop is a
-service. `friday_laptop_agent.py` (standard library + `anthropic`) listens on
-port 8765 and does exactly two things: `GET /health` and `POST /research
-{query, mode}`. Every request needs the shared token in `X-Friday-Token`
-(`hmac.compare_digest`; 401 otherwise). No other endpoint, no commands, no
-file reads, one research at a time (429 while busy), 8 KB bodies, 1000-char
-queries. Research = `claude-opus-5` + `web_search_20260209` + adaptive
-thinking, `pause_turn` resumed (≤ 5), SUMMARY (≤ 60 spoken words) / DETAIL
-(Markdown) + cited sources. Notes mode also writes ONE `.md` into
-`notes_dir` (default `~/Friday_Notes`), slugged name, never overwrites,
-never outside that folder. ⚠ It bills HARSH'S API KEY on the laptop — not
-the Pi's daily cap.
+**The laptop helper lives in his Windows login, not behind SSH.** A program
+started through Windows' SSH server runs in a session with no desktop, so a
+browser it opened would never appear on his screen. `python
+friday_laptop_agent.py --install` puts a Startup-folder entry (pythonw,
+windowless) so it starts at every login, and starts it now. Standard library
+only. It does exactly three things, each needing the token in
+`X-Friday-Token` (`hmac.compare_digest`, 401 otherwise):
+- `GET /health`
+- `POST /open {site: web|youtube, query, play}` — a Google or YouTube search
+  URL BUILT ON THE LAPTOP from the words (quote_plus), opened with
+  `webbrowser.open`; play = fetch the results page and open the first
+  11-character videoId. ⚠ The Pi can never send it a URL, a file name or a
+  command; a URL sent as a query is only searched for. Keep it that way.
+- `POST /notes {title, markdown}` — one `.md` in `~/Friday_Notes`, slugged
+  name, never overwrites, never outside the folder, opened in Notepad.
+The only programs it starts are Notepad and itself (the test checks with ast).
 
-**`delegate_to_laptop(query, mode)`** (MCP tool, and the reflex phrases
-"properly research X", "research X properly / in depth", "do a deep research
-on X", "notes on X", "make notes about X"). ASYNCHRONOUS because a research
-run outlasts `STAGE_TOOL_TIMEOUT_S`: a 2.5 s health check, then a thread in
-friday-mcp makes ONE request with `LAPTOP_RESEARCH_TIMEOUT_S` (300 s) and
-the tool returns at once ("I'm researching X properly on your laptop").
-`state/research/<id>.json` holds the job (bounded, `RESEARCH_KEEP`).
-ReminderWatch says the result between turns, through the same may-she-speak
-gate as reminders: "About X: …" / "Your notes on X are saved on your laptop,
-in the Friday_Notes folder, as ….md". `research_detail` gives the fuller
-answer when he asks for more.
-- **Laptop not up** (answer): her own answer at once — Haiku +
-  `web_search_20250305`, key read from `.env` for that call only
-  (`scene_describe._api_key`), daily cap, `RATE_LIMITS["research_fallback"]`
-  — prefixed "My laptop isn't available, so here's the direct answer."
-- **Laptop failed / timed out mid-job**: the same fallback, announced later
-  ("My laptop didn't finish researching X, so here's the direct answer.").
-- **Notes and the laptop is not there**: she says so plainly and writes
-  NOTHING locally (notes were asked for on the laptop).
-- **Never a retry.** One health check, one request, then the fallback.
-  `RATE_LIMITS["laptop_research"]` stops her firing research in a loop.
-- Every finished job (laptop or fallback) is remembered as kind `research`
-  (source `laptop` / `fallback`): query, summary, date, notes path.
+**The laptop ONLY.** Laptop not reachable → "My laptop isn't available right
+now." and nothing else: no search on the Pi, no notes written anywhere. There
+is deliberately NO fallback (his "in laptop only").
+
+**Tools (brain) and reflexes (offline, no model):**
+- `laptop_search(query, site="web", play=False)` — synchronous (a 2.5 s
+  health look, then /open). Voice: "play X on YouTube", "search X on
+  YouTube", "open YouTube and play X", "search X on my laptop", "google X".
+- `laptop_notes(topic)` — "make notes on X", "notes about X", "properly
+  research X", "research X in depth / on my laptop". Checks the laptop is up
+  FIRST (no money spent when it is not), then returns at once; a thread in
+  friday-mcp writes the notes with Haiku + `web_search_20250305` (her key via
+  `scene_describe._api_key`, daily cap, spend recorded) and saves them
+  through /notes. ONE attempt each, never a retry. ReminderWatch says it
+  between turns: "Your notes on X are open on your laptop, saved in Friday
+  Notes as <file>. In short: …", or that there are none / the laptop went
+  away before the save. Saved notes are remembered as kind `research`.
+- `research_detail(query)` reads the notes back when he asks for more.
+- `RATE_LIMITS`: `laptop_open` (free; stops a loop filling his screen) and
+  `laptop_notes` (paid, ~$0.02-0.06 each).
 
 **Secrets:** `secrets/laptop_agent.json` {url, token} on the Pi and
-`secrets/friday_agent.json` (the laptop's config, same token) — both
-gitignored, 0600. The token is never printed or committed. ⚠ The url is the
-laptop's CURRENT address (10.12.120.204, the SSH client on 2026-09-27); on
-DHCP it can change — then edit the url in `secrets/laptop_agent.json`
-(follow-up: a fixed lease or a hostname).
+`secrets/friday_agent.json` (the laptop's config, same token) — gitignored,
+0600, never printed or committed. ⚠ The url is the laptop's address on
+2026-09-27 (10.12.120.204, the SSH client); DHCP can change it — then edit
+the url. ⚠ On 2026-09-27 the laptop dropped every inbound connection (22 and
+8765 timed out): Windows asks once when the helper first listens — both
+Private AND Public must be ticked (hostel Wi-Fi is usually "Public").
 
-**Setting up the laptop (Harsh, once):**
+**Setting up the laptop (Harsh, once, PowerShell):**
 
     scp harsh@<pi>:friday/laptop/friday_laptop_agent.py .
     scp harsh@<pi>:friday/secrets/friday_agent.json .
-    pip install anthropic
-    export ANTHROPIC_API_KEY=...        # the laptop's own key
-    python3 friday_laptop_agent.py      # Ctrl-C stops it
-    # allow inbound TCP 8765 from the Pi in the laptop's firewall
+    python friday_laptop_agent.py --install
 
-    ./venv/bin/python scripts/test_file20.py   # 84 cases, agent in-process, no money
+    ./venv/bin/python scripts/test_file20.py   # 91 cases, helper in-process, no browser, no money

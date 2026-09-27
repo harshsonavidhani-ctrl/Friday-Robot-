@@ -147,8 +147,9 @@ BRAIN_FAST_NEVER = (
     "remember", "forget", "memory", "memories", "recall", "you said",
     "earlier", "last time", "yesterday", "we talked",
     "alarm", "timer", "reminder", "remind", "schedule", "news",
-    # file 20: these need a tool (delegate_to_laptop), not a quick answer
-    "research", "in depth", "thoroughly", "in detail", "notes on",
+    # file 20: these need a tool (laptop_search / laptop_notes)
+    "research", "in depth", "thoroughly", "notes on", "notes about",
+    "laptop", "youtube",
     "here", "there", "behind", "around you", "where are you",
     "what are you doing", "yourself", "your name",
     # HER OWN BODY. 2026-09-20: "roughly how much does your chassis weigh"
@@ -461,15 +462,20 @@ HOME_AFTER_EXPLORE_SETTLE_S = 5.0    # the run just released the LiDAR: let it s
 HOME_AFTER_EXPLORE_TRIES = 5         # standing looks before giving up (sensor trouble only)
 HOME_START_PRIOR_M = 0.6              # after a way-back that arrived: the look-alike this near the run's start wins
 
-# --- Deep research on Harsh's laptop (file 20, laptop_research.py) ---------
-# The laptop runs laptop/friday_laptop_agent.py BY HAND; when it is not up,
-# Friday answers from her own quick search and says so. Asynchronous: a
-# research run outlasts STAGE_TOOL_TIMEOUT_S, so the result is said later,
-# between turns (ReminderWatch). ONE timeout per job, never a retry.
+# --- Harsh's laptop (file 20, laptop_research.py) --------------------------
+# laptop/friday_laptop_agent.py runs in his Windows login (starts at login):
+# a Google/YouTube search on his screen, and notes files. THE LAPTOP ONLY --
+# not reachable means she says so, with no fallback on the Pi. Notes are
+# written here (Haiku + web search, under the daily cap), saved THERE, and
+# said later between turns (ReminderWatch). One try each, never a retry.
 LAPTOP_AGENT_FILE = ROOT / "secrets" / "laptop_agent.json"   # {url, token} -- gitignored
-LAPTOP_HEALTH_TIMEOUT_S = 2.5         # "is it up?" before anything is sent
-LAPTOP_RESEARCH_TIMEOUT_S = 300.0     # one research run, then the fallback
-RESEARCH_FALLBACK_TIMEOUT_S = 18.0    # her own answer must fit the 25 s tool limit
+LAPTOP_HEALTH_TIMEOUT_S = 2.5         # "is it up?" before anything is done
+LAPTOP_OPEN_TIMEOUT_S = 12.0          # "play X" looks up the top video first
+LAPTOP_SAVE_TIMEOUT_S = 10.0
+LAPTOP_NOTES_MODEL = MODEL_FAST       # Haiku: web_search_20250305
+LAPTOP_NOTES_TIMEOUT_S = 120.0        # one notes call (a thread, not a tool call)
+LAPTOP_NOTES_MAX_TOKENS = 3000
+LAPTOP_NOTES_MAX_SEARCHES = 5
 RESEARCH_DIR = ROOT / "state" / "research"
 RESEARCH_KEEP = 50                    # job records kept (bounded)
 HOME_FACE_HEADING = True             # on arrival, turn to the saved heading
@@ -690,11 +696,10 @@ RATE_LIMITS = {
     # agency.py: one ~$0.001 Haiku decision. 12 an hour is the ceiling; the
     # fingerprint gate means a quiet room costs about 2 an hour.
     "agency": {"min_interval_s": 240.0, "per_hour": 12, "per_day": 100},
-    # file 20. The laptop's research is billed to ITS key, not this cap --
-    # this only stops her firing research at it in a loop. The fallback is
-    # Haiku + web search (~$0.01-0.02) on the Pi's key, under the cap.
-    "laptop_research": {"min_interval_s": 20.0, "per_hour": 10, "per_day": 40},
-    "research_fallback": {"min_interval_s": 10.0, "per_hour": 20, "per_day": 60},
+    # file 20. Opening a search is free (the limit stops a loop filling his
+    # screen); notes are Haiku + up to 5 web searches, ~$0.02-0.06 each.
+    "laptop_open": {"min_interval_s": 3.0, "per_hour": 60, "per_day": 300},
+    "laptop_notes": {"min_interval_s": 20.0, "per_hour": 10, "per_day": 30},
     # Not money: wheels. The same three numbers keep the idle drive (step 9,
     # physical_curiosity.py) from becoming a robot that paces the room.
     "physical_curiosity": {"min_interval_s": 1800.0, "per_hour": 2,
