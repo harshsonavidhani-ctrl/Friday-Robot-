@@ -1118,10 +1118,32 @@ async def _home_after_explore(controller):
     whole file 14 engine: relocalise, A*, one guarded move per tick,
     RuntimeObstacles and re-planning around anything new, FAILSAFE if stuck.
     """
+    import asyncio
     import math
 
     home = nsm.home_place()
-    mapper, why = await nsm.relocalise(allow_moves=False)
+    # ⚠ WAIT FOR THE LIDAR. The run has only just handed the hardware back,
+    # and the first sweep after it can be partial -- live 2026-09-27 21:32:
+    # "my LiDAR did not answer", then "only 31 usable beams", FAILSAFE two
+    # seconds after the run ended. Settle, then retry a few standing looks.
+    mapper, why = None, ""
+    tries = int(getattr(config, "HOME_AFTER_EXPLORE_TRIES", 5))
+    for attempt in range(tries):
+        await asyncio.sleep(float(getattr(config, "HOME_AFTER_EXPLORE_SETTLE_S",
+                                          5.0)) if attempt == 0 else 3.0)
+        mapper, why = await nsm.relocalise(allow_moves=False)
+        if mapper is not None:
+            break
+        log.info("after exploring: placing myself, try %d/%d — %s",
+                 attempt + 1, tries, why)
+        if not _sensor_trouble(why):
+            break           # not the LiDAR: a look-alike -- the engine decides
+    if mapper is None and _sensor_trouble(why):
+        nav_voice.VOICE.say_text(
+            "I came back to where I started, but my LiDAR is not giving me a "
+            "clear picture, so I am staying here. Say go home to try again.")
+        return nsm.ReturnReport(arrived=False, destination="home",
+                                why=f"not set off: {why}")
     if mapper is not None and home is not None:
         away = math.hypot(float(mapper.pose[0]) - float(home["x"]),
                           float(mapper.pose[1]) - float(home["y"]))
@@ -1134,10 +1156,19 @@ async def _home_after_explore(controller):
         log.info("after exploring: could not place myself yet (%s) — "
                  "the engine will try", why)
     nav_voice.VOICE.say("setting_off", "home")
-    report = await controller.go_home()
+    # The fix just made is handed over (no second relocalisation); with none,
+    # the engine's own locate() decides, and may step to break a tie.
+    report = await controller.go_home(mapper=mapper)
     if getattr(report, "arrived", False):
         log.info("home: %s", await _face_home_heading())
     return report
+
+
+def _sensor_trouble(why: str) -> bool:
+    """Was the failure the LiDAR (worth waiting for), not the map?"""
+    low = (why or "").lower()
+    return any(w in low for w in ("lidar", "usable beams", "did not answer",
+                                  "no sweep", "sweep"))
 
 
 @tool

@@ -144,6 +144,66 @@ clear_home()
 check("no home: no journey", "no home" in call() and not started)
 
 # ---------------------------------------------------------------------------
+print("\nafter the run: wait for the LiDAR (live 21:32: 31 usable beams)")
+config.HOME_AFTER_EXPLORE_SETTLE_S = 0.0
+home_dock.save_boot_home({"state": "no_map"})
+real_sleep = asyncio.sleep
+nav_tools.asyncio_sleep_calls = []
+
+
+class FakeMapper:
+    def __init__(self, x, y):
+        self.pose = (x, y, 0.0)
+
+
+class FakeController:
+    def __init__(self):
+        self.got = "not called"
+
+    async def go_home(self, mapper=None, **kw):
+        self.got = mapper
+        return nsm.ReturnReport(arrived=False, why="fake")
+
+
+answers = [(None, "my LiDAR did not answer, so I cannot find myself."),
+           (None, "only 31 usable beams in that sweep"),
+           (FakeMapper(2.0, 0.0), "")]
+nsm.relocalise = lambda allow_moves=True: _pop()
+
+
+async def _pop():
+    return answers.pop(0)
+
+
+orig_sleep = asyncio.sleep
+asyncio.sleep = lambda s: orig_sleep(0)
+said_lines = []
+nav_voice_say = nav_tools.nav_voice.VOICE.say_text
+nav_tools.nav_voice.VOICE.say_text = lambda t: said_lines.append(t)
+nav_tools.nav_voice.VOICE.say = lambda *a: said_lines.append(a[0])
+ctl = FakeController()
+asyncio.run(nav_tools._home_after_explore(ctl))
+check("two bad sweeps, then a good one: it waited and drove",
+      isinstance(ctl.got, FakeMapper) and not answers, str(ctl.got))
+check("...handing the fix to the engine (no second relocalisation)",
+      ctl.got.pose == (2.0, 0.0, 0.0))
+answers[:] = [(None, "only 31 usable beams in that sweep")] * 5
+ctl = FakeController()
+said_lines.clear()
+report = asyncio.run(nav_tools._home_after_explore(ctl))
+check("the LiDAR never recovers: she stays and SAYS so, no drive, no FAILSAFE",
+      ctl.got == "not called" and not report.arrived
+      and any("LiDAR" in l for l in said_lines), str(said_lines))
+answers[:] = [(FakeMapper(0.1, 0.1), "")]
+ctl = FakeController()
+said_lines.clear()
+home_dock.home_heading = lambda: None
+report = asyncio.run(nav_tools._home_after_explore(ctl))
+check("already within HOME_ARRIVE_M: 'I'm home', no drive",
+      ctl.got == "not called" and report.arrived and "I'm home." in said_lines)
+asyncio.sleep = orig_sleep
+
+# ---------------------------------------------------------------------------
 print("\nfacing the saved heading on arrival")
 config.AGENCY_TURN_DEG_PER_S = 75.0
 turn = home_dock.heading_turn(0.0, math.radians(90))
