@@ -448,6 +448,17 @@ AGENCY_LOOK_S = 0.6                   # look_around: left, right x2, left
 AGENCY_EXPLORE_M = 1.0                # explore_briefly: explore_room's budget
 AGENCY_EXPLORE_S = 30.0
 
+# --- Home is saved at boot, and exploring ends there (home_dock.py) --------
+# Harsh, 2026-09-27: save the starting pose (x, y, theta) as the permanent
+# Home/Dock, and after exploring let the path planner find the way back,
+# re-planning around new obstacles. The exploration run itself is untouched.
+HOME_SAVE_AT_BOOT = True             # only when the environment has NO home yet
+EXPLORE_ENDS_AT_HOME = True          # a run that ended ON ITS OWN drives home
+HOME_ARRIVE_M = 0.45                 # this close to home: already there
+HOME_FACE_HEADING = True             # on arrival, turn to the saved heading
+HOME_FACE_TOLERANCE_DEG = 25.0       # closer than this: leave it
+HOME_FACE_MAX_S = 2.4                # one pivot, at most this long (~180°)
+
 # --- Environments, landmark naming, run summaries (file 19) --------------
 # environments.py + environment_watch.py (inside friday-mcp) + run_summary.py.
 # ⚠ EXPLORATION IS NOT TOUCHED: this only watches files it already writes.

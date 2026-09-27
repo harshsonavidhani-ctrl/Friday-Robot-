@@ -1169,3 +1169,40 @@ box, obstacles per place, recent run summaries + the older total.
 
 **Not yet seen live:** a boot mismatch in a real second place, a new area on
 the navigation map (needs map growth), a summary after a real run.
+
+---
+
+# PART 10 — Home is saved at boot, and exploring ends at home (2026-09-27)
+
+Harsh: "save its initial starting coordinates (x, y, theta) as the permanent
+Home or Dock waypoint" and "its path planner will automatically calculate the
+safest route back ... avoiding any new obstacles". `home_dock.py`; hooks in
+`environment_watch.py` (boot + run end), `environments.py` (boot_check returns
+the pose + `sure`; create_new gives a new place its home), `nav_tools.py`
+(`return_home_after_explore` tool, arrival heading), `offline.py` ("dock").
+
+- **Home at boot:** the file 19 boot check places her from ONE sweep, no
+  movement. No `home` in this environment + an UNAMBIGUOUS fix → the boot pose
+  (x, y, theta) is saved as home, theta in the place's note (the places table
+  has no heading column). A new environment (no map yet) gets home at its
+  map's origin (0, 0, 0). ⚠ **An existing home is permanent: never moved
+  automatically** — he moves it with "remember this as home". An ambiguous fix
+  (look-alike spots) never saves home (`nsm.set_home`'s own warning).
+- **Exploring ends at home:** the RL run is untouched (its own way-back still
+  drives to the run's start). When `explore_mode.json` goes running → done AND
+  the run ended ON ITS OWN (not "stopped", not "stopped by hand", exit 0),
+  `environment_watch` asks the MCP server (`home_dock.
+  request_home_after_explore` → `return_home_after_explore`) to finish the trip
+  with file 14's engine: relocalise, A* + clearance gradient, one guarded move
+  per tick, RuntimeObstacles + re-planning around anything new, FAILSAFE if
+  stuck. Within `HOME_ARRIVE_M` already: "I'm home." It is an ordinary journey
+  called "home", so "stop" ends it like any other. Skipped when a person said
+  stop (hardware.ABORT), a run or another journey holds the robot, or there is
+  no home. Works for the voice "explore" AND the dashboard's Explore button.
+- **Facing the dock:** on arriving home (this hand-over and plain "go home"),
+  one guarded pivot to the saved heading if off by more than
+  `HOME_FACE_TOLERANCE_DEG`, at most `HOME_FACE_MAX_S`, after a fresh
+  scan_environment. Switch: `HOME_FACE_HEADING`.
+- Voice: "go to your dock" / "return to the dock" / "dock yourself" = go home.
+
+    ./venv/bin/python scripts/test_home_dock.py   # 30 cases, temp places, fake journey

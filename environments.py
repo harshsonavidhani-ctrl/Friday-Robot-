@@ -251,6 +251,12 @@ def create_new(name: str | None = None) -> str:
         _db().commit()
     _activate(env_id)
     log.info("new environment %r (confirmed by Harsh)", base)
+    # Its map will be built from where she stands: home is its origin.
+    try:
+        import home_dock
+        home_dock.save_boot_home({"state": "no_map"})
+    except Exception as exc:                        # noqa: BLE001
+        log.warning("new environment without a home: %s", exc)
     return (f"Okay — {base} is a new place. I'll build its map from here; "
             f"{current['name'] if current else 'the old one'} is kept.")
 
@@ -303,6 +309,11 @@ def boot_check(scan: dict[int, int] | None) -> dict:
             fix = global_localise.localise(OccupancyGrid.load(live_map), scan)
             state, why = judge(fix)
             result.update(state=state, why=why, score=round(fix.score, 3))
+            # For home_dock: the pose, and whether it was UNAMBIGUOUS.
+            if fix.pose is not None or fix.candidate is not None:
+                result["pose"] = [round(float(v), 4)
+                                  for v in (fix.pose or fix.candidate)]
+            result["sure"] = bool(fix.ok)
         except Exception as exc:                    # noqa: BLE001
             result.update(state="unknown", why=f"{type(exc).__name__}: {exc}")
     if result["state"] == "no_match":

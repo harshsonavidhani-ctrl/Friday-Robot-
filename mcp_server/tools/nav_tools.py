@@ -1079,7 +1079,90 @@ async def _home_errand(controller):
     paused = await _pause_exploration(controller)
     report = await controller.go_home()
     _resume_after(controller, paused, report)
+    if getattr(report, "arrived", False):
+        log.info("home: %s", await _face_home_heading())
     return report
+
+
+async def _face_home_heading() -> str:
+    """Arrived home: turn to the heading saved with it (home_dock). One guarded
+    pivot through the ordinary move tool -- scan_environment first, so the
+    server's own gate is satisfied, never a motor call. Never raises."""
+    import asyncio
+
+    import home_dock
+    if not getattr(config, "HOME_FACE_HEADING", True):
+        return "facing: switched off"
+    target = home_dock.home_heading()
+    if target is None:
+        return "no heading saved with home"
+    try:
+        mapper, why = await nsm.relocalise(allow_moves=False)
+        if mapper is None:
+            return f"not turning: could not check my heading ({why})"
+        turn = home_dock.heading_turn(float(mapper.pose[2]), target)
+        if turn is None:
+            return "already facing the saved way"
+        from mcp_server.tools import movement, perception
+        await asyncio.to_thread(perception.scan_environment)
+        result = await asyncio.to_thread(movement.move, turn[0], turn[1])
+        return f"turned {turn[0]} {turn[1]:.1f}s to face home's heading: {result}"
+    except Exception as exc:                     # noqa: BLE001
+        return f"not turning: {type(exc).__name__}: {exc}"
+
+
+async def _home_after_explore(controller):
+    """The rest of the way home after a run ended on its own (home_dock).
+
+    Already within HOME_ARRIVE_M: say so and face the saved heading. Else the
+    whole file 14 engine: relocalise, A*, one guarded move per tick,
+    RuntimeObstacles and re-planning around anything new, FAILSAFE if stuck.
+    """
+    import math
+
+    home = nsm.home_place()
+    mapper, why = await nsm.relocalise(allow_moves=False)
+    if mapper is not None and home is not None:
+        away = math.hypot(float(mapper.pose[0]) - float(home["x"]),
+                          float(mapper.pose[1]) - float(home["y"]))
+        log.info("after exploring: %.2f m from home", away)
+        if away <= float(getattr(config, "HOME_ARRIVE_M", 0.45)):
+            nav_voice.VOICE.say_text("I'm home.")
+            log.info("home: %s", await _face_home_heading())
+            return nsm.ReturnReport(arrived=True, why="already home")
+    elif mapper is None:
+        log.info("after exploring: could not place myself yet (%s) — "
+                 "the engine will try", why)
+    nav_voice.VOICE.say("setting_off", "home")
+    report = await controller.go_home()
+    if getattr(report, "arrived", False):
+        log.info("home: %s", await _face_home_heading())
+    return report
+
+
+@tool
+async def return_home_after_explore() -> str:
+    """Internal: finish an exploration by driving home with the path planner.
+
+    Called by the environment watch when an exploration run ENDS ON ITS OWN
+    (never after a person's stop). Not for the brain to call on its own;
+    "go home" is nav_home. Returns at once; the journey announces itself.
+    """
+    from mcp_server.tools import autonomy
+
+    if _journey_running():
+        return f"not going home: busy ({_journey_running()})"
+    if autonomy._running():
+        return "not going home: a run still holds the robot"
+    if hardware.ABORT.is_set():
+        return "not going home: a person said stop"
+    if nsm.home_place() is None:
+        return "not going home: no home saved"
+    nsm.clear_failsafe()
+    _reclaim_if_run_gone()
+    controller, _ = _controller()
+    _start_journey("home", _home_after_explore(controller))
+    return "finishing the way home with the path planner"
 
 
 def _busy_reply() -> str:

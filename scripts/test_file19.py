@@ -131,8 +131,12 @@ check("a match is recorded as such",
 print("\nstep 3: landmark names are per environment")
 said_new = environments.create_new("Office")
 office = environments.active()
-check("'this is a new place' makes a new, empty environment",
-      office["name"] == "Office" and environments.live_places() == []
+# home_dock (2026-09-27): a new environment's map is built from where she
+# stands, so its ONLY place is home, at that map's origin (0, 0, 0).
+check("'this is a new place' makes a new environment: no map, only home at 0,0",
+      office["name"] == "Office"
+      and [(p["name"], p["x"], p["y"]) for p in environments.live_places()]
+      == [("home", 0.0, 0.0)]
       and not config.SLAM_MAP_FILE.exists(), said_new)
 home_dir = environments._dir(home["env_id"])
 check("...and Home's map and places are kept in its folder",

@@ -125,13 +125,26 @@ class Watch:
         prev = environments.known_area_m2(STATE / "rl_map.prev.npz")
         gained = (after - prev) if after is not None and prev is not None else None
         came_back = None
+        tail = ""
         try:
             tail = Path(status.get("log") or "").read_text(errors="replace")[-4000:]
             came_back = "back where I started" in tail
         except OSError:
             pass
-        return run_summary.finish(run_summary.build(
+        summary = run_summary.finish(run_summary.build(
             "explore", started, ended, gained, came_back=came_back))
+        # EXPLORING ENDS AT HOME (home_dock.py): a run that ended on its own
+        # hands over to the navigation engine to finish the way home.
+        try:
+            import home_dock
+            go, why = home_dock.wants_home_after(status, tail)
+            log.info("after the run: %s", why)
+            if go:
+                home_dock.request_home_after_explore()
+        except Exception as exc:                    # noqa: BLE001
+            log.warning("home after exploring skipped: %s: %s",
+                        type(exc).__name__, exc)
+        return summary
 
     # -- file 14's navigation home ---------------------------------------------
     def nav_arrivals(self) -> list[dict]:
@@ -185,6 +198,13 @@ def _boot(watch: Watch) -> None:
             log.debug("no sweep yet: %s", exc)
             _stop.wait(3.0)
     result = environments.boot_check(scan)
+    # HOME AT BOOT (home_dock.py): no home in this environment yet and a sure
+    # fix (or a brand-new map) -> this spot is home. An existing one is kept.
+    try:
+        import home_dock
+        home_dock.save_boot_home(result)
+    except Exception as exc:                        # noqa: BLE001
+        log.warning("home at boot skipped: %s: %s", type(exc).__name__, exc)
     if result.get("state") == "no_match" and result.get("ask"):
         try:
             import nav_voice

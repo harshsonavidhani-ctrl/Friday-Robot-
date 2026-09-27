@@ -555,7 +555,8 @@ _NAV_TRY_AGAIN_RE = re.compile(
 
 _NAV_HOME_RE = re.compile(
     _NAV_LEAD + r"(?:(?:go|come|head|drive|get|return)(?: back)? home|"
-    r"return to home|ghar(?: wapas| vapas)? (?:chalo|chal|jao|jaao|aao)|"
+    r"return to home|(?:go|head|drive|return)(?: back)? to (?:your |the )?dock|"
+    r"(?:go )?dock yourself|ghar(?: wapas| vapas)? (?:chalo|chal|jao|jaao|aao)|"
     r"घर (?:वापस )?(?:चलो|जाओ|आओ))\b",
     re.IGNORECASE | re.UNICODE)
 
@@ -683,6 +684,11 @@ def _nav_intent(heard: str, strict: bool = False) -> Intent | None:
     m = _NAV_GO_TO_RE.search(text)
     if m:
         place, tail, known = _split_place(m.group("rest"))
+        # THE DOCK IS HOME (home_dock.py): "go to your dock" is "go home".
+        if re.fullmatch(r"(?:your |the |my )?(?:dock|docking station|home)",
+                        (place or "").strip().lower()) \
+                and not tail.strip(" .,!?"):
+            return Intent(name="nav_home", tool="nav_home")
         if place and place.lower() not in _NOT_A_PLACE and (
                 known or len(place.split()) <= 3):
             come_back, then = _nav_tail(tail)
