@@ -804,7 +804,9 @@ WAKE_UNCERTAIN_CHECK_TIMEOUT_S = 5.0   # the yes/no; she is deaf while it runs
 # said". He chose: beep + listening face from here up, but below
 # WAKE_CONFIDENT_VERIFY she still ANSWERS only if the words were for her. So a
 # video can make her beep, not reply. 7 of his 8 tries were >= 0.5.
-WAKE_ACK_VERIFY = 0.5
+# 0.5 -> 0.4 (= WAKE_VERIFY_THRESHOLD) at 17:4x: his try at 17:34:36 was
+# accepted at 0.40 and stayed silent. Every accepted wake beeps now.
+WAKE_ACK_VERIFY = 0.4
 
 # HEARING HIM FROM ACROSS THE ROOM. The misses in his 40 recordings are not
 # scattered -- they are exactly the quiet takes, with clean separation:
