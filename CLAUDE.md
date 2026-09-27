@@ -1259,18 +1259,34 @@ is deliberately NO fallback (his "in laptop only").
 - `RATE_LIMITS`: `laptop_open` (free; stops a loop filling his screen) and
   `laptop_notes` (paid, ~$0.02-0.06 each).
 
-**Secrets:** `secrets/laptop_agent.json` {url, token} on the Pi and
+**Secrets:** `secrets/laptop_agent.json` {url, token, mac} on the Pi and
 `secrets/friday_agent.json` (the laptop's config, same token) — gitignored,
-0600, never printed or committed. ⚠ The url is the laptop's address on
-2026-09-27 (10.12.120.204, the SSH client); DHCP can change it — then edit
-the url. ⚠ On 2026-09-27 the laptop dropped every inbound connection (22 and
-8765 timed out): Windows asks once when the helper first listens — both
-Private AND Public must be ticked (hostel Wi-Fi is usually "Public").
+0600, never printed or committed.
+
+**The laptop's address moves (hostel DHCP)**, and Windows answers no name
+lookups there (mDNS tried). When the saved url does not answer,
+`available()` tries at most `LAPTOP_REFIND_MAX` (2) other addresses — the
+ARP entry for the laptop's `mac`, then the newest SSH logins to the Pi (he
+works on the Pi from the laptop) — and saves one ONLY if the helper there
+answers /health with our token. A 401 at the saved address is never looked
+for elsewhere.
+
+**Working since 2026-09-27 22:59** (a live `laptop_search` opened Google on
+his screen). Setup lessons: `scp` needs the trailing ` .`; `powershell` typed
+inside Command Prompt is NOT administrator (the firewall rule needs a real
+"Administrator:" window); his laptop runs the **Microsoft Store Python**,
+which puts NEW files under AppData into a private copy — so `--install`
+prints the one `echo … > …\Startup\friday_laptop_helper.cmd` line for him to
+paste into Command Prompt instead of writing it itself. Firewall rule on the
+laptop: "Friday laptop helper", inbound TCP 8765 from LocalSubnet.
 
 **Setting up the laptop (Harsh, once, PowerShell):**
 
+    mkdir Friday && cd Friday
     scp harsh@<pi>:friday/laptop/friday_laptop_agent.py .
     scp harsh@<pi>:friday/secrets/friday_agent.json .
-    python friday_laptop_agent.py --install
+    python friday_laptop_agent.py --install     # Store Python: paste the echo line it prints
+    # Administrator PowerShell:
+    New-NetFirewallRule -DisplayName "Friday laptop helper" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8765 -RemoteAddress LocalSubnet -Profile Any
 
-    ./venv/bin/python scripts/test_file20.py   # 91 cases, helper in-process, no browser, no money
+    ./venv/bin/python scripts/test_file20.py   # 97 cases, helper in-process, no browser, no money

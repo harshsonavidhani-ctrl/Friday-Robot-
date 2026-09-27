@@ -51,6 +51,11 @@ import offline                                          # noqa: E402
 import reminders                                        # noqa: E402
 from mcp_server.tools import research_tools as rt       # noqa: E402
 
+# Never the Pi's real ARP table or SSH log: those would send the rediscovery
+# to the real laptop. Each test sets what "ip" / "journalctl" print.
+FAKE_SH: dict[str, str] = {}
+lr._sh = lambda cmd: FAKE_SH.get(cmd[0], "")
+
 _results: list[bool] = []
 
 
@@ -259,6 +264,44 @@ ok, why = lr.available()
 took = time.monotonic() - started
 check("a laptop that never answers: gives up after the health timeout",
       not ok and took < config.LAPTOP_HEALTH_TIMEOUT_S + 0.5, f"{took:.1f}s")
+
+
+print("\nthe laptop's address changed (DHCP): the Pi finds it again")
+MAC = "f8:3d:c6:ad:24:02"
+config.LAPTOP_AGENT_FILE.write_text(json.dumps(
+    {"url": f"http://127.0.0.2:{PORT}", "token": TOKEN, "mac": MAC}))
+FAKE_SH["ip"] = (f"10.0.0.9 dev wlan0 lladdr aa:bb:cc:dd:ee:ff REACHABLE\n"
+                 f"127.0.0.1 dev wlan0 lladdr {MAC.upper()} STALE\n"
+                 f"10.0.0.7 dev wlan0 lladdr {MAC} FAILED\n")
+FAKE_SH["journalctl"] = ("Accepted password for harsh from 10.0.0.5 port 1 ssh2\n"
+                         "Accepted password for harsh from 10.0.0.6 port 2 ssh2\n"
+                         "Accepted password for harsh from 127.0.0.1 port 3 ssh2\n")
+check("where to look: its network card first, then the newest SSH logins, "
+      "no repeats, not the saved one, at most 2",
+      lr.candidates("127.0.0.2") == ["127.0.0.1", "10.0.0.6"],
+      str(lr.candidates("127.0.0.2")))
+check("the saved address itself is never a candidate",
+      "127.0.0.1" not in lr.candidates("127.0.0.1"))
+check("found at its new address, and it is saved",
+      lr.available() == (True, "") and json.loads(
+          config.LAPTOP_AGENT_FILE.read_text())["url"] ==
+      f"http://127.0.0.1:{PORT}")
+saved = json.loads(config.LAPTOP_AGENT_FILE.read_text())
+check("...with the token and the card kept",
+      saved["token"] == TOKEN and saved["mac"] == MAC)
+config.LAPTOP_AGENT_FILE.write_text(json.dumps(
+    {"url": f"http://127.0.0.2:{PORT}", "token": "w" * 40, "mac": MAC}))
+ok, _ = lr.available()
+check("something there without OUR token is never adopted",
+      not ok and json.loads(config.LAPTOP_AGENT_FILE.read_text())["url"] ==
+      f"http://127.0.0.2:{PORT}")
+settings(BASE, token="w" * 40)
+FAKE_SH["journalctl"] = "Accepted password for harsh from 127.0.0.2 port 3 ssh2\n"
+ok, why = lr.available()
+check("a laptop that REFUSED our token is not looked for elsewhere",
+      not ok and "401" in why and json.loads(
+          config.LAPTOP_AGENT_FILE.read_text())["url"] == BASE)
+FAKE_SH.clear()
 
 # ---------------------------------------------------------------------------
 print("\nthe laptop ONLY: down means she says so, and nothing else")

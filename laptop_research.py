@@ -23,7 +23,15 @@ job makes ONE model call chain and ONE save -- never a retry -- and writes
 state/research/<id>.json; ReminderWatch (reminders.py) says the result
 between turns. Every saved note is remembered as kind "research".
 
-SECRETS: secrets/laptop_agent.json {url, token} -- gitignored, never in code.
+SECRETS: secrets/laptop_agent.json {url, token, mac} -- gitignored, never in
+code.
+
+THE LAPTOP'S ADDRESS CHANGES (hostel DHCP) and Windows answers no name
+lookups there (mDNS tried, 2026-09-27). So when the saved url stops
+answering, available() tries at most LAPTOP_REFIND_MAX other addresses where
+the laptop was last seen -- the Pi's ARP table for its network card's `mac`,
+then the newest SSH logins to the Pi (he works on the Pi FROM the laptop) --
+and adopts one ONLY if the helper there answers /health with our token.
 """
 
 from __future__ import annotations
@@ -31,9 +39,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -83,15 +93,70 @@ def _request(path: str, body: dict | None, timeout: float) -> dict:
         return json.loads(reply.read().decode("utf-8", "replace"))
 
 
-def available() -> tuple[bool, str]:
-    """Is the helper up and accepting our token? One quick look, no retry."""
+def _health(timeout: float) -> tuple[bool, str]:
     try:
-        got = _request("/health", None, float(config.LAPTOP_HEALTH_TIMEOUT_S))
+        got = _request("/health", None, timeout)
     except urllib.error.HTTPError as exc:
         return False, f"the laptop refused us ({exc.code})"
     except Exception as exc:                        # noqa: BLE001
         return False, f"{type(exc).__name__}: {str(exc)[:80]}"
     return bool(got.get("ok")), ""
+
+
+def _sh(cmd: list[str]) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def candidates(host_now: str) -> list[str]:
+    """Other addresses the laptop may have now, most likely first."""
+    s = _settings() or {}
+    mac = str(s.get("mac") or "").lower()
+    found: list[str] = []
+    if mac:
+        for line in _sh(["ip", "neigh", "show"]).splitlines():
+            if mac in line.lower() and "FAILED" not in line:
+                found.append(line.split()[0])
+    logins = _sh(["journalctl", "-u", "ssh", "-n", "300", "--no-pager",
+                   "-o", "cat"])
+    found += reversed(re.findall(r"Accepted \S+ for \S+ from "
+                                 r"(\d+\.\d+\.\d+\.\d+)", logins))
+    out: list[str] = []
+    for ip in found:
+        if ip != host_now and ip not in out:
+            out.append(ip)
+    return out[:int(config.LAPTOP_REFIND_MAX)]
+
+
+def _save_url(url: str) -> None:
+    path = Path(config.LAPTOP_AGENT_FILE)
+    data = json.loads(path.read_text())
+    data["url"] = url
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.chmod(0o600)
+    tmp.replace(path)
+
+
+def available() -> tuple[bool, str]:
+    """Is the helper up and accepting our token? One quick look at the saved
+    address; if that fails, a few quick looks where the laptop was last seen."""
+    ok, why = _health(float(config.LAPTOP_HEALTH_TIMEOUT_S))
+    s = _settings()
+    if ok or s is None or "refused us" in why:
+        return ok, why
+    parts = urllib.parse.urlsplit(s["url"])
+    for ip in candidates(parts.hostname or ""):
+        moved = parts._replace(netloc=f"{ip}:{parts.port or 8765}").geturl()
+        _save_url(moved)
+        if _health(float(config.LAPTOP_REFIND_TIMEOUT_S))[0]:
+            log.info("the laptop moved: %s -> %s", parts.hostname, ip)
+            return True, ""
+        _save_url(s["url"])
+    return False, why
 
 
 def open_search(query: str, site: str = "web",
