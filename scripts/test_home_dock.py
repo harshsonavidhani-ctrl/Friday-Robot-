@@ -237,6 +237,21 @@ start_file.write_text(json.dumps({"pose": [0, 0, 0], "at": _t.time() - 5 * 3600}
 check("a start note hours old -> no prior", nav_tools._run_start_prior(True) is None)
 
 # ---------------------------------------------------------------------------
+print("\nre-planning: the same thing, closer each time, is an obstacle (21:52)")
+why = ("blocked: forward STOPPED after 0.2s of 0.6s — something is 109 mm "
+       "away — inside the 200 mm bump guard (LiDAR)")
+check("the distance is read from the block message", nsm._mm_in(why) == 109.0)
+spots = [(0.10, 0.50, 190.0)]
+check("190 then 109 mm at the same spot: an obstacle",
+      nsm.repeat_block(spots, (0.12, 0.52), 109.0))
+check("a block somewhere else: not (yet)",
+      not nsm.repeat_block(spots, (1.0, 1.0), 100.0))
+check("same spot but FARTHER (a person moving off): not",
+      not nsm.repeat_block(spots, (0.1, 0.5), 400.0))
+check("no distance in the message: not (the old walk-past rule)",
+      not nsm.repeat_block(spots, (0.1, 0.5), None))
+
+# ---------------------------------------------------------------------------
 print("\nfacing the saved heading on arrival")
 config.AGENCY_TURN_DEG_PER_S = 75.0
 turn = home_dock.heading_turn(0.0, math.radians(90))

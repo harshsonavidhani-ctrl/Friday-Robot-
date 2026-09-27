@@ -62,6 +62,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -998,6 +999,7 @@ class NavController:
         follower = nav_follower.Follower(robot)
         refinds = 0
 
+        block_spots: list[tuple[float, float, float | None]] = []  # x, y, mm
         for attempt in range(1, max_attempts + 1):
             report.attempts = attempt
             if attempt > 1:
@@ -1091,12 +1093,31 @@ class NavController:
                 self.state = report.state = NavState.BLOCKED_REPLANNING
                 self.voice.say("blocked")
                 still, clearance = await self._still_blocked(robot)
-                if not still:
+                here = (float(mapper.pose[0]), float(mapper.pose[1]))
+                mm = _mm_in(result.why)
+                # CLOSER THAN LAST TIME, NEAR THE SAME SPOT: she is edging
+                # into something that is not moving. A person walking past
+                # does not make the distance shrink block after block.
+                again = repeat_block(block_spots, here, mm)
+                block_spots.append((here[0], here[1], mm))
+                if not still and not again:
                     # It walked away. Re-plan on the unchanged map, which is
                     # nearly free, rather than recording a ghost obstacle.
                     log.info("%s: the block cleared on recheck", label)
                     self.voice.say("clear", label)
                     continue
+                if not still:
+                    # ⚠ BLOCKED HERE BEFORE: not a person walking past. Live
+                    # 2026-09-27 21:52 the same thing stopped her at 190, 109
+                    # and 50 mm, each recheck said "clear", and the unchanged
+                    # plan drove her back into it until FAILSAFE. The guard
+                    # sees it while moving; the standing recheck does not. So
+                    # the SECOND block near one spot is an obstacle, and the
+                    # plan goes round it.
+                    log.info("%s: blocked here before — treating it as an "
+                             "obstacle", label)
+                    clearance = clearance if clearance is not None \
+                        else _mm_in(result.why)
                 report.blocks_confirmed += 1
                 self.obstacles.add(obstacle_ahead(mapper.pose, clearance))
                 report.obstacles = self.obstacles.as_dict()
@@ -1612,6 +1633,22 @@ class RuntimeObstacles:
         return {"count": len(self._points), "ttl_s": self.ttl_s,
                 "points": [[round(p[0], 2), round(p[1], 2)]
                            for p in self._points[-12:]]}
+
+
+REPEAT_BLOCK_M = 0.35       # a second block within this of an earlier one is real
+
+
+def repeat_block(spots, here, mm) -> bool:
+    """Blocked near an earlier block AND closer than then: a real obstacle."""
+    return mm is not None and any(
+        math.hypot(here[0] - x, here[1] - y) <= REPEAT_BLOCK_M
+        and was is not None and mm <= was for x, y, was in spots)
+
+
+def _mm_in(why: str) -> float | None:
+    """The "something is 109 mm away" distance in a block message, or None."""
+    found = re.search(r"(\d+)\s*mm away", why or "")
+    return float(found.group(1)) if found else None
 
 
 def obstacle_ahead(pose, clearance_mm: float | None) -> tuple[float, float]:
