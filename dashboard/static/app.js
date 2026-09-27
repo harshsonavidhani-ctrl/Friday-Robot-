@@ -1001,6 +1001,51 @@ function paintScreen(state) {
   }
 }
 
+/* ---------- describe (file 15) ----------
+   The button writes the same switch as "keep describing what you see". The
+   heartbeat repaints it, so a voice "stop describing" or the timeout shows
+   up here within a beat without anything to reload. */
+
+let narrateOn = false;
+
+async function narratePost(on) {
+  const btn = $('narratego');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/narration', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on }),
+    });
+    if (!r.ok) { toast(await r.text(), true); return; }
+    paintNarration(await r.json());
+    toast(on ? 'She will describe what changes' : 'Describing stopped');
+  } catch (e) { toast(String(e), true); }
+  finally { btn.disabled = false; }
+}
+
+function paintNarration(n) {
+  const btn = $('narratego');
+  if (!n || !btn) return;
+  narrateOn = !!n.on;
+  btn.classList.toggle('on', narrateOn);
+  btn.textContent = narrateOn ? 'Stop describing' : 'Keep describing what you see';
+  btn.onclick = () => narratePost(!narrateOn);
+  const badge = $('narratenow');
+  badge.textContent = narrateOn ? `on · ${countdown(n.left_s || 0)} left` : 'off';
+  badge.classList.toggle('live', narrateOn);
+  const counts = narrateOn && n.looks
+    ? ` · ${n.looks} look${n.looks === 1 ? '' : 's'}, ${n.no_change || 0} with nothing new`
+    : '';
+  $('narratestatus').textContent = narrateOn
+    ? `${n.status || 'watching'}${counts}`
+    : `Off. She says what changes in front of her camera until you stop it, `
+      + `or for ${Math.round((n.timeout_s || 900) / 60)} minutes.`
+      + (n.status && n.status !== 'off' ? ` (${n.status})` : '');
+  const said = $('narratesaid');
+  said.hidden = !n.last_said;
+  if (n.last_said) said.textContent = `Last said ${ago(n.last_said_at)}: “${n.last_said}”`;
+}
+
 const countdown = (secs) => {
   const total = Math.max(0, Math.round(secs));
   const m = Math.floor(total / 60), s = total % 60;
@@ -1243,6 +1288,7 @@ async function heartbeat() {
   applyCams(s.cameras || {});     // picks up hot-plugs and other viewers
   paintRobot(s.robot_online);
   paintScreen(s.screen);          // rides the same beat; no extra request
+  paintNarration(s.narration);    // ...and so does Describe (file 15)
   growthNow = s.growth || growthNow;
   paintReflection(s.reflection); // ...and so does Brain Growth (step 7)
   paintStudy(s.study);           // ...and Study and Diary (file 12)
@@ -1311,6 +1357,7 @@ function showPane(id) {
   }
   setActive(state.mood);
   paintScreen(state.screen);
+  paintNarration(state.narration);
 
   buildExplore();
   await refreshExplore();

@@ -555,6 +555,62 @@ def _curiosity_heard() -> None:
         log.debug("could not stop the outing: %s", exc)
 
 
+def _uncertain_wake(trigger: str) -> bool:
+    """Did the verifier only just let this wake through?
+
+    The detector writes "openwakeword: 0.94 v0.70" -- v is the verifier's
+    probability. No v (verifier off or missing, the Enter key) is not
+    uncertain: then there is nothing to be less sure of than before.
+    """
+    if not getattr(config, "WAKE_UNCERTAIN_SILENT", False):
+        return False
+    import re
+    found = re.search(r"\bv(\d+(?:\.\d+)?)\b", trigger or "")
+    if not found:
+        return False
+    return float(found.group(1)) < float(
+        getattr(config, "WAKE_CONFIDENT_VERIFY", 0.85))
+
+
+async def _meant_for_her(brain_obj, spoken: str,
+                         turn: "stages.Turn") -> bool:
+    """After an UNCERTAIN wake: were these words for her? Never raises.
+
+    Yes without asking anyone: stop (never refused), an order the reflex
+    parser knows, an instruction about how she behaves, or a question while
+    she is mid-conversation with him. Otherwise one strict yes/no call, and
+    a clear YES is the only yes. With no brain to ask, the answer is no: an
+    uncertain wake plus words nobody can check is a video until shown
+    otherwise.
+    """
+    import offline
+    try:
+        if offline.is_stop(spoken) or offline.understand(spoken, strict=True):
+            turn.note("uncertain wake, but a known order — answering")
+            return True
+        import brain
+        if brain.is_instruction(spoken) or (
+                brain.asked_of_her(spoken) and brain.spoke_within(
+                    getattr(config, "BRAIN_CONVERSATION_WINDOW_S", 90.0))):
+            turn.note("uncertain wake, but plainly to her — answering")
+            return True
+        if brain_obj is None or not offline.online():
+            turn.note(f"uncertain wake, no brain to check {spoken[:40]!r} — "
+                      f"silent", dash=False)
+            return False
+        verdict = await asyncio.wait_for(
+            brain_obj.addressed_strictly(spoken),
+            float(getattr(config, "STAGE_TOOL_TIMEOUT_S", 25.0)))
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("uncertain-wake check failed (%s: %s) — silent",
+                    type(exc).__name__, exc)
+        return False
+    turn.note(f"uncertain wake, strict check said "
+              f"{'YES' if verdict else 'NO' if verdict is False else 'nothing'}"
+              f": {spoken[:60]!r}", dash=bool(verdict))
+    return bool(verdict)
+
+
 def _show_face(face: "Face", mood: str) -> None:
     """The face a turn ends on, into the band it belongs to."""
     if mood in ("success", "confused"):
@@ -622,6 +678,64 @@ async def _scene_turn(brains: "_BrainLoader", voice: "Voice", face: "Face",
         turn.done()
     except Exception as exc:                    # noqa: BLE001
         log.warning("scene remark failed: %s: %s", type(exc).__name__, exc)
+        turn.done(f"FAILED ({type(exc).__name__})")
+    finally:
+        face.rest()
+        source.resume()
+        turn.listening()
+
+
+async def _narration_turn(voice: "Voice", face: "Face", source,
+                          trigger: str, watch) -> None:
+    """Continuous narration (file 15): say what the watch found, or drop it.
+
+    The paid call already happened on the watch's own thread; this only
+    SPEAKS, from the wake loop, so it can never overlap a turn (step 6). A
+    line that waited in the queue behind one of his turns is checked again
+    here -- too old, narration switched off meanwhile, or he has started
+    talking -- and handed back with watch.missed() rather than said late.
+    Never raises.
+    """
+    import initiative
+    import narration
+
+    item = narration.parse_trigger(trigger)
+    if item is None:
+        return
+    kind = item.get("kind", "change")
+    turn = stages.Turn(f"narration: {kind}")
+    age = time.time() - float(item.get("at") or 0.0)
+    if kind != "timeout":
+        why = None
+        if not narration.mode()["on"]:
+            why = "narration was switched off"
+        elif age > float(config.NARRATION_DELIVER_MAX_AGE_S):
+            why = f"{age:.0f}s old"
+        elif initiative.he_is_talking():
+            why = "he is talking"
+        if why:
+            watch.missed()
+            turn.done(f"DROPPED ({why})")
+            return
+
+    source.pause()                              # never hear herself
+    try:
+        if kind != "timeout":
+            face.feel("curious")
+        turn.note(f"{item.get('hint') or kind} -> said by "
+                  f"{item.get('model') or 'no model'}, "
+                  f"${float(item.get('cost') or 0):.4f}")
+        voice.say(item["say"])
+        turn.spoke(item["say"])
+        turn.answered_by(item.get("model") or "locally, no model",
+                         float(item.get("cost") or 0.0))
+        turn.stage("SPEAKING", stages.quote(item["say"], 120))
+        voice.wait_until_quiet()
+        if kind != "timeout":
+            watch.delivered()
+        turn.done()
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("narration failed: %s: %s", type(exc).__name__, exc)
         turn.done(f"FAILED ({type(exc).__name__})")
     finally:
         face.rest()
@@ -922,7 +1036,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     # connection -- which friday-mcp refuses for ~29 s at boot, and which
     # crashed this process on that boot. Hearing "hey Friday" needs none of
     # them, so the mic and the detector start first and the rest loads behind.
-    stream = source = scene_watch = None
+    stream = source = scene_watch = narration_watch = None
     if typed is None:
         # ONE microphone stream, shared by the wake detector and the capture.
         # Opened here so both get the same one -- see stt.AudioStream for why
@@ -940,6 +1054,17 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             inner = (source.sources if isinstance(source, wake_word.AnyOf)
                      else (source,))
             source = wake_word.AnyOf(*inner, scene_watch)
+        # "KEEP DESCRIBING WHAT YOU SEE" (file 15) is one more, for the same
+        # reason: a narration waits for his turn and never talks over it. It
+        # is inert until his words or the dashboard turn it on, and it is
+        # turned OFF here on every start (step 5).
+        if getattr(config, "NARRATION", False):
+            import narration
+            narration.boot_reset()
+            narration_watch = narration.NarrationWatch()
+            inner = (source.sources if isinstance(source, wake_word.AnyOf)
+                     else (source,))
+            source = wake_word.AnyOf(*inner, narration_watch)
         global WAKE
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
@@ -985,16 +1110,30 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                     if once:
                         break
                     continue
+                if (narration_watch is not None
+                        and trigger.startswith("narration: ")):
+                    await _narration_turn(voice, face, source, trigger,
+                                          narration_watch)
+                    continue
                 turn = stages.Turn(trigger)
-                # Acknowledge instantly: the face and the beep both land
-                # before any model runs, so Harsh knows he was heard rather
-                # than wondering whether to repeat himself.
-                face.set("listening")
+                # AN UNCERTAIN WAKE IS HEARD IN SILENCE (2026-09-27). Below
+                # WAKE_CONFIDENT_VERIFY there is no beep and no face: she
+                # listens, and shows nothing unless what follows is for her
+                # (_meant_for_her). Harsh: "never fire randomly".
+                uncertain = _uncertain_wake(trigger)
+                if uncertain:
+                    turn.note(f"uncertain wake ({trigger}) — listening "
+                              f"silently", dash=False)
+                else:
+                    # Acknowledge instantly: the face and the beep both land
+                    # before any model runs, so Harsh knows he was heard
+                    # rather than wondering whether to repeat himself.
+                    face.set("listening")
                 # WHEELS FIRST. If step 9 has her out looking around, she
                 # stops here -- before the capture, while he is still
                 # talking -- rather than driving through his question.
                 _curiosity_heard()
-                if hasattr(source, "beep"):
+                if hasattr(source, "beep") and not uncertain:
                     source.beep()
 
                 # THE DETECTOR STAYS PAUSED FOR THE WHOLE TURN — through the
@@ -1012,7 +1151,8 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                                             + config.LISTEN_START_TIMEOUT_S
                                             + 5.0)
                     said_at = time.monotonic()   # he stopped talking here
-                    face.set("thinking")
+                    if not uncertain:
+                        face.set("thinking")
                     spoken = await turn.call(
                         "TRANSCRIBING", stt.transcribe, audio,
                         timeout=config.STAGE_STT_TIMEOUT_S)
@@ -1025,7 +1165,8 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                     # of it in the buffer. Abandoning there looks exactly like
                     # being ignored, which is the complaint this whole day of
                     # work is about.
-                    if not spoken.strip() and config.EMPTY_TRANSCRIPT_RETRY:
+                    if (not spoken.strip() and config.EMPTY_TRANSCRIPT_RETRY
+                            and not uncertain):
                         turn.stage("RE-LISTENING", "nothing in the first take")
                         # No handover on the retry: the wake word is long
                         # past, so there is nothing worth reaching back for,
@@ -1048,17 +1189,34 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                     turn.stage("NOTHING SAID", str(exc))
                     turn.done("ABANDONED")
                 except stages.StageTimeout as exc:
-                    face.alarm("dizzy")
-                    voice.say("Sorry, I lost that one.")
-                    voice.wait_until_quiet()
+                    if not uncertain:        # nobody may have been talking to her
+                        face.alarm("dizzy")
+                        voice.say("Sorry, I lost that one.")
+                        voice.wait_until_quiet()
                     turn.done(f"ABANDONED ({exc})")
                 except Exception as exc:    # noqa: BLE001
                     log.error("could not listen: %s: %s",
                               type(exc).__name__, exc)
-                    face.alarm("dizzy")
+                    if not uncertain:
+                        face.alarm("dizzy")
                     turn.done("FAILED (capture)")
                 else:
-                    if spoken.strip():
+                    quiet = False
+                    if uncertain and not spoken.strip():
+                        turn.done("ABANDONED (uncertain wake, nothing said)")
+                        quiet = True
+                    elif uncertain:
+                        if await _meant_for_her(await brains.get(), spoken,
+                                                turn):
+                            face.set("thinking")    # it was him: a normal turn
+                        else:
+                            spoken = ""             # not his: no "he is here"
+                            turn.done("QUIET (uncertain wake, not said to "
+                                      "her)")
+                            quiet = True
+                    if quiet:
+                        pass
+                    elif spoken.strip():
                         brain_obj = await brains.get()
                         # At boot friday-mcp may still be coming up, so the
                         # first turn waits for it; after a server restart the
@@ -1098,12 +1256,15 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 finally:
                     if scene_watch is not None and spoken.strip():
                         scene_watch.heard_harsh()   # he is here; give him a moment
+                    if narration_watch is not None and spoken.strip():
+                        narration_watch.heard_harsh()
                     _idle_turn_ended(spoken)
                     # RE-ARM, ALWAYS. Every path above lands here, including
                     # the timeouts and the crashes, because a turn that ends
                     # without handing the microphone back is exactly the bug
                     # this whole trace exists to make visible.
-                    face.rest()
+                    if not uncertain:    # a silent wake never touched the face
+                        face.rest()
                     source.resume()
                     turn.listening()
 
@@ -1146,6 +1307,7 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
 
     if offline.is_stop(spoken):
         turn.note("STOP heard — going straight to the motors")
+        _narration_off("stop", turn)
         await _run_offline(offline.Intent(name="stop", tool="stop",
                                           say="Stopping."),
                            session, voice, face, turn)
@@ -1469,6 +1631,7 @@ def _run_local(intent, face: Face, turn: "stages.Turn") -> None:
             turn.done("DONE (nothing to sleep)")
             return
         granted = WAKE.sleep(minutes * 60.0)
+        _narration_off("sleep", turn)       # "be quiet" means the narration too
         # THE FACE IS THE ONLY SIGN SHE IS ASLEEP RATHER THAN BROKEN. A
         # detector that has stopped answering and a detector that was told to
         # stop answering look identical from the sofa, and this project has
@@ -1483,7 +1646,31 @@ def _run_local(intent, face: Face, turn: "stages.Turn") -> None:
         turn.note(f"mode -> {now}")
         turn.done(f"DONE ({now})")
         return
+    if intent.local == "narration":
+        # FILE 15 STEP 5. His words are the switch; the watch (a wake source)
+        # notices on its next poll and makes the first look.
+        import narration
+        on = bool(intent.args.get("on"))
+        now = narration.set_mode(on, by="voice")
+        state = ("on until " + time.strftime("%H:%M",
+                                             time.localtime(now["until"]))
+                 if now["on"] else "off")
+        turn.note(f"narration {state}")
+        turn.done(f"DONE (narration {state})")
+        return
     turn.done("DONE")
+
+
+def _narration_off(why: str, turn: "stages.Turn | None" = None) -> None:
+    """Stop continuous narration if it is running. Never raises."""
+    try:
+        import narration
+        if narration.mode()["on"]:
+            narration.set_mode(False, by=why)
+            if turn is not None:
+                turn.note(f"narration off ({why})")
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("could not turn narration off: %s", exc)
 
 
 async def _run_offline(intent, session, voice: Voice, face: Face,

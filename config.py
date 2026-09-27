@@ -313,6 +313,54 @@ SCENE_BRIDGE_QUIET_AFTER_TURN_S = 20.0   # after Harsh last spoke to her
 SCENE_BRIDGE_AUDIENCE_S = 300.0      # he spoke, or a person was seen, this recently
 SCENE_BRIDGE_IGNORE = ("person",)    # somebody, not something
 
+# --- Describing what she sees (file 15) ----------------------------------
+# scene_describe.py is the ONE Haiku vision call both halves share; nothing
+# else in file 15 sends a picture to a model.
+#
+# ON DEMAND: the describe_scene(focus) tool (mcp_server/tools/describe.py).
+# It uses the scene watcher's frame when it is fresh and vision.look() --
+# the same capture lock as look()/observe() -- when it is not, so no second
+# handle is ever opened on a camera.
+DESCRIBE_MODEL = MODEL_FAST          # Haiku: multimodal, no new vision model
+DESCRIBE_MAX_TOKENS = 160
+DESCRIBE_MAX_WORDS = 45              # a fact sheet for the brain, not a speech
+DESCRIBE_FRESH_S = SCENE_FRESH_IMAGE_S   # use the watcher's frame within this
+DESCRIBE_REUSE_S = 20.0              # inside the cooldown, hand back the last answer
+DESCRIBE_KEY_FILE = ROOT / ".env"    # read for the one call; see scene_describe._api_key
+#
+# CONTINUOUS: narration.py. OFF on every start of friday-brain, turned on only
+# by his own words ("keep describing what you see") or the dashboard button,
+# and off again by "stop describing", a plain "stop", the button, or the
+# timeout below. Two tiers:
+#   Tier 1, free: every NARRATION_POLL_S, compare the scene watcher's latest
+#     reading with the one she last described -- a label came or went, a label
+#     moved NARRATION_MOVE_DEG, or NARRATION_PIXEL_CHANGE of the picture
+#     changed. No model.
+#   Tier 2, paid: only on a Tier 1 change. ONE call with the new frame AND the
+#     last thing she said, answering NO_CHANGE or only what is new.
+# ⚠ WHY A PIXEL TEST AND NOT ONLY LABELS. The detector names almost nothing
+# in Harsh's room -- every scene.json on 2026-09-27 read "objects": [] with a
+# suitcase in plain view -- so a label-only Tier 1 would never fire there.
+# Measured on 9 consecutive frames of a still room: the MEAN brightness moved
+# up to 6.7 levels (auto-exposure), but the share of 32x24 cells that moved
+# more than NARRATION_PIXEL_DELTA was 0.000 on every pair.
+NARRATION = True                     # the watch exists; the SWITCH below ships off
+NARRATION_FILE = ROOT / "state" / "narration.json"        # the switch
+NARRATION_STATUS_FILE = ROOT / "state" / "narration_status.json"   # what she is doing
+NARRATION_TIMEOUT_S = 900.0          # 15 min, then off by itself -- and she says so
+NARRATION_POLL_S = 4.0               # Tier 1: a file read, spec says every 3-5 s
+NARRATION_FRAME_MAX_AGE_S = 30.0     # an older frame is not what is in view
+NARRATION_PIXEL_DELTA = 25           # grey levels a cell must move to count
+NARRATION_PIXEL_CHANGE = 0.08        # share of cells that must move (still room: 0.000)
+NARRATION_MOVE_DEG = 20.0            # a named thing moved this far across the view
+NARRATION_MIN_SCORE = SCENE_BRIDGE_MIN_SCORE
+NARRATION_QUIET_AFTER_TURN_S = 5.0   # after he spoke to her, a moment before she narrates
+NARRATION_DELIVER_MAX_AGE_S = 15.0   # a description older than this at speaking time is dropped
+NARRATION_ERROR_BACKOFF_S = 30.0     # after a failed call (no internet, 5xx)
+NARRATION_MAX_WORDS = 25
+NARRATION_FIRST_MAX_WORDS = 35
+NARRATION_MAX_TOKENS = 100
+
 # --- When Harsh says that was wrong, keep it (file 09 step 1) ------------
 # corrections.py. Two ways in, because they fail in different places:
 #   1. the brain fills `correction` in the reply object -- it read the whole
@@ -493,6 +541,14 @@ RATE_LIMITS = {
     # call it as often as it likes -- "look again" is a reasonable-sounding
     # thought to have twice a second -- and nothing used to stop it.
     "vision_describe": {"min_interval_s": 15.0, "per_hour": 20, "per_day": 120},
+    # File 15. describe_scene is asked for, so its gap is short (the spec's
+    # 2-3 s) and inside it the last answer is handed back instead. Continuous
+    # narration only pays on a Tier 1 change, and this is what stops a
+    # flickering detector turning that into a call every poll. Measured
+    # 2026-09-27 on Haiku 4.5: $0.0007-0.0009 a call, so even a 15-minute
+    # session pinned at this limit costs about $0.07.
+    "describe_scene": {"min_interval_s": 3.0, "per_hour": 40, "per_day": 200},
+    "vision_narrate": {"min_interval_s": 10.0, "per_hour": 60, "per_day": 240},
     # Not money: wheels. The same three numbers keep the idle drive (step 9,
     # physical_curiosity.py) from becoming a robot that paces the room.
     "physical_curiosity": {"min_interval_s": 1800.0, "per_hour": 2,
@@ -711,6 +767,28 @@ WAKE_VERIFY = True
 WAKE_HEARTBEAT_FILE = ROOT / "state" / "wake_alive.json"
 WAKE_VERIFIER_MODEL = ROOT / "assets/models/wake/friday_verifier.npz"
 WAKE_VERIFY_THRESHOLD = 0.6
+# ONLY A CONFIDENT WAKE BEEPS (2026-09-27). Harsh: "it should never fire
+# randomly only by hey friday". This week's live wakes, replayed through the
+# detector + verifier and labelled by what FOLLOWED them:
+#
+#   verifier >=   his 29 real commands   84 false wakes (silence/ignored/empty)
+#     0.60              26                     69          <- the floor above
+#     0.80              13                     30
+#     0.85              10                     20
+#     0.90               7                     10
+#
+# No cutoff separates them: raising the floor to 0.8 halves the false wakes
+# and misses HALF of him. So the floor stays and what a wake DOES changes:
+#   >= WAKE_CONFIDENT_VERIFY  beep + listening face, exactly as before.
+#   below it (but >= 0.6)     she listens SILENTLY -- no beep, no face -- and
+#                             only reacts if what follows is a known order
+#                             or a strict "was this said TO her?" says yes
+#                             (main._meant_for_her). Nothing said, an empty
+#                             transcript, a timeout: nothing visible at all.
+# A real "hey Friday" that scores low still gets its answer, just without the
+# beep; a video that scores low gets nothing. False to beep on every wake.
+WAKE_UNCERTAIN_SILENT = True
+WAKE_CONFIDENT_VERIFY = 0.85
 
 # HEARING HIM FROM ACROSS THE ROOM. The misses in his 40 recordings are not
 # scattered -- they are exactly the quiet takes, with clean separation:

@@ -569,7 +569,18 @@ class Brain:
                 re.IGNORECASE)
         return bool(_FAST_NEVER_RE.search(text))
 
-    async def _addressed_to_her(self, text: str) -> bool | None:
+    async def addressed_strictly(self, text: str) -> bool | None:
+        """The same yes/no, biased the OTHER way. For an uncertain wake only.
+
+        main.py asks this when the verifier was not confident the wake word
+        was said at all (config.WAKE_CONFIDENT_VERIFY). Then the likelier
+        story is a video or a conversation, so only a clear YES is a yes.
+        None when it could not be asked -- the caller decides what that means.
+        """
+        return await self._addressed_to_her(text, strict=True)
+
+    async def _addressed_to_her(self, text: str,
+                                strict: bool = False) -> bool | None:
         """Was this said TO her? None when the question could not be asked.
 
         Deliberately its own call, with its own two-word answer, so that a
@@ -599,6 +610,23 @@ class Brain:
             "cannot tell, answer YES.\n"
             "Reply with exactly YES or exactly NO and nothing else."
         )
+        if strict:
+            system = (
+                "You are the ear of a home robot called Friday. Decide ONE "
+                "thing about the words below: were they said TO the robot?\n"
+                "Her wake word was NOT confidently heard this time, so these "
+                "words are most likely a video, a television, or people "
+                "talking to each other nearby.\n"
+                "Answer YES when the words are a question or a request put "
+                "straight to someone listening -- 'how are you?', 'what do "
+                "you see?', 'what is this?', 'tell me the time', 'what is "
+                "the first law of motion?' -- or an order, or use her name. "
+                "Answer NO for statements about oneself or others, thanks and "
+                "goodbyes, commentary, narration, fragments, and anything "
+                "that reads like a line from a show or a phone call. If you "
+                "cannot tell, answer NO.\n"
+                "Reply with exactly YES or exactly NO and nothing else."
+            )
         try:
             message = await self.client.messages.create(
                 model=model, max_tokens=5,

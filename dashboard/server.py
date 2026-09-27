@@ -180,6 +180,7 @@ async def api_state(request: web.Request) -> web.Response:
         "face_running": _face_is_running(),
         "robot_online": robot_online(),
         "screen": screen_state(),
+        "narration": narration_state(),
         "ui": ui_version(),
         # FILE 09 STEP 7: "Reuse the dashboard's existing data-fetching
         # pattern instead of adding a separate one." This is that pattern --
@@ -530,6 +531,32 @@ async def api_screen_post(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(text=str(exc))
 
     return web.json_response({"ok": True, "result": said, **screen_state()})
+
+
+# --- describing what she sees (file 15) -------------------------------
+# The button is the SAME switch as "keep describing what you see": both write
+# state/narration.json through narration.set_mode, and friday-brain's watch
+# does the rest. Nothing here looks, calls a model or speaks -- a file write,
+# answered at once whether or not the brain is up.
+
+def narration_state() -> dict:
+    try:
+        import narration
+        return narration.panel()
+    except Exception as exc:                    # noqa: BLE001
+        return {"on": False, "status": f"unavailable ({exc})"}
+
+
+async def api_narration_post(request: web.Request) -> web.Response:
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    if not isinstance(payload.get("on"), bool):
+        raise web.HTTPBadRequest(text='send {"on": true} or {"on": false}')
+    import narration
+    narration.set_mode(payload["on"], by="dashboard")
+    return web.json_response({"ok": True, **narration_state()})
 
 
 # --- cameras ---------------------------------------------------------
@@ -1069,6 +1096,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/motor/speed", api_motor_speed)
     app.router.add_get("/api/screen", api_screen_get)
     app.router.add_post("/api/screen", api_screen_post)
+    app.router.add_post("/api/narration", api_narration_post)
     app.router.add_post("/api/study", api_study_post)
     app.router.add_get("/api/reflection", api_reflection_get)
     app.router.add_post("/api/reflection", api_reflection_post)

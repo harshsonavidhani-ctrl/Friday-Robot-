@@ -178,6 +178,23 @@
       </div>
     </section>
 
+    <section class="panel" id="panel-narrate">
+      <div class="panelhead">
+        <h2>Describe</h2>
+        <span class="badge" id="narratenow">off</span>
+      </div>
+      <div class="screen">
+        <!-- FILE 15. The same switch as saying "Friday, keep describing what
+             you see" -- both write state/narration.json. While it is on she
+             says what is NEW in view, only when something changed, never
+             over anyone talking, and it turns itself off after the time
+             limit. It is off every time friday-brain starts. -->
+        <button class="narratebtn" id="narratego">Keep describing what you see</button>
+        <p class="drivenote" id="narratestatus"></p>
+        <p class="drivenote narratesaid" id="narratesaid" hidden></p>
+      </div>
+    </section>
+
     <section class="panel" id="panel-explore">
       <div class="panelhead">
         <h2>Explore</h2>

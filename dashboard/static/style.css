@@ -763,6 +763,23 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
 .thinkmode input { width: 1.05rem; height: 1.05rem; cursor: pointer; }
 .thinkmode small { opacity: .65; font-weight: 400; display: block; }
 
+/* --- describe (file 15) ---------------------------------------------
+   One switch. Off it offers to start in the accent colour; on it becomes
+   the same warm "act now" stop as Explore's, because turning a talking robot
+   off is the thing that has to be findable without reading. */
+.narratebtn{
+  display:block;width:100%;padding:9px 14px;border-radius:999px;
+  background:rgba(77,163,255,.12);border:1px solid var(--accent-dim);
+  color:var(--accent);font-weight:700;font-size:11px;letter-spacing:.06em;
+  text-transform:uppercase;cursor:pointer;touch-action:manipulation;
+}
+.narratebtn.on{background:var(--c-call);border-color:transparent;color:#1a1204}
+.narratebtn:hover{filter:brightness(1.12)}
+.narratebtn:disabled{opacity:.5;cursor:progress}
+.badge.live{color:var(--c-call);border-color:rgba(255,171,77,.5)}
+.narratesaid{font-style:italic}
+.narratesaid[hidden]{display:none}
+
 /* ---------- map (read-only view of state/rl_map.npz) ---------- */
 
 .mapimg{

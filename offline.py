@@ -379,6 +379,30 @@ _HELP_RE = re.compile(
     r"\b(what can you do|what commands|list (your )?commands|help me out|"
     r"^help$|kya kar sakti)\b", re.IGNORECASE | re.UNICODE)
 
+# FILE 15: CONTINUOUS NARRATION, ON AND OFF. Only his own words turn it on
+# (Harsh: "when voice command given to it then only") -- there is no brain
+# tool that can, so a garbled line the brain half-understood never starts a
+# robot that talks every few seconds. The OFF phrases are checked first, and
+# above the stop rule, so "stop describing" ends the narration and is never
+# read as "keep describing" or as a motor stop. A bare "describe what you
+# see" is NOT here: that is one look, and goes to the brain.
+_NARRATE_OFF_RE = re.compile(
+    r"\b((stop|quit|end|cancel|enough|pause)( the| your| with the)? "
+    r"(describing|narrating|narration|descriptions?|commentary)|"
+    r"(don'?t|do not|no more) (keep )?(describe|describing|narrate|narrating)|"
+    r"(narration|narrating|describing|description|commentary) (mode )?off|"
+    r"turn off (the )?(narration|describing|description|commentary))\b",
+    re.IGNORECASE)
+_NARRATE_ON_RE = re.compile(
+    r"\b((keep|start|begin|continue|carry on|go on) (describing|narrating)|"
+    r"keep (telling|saying) (me )?what you (can )?see|"
+    r"(describe|narrate) (everything|what you (can )?see|the (room|scene|view))"
+    r" (continuously|constantly|all the time|as it changes|as you go)|"
+    r"(narration|narrate|describing|description|commentary) mode( on)?|"
+    r"turn on (the )?(narration|describing|description|commentary)|"
+    r"continuous (description|narration|describing|commentary))\b",
+    re.IGNORECASE)
+
 # "Stop exploring" is not "stop". Both halt the wheels, but only one of them
 # ends the autonomous run, and the run restarts the wheels a second later --
 # so a bare stop() against a live exploration looks like the robot ignoring
@@ -689,6 +713,17 @@ def _local_intent(heard: str, strict: bool = False) -> Intent | None:
     """The two things the spine does itself: stop listening, and say what it
     knows how to do. Checked before every tool rule, because both phrasings
     contain words that a tool rule would otherwise claim."""
+    # File 15 -- first, because "stop describing" contains "stop" and "keep
+    # describing what you see" contains the "see" question.
+    if _NARRATE_OFF_RE.search(heard):
+        return Intent(name="narration", local="narration", args={"on": False},
+                      say="Okay, I'll stop describing.")
+    if _NARRATE_ON_RE.search(heard):
+        return Intent(name="narration", local="narration", args={"on": True},
+                      say="Okay, I'll keep telling you what I see as it "
+                          "changes. Say stop describing when you've had "
+                          "enough.")
+
     if _SLEEP_RE.search(heard):
         minutes, unit = _amount(heard)
         if unit == "s" and minutes:
@@ -951,7 +986,8 @@ def help_text() -> str:
         "get stuck. "
         "I can explore on my own, map the room, and tell you what I see or "
         "how far away things are. I can set alarms and timers, show the "
-        "clock, tell you the time and my battery. Say go to sleep and I'll "
+        "clock, tell you the time and my battery. Say keep describing and "
+        "I'll tell you what I see as it changes. Say go to sleep and I'll "
         "stop listening for a while."
     )
 
@@ -998,6 +1034,7 @@ _STRICT_MAX_WORDS = 5
 # brain, which is better at it and is already paid for.
 _REFLEX_INTENTS = frozenset({
     "stop", "stop_exploring", "explore", "sleep", "help", "time", "mode",
+    "narration",
     "left", "right", "around", "forward", "backward",
     "go_left", "go_right", "go_forward", "go_backward",
     "speed", "face",

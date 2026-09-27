@@ -579,7 +579,12 @@ class OpenWakeWord(WakeSource):
                     log.info("wake word detected (%.2f, verifier %s)", score,
                              "off" if verdict is None else f"{verdict:.2f}")
                     with self._ready:
-                        self._fired.append(f"{score:.2f}")
+                        # The verifier's number rides on the trigger: main.py
+                        # answers an UNCERTAIN wake silently (see
+                        # config.WAKE_CONFIDENT_VERIFY), so it has to know.
+                        self._fired.append(
+                            f"{score:.2f}" if verdict is None
+                            else f"{score:.2f} v{verdict:.2f}")
                         self._ready.notify()
                     # AFTER the notify, never before it. The turn starts on
                     # that notify and a disk write in front of it is latency

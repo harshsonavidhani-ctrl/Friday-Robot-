@@ -797,3 +797,84 @@ in a niced child process (`way_back.py --serve`), the thread only pipes to
 it. Simulated on the Pi: 60.4 ms/tick with the way back, 61.3 without. ANY
 new per-tick work in pi_deploy must be measured against its "measured inside
 tick()" and "overruns" lines before it goes on the robot.
+
+---
+
+# PART 6 — What file 15 added (2026-09-27): describing what she sees
+
+File 15 is VISION DESCRIPTION, on demand and continuous. Additive: new files
+`scene_describe.py`, `narration.py`, `mcp_server/tools/describe.py`,
+`scripts/test_narration.py`; small hooks in `main.py`, `offline.py`,
+`config.py` and the dashboard. The spec's `get_visible_objects()` and
+`robot_server.py` do not exist — the detections are the scene watcher's
+`state/scene.json` (scene.py, inside friday-mcp) and tools live in
+`mcp_server/tools/`.
+
+**One vision call, two callers.** `scene_describe.py` is the only place file
+15 sends a picture to a model (Haiku, `DESCRIBE_MODEL`): it checks the daily
+cap, its rate limit, records the spend, and never raises. Measured $0.0007-
+0.0009 a call. ⚠ friday-mcp's unit has NO API key in its environment on
+purpose (dev_task hands its environment to Claude Code), so `_api_key()`
+reads `.env` for that one request and never exports it.
+
+**`describe_scene(focus="")` (steps 1-2).** The frame is the scene watcher's
+`scene_latest.jpg` when under `DESCRIBE_FRESH_S` old, else `vision.look("up")`
+under the same capture lock as look()/observe() — never a second handle on a
+camera. It RETURNS words to the brain and speaks nothing; the brain says them
+in her voice with the reply object's emotion and memory_note. `focus` is his
+question ("what's written on that") and the answer targets it. 3 s cooldown
+(`RATE_LIMITS["describe_scene"]`); inside it the last answer is handed back
+with its age. The existing eyes-first path (a fresh frame attached to the
+brain's own turn for "what do you see") is unchanged and still answers the
+plain question fastest.
+
+**Continuous narration (steps 3-7), `narration.py`.**
+- **The switch** is `state/narration.json`: his words ("keep describing what
+  you see" / "stop describing", `offline._NARRATE_*_RE`, reflex intents, no
+  model), the dashboard's Describe button (`POST /api/narration`), a plain
+  "stop", "go to sleep", and the timeout. **No brain tool can turn it on**
+  (Harsh: "when voice command given to it then only"). OFF on every start of
+  friday-brain (`boot_reset`). `NARRATION_TIMEOUT_S` (15 min) turns it off
+  and she says so.
+- **Tier 1, free**: every `NARRATION_POLL_S`, scene.json + the JPEG compared
+  with the BASELINE (the reading she last described): a label came/went/moved
+  `NARRATION_MOVE_DEG`, or `NARRATION_PIXEL_CHANGE` of a 32x24 grey thumbnail
+  moved `NARRATION_PIXEL_DELTA` levels. The pixel test exists because the
+  detector names almost nothing in his room; 13 real still-room frames never
+  trip it (auto-exposure moves the MEAN, not the cells).
+- **Tier 2, paid, only on a Tier 1 change**: ONE call with the new frame and
+  the last thing she said → `NO_CHANGE` or one sentence about only what is
+  new. The baseline moves either way, so a change is never paid for twice.
+  Live: the same view came back NO_CHANGE.
+- **Executive layer (step 6)**: it is a WAKE SOURCE (like scene_bridge), so a
+  narration is spoken from main's loop BETWEEN turns, never over one. The
+  paid call runs on the source's own thread first, and only when
+  initiative.py says nobody is talking, she is not speaking, it is not quiet
+  mode, and he did not just speak; otherwise the change stays PENDING. A line
+  that went stale in the queue is dropped by `main._narration_turn` and handed
+  back (`watch.missed()`) to be re-checked against a fresh frame.
+- ⚠ The scene watcher pauses while the dashboard streams the up camera or a
+  run holds the robot, so narration goes quiet then — the Describe panel says
+  "no fresh picture".
+
+    ./venv/bin/python scripts/test_narration.py   # 56 cases, no camera, no money
+
+## The wake word: an uncertain wake is heard in silence (2026-09-27)
+
+Harsh: "it should never fire randomly only by hey friday". Replayed this
+week's live wakes through detector + verifier, labelled by what followed:
+no verifier cutoff separates his 29 real commands from 84 false wakes (0.8
+halves the false ones and misses half of him). So the floor stays at
+`WAKE_VERIFY_THRESHOLD` and what a wake DOES changed:
+- verifier >= `WAKE_CONFIDENT_VERIFY` (0.85): beep + listening face, as before.
+- below it: NO beep, NO face. She captures and transcribes silently and
+  reacts only if `main._meant_for_her` says so: stop / a reflex order / an
+  instruction / a question inside the conversation window answer at once;
+  anything else goes to `brain.addressed_strictly` (a 5-token yes/no biased
+  to NO). Measured on this week's transcripts: real commands 28/29 answered,
+  false wakes 3/54, plain questions ("how are you?") answered, thanks and
+  statements silent. Nothing said / empty / a timeout: nothing visible.
+- The verifier's number rides on the trigger: `openwakeword: 0.94 v0.70`.
+  `WAKE_UNCERTAIN_SILENT = False` puts every wake back to beeping.
+
+    ./venv/bin/python scripts/test_uncertain_wake.py   # 24 cases
