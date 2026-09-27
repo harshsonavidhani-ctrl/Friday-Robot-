@@ -410,9 +410,43 @@ BRIEFING_WINDOW = (6, 12)            # hours, local time: [start, end)
 BRIEFING_PRESENCE_S = 600.0
 BRIEFING_FILE = ROOT / "state" / "briefing.json"
 
+# THE CALENDAR IS HERS (day_calendar.py): Harsh, 2026-09-27, "add a simple
+# calendar". Google (below) is optional and merged in only if ever connected.
 # GOOGLE CALENDAR (step 4). ⚠ SECRETS LIVE IN secrets/ (gitignored), never in
 # git and never in this file. The token is made ONCE on a laptop with a
 # browser (scripts/gcal_setup.py, standard library only) and copied here.
+CALENDAR_HEADS_UP_MIN = 10          # she mentions an event this long before it
+
+# --- Who may delete a memory (file 17) -----------------------------------
+# memory_governance.py. Nothing is deleted without a yes: a forget makes a
+# pending request, and only confirm_delete with its token removes the row.
+MEMORY_PENDING_FILE = ROOT / "state" / "memory_pending.json"
+MEMORY_PENDING_TTL_S = 120.0          # "Friday, yes" must come within this
+MEMORY_MATCH_MIN_SCORE = 0.5          # without the model: a candidate this close
+
+# --- She acts on her own (agency.py) -------------------------------------
+# Harsh, 2026-09-27: "thinking and controlling the Friday body on its own,
+# like humans do according to the needs and environment". Between
+# conversations one small Haiku call looks at her situation and picks ONE
+# action -- usually nothing. Speech goes through initiative.decide and is
+# spoken between turns; every movement is an MCP tool call (safety layer).
+AGENCY = True
+# ⛔ MOTION SHIPS OFF, like PHYSICAL_CURIOSITY: whether she turns, looks
+# around or wanders on her own is Harsh's call after a supervised test.
+AGENCY_MOTION = False
+AGENCY_MODEL = MODEL_FAST
+AGENCY_POLL_S = 30.0                  # a free look at the situation (file reads)
+AGENCY_MIN_GAP_S = 300.0              # never think more often than this...
+AGENCY_MAX_GAP_S = 1800.0             # ...and when nothing changed, only this often
+AGENCY_IDLE_S = 90.0                  # quiet this long after he spoke
+AGENCY_AUDIENCE_S = 1800.0            # "someone is here": he spoke, or a person in view
+AGENCY_FILE = ROOT / "state" / "agency.json"
+AGENCY_MOTION_HOURS = (9, 21)
+AGENCY_TURN_DEG_PER_S = 75.0          # measured (friday-drivetrain-calibration)
+AGENCY_TURN_MAX_S = 1.2               # no pivot longer than this
+AGENCY_LOOK_S = 0.6                   # look_around: left, right x2, left
+AGENCY_EXPLORE_M = 1.0                # explore_briefly: explore_room's budget
+AGENCY_EXPLORE_S = 30.0
 GCAL_TOKEN_FILE = ROOT / "secrets" / "google_token.json"
 GCAL_CALENDAR_ID = "primary"
 GCAL_TIMEOUT_S = 8.0
@@ -606,6 +640,9 @@ RATE_LIMITS = {
     # session pinned at this limit costs about $0.07.
     "describe_scene": {"min_interval_s": 3.0, "per_hour": 40, "per_day": 200},
     "vision_narrate": {"min_interval_s": 10.0, "per_hour": 60, "per_day": 240},
+    # agency.py: one ~$0.001 Haiku decision. 12 an hour is the ceiling; the
+    # fingerprint gate means a quiet room costs about 2 an hour.
+    "agency": {"min_interval_s": 240.0, "per_hour": 12, "per_day": 100},
     # Not money: wheels. The same three numbers keep the idle drive (step 9,
     # physical_curiosity.py) from becoming a robot that paces the room.
     "physical_curiosity": {"min_interval_s": 1800.0, "per_hour": 2,

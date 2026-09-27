@@ -940,7 +940,16 @@ only when the sentence is ≤ `ROUTINE_MAX_WORDS` (a video's "good morning
 everyone…" is not the routine). Quiet mode now has a voice switch too
 ("quiet mode" / "you can talk again"): `mode.quiet_asked_for` had no caller.
 
-**Google Calendar (step 4), `gcal.py`.** Plain REST over httpx (already in
+**Her own calendar (`day_calendar.py`, 2026-09-27).** Harsh: "add a simple
+calendar". `calendar_events` table in memory.db (kind='calendar') — no Google,
+no OAuth, works offline. Voice: "add dentist to my calendar tomorrow at 10",
+"what's on my calendar (tomorrow / this week)", "remove dentist from my
+calendar". She says "In 10 minutes: dentist." once (`CALENDAR_HEADS_UP_MIN`,
+through ReminderWatch). The calendar tools, the briefing and the dashboard all
+read `day_calendar.merged_*`, which adds Google's events ONLY if a token was
+ever set up. Named day_calendar because `calendar` would shadow the stdlib.
+
+**Google Calendar (step 4, optional now), `gcal.py`.** Plain REST over httpx (already in
 the venv) — no Google client library. Token in `secrets/google_token.json`
 (⚠ `secrets/` is gitignored; nothing else ever holds a credential). Made ONCE
 on a laptop with `scripts/gcal_setup.py client_secret.json` (standard library,
@@ -967,3 +976,99 @@ done. Not yet tried: the calendar (needs Harsh's one-time sign-in), a real
 morning briefing, "good morning" by voice.
 
     ./venv/bin/python scripts/test_file16.py    # 76 cases, temp files, Google/weather faked
+
+---
+
+# PART 8 — What file 17 added (2026-09-27): memory governance, and her own initiative
+
+## The memory type convention (step 1) — use these, don't invent new ones
+Written down in `memory_governance.TYPES`. Surveyed before writing any code:
+
+| type | where | who writes it |
+|---|---|---|
+| `fact` | facts.kind (default) | brain's remember tool, reply-object memory notes (source `brain-note`), idle study (`idle-study`), memory CLI, "remember that…" (`explicit`) |
+| `learned_preference` | facts.kind | file 09 corrections (`config.LEARNED_PREFERENCE_KIND`) |
+| `exploration_sighting` | facts.kind | trip_objects.py, one per explore trip |
+| `calendar` | facts.kind + `calendar_events` table | gcal.py notes, day_calendar.py (file 16) |
+| `reminder` | `reminders` table | reminders.py (file 16) |
+| `place` / `home` | `places` table | file 14 |
+
+The spec's "uncertain-response logs" live in uncertainty.py's own file, not in
+memory; "component lookups" and "environment records" (files 18-20) do not
+exist in this repo. A new memory writer picks a row here or adds one here.
+
+## Remember, never-forget, forget (steps 2-3), `memory_governance.py`
+- "Friday, remember that X" → reflex `remember_explicit` → the existing
+  `remember` tool: saved for certain, whether or not file 09 would have
+  captured it. First person becomes "Harsh's …" (`offline._third_person`).
+  ⚠ Anchored at the start: "do you remember when…" is still the brain's.
+- "always remember / never forget X" → `remember_forever` → saved PROTECTED.
+  Re-stating a protected memory plainly does not unprotect it.
+- "forget X" / "forget what I said about X" / "delete the memory about X" →
+  `forget_memory`: `memory.recall` + word overlap find candidates, ONE small
+  Haiku call picks which the description means (scores decide without a key).
+  One match → "I found: … Should I delete it?"; several → numbered list,
+  "which one?"; none → "I don't have anything saved about …". NOTHING IS
+  DELETED YET: a pending request goes to `state/memory_pending.json`
+  (`MEMORY_PENDING_TTL_S` 120 s).
+- His answer — "Friday, yes" / "no" / "the second one" — is `forget_answer`,
+  a reflex only while a request is pending, and only when the WHOLE sentence
+  is the answer ("yes please turn left" is not a yes). There is no follow-up
+  listening, so the answer needs the wake word.
+- **`confirm_delete(token, id)` is the only delete in file 17**, voice or
+  dashboard: it needs the pending request's token for exactly that row.
+
+## The protected flag and THE ONE EDIT TO FILE 09 (step 4)
+`facts.protected INTEGER NOT NULL DEFAULT 0`, added by `memory_governance`
+with ALTER TABLE on first use (memory.py's schema untouched; memory.db backed
+up first to `state/memory.db.bak-20260927-file17` with sqlite's backup()).
+
+⚠ **The only change to a prior file in file 17** — `reflection.py`, in the
+loop that turns the model's flags into `new_flags`, right after the "only a
+row it was actually shown" check:
+
+```python
+        # FILE 17 STEP 4 — the one guard: a PROTECTED memory is never flagged.
+        import memory_governance
+        if memory_governance.is_protected(fact_id):
+            continue
+```
+
+Four lines, nothing else in the file changed (`scripts/test_file17.py` checks
+the diff). Reflection never deleted anything by itself — it FLAGS, and only
+Harsh's answer removes — so "pruning" here means flagging. Harsh can still
+forget a protected memory himself (she warns it is protected); his manual
+control wins.
+
+## Memory Lane's two controls (step 5) — the SECOND narrow write-path
+Each memory in Memory Lane (plus an "All" page of the 40 most recent, because
+a protected memory need not be about a person) gets 🔒/🔓 and 🗑.
+`POST /api/memory` accepts exactly three actions and nothing else:
+`protect {id, on}`, `delete_request {id}` (creates the pending request, deletes
+nothing) and `delete_confirm {id, token}` (after the browser's confirm dialog).
+Same `confirm_delete` as voice. The first narrow write-path was file 14's
+landmark naming. Adding anything else to this route needs its own review.
+
+## Her own initiative (`agency.py`)
+Harsh: "make the brain … thinking and controlling the Friday body on its own,
+like humans do according to the needs and environment". `AgencyWatch` is a
+wake source. Every `AGENCY_POLL_S` it reads her situation for free (time, who
+is in view and where, things in view, reminders/events in the next 3 h, how
+long since he spoke, quiet mode, what she did in the last hour). Only when that
+situation's FINGERPRINT changed (and ≥ `AGENCY_MIN_GAP_S`), or once per
+`AGENCY_MAX_GAP_S`, one Haiku call (~$0.001, `RATE_LIMITS["agency"]`) picks
+ONE action: nothing / say / feel / show clock-weather / look_around /
+turn_to_person / explore_briefly.
+- `agency.allowed()` is CODE, not prompt: no "say" with nobody here, in quiet
+  mode, or repeating itself; no motion unless `AGENCY_MOTION`, in
+  `AGENCY_MOTION_HOURS`, with no run holding the robot.
+- Speech is spoken from main's loop between turns (`main._agency_turn`), and
+  dropped — not queued — if he started talking or 20 s passed.
+- Motion is MCP tool calls on her own session (`brain.mcp_session`): a fresh
+  scan_environment, then `move` pivots ≤ `AGENCY_TURN_MAX_S`, or explore_room
+  with a 1 m / 30 s budget. Nothing touches a motor directly.
+- ⛔ **`AGENCY_MOTION` ships False**, like `PHYSICAL_CURIOSITY`: turning on
+  her own is Harsh's call after a supervised test. Thinking, speaking, the
+  face and the screen are on.
+
+    ./venv/bin/python scripts/test_file17.py   # 59 cases: calendar, memory rules, the guard, initiative

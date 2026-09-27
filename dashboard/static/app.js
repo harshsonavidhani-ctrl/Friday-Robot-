@@ -934,10 +934,53 @@ function paintLane(pages) {
   box.appendChild(head);
   for (const fact of page.facts) {
     const line = document.createElement('p');
-    line.className = 'diarytext';
-    line.textContent = fact.text;
+    line.className = 'diarytext lanefact';
+    const words = document.createElement('span');
+    words.textContent = fact.text;
+    line.appendChild(words);
+    if (fact.id != null) {
+      // FILE 17: exactly two controls. The bin only ASKS; the server deletes
+      // only when the confirmation's token comes back for this same row.
+      const lock = document.createElement('button');
+      lock.className = 'lanebtn' + (fact.protected ? ' on' : '');
+      lock.title = fact.protected ? 'Protected — never flagged as stale' : 'Protect';
+      lock.textContent = fact.protected ? '🔒' : '🔓';
+      lock.onclick = () => memoryPost({ action: 'protect', id: fact.id, on: !fact.protected });
+      const bin = document.createElement('button');
+      bin.className = 'lanebtn';
+      bin.title = 'Forget this';
+      bin.textContent = '🗑';
+      bin.onclick = () => forgetFact(fact);
+      line.appendChild(lock);
+      line.appendChild(bin);
+    }
     box.appendChild(line);
   }
+}
+
+async function memoryPost(body) {
+  try {
+    const r = await fetch('/api/memory', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { toast(await r.text(), true); return null; }
+    const j = await r.json();
+    if (j.result) toast(j.result);
+    if (body.action !== 'delete_request') heartbeat();
+    return j;
+  } catch (e) { toast(String(e), true); return null; }
+}
+
+async function forgetFact(fact) {
+  const ask = await memoryPost({ action: 'delete_request', id: fact.id });
+  if (!ask) return;
+  const warn = ask.protected ? '\n\nThis one is protected.' : '';
+  if (!window.confirm(`Forget this?\n\n“${ask.text}”${warn}`)) {
+    toast('Kept');
+    return;
+  }
+  await memoryPost({ action: 'delete_confirm', id: fact.id, token: ask.token });
 }
 
 async function screenPost(body) {
@@ -1049,9 +1092,8 @@ function paintDay(d) {
   for (const item of todo) todoList.appendChild(dayItem(item, false));
 
   const cal = d.calendar || {};
-  $('calnote').textContent = cal.connected
-    ? (cal.events && cal.events.length ? 'Today on your calendar:' : 'Nothing on your calendar today.')
-    : `Calendar: ${cal.status || 'not connected'}`;
+  $('calnote').textContent = cal.events && cal.events.length
+    ? 'Today on your calendar:' : 'Nothing on your calendar today.';
   const calList = $('callist');
   calList.innerHTML = '';
   for (const e of (cal.events || [])) {
@@ -1059,6 +1101,14 @@ function paintDay(d) {
     const when = e.all_day ? 'all day' : new Date(e.start_ts * 1000)
       .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     li.innerHTML = `<span class="kind">${esc(when)}</span><span class="lbl">${esc(e.title)}</span>`;
+    if (e.local && e.id != null) {
+      const kill = document.createElement('button');
+      kill.className = 'kill';
+      kill.title = 'Remove';
+      kill.textContent = '×';
+      kill.onclick = () => dayPost({ action: 'event_delete', id: e.id });
+      li.appendChild(kill);
+    }
     calList.appendChild(li);
   }
   const routines = (d.routines || []).map((r) => `“${r.name}” → ${r.steps.join(', ')}`);
@@ -1075,6 +1125,14 @@ function wireDay() {
     $('remtext').value = ''; $('remwhen').value = '';
   };
   $('remadd').onclick = add;
+  const addEvent = () => {
+    const text = $('evtext').value.trim(), when = $('evwhen').value.trim();
+    if (!text || !when) { toast('An event needs a name and a time', true); return; }
+    dayPost({ action: 'event', text, when });
+    $('evtext').value = ''; $('evwhen').value = '';
+  };
+  $('evadd').onclick = addEvent;
+  $('evwhen').onkeydown = (e) => { if (e.key === 'Enter') addEvent(); };
   $('remtext').onkeydown = (e) => { if (e.key === 'Enter') add(); };
 }
 

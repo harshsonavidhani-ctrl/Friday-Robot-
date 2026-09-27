@@ -106,16 +106,14 @@ def _weather() -> str:
 
 def _calendar(now: float) -> str:
     try:
-        import gcal
-        if not gcal.connected():
-            return ""
-        events = gcal.today_events(now)
+        import day_calendar
+        events = day_calendar.merged_day(now)
     except Exception as exc:                        # noqa: BLE001
         log.info("briefing without the calendar: %s", exc)
         return ""
     ahead = [e for e in events if e.get("start_ts", 0) >= now - 600]
     if not ahead:
-        return "Nothing on your calendar today." if events == [] else ""
+        return ""
     first = ahead[0]
     import reminders
     when = ("all day" if first.get("all_day")

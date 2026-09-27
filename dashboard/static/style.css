@@ -860,3 +860,11 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
 .mapcard img { width: 100%; aspect-ratio: 1; object-fit: contain;
   background: #969696; border-radius: 4px; }
 .mapcard span { font-size: 0.7rem; line-height: 1.25; overflow-wrap: anywhere; }
+
+/* --- Memory Lane controls (file 17): protect + forget, nothing else --- */
+.lanefact{display:flex;gap:6px;align-items:flex-start}
+.lanefact span{flex:1;min-width:0}
+.lanebtn{flex:none;background:none;border:1px solid var(--line2);border-radius:6px;
+  padding:1px 6px;font-size:12px;line-height:1.4;cursor:pointer;opacity:.7}
+.lanebtn:hover{opacity:1}
+.lanebtn.on{border-color:var(--c-call);opacity:1}

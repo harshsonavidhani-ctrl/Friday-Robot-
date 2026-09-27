@@ -140,68 +140,69 @@ def quiet_mode(on: bool = True) -> str:
 
 @tool
 def calendar_today() -> str:
-    """Today's Google Calendar, as one sentence. Says so if the calendar is
-    not connected rather than guessing."""
-    import gcal
-    if not gcal.connected():
-        return "Your calendar isn't connected yet."
-    try:
-        events = gcal.today_events()
-    except gcal.CalendarError as exc:
-        return f"I couldn't read your calendar: {exc}."
+    """Today's calendar, as one sentence: her own calendar, plus Google's if
+    it has been connected."""
+    import day_calendar
     now = time.time()
-    ahead = [e for e in events if e["end_ts"] > now]
-    if not ahead:
-        return "Nothing else on your calendar today."
-    words = [e["title"] + ("" if e["all_day"]
-                           else f" at {reminders.say_when(e['start_ts'])}")
-             for e in ahead[:config.REMINDER_LIST_MAX]]
-    return "On your calendar today: " + ", ".join(words) + "."
+    ahead = [e for e in day_calendar.merged_day(now) if e["end_ts"] > now]
+    return (day_calendar.say(ahead, "On your calendar today: ")
+            or "Nothing else on your calendar today.")
 
 
 @tool
 def calendar_upcoming(days: float = 1.0) -> str:
-    """Upcoming Google Calendar events.
+    """Upcoming calendar events.
 
     Args:
-        days: how far ahead to look, in days (default 1).
+        days: how far ahead to look, in days (default 1; 7 for the week).
     """
-    import gcal
-    if not gcal.connected():
-        return "Your calendar isn't connected yet."
-    try:
-        events = gcal.upcoming(max(0.1, min(float(days), 31.0)))
-    except gcal.CalendarError as exc:
-        return f"I couldn't read your calendar: {exc}."
-    if not events:
-        return "Nothing on your calendar in that time."
-    words = [e["title"] + ("" if e["all_day"]
-                           else f" at {reminders.say_when(e['start_ts'])}")
-             for e in events[:8]]
-    return "Coming up: " + ", ".join(words) + "."
+    import day_calendar
+    events = day_calendar.merged_upcoming(max(0.1, min(float(days), 31.0)))
+    return (day_calendar.say(events, "Coming up: ")
+            or "Nothing on your calendar in that time.")
 
 
 @tool
 def calendar_add_event(title: str, when: str, minutes: float = 60.0) -> str:
-    """Put an event on Harsh's Google Calendar.
+    """Put an event on Harsh's calendar (her own, on the robot).
 
     Args:
         title: what the event is, e.g. "Dentist".
-        when: a spoken time -- "tomorrow at 10", "on friday at 3 pm".
+        when: a spoken time -- "tomorrow at 10", "on friday at 3 pm" -- or
+            an exact "YYYY-MM-DD HH:MM".
         minutes: how long it lasts (default 60).
     """
-    import gcal
-    if not gcal.connected():
-        return "Your calendar isn't connected yet, so I can't add that."
-    start = reminders.spoken_time(when)
+    import day_calendar
+    from datetime import datetime
+    start = None
+    if when.strip():
+        try:
+            start = datetime.fromisoformat(when.strip()).timestamp()
+        except ValueError:
+            start = reminders.spoken_time(when)
     if start is None:
-        return f"I couldn't tell what time '{when}' means."
+        return ("I need a time for that — say something like add dentist to "
+                "my calendar tomorrow at 10.")
     try:
-        event = gcal.add_event(title, start, float(minutes))
-    except gcal.CalendarError as exc:
-        return f"I couldn't add it: {exc}."
+        event = day_calendar.add(title, start, float(minutes), source="voice")
+    except ValueError as exc:
+        return str(exc)
     return (f"Added {event['title']} to your calendar at "
             f"{reminders.say_when(event['start_ts'])}.")
+
+
+@tool
+def calendar_remove(which: str) -> str:
+    """Take an upcoming event off the calendar.
+
+    Args:
+        which: the event's name ("dentist") or number.
+    """
+    import day_calendar
+    found = day_calendar.remove(which)
+    if found is None:
+        return f"I couldn't find {which} on your calendar."
+    return f"Removed {found['title']} from your calendar."
 
 
 @tool

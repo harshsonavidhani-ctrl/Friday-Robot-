@@ -715,10 +715,99 @@ _BRIEFING_RE = re.compile(
     re.IGNORECASE)
 
 
+_REMEMBER_FOREVER_RE = re.compile(
+    r"^(?:please\s+)?(?:always remember|never forget|remember forever|"
+    r"remember this forever|don'?t ever forget|do not ever forget|"
+    r"never ever forget)(?:\s+that|\s+this)?[:,]?\s+(?P<fact>.{3,})$",
+    re.IGNORECASE)
+_REMEMBER_EXPLICIT_RE = re.compile(
+    r"^(?:please\s+)?(?:remember|note|make a note)\s+(?:that\s+|this[:,]?\s+)"
+    r"(?P<fact>.{3,})$", re.IGNORECASE)
+_FORGET_RE = re.compile(
+    r"^(?:please\s+)?(?:forget|delete|erase|remove)\s+"
+    r"(?:what i (?:said|told you) about|that|everything (?:i said )?about|"
+    r"the (?:memory|fact|note) (?:about|that)|my (?:memory|note) about|about)"
+    r"\s+(?P<what>.{2,})$", re.IGNORECASE)
+# THE WHOLE SENTENCE IS THE ANSWER. "yes please turn left" while a delete
+# question is open is an order, not a yes -- fullmatch, with only filler words
+# allowed around the answer.
+_PENDING_ANSWER_RE = re.compile(
+    r"(?:(?:yes|yeah|yep|yup|sure|ok(?:ay)?|haan|confirm)"
+    r"(?:\s+(?:please|delete it|do it|go ahead|forget it))?"
+    r"|delete it|do it|go ahead|forget it"
+    r"|(?:no|nope|nahi|cancel|don'?t|never ?mind|keep it)"
+    r"(?:\s+(?:thanks|thank you|keep it|don'?t delete it))?"
+    r"|(?:the\s+)?(?:number\s+)?(?:first|second|third|fourth|fifth|one|two|"
+    r"three|four|five|[1-5])(?:\s+one)?)", re.IGNORECASE)
+
+
+def _third_person(fact: str) -> str:
+    """"my sister is Priya" -> "Harsh's sister is Priya". Memories are kept in
+    the third person (the remember tool's own rule); saved as heard, "my
+    sister" would later read as HER sister."""
+    name = getattr(config, "OWNER_NAME", "Harsh")
+    for pattern, repl in ((r"\bI am\b|\bI'm\b", f"{name} is"),
+                          (r"\bI have\b|\bI've\b", f"{name} has"),
+                          (r"\bmy\b|\bmine\b", f"{name}'s"),
+                          (r"\bmyself\b|\bme\b|\bI\b", name)):
+        fact = re.sub(pattern, repl, fact, flags=re.IGNORECASE)
+    return fact
+
+
+def _memory_intent(heard: str) -> Intent | None:
+    """File 17: "always remember ...", "remember that ...", "forget ...", and
+    his answer to the forget question. The whole sentence has to BE the ask
+    (anchored at the start after "Friday,"), so "do you remember when..." is
+    a question for the brain, not something to save."""
+    text = _ADDRESS_RE.sub("", heard).strip(" .!?")
+    try:
+        import memory_governance                # noqa: PLC0415
+        waiting = memory_governance.pending() is not None
+    except Exception:                           # noqa: BLE001
+        waiting = False
+    if waiting and _PENDING_ANSWER_RE.fullmatch(text):
+        return Intent(name="forget_answer", tool="forget_confirm",
+                      args={"answer": text})
+    match = _REMEMBER_FOREVER_RE.match(text)
+    if match:
+        return Intent(name="remember_forever", tool="remember_forever",
+                      args={"fact": _third_person(match.group("fact").strip(" ."))})
+    match = _REMEMBER_EXPLICIT_RE.match(text)
+    if match:
+        return Intent(name="remember_explicit", tool="remember",
+                      args={"fact": _third_person(match.group("fact").strip(" ."))},
+                      say="I'll remember that.")
+    match = _FORGET_RE.match(text)
+    if match:
+        return Intent(name="forget", tool="forget_memory",
+                      args={"description": match.group("what").strip(" .")})
+    return None
+
+
 def _day_intent(heard: str) -> Intent | None:
     """File 16: reminders, to-dos, routines, the briefing. All tool calls, so
     they run through the MCP server like every other command, and all answer
     out loud (_SPEAK_RESULT)."""
+    try:
+        import day_calendar                     # noqa: PLC0415
+        cal = day_calendar.parse_request(heard)
+    except Exception:                           # noqa: BLE001
+        cal = None
+    if cal is not None:
+        if cal["action"] == "add":
+            import time as _time                # noqa: PLC0415
+            when = (_time.strftime("%Y-%m-%d %H:%M",
+                                   _time.localtime(cal["start"]))
+                    if cal["start"] else "")
+            return Intent(name="calendar_add", tool="calendar_add_event",
+                          args={"title": cal["title"], "when": when})
+        if cal["action"] == "remove":
+            return Intent(name="calendar_remove", tool="calendar_remove",
+                          args={"which": cal["which"]})
+        if cal["tomorrow"] or cal["days"] > 1:
+            return Intent(name="calendar_ask", tool="calendar_upcoming",
+                          args={"days": 2 if cal["tomorrow"] else cal["days"]})
+        return Intent(name="calendar_ask", tool="calendar_today")
     try:
         import reminders                        # noqa: PLC0415
         asked = reminders.parse_request(heard)
@@ -1079,7 +1168,8 @@ _SPEAK_RESULT = frozenset({
     # (explore_and_return does, since 2026-09-24 -- it is not here.)
     "remember_place",
     "reminder_add", "todo_add", "reminder_done", "reminder_list", "routine",
-    "briefing",
+    "briefing", "calendar_add", "calendar_ask", "calendar_remove",
+    "remember_forever", "forget", "forget_answer",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -1108,7 +1198,9 @@ _REFLEX_INTENTS = frozenset({
     "remember_place",
     # File 16 -- all offline, all through tools that answer in words.
     "reminder_add", "todo_add", "reminder_done", "reminder_list", "routine",
-    "briefing", "quiet",
+    "briefing", "quiet", "calendar_add", "calendar_ask", "calendar_remove",
+    # File 17
+    "remember_forever", "remember_explicit", "forget", "forget_answer",
 })
 
 
@@ -1158,9 +1250,14 @@ def _match(text: str, strict: bool) -> Intent | None:
     # halt) and before the timer rule ("remind me in 10 minutes to call mom"
     # is a reminder; a bare "remind me in 10 minutes" still falls through to
     # the timer, and "remind me at seven" to the alarm, exactly as before).
-    day = _day_intent(heard)
+    day = _day_intent(text.strip())     # original case: "lunch with Rahul"
     if day is not None:
         return day
+
+    # FILE 17: remember for ever / forget (asks first) / his yes-or-which.
+    kept = _memory_intent(text.strip())
+    if kept is not None:
+        return kept
 
     # STOP THE RUN, NOT JUST THE WHEELS. A bare stop() against a live
     # exploration halts the motors only until the run issues its next command,

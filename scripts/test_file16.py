@@ -231,8 +231,8 @@ check("an unknown routine says which ones exist",
 print("\ncalendar (step 4) — Google faked")
 check("no token: not connected", not gcal.connected())
 import mcp_server.tools.reminders_tools as tools        # noqa: E402
-check("tools say so instead of guessing",
-      tools.calendar_today() == "Your calendar isn't connected yet.")
+check("her own calendar answers with no Google at all",
+      tools.calendar_today() == "Nothing else on your calendar today.")
 config.GCAL_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
 config.GCAL_TOKEN_FILE.write_text(json.dumps({
     "client_id": "id", "client_secret": "s", "refresh_token": "r",
@@ -270,9 +270,9 @@ def fake_post(url, **kw):
 
 
 httpx.post = fake_post
-said = tools.calendar_add_event("Dentist", "tomorrow at 10")
-check("an event is created", posted.get("summary") == "Dentist"
-      and "Added Dentist" in said, said)
+event = gcal.add_event("Dentist", time.time() + 86400)
+check("a Google event is created", posted.get("summary") == "Dentist"
+      and event["title"] == "Dentist", str(event))
 noted = memory.facts_of_kind("calendar")
 check("...and noted in memory with type 'calendar'",
       noted and noted[0].text.startswith("Calendar: Dentist"), str(noted))

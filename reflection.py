@@ -408,6 +408,10 @@ def run_self_reflection(reason: str = "idle", force: bool = False) -> dict | Non
             log.info("reflection flagged an id it was not given (%s) — dropped",
                      fact_id)
             continue
+        # FILE 17 STEP 4 — the one guard: a PROTECTED memory is never flagged.
+        import memory_governance
+        if memory_governance.is_protected(fact_id):
+            continue
         kind = str(item.get("kind") or "").lower()
         new_flags.append({
             "id": f"{int(time.time())}-{fact_id}",

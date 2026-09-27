@@ -812,6 +812,50 @@ async def _reminder_turn(voice: "Voice", face: "Face", source,
         turn.listening()
 
 
+async def _agency_turn(voice: "Voice", face: "Face", source,
+                       trigger: str) -> None:
+    """What her own initiative decided to say or show on her face. Never raises.
+
+    Spoken from the wake loop like narration, so never over a turn; checked
+    once more at the moment of speaking, and dropped (not queued) if he has
+    started talking -- an unprompted remark that missed its moment is simply
+    not said.
+    """
+    import agency
+    import initiative
+
+    item = agency.parse_trigger(trigger)
+    if item is None:
+        return
+    turn = stages.Turn(f"agency: {item['kind']}")
+    if item["kind"] == "feel":
+        face.feel(item.get("emotion") or "curious")
+        turn.note(f"her own choice: {item.get('emotion')} — {item.get('why')}")
+        turn.done()
+        return
+    age = time.time() - float(item.get("at") or 0)
+    if initiative.he_is_talking() or age > 20:
+        turn.done("DROPPED (the moment passed)")
+        return
+    source.pause()
+    try:
+        face.feel("happy")
+        voice.say(item["say"])
+        turn.spoke(item["say"])
+        turn.note(f"her own choice — {item.get('why')}")
+        turn.answered_by(getattr(config, "AGENCY_MODEL", "haiku"), 0.0)
+        turn.stage("SPEAKING", stages.quote(item["say"], 160))
+        voice.wait_until_quiet()
+        turn.done()
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("agency speech failed: %s: %s", type(exc).__name__, exc)
+        turn.done(f"FAILED ({type(exc).__name__})")
+    finally:
+        face.rest()
+        source.resume()
+        turn.listening()
+
+
 def _keep_note(note: str, turn: "stages.Turn") -> None:
     """Save the reply object's memory_note, on a thread. Never raises.
 
@@ -1106,6 +1150,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     # crashed this process on that boot. Hearing "hey Friday" needs none of
     # them, so the mic and the detector start first and the rest loads behind.
     stream = source = scene_watch = narration_watch = reminder_watch = None
+    agency_watch = None
     if typed is None:
         # ONE microphone stream, shared by the wake detector and the capture.
         # Opened here so both get the same one -- see stt.AudioStream for why
@@ -1142,6 +1187,15 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             inner = (source.sources if isinstance(source, wake_word.AnyOf)
                      else (source,))
             source = wake_word.AnyOf(*inner, reminder_watch)
+        # HER OWN INITIATIVE (agency.py): she notices, thinks, and does one
+        # thing on her own. What she decides to SAY comes through here, so it
+        # also lands between turns.
+        if getattr(config, "AGENCY", False):
+            import agency
+            agency_watch = agency.AgencyWatch()
+            inner = (source.sources if isinstance(source, wake_word.AnyOf)
+                     else (source,))
+            source = wake_word.AnyOf(*inner, agency_watch)
         global WAKE
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
@@ -1196,6 +1250,10 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                         and trigger.startswith("reminders: ")):
                     await _reminder_turn(voice, face, source, trigger,
                                          reminder_watch)
+                    continue
+                if (agency_watch is not None
+                        and trigger.startswith("agency: ")):
+                    await _agency_turn(voice, face, source, trigger)
                     continue
                 turn = stages.Turn(trigger)
                 # AN UNCERTAIN WAKE IS HEARD IN SILENCE (2026-09-27). Below
@@ -1348,6 +1406,8 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                         narration_watch.heard_harsh()
                     if reminder_watch is not None and spoken.strip():
                         reminder_watch.heard_harsh()  # he is here: briefing may follow
+                    if agency_watch is not None and spoken.strip():
+                        agency_watch.heard_harsh()
                     _idle_turn_ended(spoken)
                     # RE-ARM, ALWAYS. Every path above lands here, including
                     # the timeouts and the crashes, because a turn that ends

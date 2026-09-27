@@ -213,6 +213,7 @@ def brain_growth() -> dict:
         lane = people.pages()
     except Exception:                           # noqa: BLE001
         lane = []
+    lane = _lane_with_controls(lane)
     return {"growth": growth.report(),
             "study": study_panel,
             "people": lane,
@@ -560,6 +561,65 @@ async def api_narration_post(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, **narration_state()})
 
 
+# --- Memory Lane's two controls (file 17) --------------------------------
+# THE SECOND NARROW WRITE-PATH (the first: file 14's landmark naming). It can
+# do exactly two things -- ask to delete one memory (then confirm it) and
+# toggle one memory's protected flag -- and nothing else. Deleting goes
+# through memory_governance's pending request + token, the same function the
+# voice "forget ..." uses: the first click deletes nothing.
+
+def _lane_with_controls(pages: list) -> list:
+    """Each fact gets its `protected` flag; an "All" page lists recent ones,
+    because a protected memory need not be about a person."""
+    try:
+        import memory
+        import memory_governance
+        guarded = memory_governance.protected_ids()
+        pages = [{**page, "facts": [{**f, "protected": f.get("id") in guarded}
+                                    for f in page.get("facts") or []]}
+                 for page in pages]
+        recent = [{"id": f.id, "text": f.text, "kind": f.kind,
+                   "created_at": f.created_at, "protected": f.id in guarded}
+                  for f in memory.all_facts(limit=40)]
+        if recent:
+            pages.append({"name": "All", "facts": recent, "count": len(recent),
+                          "last_said": "", "all": True})
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("memory lane controls unavailable: %s", exc)
+    return pages
+
+
+async def api_memory_post(request: web.Request) -> web.Response:
+    """delete_request {id} | delete_confirm {id, token} | protect {id, on}."""
+    try:
+        payload = await request.json()
+        fact_id = int(payload.get("id"))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        raise web.HTTPBadRequest(text="send JSON with an id")
+    import memory_governance
+    action = str(payload.get("action", "")).strip().lower()
+    if action == "delete_request":
+        pending = memory_governance.request_delete(fact_id, via="dashboard")
+        if pending is None:
+            raise web.HTTPNotFound(text="no such memory")
+        return web.json_response({"ok": True, **pending})
+    if action == "delete_confirm":
+        gone = memory_governance.confirm_delete(str(payload.get("token", "")),
+                                                fact_id)
+        if not gone:
+            raise web.HTTPConflict(text="not deleted — the confirmation did "
+                                        "not match or expired; try again")
+        return web.json_response({"ok": True, "result": "forgotten"})
+    if action == "protect":
+        on = bool(payload.get("on"))
+        if not memory_governance.set_protected(fact_id, on):
+            raise web.HTTPNotFound(text="no such memory")
+        return web.json_response({"ok": True, "protected": on,
+                                  "result": "protected" if on else "unprotected"})
+    raise web.HTTPBadRequest(text="action must be delete_request, "
+                                  "delete_confirm or protect")
+
+
 # --- reminders, to-do, routines, calendar (file 16) --------------------
 # The SAME rows her voice writes (reminders.py, memory.db): anything added or
 # ticked off here is what she reads out, and the reverse.
@@ -569,17 +629,13 @@ def day_state() -> dict:
         import reminders
         import routines
         items = reminders.open_items()
-        calendar = {"connected": False, "events": [], "status": ""}
-        try:
-            import gcal
-            calendar["status"] = gcal.status()
-            if gcal.connected():
-                calendar["connected"] = True
-                calendar["events"] = [
-                    {"title": e["title"], "start_ts": e["start_ts"],
-                     "all_day": e["all_day"]} for e in gcal.today_events()]
-        except Exception as exc:                # noqa: BLE001
-            calendar["status"] = f"could not read it: {exc}"
+        import day_calendar
+        calendar = {"connected": True, "status": "on the robot",
+                    "events": [{"id": e.get("id"), "title": e["title"],
+                                "start_ts": e["start_ts"],
+                                "all_day": e.get("all_day", False),
+                                "local": e.get("kind") == "calendar"}
+                               for e in day_calendar.merged_day()]}
         import briefing
         return {"reminders": [r for r in items if r["due_at"] is not None],
                 "todos": [r for r in items if r["due_at"] is None],
@@ -614,6 +670,23 @@ async def api_reminders_post(request: web.Request) -> web.Response:
         said = (f"reminder set for {reminders.say_when(due)}" if due
                 else "added to the to-do list")
         result = f"{item['text']} — {said}"
+    elif action == "event":
+        import day_calendar
+        when = str(payload.get("when") or "").strip()
+        start = reminders.spoken_time(when) if when else None
+        if start is None:
+            raise web.HTTPBadRequest(
+                text="an event needs a time — e.g. tomorrow at 10")
+        try:
+            event = day_calendar.add(str(payload.get("text", "")), start,
+                                     source="dashboard")
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc))
+        result = f"{event['title']} — on the calendar {reminders.say_when(start)}"
+    elif action == "event_delete":
+        import day_calendar
+        found = day_calendar.remove(str(payload.get("id", "")))
+        result = f"removed {found['title']}" if found else "not found"
     elif action in ("done", "delete"):
         try:
             item_id = int(payload.get("id"))
@@ -625,7 +698,7 @@ async def api_reminders_post(request: web.Request) -> web.Response:
         else:
             result = "deleted" if reminders.delete(item_id) else "not found"
     else:
-        raise web.HTTPBadRequest(text="action must be add, done or delete")
+        raise web.HTTPBadRequest(text="action must be add, done, delete, event or event_delete")
     return web.json_response({"ok": True, "result": result, **day_state()})
 
 
@@ -1168,6 +1241,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/screen", api_screen_post)
     app.router.add_post("/api/narration", api_narration_post)
     app.router.add_post("/api/reminders", api_reminders_post)
+    app.router.add_post("/api/memory", api_memory_post)
     app.router.add_post("/api/study", api_study_post)
     app.router.add_get("/api/reflection", api_reflection_get)
     app.router.add_post("/api/reflection", api_reflection_post)

@@ -62,6 +62,9 @@ KEEP = [
     ("go home", "nav_home"), ("ghar chalo", "nav_home"),
     ("try again", "try_again"), ("phir se try karo", "try_again"),
     ("remember this as home", "remember_place"),
+    # File 17: an explicit remember saves for certain -- and is NOT a place.
+    ("remember that my exam is on Monday", "remember_explicit"),
+    ("remember this, the exam is on Monday", "remember_explicit"),
     ("Friday, remember this place as the kitchen", "remember_place"),
     ("save this spot as my desk", "remember_place"),
     ("this place is the kitchen", "remember_place"),
@@ -107,8 +110,9 @@ REFUSE = [
     "you should come back tomorrow",
     "don't come back",
     "I will try again later if it doesn't work out today",
-    "remember that my exam is on Monday",
-    "remember this, the exam is on Monday",
+    # (File 17, 2026-09-27: "remember that my exam is on Monday" moved to the
+    # reflex list above -- an explicit remember now SAVES for certain, as
+    # remember_explicit. It still must never become remember_place.)
     "I have to go to the library later",
 ]
 

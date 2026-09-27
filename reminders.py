@@ -503,13 +503,17 @@ class ReminderWatch(WakeSource):
     def delivered(self, item: dict) -> None:
         if item.get("kind") == "reminder":
             mark_said(item.get("ids") or [])
+        elif item.get("kind") == "calendar":
+            import day_calendar
+            day_calendar.mark_announced(item.get("ids") or [])
         elif item.get("kind") == "briefing":
             import briefing
             briefing.mark_done(item.get("say", ""))
 
     def missed(self, item: dict) -> None:
+        sign = -1 if item.get("kind") == "calendar" else 1
         for i in item.get("ids") or []:
-            self._inflight.pop(int(i), None)
+            self._inflight.pop(sign * int(i), None)
         if item.get("kind") == "briefing":
             self._briefing_inflight = 0.0
 
@@ -581,6 +585,26 @@ class ReminderWatch(WakeSource):
             return {"kind": "reminder", "at": now,
                     "ids": [r["id"] for r in due],
                     "say": self._reminder_words(due, now)}
+
+        try:
+            import day_calendar
+            soon = [e for e in day_calendar.heads_up_due(now)
+                    if -e["id"] not in self._inflight]
+        except Exception as exc:                    # noqa: BLE001
+            log.debug("calendar heads-up skipped: %s", exc)
+            soon = []
+        if soon:
+            why = self._why_not("calendar")
+            if why:
+                self._note(f"calendar — {why}")
+                return None
+            for e in soon:
+                self._inflight[-e["id"]] = now       # negative: not a reminder id
+            words = " ".join(
+                f"In {max(1, round((e['start_ts'] - now) / 60))} minutes: "
+                f"{e['title']}." for e in soon)
+            return {"kind": "calendar", "at": now,
+                    "ids": [e["id"] for e in soon], "say": words}
 
         if getattr(config, "BRIEFING", False) and \
                 now - self._briefing_inflight > 120:
