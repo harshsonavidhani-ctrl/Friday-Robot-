@@ -74,8 +74,23 @@ for trigger, want in (("openwakeword: 0.94 v0.70", True),
                       ("openwakeword: 0.94", False),        # verifier off
                       ("enter-key: pressed", False),
                       ("", False)):
-    check(f"{trigger!r} -> {'silent' if want else 'beep'}",
+    check(f"{trigger!r} -> {'gated' if want else 'certain'}",
           main._uncertain_wake(trigger) is want)
+
+print("\nwhich wakes BEEP (he waits for it) -- separate from the answer gate")
+config.WAKE_ACK_VERIFY = 0.5
+for trigger, want in (("openwakeword: 0.94 v0.79", True),   # his, live 17:23
+                      ("openwakeword: 0.95 v0.58", True),
+                      ("openwakeword: 1.00 v0.50", True),
+                      ("openwakeword: 0.55 v0.47", False),  # below the ack line
+                      ("openwakeword: 0.94 v0.90", True),   # certain
+                      ("openwakeword: 0.94", True),         # verifier off
+                      ("enter-key: pressed", True)):
+    check(f"{trigger!r} -> {'beep' if want else 'silent'}",
+          main._acknowledged_wake(trigger) is want)
+check("a beeping uncertain wake is still answer-gated",
+      main._acknowledged_wake("openwakeword: 0.9 v0.6")
+      and main._uncertain_wake("openwakeword: 0.9 v0.6"))
 config.WAKE_UNCERTAIN_SILENT = False
 check("switched off: every wake beeps again",
       main._uncertain_wake("openwakeword: 0.94 v0.61") is False)

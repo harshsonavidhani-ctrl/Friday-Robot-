@@ -797,6 +797,14 @@ WAKE_VERIFY_THRESHOLD = 0.4
 # beep; a video that scores low gets nothing. False to beep on every wake.
 WAKE_UNCERTAIN_SILENT = True
 WAKE_CONFIDENT_VERIFY = 0.85
+WAKE_UNCERTAIN_CHECK_TIMEOUT_S = 5.0   # the yes/no; she is deaf while it runs
+# THE BEEP IS SEPARATE FROM THE ANSWER (2026-09-27 17:3x). Fully silent below
+# 0.85 made her look deaf: Harsh says "hey Friday" and WAITS for the beep, and
+# his 8 live tries after the x2 gain scored 0.47-0.79 -- four ended "nothing
+# said". He chose: beep + listening face from here up, but below
+# WAKE_CONFIDENT_VERIFY she still ANSWERS only if the words were for her. So a
+# video can make her beep, not reply. 7 of his 8 tries were >= 0.5.
+WAKE_ACK_VERIFY = 0.5
 
 # HEARING HIM FROM ACROSS THE ROOM. The misses in his 40 recordings are not
 # scattered -- they are exactly the quiet takes, with clean separation:

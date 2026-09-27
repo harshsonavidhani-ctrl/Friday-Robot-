@@ -555,21 +555,45 @@ def _curiosity_heard() -> None:
         log.debug("could not stop the outing: %s", exc)
 
 
+def _wake_verdict(trigger: str) -> float | None:
+    """The verifier's probability on a wake trigger, or None if it has none.
+
+    The detector writes "openwakeword: 0.94 v0.70". No v (verifier off or
+    missing, the Enter key) is None.
+    """
+    import re
+    found = re.search(r"\bv(\d+(?:\.\d+)?)\b", trigger or "")
+    return float(found.group(1)) if found else None
+
+
 def _uncertain_wake(trigger: str) -> bool:
     """Did the verifier only just let this wake through?
 
-    The detector writes "openwakeword: 0.94 v0.70" -- v is the verifier's
-    probability. No v (verifier off or missing, the Enter key) is not
-    uncertain: then there is nothing to be less sure of than before.
+    Uncertain means she ANSWERS only if the words were for her
+    (_meant_for_her). No v is not uncertain: then there is nothing to be less
+    sure of than before.
     """
     if not getattr(config, "WAKE_UNCERTAIN_SILENT", False):
         return False
-    import re
-    found = re.search(r"\bv(\d+(?:\.\d+)?)\b", trigger or "")
-    if not found:
-        return False
-    return float(found.group(1)) < float(
+    verdict = _wake_verdict(trigger)
+    return verdict is not None and verdict < float(
         getattr(config, "WAKE_CONFIDENT_VERIFY", 0.85))
+
+
+def _acknowledged_wake(trigger: str) -> bool:
+    """Does this wake get the beep and the listening face?
+
+    Every certain wake, and an uncertain one at WAKE_ACK_VERIFY or above.
+    Harsh, 2026-09-27, after the fully silent version: "its not listening" --
+    he says "hey Friday" and WAITS for the beep, and his own wakes scored
+    0.47-0.79, so with no beep below 0.85 he never spoke and she gave up. He
+    chose: beep again, but still only ANSWER below 0.85 if it was for her.
+    """
+    if not _uncertain_wake(trigger):
+        return True
+    verdict = _wake_verdict(trigger)
+    return verdict is not None and verdict >= float(
+        getattr(config, "WAKE_ACK_VERIFY", 0.5))
 
 
 async def _meant_for_her(brain_obj, spoken: str,
@@ -598,9 +622,12 @@ async def _meant_for_her(brain_obj, spoken: str,
             turn.note(f"uncertain wake, no brain to check {spoken[:40]!r} — "
                       f"silent", dash=False)
             return False
+        # ITS OWN SHORT CEILING, not the 25 s tool one: the detector is paused
+        # for this whole turn. 2026-09-27 17:19 one API retry held this check
+        # 20 s and she was deaf for 30 s over a video's "See you later."
         verdict = await asyncio.wait_for(
             brain_obj.addressed_strictly(spoken),
-            float(getattr(config, "STAGE_TOOL_TIMEOUT_S", 25.0)))
+            float(getattr(config, "WAKE_UNCERTAIN_CHECK_TIMEOUT_S", 5.0)))
     except Exception as exc:                    # noqa: BLE001
         log.warning("uncertain-wake check failed (%s: %s) — silent",
                     type(exc).__name__, exc)
@@ -1120,11 +1147,17 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 # WAKE_CONFIDENT_VERIFY there is no beep and no face: she
                 # listens, and shows nothing unless what follows is for her
                 # (_meant_for_her). Harsh: "never fire randomly".
+                # BUT HE WAITS FOR THE BEEP: an uncertain wake at
+                # WAKE_ACK_VERIFY or above still beeps (_acknowledged_wake);
+                # only the ANSWER stays gated.
                 uncertain = _uncertain_wake(trigger)
+                acknowledged = _acknowledged_wake(trigger)
                 if uncertain:
                     turn.note(f"uncertain wake ({trigger}) — listening "
-                              f"silently", dash=False)
-                else:
+                              f"{'with a beep' if acknowledged else 'silently'}"
+                              f", answering only if it is for her",
+                              dash=False)
+                if acknowledged:
                     # Acknowledge instantly: the face and the beep both land
                     # before any model runs, so Harsh knows he was heard
                     # rather than wondering whether to repeat himself.
@@ -1133,7 +1166,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 # stops here -- before the capture, while he is still
                 # talking -- rather than driving through his question.
                 _curiosity_heard()
-                if hasattr(source, "beep") and not uncertain:
+                if hasattr(source, "beep") and acknowledged:
                     source.beep()
 
                 # THE DETECTOR STAYS PAUSED FOR THE WHOLE TURN — through the
@@ -1151,7 +1184,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                                             + config.LISTEN_START_TIMEOUT_S
                                             + 5.0)
                     said_at = time.monotonic()   # he stopped talking here
-                    if not uncertain:
+                    if acknowledged:
                         face.set("thinking")
                     spoken = await turn.call(
                         "TRANSCRIBING", stt.transcribe, audio,
@@ -1263,7 +1296,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                     # the timeouts and the crashes, because a turn that ends
                     # without handing the microphone back is exactly the bug
                     # this whole trace exists to make visible.
-                    if not uncertain:    # a silent wake never touched the face
+                    if acknowledged:     # a silent wake never touched the face
                         face.rest()
                     source.resume()
                     turn.listening()
