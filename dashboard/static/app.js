@@ -1001,6 +1001,83 @@ function paintScreen(state) {
   }
 }
 
+/* ---------- reminders, to-do, routines, calendar (file 16) ----------
+   Rides the 4 s heartbeat like the other panels. Times are typed the way
+   they are said ("5 pm", "tomorrow morning", "in 20 minutes"); the server
+   parses them with the same code her voice uses. */
+
+async function dayPost(body) {
+  try {
+    const r = await fetch('/api/reminders', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { toast(await r.text(), true); return; }
+    const j = await r.json();
+    toast(j.result);
+    paintDay(j);
+  } catch (e) { toast(String(e), true); }
+}
+
+function dayItem(item, withTime) {
+  const li = document.createElement('li');
+  const when = withTime && item.due_at
+    ? new Date(item.due_at * 1000).toLocaleString([], {
+        weekday: 'short', hour: '2-digit', minute: '2-digit' })
+    : 'to-do';
+  li.innerHTML = `<span class="kind">${esc(when)}</span>` +
+    `<span class="lbl">${esc(item.text)}</span>`;
+  const done = document.createElement('button');
+  done.className = 'kill';
+  done.title = 'Done';
+  done.textContent = '✓';
+  done.onclick = () => dayPost({ action: 'done', id: item.id });
+  li.appendChild(done);
+  return li;
+}
+
+function paintDay(d) {
+  if (!d || !$('remlist') || d.error) return;
+  const rem = d.reminders || [], todo = d.todos || [];
+  $('daynow').textContent = `${rem.length} reminder${rem.length === 1 ? '' : 's'}` +
+    ` · ${todo.length} to-do`;
+  const remList = $('remlist');
+  remList.innerHTML = rem.length ? '' : '<li class="none">No reminders set</li>';
+  for (const item of rem) remList.appendChild(dayItem(item, true));
+  const todoList = $('todolist');
+  todoList.innerHTML = todo.length ? '' : '<li class="none">To-do list is empty</li>';
+  for (const item of todo) todoList.appendChild(dayItem(item, false));
+
+  const cal = d.calendar || {};
+  $('calnote').textContent = cal.connected
+    ? (cal.events && cal.events.length ? 'Today on your calendar:' : 'Nothing on your calendar today.')
+    : `Calendar: ${cal.status || 'not connected'}`;
+  const calList = $('callist');
+  calList.innerHTML = '';
+  for (const e of (cal.events || [])) {
+    const li = document.createElement('li');
+    const when = e.all_day ? 'all day' : new Date(e.start_ts * 1000)
+      .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    li.innerHTML = `<span class="kind">${esc(when)}</span><span class="lbl">${esc(e.title)}</span>`;
+    calList.appendChild(li);
+  }
+  const routines = (d.routines || []).map((r) => `“${r.name}” → ${r.steps.join(', ')}`);
+  $('routinenote').textContent = (routines.length ? `Routines: ${routines.join(' · ')}` : '') +
+    (d.briefing_done_today ? ' · today\'s briefing: said' : ' · today\'s briefing: not yet');
+}
+
+function wireDay() {
+  if (!$('remadd')) return;
+  const add = () => {
+    const text = $('remtext').value.trim();
+    if (!text) { toast('What should I remind you of?', true); return; }
+    dayPost({ action: 'add', text, when: $('remwhen').value.trim() });
+    $('remtext').value = ''; $('remwhen').value = '';
+  };
+  $('remadd').onclick = add;
+  $('remtext').onkeydown = (e) => { if (e.key === 'Enter') add(); };
+}
+
 /* ---------- describe (file 15) ----------
    The button writes the same switch as "keep describing what you see". The
    heartbeat repaints it, so a voice "stop describing" or the timeout shows
@@ -1289,6 +1366,7 @@ async function heartbeat() {
   paintRobot(s.robot_online);
   paintScreen(s.screen);          // rides the same beat; no extra request
   paintNarration(s.narration);    // ...and so does Describe (file 15)
+  paintDay(s.day);                // ...and Reminders (file 16)
   growthNow = s.growth || growthNow;
   paintReflection(s.reflection); // ...and so does Brain Growth (step 7)
   paintStudy(s.study);           // ...and Study and Diary (file 12)
@@ -1358,6 +1436,8 @@ function showPane(id) {
   setActive(state.mood);
   paintScreen(state.screen);
   paintNarration(state.narration);
+  wireDay();
+  paintDay(state.day);
 
   buildExplore();
   await refreshExplore();

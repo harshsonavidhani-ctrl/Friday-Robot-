@@ -709,6 +709,51 @@ def _nav_intent(heard: str, strict: bool = False) -> Intent | None:
     return None
 
 
+_BRIEFING_RE = re.compile(
+    r"\b(?:daily briefing|my briefing|morning briefing|brief me|"
+    r"what(?:'s| is) my day(?: look like)?|how(?:'s| does) my day look)\b",
+    re.IGNORECASE)
+
+
+def _day_intent(heard: str) -> Intent | None:
+    """File 16: reminders, to-dos, routines, the briefing. All tool calls, so
+    they run through the MCP server like every other command, and all answer
+    out loud (_SPEAK_RESULT)."""
+    try:
+        import reminders                        # noqa: PLC0415
+        asked = reminders.parse_request(heard)
+    except Exception:                           # noqa: BLE001
+        asked = None
+    if asked is not None:
+        if asked["action"] == "add" and asked["due_at"] is not None:
+            import time as _time                # noqa: PLC0415
+            when = _time.strftime("%Y-%m-%d %H:%M",
+                                  _time.localtime(asked["due_at"]))
+            return Intent(name="reminder_add", tool="add_reminder",
+                          args={"text": asked["text"], "when": when})
+        if asked["action"] == "add":
+            return Intent(name="todo_add", tool="add_todo",
+                          args={"text": asked["text"]})
+        if asked["action"] == "done":
+            return Intent(name="reminder_done", tool="complete_reminder",
+                          args={"which": asked["which"]})
+        if asked["action"] == "list":
+            return Intent(name="reminder_list", tool="list_reminders",
+                          args={"which": "todo" if asked["which"] == "todo"
+                                else "all"})
+    if _BRIEFING_RE.search(heard):
+        return Intent(name="briefing", tool="daily_briefing")
+    try:
+        import routines                         # noqa: PLC0415
+        routine = routines.match(heard)
+    except Exception:                           # noqa: BLE001
+        routine = None
+    if routine is not None:
+        return Intent(name="routine", tool="run_routine",
+                      args={"name": routine})
+    return None
+
+
 def _local_intent(heard: str, strict: bool = False) -> Intent | None:
     """The two things the spine does itself: stop listening, and say what it
     knows how to do. Checked before every tool rule, because both phrasings
@@ -737,6 +782,20 @@ def _local_intent(heard: str, strict: bool = False) -> Intent | None:
                       args={"minutes": minutes},
                       say=f"Okay, I'll stop listening for "
                           f"{minutes:.0f} minutes.")
+
+    # QUIET MODE BY VOICE (file 16: "movie time" turns it on, so there has to
+    # be a way to turn it off). After the sleep rule on purpose -- "be quiet"
+    # still means stop listening, as it always has; "quiet mode", "you can
+    # talk again" are this.
+    try:
+        import mode as mode_module              # noqa: PLC0415
+        quiet = mode_module.quiet_asked_for(heard)
+    except Exception:                           # noqa: BLE001
+        quiet = None
+    if quiet is not None:
+        return Intent(name="quiet", local="quiet", args={"on": quiet},
+                      say=("Quiet mode on. I'll still answer if you ask."
+                           if quiet else "Okay, I can talk again."))
 
     if _HELP_RE.search(heard):
         return Intent(name="help", local="help", say=help_text())
@@ -1019,6 +1078,8 @@ _SPEAK_RESULT = frozenset({
     # remember_place answers in prose and does not speak for itself.
     # (explore_and_return does, since 2026-09-24 -- it is not here.)
     "remember_place",
+    "reminder_add", "todo_add", "reminder_done", "reminder_list", "routine",
+    "briefing",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -1045,6 +1106,9 @@ _REFLEX_INTENTS = frozenset({
     # _SPEAK_RESULT except the one that is an existing brain-facing tool.
     "nav_go", "nav_home", "nav_come_back", "try_again", "explore_return",
     "remember_place",
+    # File 16 -- all offline, all through tools that answer in words.
+    "reminder_add", "todo_add", "reminder_done", "reminder_list", "routine",
+    "briefing", "quiet",
 })
 
 
@@ -1088,6 +1152,15 @@ def _match(text: str, strict: bool) -> Intent | None:
     local = _local_intent(heard, strict)
     if local is not None:
         return local
+
+    # FILE 16: reminders, the to-do list, routines, the briefing. Before the
+    # stop rule ("remind me to stop at the shop at 6" is a reminder, not a
+    # halt) and before the timer rule ("remind me in 10 minutes to call mom"
+    # is a reminder; a bare "remind me in 10 minutes" still falls through to
+    # the timer, and "remind me at seven" to the alarm, exactly as before).
+    day = _day_intent(heard)
+    if day is not None:
+        return day
 
     # STOP THE RUN, NOT JUST THE WHEELS. A bare stop() against a live
     # exploration halts the motors only until the run issues its next command,

@@ -221,3 +221,6 @@ state/memory.db.bak-*
 state/memory-deleted-*.json
 logs/*.wav
 .claude-scratch/
+
+# Google Calendar OAuth token and client secret (file 16) -- never commit.
+secrets/

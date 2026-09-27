@@ -178,6 +178,32 @@
       </div>
     </section>
 
+    <section class="panel" id="panel-day">
+      <div class="panelhead">
+        <h2>Reminders</h2>
+        <span class="badge" id="daynow">—</span>
+      </div>
+      <div class="screen">
+        <!-- FILE 16. The same list her voice writes ("remind me to call mom at
+             5", "add eggs to my to-do list"). A reminder is SAID once at its
+             time, between turns; a to-do is only read when asked and in the
+             morning briefing. -->
+        <div class="screenrow">
+          <label for="remtext">Add</label>
+          <div class="calfield">
+            <input type="text" id="remtext" placeholder="call mom" maxlength="120">
+            <input type="text" id="remwhen" placeholder="when (blank = to-do)" maxlength="40">
+            <button id="remadd">Add</button>
+          </div>
+        </div>
+        <ul class="pending" id="remlist"></ul>
+        <ul class="pending" id="todolist"></ul>
+        <p class="drivenote" id="calnote"></p>
+        <ul class="pending" id="callist"></ul>
+        <p class="drivenote" id="routinenote"></p>
+      </div>
+    </section>
+
     <section class="panel" id="panel-narrate">
       <div class="panelhead">
         <h2>Describe</h2>

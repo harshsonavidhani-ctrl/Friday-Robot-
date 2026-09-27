@@ -361,6 +361,63 @@ NARRATION_MAX_WORDS = 25
 NARRATION_FIRST_MAX_WORDS = 35
 NARRATION_MAX_TOKENS = 100
 
+# --- Reminders, to-do, routines, calendar, briefing (file 16) ------------
+# reminders.py keeps them in memory.db's `reminders` table (kind='reminder':
+# the type value the file-17 spec reserves). A reminder has a due_at; a to-do
+# does not. NOT timers or alarms (app_control): those ring; a reminder is
+# SAID, once, through initiative.py's may-she-speak-now gate, between turns.
+REMINDER_WATCH = True                # False: reminders are stored but never said
+REMINDER_POLL_S = 15.0               # how often due reminders are looked for
+REMINDER_DEFAULT_HOUR = 9            # "remind me tomorrow to ..." with no time
+REMINDER_PART_OF_DAY = {             # "tomorrow morning", "this evening"
+    "morning": 9, "afternoon": 14, "evening": 18, "tonight": 20, "night": 21,
+}
+REMINDER_LIST_MAX = 5                # read out at most this many, then "and N more"
+
+# PREDEFINED ROUTINES (step 3): a trigger phrase and a FIXED chain of steps,
+# each a tool name the MCP server already has (or one of routines.py's few
+# built-in steps). Adding a routine is adding an entry here -- no code.
+# Voice-authored routines are future scope. There is NO music player in this
+# repo (the file 08 spec named one; it was never built), so "light music" is
+# left out of good morning rather than faked.
+# A step is {"tool": name, "args": {...}, "speak": bool}; "speak" (default
+# True) says the tool's answer as part of the routine's reply.
+ROUTINES = {
+    "good morning": {
+        "phrases": ("good morning", "morning routine", "start my day"),
+        "steps": ({"tool": "weather_now"},
+                  {"tool": "reminders_today"},
+                  {"tool": "calendar_today"}),
+        "say_first": "Good morning!",
+    },
+    "movie time": {
+        # Tools only -- there are no smart-home devices. She goes quiet
+        # (face only) so she does not talk over the film.
+        "phrases": ("movie time", "movie mode", "film time"),
+        "steps": ({"tool": "dismiss_screen", "speak": False},
+                  {"tool": "quiet_mode", "args": {"on": True}, "speak": False}),
+        "say_first": "Enjoy the movie. I will stay quiet until you say you can talk again.",
+    },
+}
+ROUTINE_MAX_WORDS = 6                # "good morning" must be the ask, not a line in a video
+
+# DAILY BRIEFING (step 5): weather + today's first calendar event + today's
+# reminders + open to-dos, said ONCE a day. Offered in the morning window,
+# only once someone is here (he spoke to her, or the camera saw a person,
+# within BRIEFING_PRESENCE_S) and initiative.decide() says she may speak.
+BRIEFING = True
+BRIEFING_WINDOW = (6, 12)            # hours, local time: [start, end)
+BRIEFING_PRESENCE_S = 600.0
+BRIEFING_FILE = ROOT / "state" / "briefing.json"
+
+# GOOGLE CALENDAR (step 4). ⚠ SECRETS LIVE IN secrets/ (gitignored), never in
+# git and never in this file. The token is made ONCE on a laptop with a
+# browser (scripts/gcal_setup.py, standard library only) and copied here.
+GCAL_TOKEN_FILE = ROOT / "secrets" / "google_token.json"
+GCAL_CALENDAR_ID = "primary"
+GCAL_TIMEOUT_S = 8.0
+GCAL_CACHE_S = 300.0                 # the dashboard polls every 4 s
+
 # --- When Harsh says that was wrong, keep it (file 09 step 1) ------------
 # corrections.py. Two ways in, because they fail in different places:
 #   1. the brain fills `correction` in the reply object -- it read the whole

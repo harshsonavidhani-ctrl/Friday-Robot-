@@ -181,6 +181,7 @@ async def api_state(request: web.Request) -> web.Response:
         "robot_online": robot_online(),
         "screen": screen_state(),
         "narration": narration_state(),
+        "day": day_state(),
         "ui": ui_version(),
         # FILE 09 STEP 7: "Reuse the dashboard's existing data-fetching
         # pattern instead of adding a separate one." This is that pattern --
@@ -557,6 +558,75 @@ async def api_narration_post(request: web.Request) -> web.Response:
     import narration
     narration.set_mode(payload["on"], by="dashboard")
     return web.json_response({"ok": True, **narration_state()})
+
+
+# --- reminders, to-do, routines, calendar (file 16) --------------------
+# The SAME rows her voice writes (reminders.py, memory.db): anything added or
+# ticked off here is what she reads out, and the reverse.
+
+def day_state() -> dict:
+    try:
+        import reminders
+        import routines
+        items = reminders.open_items()
+        calendar = {"connected": False, "events": [], "status": ""}
+        try:
+            import gcal
+            calendar["status"] = gcal.status()
+            if gcal.connected():
+                calendar["connected"] = True
+                calendar["events"] = [
+                    {"title": e["title"], "start_ts": e["start_ts"],
+                     "all_day": e["all_day"]} for e in gcal.today_events()]
+        except Exception as exc:                # noqa: BLE001
+            calendar["status"] = f"could not read it: {exc}"
+        import briefing
+        return {"reminders": [r for r in items if r["due_at"] is not None],
+                "todos": [r for r in items if r["due_at"] is None],
+                "routines": routines.describe(),
+                "calendar": calendar,
+                "briefing_done_today": briefing.done_today()}
+    except Exception as exc:                    # noqa: BLE001
+        return {"error": str(exc)}
+
+
+async def api_reminders_post(request: web.Request) -> web.Response:
+    """add {text, when?} | done {id} | delete {id}. File writes, answered at
+    once whether or not the brain is up."""
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    import reminders
+    action = str(payload.get("action", "")).strip().lower()
+    if action == "add":
+        when = str(payload.get("when") or "").strip()
+        due = reminders.spoken_time(when) if when else None
+        if when and due is None:
+            raise web.HTTPBadRequest(
+                text=f"couldn't read the time '{when}' — try 5 pm, "
+                     f"tomorrow morning, in 20 minutes")
+        try:
+            item = reminders.add(str(payload.get("text", "")), due_at=due,
+                                 source="dashboard")
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc))
+        said = (f"reminder set for {reminders.say_when(due)}" if due
+                else "added to the to-do list")
+        result = f"{item['text']} — {said}"
+    elif action in ("done", "delete"):
+        try:
+            item_id = int(payload.get("id"))
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text="send an id")
+        if action == "done":
+            found = reminders.complete(str(item_id))
+            result = f"ticked off {found['text']}" if found else "not found"
+        else:
+            result = "deleted" if reminders.delete(item_id) else "not found"
+    else:
+        raise web.HTTPBadRequest(text="action must be add, done or delete")
+    return web.json_response({"ok": True, "result": result, **day_state()})
 
 
 # --- cameras ---------------------------------------------------------
@@ -1097,6 +1167,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/screen", api_screen_get)
     app.router.add_post("/api/screen", api_screen_post)
     app.router.add_post("/api/narration", api_narration_post)
+    app.router.add_post("/api/reminders", api_reminders_post)
     app.router.add_post("/api/study", api_study_post)
     app.router.add_get("/api/reflection", api_reflection_get)
     app.router.add_post("/api/reflection", api_reflection_post)

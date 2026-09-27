@@ -896,3 +896,74 @@ wakes that BEEP 5 → 3/84 (silent ones 59 → 70/84, each a transcription and a
   starts there. What would move it: more real far/quiet takes as positives.
 - ⚠ `ship_verifier` rewrites `WAKE_VERIFY_THRESHOLD` in config.py with its
   own pick when it ships; pick from the replay table instead.
+
+---
+
+# PART 7 — What file 16 added (2026-09-27): reminders, routines, calendar, briefing
+
+Additive. New files: `reminders.py`, `routines.py`, `briefing.py`, `gcal.py`,
+`mcp_server/tools/reminders_tools.py` (12 tools), `scripts/gcal_setup.py`,
+`scripts/test_file16.py`; hooks in `offline.py`, `main.py`, `config.py`,
+`dashboard/`. ⚠ The spec builds on "file 17's unified memory" and "file 08's
+music tool": NEITHER EXISTS. The type values live in memory.db (below) and
+there is no music player, so good morning has no music step.
+
+**Reminders and to-do (steps 1-2), `reminders.py`.** One table,
+`reminders` in memory.db, `kind='reminder'`: {id, text, due_at, done,
+said_at}. A reminder has due_at; a to-do does not. Not in `facts` on purpose:
+`memory.remember` merges near-duplicates, and "call mom" on two days must stay
+two. Not a timer/alarm either: those RING from the face process; a reminder is
+SAID once, between turns, through `initiative.decide()` (the spec's "file 11"
+window — it had no caller before this). `ReminderWatch` is a wake source like
+narration: held while he talks, she speaks, in quiet mode, mid-turn or asleep;
+marked done only after it was actually said; a line that went stale in the
+queue is handed back. To-dos are never pushed — only read when asked and in
+the briefing.
+- Voice (reflexes, no model, `offline._day_intent`, checked BEFORE the stop
+  and timer rules): "remind me to X at/in/on Y", "remind me at Y to X", "add X
+  to my to-do list", "what's on my to-do list", "what are my reminders", "mark X
+  as done" / "tick off X" / "remove X from my to-do list". A bare "remind me in
+  ten minutes" is still the timer; "remind me at seven" still goes to the brain.
+- ⚠ Times use `reminders.spoken_time`, NOT `app_control.parse_when`, which
+  reads "7:30 in the morning" as 19:30, "half past six" as midnight and cannot
+  read "noon" (left alone — alarms use it). A day with no am/pm and 1-6 o'clock
+  is the afternoon ("tomorrow at 5" = 17:00). "on friday" is a weekday only
+  after on/next/this — a bare "friday" is her name.
+
+**Routines (step 3), `routines.py` + `config.ROUTINES`.** A routine is
+phrases + `say_first` + a list of steps `{"tool", "args", "speak"}`, each step
+the NAME of an existing MCP tool (resolved from mcp_server/tools/ at run time).
+A new routine is a config entry, no code. "good morning" = weather_now +
+reminders_today + calendar_today; "movie time" = dismiss_screen + quiet_mode.
+A missing/failing step is skipped and logged, the rest runs. Voice trigger
+only when the sentence is ≤ `ROUTINE_MAX_WORDS` (a video's "good morning
+everyone…" is not the routine). Quiet mode now has a voice switch too
+("quiet mode" / "you can talk again"): `mode.quiet_asked_for` had no caller.
+
+**Google Calendar (step 4), `gcal.py`.** Plain REST over httpx (already in
+the venv) — no Google client library. Token in `secrets/google_token.json`
+(⚠ `secrets/` is gitignored; nothing else ever holds a credential). Made ONCE
+on a laptop with `scripts/gcal_setup.py client_secret.json` (standard library,
+loopback + PKCE, scope calendar.events only; the device flow does not allow
+calendar scopes), then `scp`'d to the Pi. Tools: calendar_today,
+calendar_upcoming, calendar_add_event; an added event is also noted in memory
+with `kind='calendar'`. With no token every tool says "isn't connected yet".
+
+**Daily briefing (step 5), `briefing.py`.** Weather + first calendar event +
+today's reminders + to-do count; each part skipped, not guessed, when it
+cannot be had. Offered by ReminderWatch in `BRIEFING_WINDOW` (6-12) once
+somebody is here (he spoke, or a person was seen, within
+`BRIEFING_PRESENCE_S`) and after `INITIATIVE_IDLE_S` of quiet, through the same
+gate. Once a day: `state/briefing.json`. "Give me my briefing" says it on
+demand and counts as today's.
+
+**Dashboard (step 6).** Reminders panel: reminders + to-dos with ✓, an add row
+(times typed the way they are said), today's calendar, the routines, and
+whether today's briefing was said. `POST /api/reminders` add|done|delete —
+the same rows as her voice.
+
+Live 2026-09-27 18:06: a reminder due 18:06:55 was said 18:06:56 and marked
+done. Not yet tried: the calendar (needs Harsh's one-time sign-in), a real
+morning briefing, "good morning" by voice.
+
+    ./venv/bin/python scripts/test_file16.py    # 76 cases, temp files, Google/weather faked

@@ -770,6 +770,48 @@ async def _narration_turn(voice: "Voice", face: "Face", source,
         turn.listening()
 
 
+async def _reminder_turn(voice: "Voice", face: "Face", source,
+                         trigger: str, watch) -> None:
+    """A due reminder or the daily briefing (file 16): say it, or hand it back.
+
+    The words were made on the watch's own thread; this only SPEAKS, from the
+    wake loop, so it can never land on top of a turn. Checked again at the
+    moment of speaking -- he may have started talking while it waited in the
+    queue -- and handed back (watch.missed) rather than said over him. A
+    reminder is marked done only once it has actually been said. Never raises.
+    """
+    import initiative
+    import reminders
+
+    item = reminders.parse_trigger(trigger)
+    if item is None:
+        return
+    kind = item.get("kind", "reminder")
+    turn = stages.Turn(f"{kind}")
+    if initiative.he_is_talking():
+        watch.missed(item)
+        turn.done("DROPPED (he is talking — offered again next poll)")
+        return
+    source.pause()                              # never hear herself
+    try:
+        face.feel("curious" if kind == "reminder" else "happy")
+        voice.say(item["say"])
+        turn.spoke(item["say"])
+        turn.answered_by("locally, no model", 0.0)
+        turn.stage("SPEAKING", stages.quote(item["say"], 160))
+        voice.wait_until_quiet()
+        watch.delivered(item)
+        turn.done()
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("%s failed: %s: %s", kind, type(exc).__name__, exc)
+        watch.missed(item)
+        turn.done(f"FAILED ({type(exc).__name__})")
+    finally:
+        face.rest()
+        source.resume()
+        turn.listening()
+
+
 def _keep_note(note: str, turn: "stages.Turn") -> None:
     """Save the reply object's memory_note, on a thread. Never raises.
 
@@ -1063,7 +1105,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     # connection -- which friday-mcp refuses for ~29 s at boot, and which
     # crashed this process on that boot. Hearing "hey Friday" needs none of
     # them, so the mic and the detector start first and the rest loads behind.
-    stream = source = scene_watch = narration_watch = None
+    stream = source = scene_watch = narration_watch = reminder_watch = None
     if typed is None:
         # ONE microphone stream, shared by the wake detector and the capture.
         # Opened here so both get the same one -- see stt.AudioStream for why
@@ -1092,6 +1134,14 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             inner = (source.sources if isinstance(source, wake_word.AnyOf)
                      else (source,))
             source = wake_word.AnyOf(*inner, narration_watch)
+        # DUE REMINDERS AND THE DAILY BRIEFING (file 16) come in the same way:
+        # said between turns, after initiative.decide() says she may speak.
+        if getattr(config, "REMINDER_WATCH", False):
+            import reminders
+            reminder_watch = reminders.ReminderWatch()
+            inner = (source.sources if isinstance(source, wake_word.AnyOf)
+                     else (source,))
+            source = wake_word.AnyOf(*inner, reminder_watch)
         global WAKE
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
@@ -1141,6 +1191,11 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                         and trigger.startswith("narration: ")):
                     await _narration_turn(voice, face, source, trigger,
                                           narration_watch)
+                    continue
+                if (reminder_watch is not None
+                        and trigger.startswith("reminders: ")):
+                    await _reminder_turn(voice, face, source, trigger,
+                                         reminder_watch)
                     continue
                 turn = stages.Turn(trigger)
                 # AN UNCERTAIN WAKE IS HEARD IN SILENCE (2026-09-27). Below
@@ -1291,6 +1346,8 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                         scene_watch.heard_harsh()   # he is here; give him a moment
                     if narration_watch is not None and spoken.strip():
                         narration_watch.heard_harsh()
+                    if reminder_watch is not None and spoken.strip():
+                        reminder_watch.heard_harsh()  # he is here: briefing may follow
                     _idle_turn_ended(spoken)
                     # RE-ARM, ALWAYS. Every path above lands here, including
                     # the timeouts and the crashes, because a turn that ends
@@ -1678,6 +1735,14 @@ def _run_local(intent, face: Face, turn: "stages.Turn") -> None:
         now = mode.set_mode(str(intent.args.get("mode", "")), why="he asked")
         turn.note(f"mode -> {now}")
         turn.done(f"DONE ({now})")
+        return
+    if intent.local == "quiet":
+        # FILE 16: quiet mode by voice. mode.quiet_asked_for existed with no
+        # caller; "movie time" turns quiet on, so it needs a spoken way off.
+        import mode
+        on = mode.set_quiet(bool(intent.args.get("on")), why="he asked")
+        turn.note(f"quiet mode {'on' if on else 'off'}")
+        turn.done(f"DONE (quiet {'on' if on else 'off'})")
         return
     if intent.local == "narration":
         # FILE 15 STEP 5. His words are the switch; the watch (a wake source)
