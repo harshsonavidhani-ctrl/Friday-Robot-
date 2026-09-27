@@ -447,6 +447,25 @@ AGENCY_TURN_MAX_S = 1.2               # no pivot longer than this
 AGENCY_LOOK_S = 0.6                   # look_around: left, right x2, left
 AGENCY_EXPLORE_M = 1.0                # explore_briefly: explore_room's budget
 AGENCY_EXPLORE_S = 30.0
+
+# --- Environments, landmark naming, run summaries (file 19) --------------
+# environments.py + environment_watch.py (inside friday-mcp) + run_summary.py.
+# ⚠ EXPLORATION IS NOT TOUCHED: this only watches files it already writes.
+ENVIRONMENTS = True
+ENV_DIR = ROOT / "state" / "environments"      # inactive envs' map + places
+ENV_FIRST_NAME = "Home"               # what today's map becomes on first run
+ENV_STATUS_FILE = ROOT / "state" / "environment_status.json"
+ENV_MATCH_MIN_SCORE = 0.35            # = global_localise.MIN_SCORE: a real fit
+ENV_BOOT_WAIT_S = 60.0                # wait this long for a LiDAR sweep at start
+ENV_WATCH_S = 20.0                    # file polls: nav map, explore state, nav log
+ENV_NAME_MAX = 40                     # a landmark name, dashboard or voice
+ENV_OBSTACLE_MIN_CELLS = 3            # new occupied cells in a place to count
+ENV_OBSTACLE_KEEP = 20                # per place, the newest kept (bounded)
+LANDMARK_MIN_AREA_M2 = 4.0            # = landmarks.MIN_AREA_M2: a new area worth a name
+LANDMARK_ASK_WINDOW_S = 90.0          # he spoke this recently: also ask by voice
+RUN_SUMMARY_FILE = ROOT / "state" / "run_summaries.json"
+RUN_SUMMARY_KEEP = 20                 # whole runs kept; older folded into a total
+RUN_SUMMARY_HOME_NAMES = ("home", "where I set off from")
 GCAL_TOKEN_FILE = ROOT / "secrets" / "google_token.json"
 GCAL_CALENDAR_ID = "primary"
 GCAL_TIMEOUT_S = 8.0

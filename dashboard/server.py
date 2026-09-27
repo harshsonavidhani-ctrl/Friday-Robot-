@@ -182,6 +182,7 @@ async def api_state(request: web.Request) -> web.Response:
         "screen": screen_state(),
         "narration": narration_state(),
         "day": day_state(),
+        "environments": environments_state(),
         "ui": ui_version(),
         # FILE 09 STEP 7: "Reuse the dashboard's existing data-fetching
         # pattern instead of adding a separate one." This is that pattern --
@@ -559,6 +560,49 @@ async def api_narration_post(request: web.Request) -> web.Response:
     import narration
     narration.set_mode(payload["on"], by="dashboard")
     return web.json_response({"ok": True, **narration_state()})
+
+
+# --- Environments (file 19) ------------------------------------------------
+# READ: the environments, which one is active, the boot check, areas waiting
+# for a name, per-place obstacles, the bounded run-summary log.
+# WRITE: exactly ONE thing -- a name for a pending area (POST /api/landmarks).
+# ⛔ This route must never grow another control (no drive, no start/stop of
+# exploration, no environment switch/create -- those are his spoken words)
+# without its own safety review. See CLAUDE.md PART 9.
+
+def environments_state() -> dict:
+    try:
+        import environments
+        import run_summary
+        return {**environments.panel(), "summaries": run_summary.panel()}
+    except Exception as exc:                    # noqa: BLE001
+        return {"error": str(exc)}
+
+
+async def api_landmarks_post(request: web.Request) -> web.Response:
+    """{"pending_id": int, "name": str} -- and nothing else is accepted."""
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    if not isinstance(payload, dict) or set(payload) - {"pending_id", "name"}:
+        raise web.HTTPBadRequest(text="only pending_id and name are accepted")
+    try:
+        pending_id = int(payload.get("pending_id"))
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="pending_id must be a number")
+    name = payload.get("name")
+    if not isinstance(name, str):
+        raise web.HTTPBadRequest(text="name must be text")
+    import environments
+    clean, why = environments.validate_name(name)
+    if clean is None:
+        raise web.HTTPBadRequest(text=f"not saved: {why}")
+    said = environments.name_pending(pending_id, clean)
+    if not said.startswith("Saved"):
+        raise web.HTTPConflict(text=said)
+    return web.json_response({"ok": True, "result": said,
+                              **environments_state()})
 
 
 # --- Memory Lane's two controls (file 17) --------------------------------
@@ -1242,6 +1286,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/narration", api_narration_post)
     app.router.add_post("/api/reminders", api_reminders_post)
     app.router.add_post("/api/memory", api_memory_post)
+    app.router.add_post("/api/landmarks", api_landmarks_post)
     app.router.add_post("/api/study", api_study_post)
     app.router.add_get("/api/reflection", api_reflection_get)
     app.router.add_post("/api/reflection", api_reflection_post)

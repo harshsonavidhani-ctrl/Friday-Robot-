@@ -1831,6 +1831,44 @@ def _narration_off(why: str, turn: "stages.Turn | None" = None) -> None:
         log.warning("could not turn narration off: %s", exc)
 
 
+async def _run_environment(intent, session, voice: Voice,
+                           turn: "stages.Turn") -> None:
+    """FILE 19: his word creates, switches or names -- never a brain tool.
+
+    Refused while a run or a journey is using the map (the MCP server's
+    read-only map_in_use knows; swapping map.npz under a drive would pull the
+    floor out from under the follower). Never raises.
+    """
+    import environments
+    said = ""
+    try:
+        if intent.local != "env_name":
+            result = await asyncio.wait_for(
+                session.call_tool("map_in_use", {}), config.STAGE_TOOL_TIMEOUT_S)
+            busy = " ".join(getattr(part, "text", "") or ""
+                            for part in (result.content or [])).strip()
+            if busy:
+                said = f"Not now — {busy}. Ask me again when I've stopped."
+        if not said:
+            if intent.local == "env_new":
+                said = environments.create_new(intent.args.get("name") or None)
+            elif intent.local == "env_switch":
+                said = environments.switch_to(intent.args["name"])
+            else:
+                said = environments.name_pending(int(intent.args["id"]),
+                                                 intent.args["name"])
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("environment command failed: %s: %s",
+                    type(exc).__name__, exc)
+        said = "I couldn't do that — something went wrong with the maps."
+    voice.say(said)
+    turn.spoke(said)
+    turn.answered_by("locally, no model", 0.0)
+    turn.note(f"environment: {said}")
+    voice.wait_until_quiet()
+    turn.done(f"DONE ({intent.local})")
+
+
 async def _run_offline(intent, session, voice: Voice, face: Face,
                        turn: "stages.Turn | None" = None) -> None:
     """Carry out a locally-understood command, still through the MCP server.
@@ -1860,6 +1898,9 @@ async def _run_offline(intent, session, voice: Voice, face: Face,
     # sentence finishes playing is one that never confirms it heard the order.
     # Only for intents with NO tool calls; the ones that have both run their
     # tools first and their local part after (see the end of this function).
+    if intent.local in ("env_new", "env_switch", "env_name"):
+        await _run_environment(intent, session, voice, turn)
+        return
     if intent.local and not intent.plan():
         voice.wait_until_quiet()
         _run_local(intent, face, turn)

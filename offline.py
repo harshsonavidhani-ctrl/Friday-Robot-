@@ -784,6 +784,54 @@ def _memory_intent(heard: str) -> Intent | None:
     return None
 
 
+_ENV_NEW_RE = re.compile(
+    r"^(?:this is|we are|we're)\s+(?:in\s+|at\s+)?(?:a\s+)?"
+    r"(?:new|different)\s+(?:place|environment|house|home|room)"
+    r"(?:\s+called\s+(?P<name>.+))?$"
+    r"|^new environment(?:\s+called\s+(?P<name2>.+))?$", re.IGNORECASE)
+_ENV_SWITCH_RE = re.compile(
+    r"^(?:we(?:'re| are)\s+(?:back\s+)?(?:at|in)|switch\s+(?:the\s+)?"
+    r"(?:map|environment|place)\s+to|load\s+(?:the\s+)?)\s+(?P<name>.+?)"
+    r"(?:\s+map)?$", re.IGNORECASE)
+_ENV_NAME_RE = re.compile(
+    r"^(?:call|name)\s+(?:it|that|this|this area|that area|the new area)\s+"
+    r"(?:as\s+)?(?P<name>.+)$", re.IGNORECASE)
+
+
+def _env_intent(heard: str) -> Intent | None:
+    """File 19. "this is a new place [called X]", "we're at <known place>",
+    "call it <name>" (only while an area waits for a name)."""
+    text = _ADDRESS_RE.sub("", heard).strip(" .!?")
+    try:
+        import environments                     # noqa: PLC0415
+    except Exception:                           # noqa: BLE001
+        return None
+    match = _ENV_NEW_RE.match(text)
+    if match:
+        name = (match.group("name") or match.group("name2") or "").strip()
+        return Intent(name="env_new", local="env_new", args={"name": name})
+    match = _ENV_SWITCH_RE.match(text)
+    if match:
+        try:
+            known = environments.by_name(match.group("name").strip())
+        except Exception:                       # noqa: BLE001
+            known = None
+        if known is not None:                   # only a place she knows
+            return Intent(name="env_switch", local="env_switch",
+                          args={"name": known["name"]})
+    match = _ENV_NAME_RE.match(text)
+    if match:
+        try:
+            waiting = environments.pending()
+        except Exception:                       # noqa: BLE001
+            waiting = []
+        if waiting:
+            return Intent(name="env_name", local="env_name",
+                          args={"id": waiting[-1]["id"],
+                                "name": match.group("name").strip()})
+    return None
+
+
 def _day_intent(heard: str) -> Intent | None:
     """File 16: reminders, to-dos, routines, the briefing. All tool calls, so
     they run through the MCP server like every other command, and all answer
@@ -1201,6 +1249,8 @@ _REFLEX_INTENTS = frozenset({
     "briefing", "quiet", "calendar_add", "calendar_ask", "calendar_remove",
     # File 17
     "remember_forever", "remember_explicit", "forget", "forget_answer",
+    # File 19
+    "env_new", "env_switch", "env_name",
 })
 
 
@@ -1258,6 +1308,13 @@ def _match(text: str, strict: bool) -> Intent | None:
     kept = _memory_intent(text.strip())
     if kept is not None:
         return kept
+
+    # FILE 19: which environment this is, and naming a new area. Local
+    # intents on purpose: switching or creating an environment is HIS word,
+    # never a tool the brain could call on its own.
+    place = _env_intent(text.strip())
+    if place is not None:
+        return place
 
     # STOP THE RUN, NOT JUST THE WHEELS. A bare stop() against a live
     # exploration halts the motors only until the run issues its next command,

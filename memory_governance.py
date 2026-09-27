@@ -55,7 +55,12 @@ TYPES: dict[str, str] = {
                 "calendar_events table (day_calendar.py) — file 16.",
     "reminder": "the reminders table (reminders.py): reminders (due_at) and "
                 "to-dos (no due_at) — file 16.",
-    "place": "the places table: named spots on the map (file 14).",
+    "environment": "the environments table (environments.py, file 19): one "
+                   "row per place she lives in -- its map file, landmark "
+                   "names, per-place obstacle log. Inactive ones keep their "
+                   "map + places in state/environments/<env_id>/.",
+    "place": "the places table: named spots on the ACTIVE environment's map "
+             "(file 14; file 19 swaps it when the environment changes).",
     "home": "the places table: the one spot called home.",
 }
 

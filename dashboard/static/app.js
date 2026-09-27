@@ -1044,6 +1044,87 @@ function paintScreen(state) {
   }
 }
 
+/* ---------- environments (file 19) ----------
+   Everything read-only except the one naming box per waiting area, which
+   POSTs {pending_id, name} to /api/landmarks and nothing else. */
+
+async function nameArea(id, input) {
+  const name = input.value.trim();
+  if (!name) { toast('Type a name first', true); return; }
+  try {
+    const r = await fetch('/api/landmarks', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pending_id: id, name }),
+    });
+    if (!r.ok) { toast(await r.text(), true); return; }
+    const j = await r.json();
+    toast(j.result);
+    paintEnvs(j);
+  } catch (e) { toast(String(e), true); }
+}
+
+function paintEnvs(d) {
+  if (!d || !$('envlist') || d.error) return;
+  const waiting = d.pending || [];
+  const badge = $('envnow');
+  badge.textContent = waiting.length
+    ? `${waiting.length} to name` : (d.active || '—');
+  badge.classList.toggle('live', waiting.length > 0);
+  const st = d.status || {};
+  $('envstatus').textContent = st.state === 'no_match'
+    ? `⚠ ${st.ask || 'At start-up she did not recognise this place.'}`
+    : st.state === 'matched' ? `In ${d.active} — recognised at start-up (${st.why || ''}).`
+    : st.state === 'no_map' ? `In ${d.active} — no map yet here.`
+    : `In ${d.active || '—'}${st.why ? ' — ' + st.why : ''}.`;
+
+  const list = $('envlist');
+  list.innerHTML = '';
+  for (const e of d.environments || []) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="kind">${e.active ? 'here' : ''}</span>` +
+      `<span class="lbl">${esc(e.name)} · ${e.landmarks} place${e.landmarks === 1 ? '' : 's'}</span>`;
+    list.appendChild(li);
+  }
+
+  $('envpendhead').hidden = !waiting.length;
+  const pend = $('envpending');
+  pend.innerHTML = '';
+  for (const p of waiting) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="kind">${esc(p.area_m2)} m²</span>`;
+    const input = document.createElement('input');
+    input.type = 'text'; input.maxLength = 40; input.placeholder = 'Name this space';
+    input.onkeydown = (ev) => { if (ev.key === 'Enter') nameArea(p.id, input); };
+    const save = document.createElement('button');
+    save.className = 'kill'; save.title = 'Save name'; save.textContent = '✓';
+    save.onclick = () => nameArea(p.id, input);
+    li.appendChild(input); li.appendChild(save);
+    pend.appendChild(li);
+  }
+
+  const obst = Object.entries(d.obstacles || {});
+  $('envobst').textContent = obst.length
+    ? 'Obstacles noted: ' + obst.map(([place, o]) =>
+        `${place} ${o.count}${o.last && o.last.class !== 'unclassified' ? ' (' + o.last.class + ')' : ''}`).join(' · ')
+    : '';
+
+  const runs = ((d.summaries || {}).runs) || [];
+  const rl = $('envruns');
+  rl.innerHTML = runs.length ? '' : '<li class="none">No runs summarised yet</li>';
+  for (const r of runs.slice(0, 6)) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="kind">${esc(ago(r.ended))}</span><span class="lbl">${esc(r.line || '')}</span>`;
+    rl.appendChild(li);
+  }
+  const older = (d.summaries || {}).older;
+  if (older && older.runs) {
+    const li = document.createElement('li');
+    li.className = 'none';
+    li.textContent = `…and ${older.runs} older runs, ${older.minutes} min, ${older.area_m2} m² in all`;
+    rl.appendChild(li);
+  }
+}
+
 /* ---------- reminders, to-do, routines, calendar (file 16) ----------
    Rides the 4 s heartbeat like the other panels. Times are typed the way
    they are said ("5 pm", "tomorrow morning", "in 20 minutes"); the server
@@ -1425,6 +1506,7 @@ async function heartbeat() {
   paintScreen(s.screen);          // rides the same beat; no extra request
   paintNarration(s.narration);    // ...and so does Describe (file 15)
   paintDay(s.day);                // ...and Reminders (file 16)
+  paintEnvs(s.environments);      // ...and Environments (file 19)
   growthNow = s.growth || growthNow;
   paintReflection(s.reflection); // ...and so does Brain Growth (step 7)
   paintStudy(s.study);           // ...and Study and Diary (file 12)
@@ -1496,6 +1578,7 @@ function showPane(id) {
   paintNarration(state.narration);
   wireDay();
   paintDay(state.day);
+  paintEnvs(state.environments);
 
   buildExplore();
   await refreshExplore();

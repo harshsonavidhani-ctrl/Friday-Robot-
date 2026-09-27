@@ -1072,3 +1072,100 @@ turn_to_person / explore_briefly.
   face and the screen are on.
 
     ./venv/bin/python scripts/test_file17.py   # 59 cases: calendar, memory rules, the guard, initiative
+
+---
+
+# PART 9 — What file 19 added (2026-09-27): environments, naming new areas, run summaries
+
+Additive. New files: `environments.py`, `environment_watch.py` (a thread in
+friday-mcp, started beside the scene watcher), `run_summary.py`,
+`mcp_server/tools/environment_tools.py` (read-only), `scripts/test_file19.py`;
+hooks in `offline.py` (env_* intents), `main.py` (`_run_environment`),
+`reminders.py` (the voice half of the naming queue), `config.py`,
+`memory_governance.TYPES` ("environment"), `mcp_server/server.py` (start) and
+the dashboard. Survey first (the spec asked): `slam/places.py` holds file 14's
+landmarks with a UNIQUE name; `landmarks.AreaWatch` had NO caller (since
+75eb9d9 "explore" is the RL run, whose map is a different frame); "ARRIVED
+after RETURN_TO_HOME" only exists for navigation; `get_visible_objects()` is
+`state/scene.json`; the dashboard already had write routes.
+
+## ⛔ The hard rule: exploration is unchanged
+Nothing here decides where, when or how she drives. rl/, slam/,
+exploration_mode.py and mcp_server/tools/explore.py are untouched
+(`test_file19.py` checks git). environment_watch only READS files they write
+(state/explore_mode.json, rl_map*.npz, the navigation map, nav_log.jsonl),
+every ENV_WATCH_S, on its own thread in friday-mcp — it cannot slow a control
+tick (those run in rl/'s own process).
+
+## The multi-environment model (steps 1-3)
+`environments` table in memory.db (kind 'environment'): {env_id, name,
+map_file, landmarks, obstacle_log, active, last_active}. **The live pair —
+`config.SLAM_MAP_FILE` + the `places` table — always belongs to the ACTIVE
+environment**, so file 14's lookups resolve against it with no slam/ change and
+the same name can exist in two environments. Inactive ones keep their map +
+places in `state/environments/<env_id>/`; a switch copies the live pair there
+FIRST, then loads the other — never overwrites unsaved, never deletes. First
+run: today's map and places became "Home" (nothing moved).
+
+**Boot check (step 2):** once per friday-mcp start, ONE LiDAR sweep,
+`global_localise.localise` against the active map — no movement (file 14's
+`nsm.locate` can drive to break a tie; not at boot). `judge()`: a fit, even
+an ambiguous one (score ≥ `ENV_MATCH_MIN_SCORE` = global_localise.MIN_SCORE),
+is the same environment — a small map around here is normal, it grows.
+**No fit anywhere is FLAGGED, never auto-created**: status file, dashboard,
+and she says "I don't recognise this place… Say: Friday, we're at <name>, or:
+Friday, this is a new place."
+
+**Switching/creating is his WORD only** — `offline._env_intent` ("this is a
+new place [called X]", "we're at <KNOWN name>", "switch the map to X") →
+`main._run_environment`, which first asks the read-only `map_in_use` tool and
+refuses while a run or a journey is using the map. Deliberately NOT brain
+tools: the model can never decide to switch or create an environment.
+⚠ "this is the kitchen" / "this place is the kitchen" stay file 14's
+remember_place; "we're at the park" (unknown) is not a switch.
+
+## Naming new areas (steps 4-5)
+`environment_watch.Watch.map_changed`: when the NAVIGATION map changes (map_here,
+go_to, trip growth), file 14's `AreaWatch` runs on it; a new region ≥
+`LANDMARK_MIN_AREA_M2` outside every known place → `pending_landmarks`. Correct
+frame by construction. ⚠ **RL explore runs do not feed it** — their map is a
+different frame; naming a spot from it would put a landmark in the wrong
+place. That is why the queue can stay empty after "Friday, explore".
+- Voice half: ReminderWatch asks "I found a new area… What should I call it?"
+  only when he spoke within `LANDMARK_ASK_WINDOW_S`; "call it X" (only while
+  one waits) names it. Queue half: the dashboard badge "N to name".
+- **THE DASHBOARD'S LANDMARK WRITE-PATH IS NAMING ONLY.** `POST /api/landmarks`
+  accepts exactly `{pending_id, name}` (any other key → 400), validates the
+  name (`environments.validate_name`: non-empty, ≤ ENV_NAME_MAX, letters/
+  digits/space/-/'), and saves through `slam.places.remember_here` in the
+  ACTIVE environment. ⛔ **Never add another control to it** — no drive, no
+  exploration start/stop, no environment switch/create — without its own
+  safety review. (Other routes — /api/memory, /api/reminders, … — are their
+  own narrow paths; this one stays naming.)
+
+## Obstacles near named places (step 6)
+On each navigation-map change: new occupied cells after file 14's despeckle
+(`path_planner.preprocess`) inside a place's radius → ONE entry for the
+NEAREST containing place (overlaps counted once), ≥ ENV_OBSTACLE_MIN_CELLS,
+class from a fresh scene.json label else "unclassified". Bounded:
+ENV_OBSTACLE_KEEP per place. Visibility only — planning reads the grid as
+before.
+
+## Run summaries (step 7), `run_summary.py`
+Two ways home, both summarised: (1) the RL explore run ending
+(explore_mode.json running → done): minutes, area gained on the explore map
+(rl_map.prev vs rl_map — valid within that one map), spoken only if the run log
+says "back where I started"; (2) navigation arriving at "home" / "where I set
+off from" (new nav_log.jsonl lines). Plus areas named, areas waiting, obstacles
+noted. Spoken through nav_voice (tts.speak) with the proud face. Log bounded
+file-09 style: last RUN_SUMMARY_KEEP whole, older folded into one total.
+
+## Dashboard (step 8)
+Environments panel: places with the active one marked, the boot check's
+verdict (and what to say if unrecognised), areas waiting with the one naming
+box, obstacles per place, recent run summaries + the older total.
+
+    ./venv/bin/python scripts/test_file19.py    # 50 cases, synthetic maps, temp files, git check
+
+**Not yet seen live:** a boot mismatch in a real second place, a new area on
+the navigation map (needs map growth), a summary after a real run.

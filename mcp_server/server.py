@@ -172,6 +172,16 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("scene watcher did not start: %s: %s",
                     type(exc).__name__, exc)
 
+    # WHICH PLACE THIS IS, and what the maps and runs amounted to (file 19):
+    # a boot check with one sweep and no movement, then file polls only.
+    # Guarded the same way -- it can cost a summary, never the server.
+    try:
+        import environment_watch
+        environment_watch.start()
+    except Exception as exc:                # noqa: BLE001
+        log.warning("environment watch did not start: %s: %s",
+                    type(exc).__name__, exc)
+
     try:
         if args.http:
             server.run("streamable-http",

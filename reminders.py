@@ -494,6 +494,7 @@ class ReminderWatch(WakeSource):
         self._last_heard = 0.0
         self._inflight: dict[int, float] = {}     # id -> when offered
         self._briefing_inflight = 0.0
+        self._landmark_inflight = 0.0
         self._last_why = ""
 
     # -- told by main.py -------------------------------------------------------
@@ -506,6 +507,10 @@ class ReminderWatch(WakeSource):
         elif item.get("kind") == "calendar":
             import day_calendar
             day_calendar.mark_announced(item.get("ids") or [])
+        elif item.get("kind") == "landmark":
+            import environments
+            for i in item.get("ids") or []:
+                environments.mark_asked(int(i))
         elif item.get("kind") == "briefing":
             import briefing
             briefing.mark_done(item.get("say", ""))
@@ -516,6 +521,8 @@ class ReminderWatch(WakeSource):
             self._inflight.pop(sign * int(i), None)
         if item.get("kind") == "briefing":
             self._briefing_inflight = 0.0
+        if item.get("kind") == "landmark":
+            self._landmark_inflight = 0.0
 
     # -- WakeSource ------------------------------------------------------------
     def pause(self) -> None:
@@ -605,6 +612,28 @@ class ReminderWatch(WakeSource):
                 f"{e['title']}." for e in soon)
             return {"kind": "calendar", "at": now,
                     "ids": [e["id"] for e in soon], "say": words}
+
+        # FILE 19 STEP 4, the voice half: a new area waits for a name AND he
+        # is mid-conversation. The dashboard queue is the reliable half; this
+        # only asks when someone is plainly here to answer.
+        try:
+            import environments
+            unasked = [p for p in environments.pending() if not p["asked_at"]]
+        except Exception as exc:                    # noqa: BLE001
+            log.debug("landmark ask skipped: %s", exc)
+            unasked = []
+        if (unasked and now - self._last_heard
+                <= float(getattr(config, "LANDMARK_ASK_WINDOW_S", 90.0))
+                and now - self._landmark_inflight > 120):
+            why = self._why_not("landmark")
+            if not why:
+                area = unasked[-1]
+                self._landmark_inflight = now
+                return {"kind": "landmark", "at": now, "ids": [area["id"]],
+                        "say": (f"I found a new area of about "
+                                f"{max(1, round(area['area_m2']))} square "
+                                f"metres. What should I call it? Say: call "
+                                f"it, and a name.")}
 
         if getattr(config, "BRIEFING", False) and \
                 now - self._briefing_inflight > 120:
