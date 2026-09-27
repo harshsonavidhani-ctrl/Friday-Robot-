@@ -111,6 +111,26 @@ def _write_heartbeat(**fields) -> None:
         log.debug("could not write the wake heartbeat: %s", exc)
 
 
+def score_gain(samples):
+    """config.WAKE_SCORE_GAIN applied to a chunk before it is scored.
+
+    A FIXED gain, clipped to int16: his distant "hey Friday" peaks at -14 to
+    -23 dBFS and scores 0.00 raw. scripts/train_verifier.stream_clip applies
+    the same number, so the verifier is trained on what it will hear. Never
+    raises -- a failure here must not end the detector thread.
+    """
+    gain = float(getattr(config, "WAKE_SCORE_GAIN", 1.0) or 1.0)
+    if gain == 1.0:
+        return samples
+    try:
+        import numpy as np
+        return np.clip(samples.astype(np.float32) * gain,
+                       -32768, 32767).astype(np.int16)
+    except Exception as exc:                    # noqa: BLE001
+        log.debug("score gain skipped: %s", exc)
+        return samples
+
+
 class WakeSource:
     """Something that yields once per wake."""
 
@@ -502,7 +522,8 @@ class OpenWakeWord(WakeSource):
                     # room. `samples` is the only thing changed: _recent above
                     # holds the raw chunk, and last_rms below is measured on
                     # the raw one too.
-                    scores = self.model().predict(self._lift(samples))
+                    scores = self.model().predict(
+                        score_gain(self._lift(samples)))
                 except Exception as exc:        # noqa: BLE001
                     # A prediction that blows up must not end the thread —
                     # that would leave Friday permanently deaf.
@@ -907,7 +928,7 @@ def tune() -> int:
                 chunk = bytes(buffer[:CHUNK_BYTES])
                 del buffer[:CHUNK_BYTES]
                 samples = np.frombuffer(chunk, dtype=np.int16)
-                scores = detector.model().predict(samples)
+                scores = detector.model().predict(score_gain(samples))
                 score = max(scores.values()) if scores else 0.0
                 peak = max(peak, score)
                 bar = "#" * int(score * 50)

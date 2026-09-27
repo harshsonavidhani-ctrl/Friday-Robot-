@@ -68,7 +68,11 @@ import config                                            # noqa: E402
 RATE = 16000
 CHUNK = 1280
 WAKE_DIR = config.ROOT / "assets/models/wake"
-CACHE = config.ROOT / "state" / "verifier_features.npz"
+# PER GAIN: features of boosted audio are different features. Mixing them with
+# a cache streamed at another config.WAKE_SCORE_GAIN would train on a mixture.
+GAIN = float(getattr(config, "WAKE_SCORE_GAIN", 1.0) or 1.0)
+CACHE = config.ROOT / "state" / ("verifier_features.npz" if GAIN == 1.0
+                                 else f"verifier_features.gain{GAIN:g}.npz")
 AUG_DIR = config.ROOT / "state" / "verifier_aug"
 KEEP_SCORE = 0.2          # features are kept for chunks scoring at least this
 # IGNORECASE, OR WHISPER'S LABELS ARE ALL SILENTLY THROWN AWAY. This was
@@ -363,6 +367,11 @@ def stream_clip(path: str):
     tw.reset_streams(_MODEL)
     tail = np.zeros(RATE // 4, np.int16)
     stream = np.concatenate([_LEAD, audio, tail]).astype(np.int16)
+    if GAIN != 1.0:
+        # EXACTLY wake_word.score_gain: the live detector scores boosted audio,
+        # so the verifier must learn from boosted audio too -- room lead and all.
+        stream = np.clip(stream.astype(np.float32) * GAIN,
+                         -32768, 32767).astype(np.int16)
     first = len(_LEAD) // CHUNK
     scores, feats = [], {}
     for n, i in enumerate(range(0, len(stream) - CHUNK + 1, CHUNK)):

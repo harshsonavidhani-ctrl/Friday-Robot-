@@ -766,7 +766,15 @@ WAKE_VERIFY = True
 # answer on the face instead of out loud.
 WAKE_HEARTBEAT_FILE = ROOT / "state" / "wake_alive.json"
 WAKE_VERIFIER_MODEL = ROOT / "assets/models/wake/friday_verifier.npz"
-WAKE_VERIFY_THRESHOLD = 0.6
+# 0.6 -> 0.4 ON 2026-09-27, FOR DISTANCE, and only because a wake below
+# WAKE_CONFIDENT_VERIFY is now SILENT (no beep, no face, answered only if the
+# words were for her). Replayed with WAKE_SCORE_GAIN 2.0, first-accept as live:
+#                      his close  far takes  real commands  false woken  false BEEPED
+#   x1, 0.6 (before)     32/40      11/14       23/29         59/84        5/84
+#   x2, 0.4 (now)        34/40      13/14       26/29         70/84        3/84
+# The 11 extra false wakes are silent: each costs a transcription and one
+# ~$0.0003 yes/no, and the strict check answered 3 of 54 false transcripts.
+WAKE_VERIFY_THRESHOLD = 0.4
 # ONLY A CONFIDENT WAKE BEEPS (2026-09-27). Harsh: "it should never fire
 # randomly only by hey friday". This week's live wakes, replayed through the
 # detector + verifier and labelled by what FOLLOWED them:
@@ -835,6 +843,28 @@ WAKE_CONFIDENT_VERIFY = 0.85
 # probably SNR-relative augmentation in the TRAINING (see the note in
 # friday-voice-pipeline), not a runtime normaliser. One line to try it.
 WAKE_AUTO_GAIN = False
+# A FIXED BOOST BEFORE SCORING (2026-09-27), the thing WAKE_AUTO_GAIN was
+# built to be. Harsh: "increase its listening power ... from little long
+# distance ... it ignores the hey friday". His quiet takes (peak -14 to -23
+# dBFS) score 0.00 in openWakeWord -- invisible at ANY threshold -- and the
+# mic is already maxed in hardware. A FIXED gain does not tilt the phrase's
+# envelope the way the ramping auto-gain did, so it cannot have that failure.
+# Replayed (his 40 close takes, 14 far, this week's 29 real commands, 84
+# false wakes), detector alone at 0.5:
+#     x1: 33/40  13/14  25/29  false 70      x2: 36/40  13/14  27/29  false 75
+#     x3.16 is no better than x2 on him and worse on commands.
+# Loud takes (peak -5 to -10 dBFS) score identically at x2: the clipping costs
+# nothing. The verifier reads the boosted features: at the OLD 0.6 floor the
+# un-boosted verifier kept only 19/29 of his commands at x2 (23 at x1), which
+# is why the floor went to 0.4 with it (26/29, see WAKE_VERIFY_THRESHOLD).
+# ⚠ A VERIFIER RETRAINED ON x2 AUDIO FAILED ITS OWN GATE (ship_verifier,
+# 2026-09-27 17:3x): held out, it lost one of his takes and one far take at
+# EVERY level, so nothing was written and the 09-19 model (md5 f62a91a7) is
+# still live. scripts/train_verifier.stream_clip applies this same number and
+# caches per gain (state/verifier_features.gain2.npz), so the next retrain
+# starts from 1159 streamed clips. Scoring only: the saved clips, the capture
+# and last_rms all stay raw. 1.0 turns it off.
+WAKE_SCORE_GAIN = 2.0
 WAKE_GAIN_TARGET_DBFS = -10.0   # the peak level his CAUGHT takes sit at
 WAKE_GAIN_MAX_DB = 12.0         # 4x. -18.5 dBFS (a typical miss) lands at -6.5
 WAKE_GAIN_FLOOR_DBFS = -42.0    # below this it is the room, not him
