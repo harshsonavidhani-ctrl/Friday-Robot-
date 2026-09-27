@@ -234,12 +234,28 @@ def _pythonw() -> str:
     return str(windowless if windowless.exists() else exe)
 
 
+def _store_python() -> bool:
+    """Microsoft Store Python: NEW files it creates under AppData go to a
+    private copy (the package's LocalCache), so a Startup entry it wrote
+    would never run. Command Prompt has to write that one file instead."""
+    return "WindowsApps" in sys.executable or "WindowsApps" in sys.prefix
+
+
 def install() -> int:
     if os.name != "nt":
         raise SystemExit("--install is for the Windows laptop.")
-    target = _startup_file()
-    target.write_text(f'@start "" "{_pythonw()}" "{Path(__file__).resolve()}"\r\n')
-    print(f"Starts at every login now ({target}).")
+    script = Path(__file__).resolve()
+    if _store_python():
+        print("This is the Microsoft Store Python, which cannot write to the "
+              "Startup folder itself.\nTo start the helper at every login, "
+              "paste this ONE line into Command Prompt (not PowerShell):\n\n"
+              f'echo @start "" pythonw "{script}" > '
+              f'"%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\'
+              f'{STARTUP_NAME}"\n')
+    else:
+        target = _startup_file()
+        target.write_text(f'@start "" "{_pythonw()}" "{script}"\r\n')
+        print(f"Starts at every login now ({target}).")
     subprocess.Popen([_pythonw(), str(Path(__file__).resolve())],
                      creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
                      close_fds=True)
