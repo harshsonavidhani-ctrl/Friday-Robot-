@@ -760,6 +760,35 @@ def _third_person(fact: str) -> str:
     return fact
 
 
+_RESEARCH_RE = re.compile(
+    r"^(?:please\s+)?(?:(?:properly|deeply|thoroughly)\s+research"
+    r"|(?:do|run)\s+(?:a\s+|some\s+)?(?:deep|proper|full|thorough)\s+research"
+    r"\s+(?:on|into|about)|deep\s+research\s+(?:on|into|about))"
+    r"\s*[:,]?\s*(?P<q>.{3,})$", re.IGNORECASE)
+_RESEARCH_TAIL_RE = re.compile(
+    r"^research\s+(?P<q>.{3,}?)[,\s]+(?:properly|in depth|thoroughly)$",
+    re.IGNORECASE)
+_NOTES_RE = re.compile(
+    r"^(?:please\s+)?(?:(?:make|take|write|prepare|create)\s+(?:me\s+)?"
+    r"(?:some\s+)?notes|notes)\s+(?:on|about)\s+(?P<q>.{3,})$",
+    re.IGNORECASE)
+
+
+def _research_intent(heard: str) -> Intent | None:
+    """File 20's explicit override: "properly research X" / "notes on X"."""
+    text = _ADDRESS_RE.sub("", heard).strip(" .!?")
+    for pattern, mode in ((_NOTES_RE, "notes"), (_RESEARCH_RE, "answer"),
+                          (_RESEARCH_TAIL_RE, "answer")):
+        match = pattern.match(text)
+        if match:
+            query = match.group("q").strip(" ,.?")
+            if len(query) >= 3:
+                return Intent(name="research_notes" if mode == "notes"
+                              else "research", tool="delegate_to_laptop",
+                              args={"query": query, "mode": mode})
+    return None
+
+
 def _memory_intent(heard: str) -> Intent | None:
     """File 17: "always remember ...", "remember that ...", "forget ...", and
     his answer to the forget question. The whole sentence has to BE the ask
@@ -1224,6 +1253,7 @@ _SPEAK_RESULT = frozenset({
     "reminder_add", "todo_add", "reminder_done", "reminder_list", "routine",
     "briefing", "calendar_add", "calendar_ask", "calendar_remove",
     "remember_forever", "forget", "forget_answer",
+    "research", "research_notes",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -1257,6 +1287,8 @@ _REFLEX_INTENTS = frozenset({
     "remember_forever", "remember_explicit", "forget", "forget_answer",
     # File 19
     "env_new", "env_switch", "env_name",
+    # File 20
+    "research", "research_notes",
 })
 
 
@@ -1309,6 +1341,11 @@ def _match(text: str, strict: bool) -> Intent | None:
     day = _day_intent(text.strip())     # original case: "lunch with Rahul"
     if day is not None:
         return day
+
+    # FILE 20: "properly research X" / "notes on X" -- the explicit override.
+    asked = _research_intent(text.strip())
+    if asked is not None:
+        return asked
 
     # FILE 17: remember for ever / forget (asks first) / his yes-or-which.
     kept = _memory_intent(text.strip())

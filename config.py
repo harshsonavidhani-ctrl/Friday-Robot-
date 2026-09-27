@@ -147,6 +147,8 @@ BRAIN_FAST_NEVER = (
     "remember", "forget", "memory", "memories", "recall", "you said",
     "earlier", "last time", "yesterday", "we talked",
     "alarm", "timer", "reminder", "remind", "schedule", "news",
+    # file 20: these need a tool (delegate_to_laptop), not a quick answer
+    "research", "in depth", "thoroughly", "in detail", "notes on",
     "here", "there", "behind", "around you", "where are you",
     "what are you doing", "yourself", "your name",
     # HER OWN BODY. 2026-09-20: "roughly how much does your chassis weigh"
@@ -458,6 +460,18 @@ HOME_ARRIVE_M = 0.45                 # this close to home: already there
 HOME_AFTER_EXPLORE_SETTLE_S = 5.0    # the run just released the LiDAR: let it settle
 HOME_AFTER_EXPLORE_TRIES = 5         # standing looks before giving up (sensor trouble only)
 HOME_START_PRIOR_M = 0.6              # after a way-back that arrived: the look-alike this near the run's start wins
+
+# --- Deep research on Harsh's laptop (file 20, laptop_research.py) ---------
+# The laptop runs laptop/friday_laptop_agent.py BY HAND; when it is not up,
+# Friday answers from her own quick search and says so. Asynchronous: a
+# research run outlasts STAGE_TOOL_TIMEOUT_S, so the result is said later,
+# between turns (ReminderWatch). ONE timeout per job, never a retry.
+LAPTOP_AGENT_FILE = ROOT / "secrets" / "laptop_agent.json"   # {url, token} -- gitignored
+LAPTOP_HEALTH_TIMEOUT_S = 2.5         # "is it up?" before anything is sent
+LAPTOP_RESEARCH_TIMEOUT_S = 300.0     # one research run, then the fallback
+RESEARCH_FALLBACK_TIMEOUT_S = 18.0    # her own answer must fit the 25 s tool limit
+RESEARCH_DIR = ROOT / "state" / "research"
+RESEARCH_KEEP = 50                    # job records kept (bounded)
 HOME_FACE_HEADING = True             # on arrival, turn to the saved heading
 HOME_FACE_TOLERANCE_DEG = 25.0       # closer than this: leave it
 HOME_FACE_MAX_S = 2.4                # one pivot, at most this long (~180°)
@@ -676,6 +690,11 @@ RATE_LIMITS = {
     # agency.py: one ~$0.001 Haiku decision. 12 an hour is the ceiling; the
     # fingerprint gate means a quiet room costs about 2 an hour.
     "agency": {"min_interval_s": 240.0, "per_hour": 12, "per_day": 100},
+    # file 20. The laptop's research is billed to ITS key, not this cap --
+    # this only stops her firing research at it in a loop. The fallback is
+    # Haiku + web search (~$0.01-0.02) on the Pi's key, under the cap.
+    "laptop_research": {"min_interval_s": 20.0, "per_hour": 10, "per_day": 40},
+    "research_fallback": {"min_interval_s": 10.0, "per_hour": 20, "per_day": 60},
     # Not money: wheels. The same three numbers keep the idle drive (step 9,
     # physical_curiosity.py) from becoming a robot that paces the room.
     "physical_curiosity": {"min_interval_s": 1800.0, "per_hour": 2,

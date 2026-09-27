@@ -495,6 +495,7 @@ class ReminderWatch(WakeSource):
         self._inflight: dict[int, float] = {}     # id -> when offered
         self._briefing_inflight = 0.0
         self._landmark_inflight = 0.0
+        self._research_inflight: dict[str, float] = {}
         self._last_why = ""
 
     # -- told by main.py -------------------------------------------------------
@@ -507,6 +508,9 @@ class ReminderWatch(WakeSource):
         elif item.get("kind") == "calendar":
             import day_calendar
             day_calendar.mark_announced(item.get("ids") or [])
+        elif item.get("kind") == "research":
+            import laptop_research
+            laptop_research.mark_announced(str(item.get("job", "")))
         elif item.get("kind") == "landmark":
             import environments
             for i in item.get("ids") or []:
@@ -523,6 +527,8 @@ class ReminderWatch(WakeSource):
             self._briefing_inflight = 0.0
         if item.get("kind") == "landmark":
             self._landmark_inflight = 0.0
+        if item.get("kind") == "research":
+            self._research_inflight.pop(str(item.get("job", "")), None)
 
     # -- WakeSource ------------------------------------------------------------
     def pause(self) -> None:
@@ -635,6 +641,27 @@ class ReminderWatch(WakeSource):
                                 f"metres. What should I call it? Say: call "
                                 f"it, and a name.")}
 
+        # FILE 20: research the laptop finished (or her fallback) -- said once.
+        self._research_inflight = {k: t for k, t in
+                                   self._research_inflight.items()
+                                   if now - t < 120}
+        try:
+            import laptop_research
+            ended = [j for j in laptop_research.finished()
+                     if j["id"] not in self._research_inflight]
+        except Exception as exc:                    # noqa: BLE001
+            log.debug("research check skipped: %s", exc)
+            ended = []
+        if ended:
+            why = self._why_not("research")
+            if why:
+                self._note(f"research — {why}")
+                return None
+            job = ended[0]
+            self._research_inflight[job["id"]] = now
+            return {"kind": "research", "at": now, "ids": [],
+                    "job": job["id"], "say": research_words(job)}
+
         if getattr(config, "BRIEFING", False) and \
                 now - self._briefing_inflight > 120:
             import briefing
@@ -661,6 +688,28 @@ class ReminderWatch(WakeSource):
             else:
                 lines.append(f"Reminder: {r['text']}.")
         return " ".join(lines)
+
+
+def research_words(job: dict) -> str:
+    """What she says when a laptop research job ends (file 20)."""
+    query = job.get("query") or "that"
+    status = job.get("status")
+    summary = (job.get("summary") or "").strip()
+    if status == "done" and job.get("mode") == "notes":
+        parts = [p for p in re.split(r"[\\/]", str(job.get("path") or "")) if p]
+        if len(parts) >= 2:
+            return (f"Your notes on {query} are saved on your laptop, in the "
+                    f"{parts[-2]} folder, as {parts[-1]}.")
+        return f"Your notes on {query} are saved on your laptop."
+    if status == "done":
+        return f"About {query}: {summary}"
+    if status == "fallback" and summary:
+        return (f"My laptop didn't finish researching {query}, so here's the "
+                f"direct answer. {summary}")
+    if job.get("mode") == "notes":
+        return f"My laptop didn't finish the notes on {query}."
+    return (f"My laptop didn't finish researching {query}, and I couldn't "
+            f"look it up myself either.")
 
 
 def parse_trigger(trigger: str) -> dict | None:

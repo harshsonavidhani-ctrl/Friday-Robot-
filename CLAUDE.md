@@ -1206,3 +1206,68 @@ the pose + `sure`; create_new gives a new place its home), `nav_tools.py`
 - Voice: "go to your dock" / "return to the dock" / "dock yourself" = go home.
 
     ./venv/bin/python scripts/test_home_dock.py   # 30 cases, temp places, fake journey
+
+---
+
+# PART 11 — What file 20 added (2026-09-27): deep research on Harsh's laptop
+
+Additive. New files: `laptop/friday_laptop_agent.py` (runs on the LAPTOP),
+`laptop_research.py`, `mcp_server/tools/research_tools.py`,
+`scripts/test_file20.py`; hooks in `reminders.py` (the announcement),
+`offline.py` (voice), `config.py`, `memory_governance.TYPES` ("research").
+
+**The laptop agent is a separate program, started by hand.** Nothing on the
+Pi installs, starts or reaches into the laptop; nothing on the laptop is a
+service. `friday_laptop_agent.py` (standard library + `anthropic`) listens on
+port 8765 and does exactly two things: `GET /health` and `POST /research
+{query, mode}`. Every request needs the shared token in `X-Friday-Token`
+(`hmac.compare_digest`; 401 otherwise). No other endpoint, no commands, no
+file reads, one research at a time (429 while busy), 8 KB bodies, 1000-char
+queries. Research = `claude-opus-5` + `web_search_20260209` + adaptive
+thinking, `pause_turn` resumed (≤ 5), SUMMARY (≤ 60 spoken words) / DETAIL
+(Markdown) + cited sources. Notes mode also writes ONE `.md` into
+`notes_dir` (default `~/Friday_Notes`), slugged name, never overwrites,
+never outside that folder. ⚠ It bills HARSH'S API KEY on the laptop — not
+the Pi's daily cap.
+
+**`delegate_to_laptop(query, mode)`** (MCP tool, and the reflex phrases
+"properly research X", "research X properly / in depth", "do a deep research
+on X", "notes on X", "make notes about X"). ASYNCHRONOUS because a research
+run outlasts `STAGE_TOOL_TIMEOUT_S`: a 2.5 s health check, then a thread in
+friday-mcp makes ONE request with `LAPTOP_RESEARCH_TIMEOUT_S` (300 s) and
+the tool returns at once ("I'm researching X properly on your laptop").
+`state/research/<id>.json` holds the job (bounded, `RESEARCH_KEEP`).
+ReminderWatch says the result between turns, through the same may-she-speak
+gate as reminders: "About X: …" / "Your notes on X are saved on your laptop,
+in the Friday_Notes folder, as ….md". `research_detail` gives the fuller
+answer when he asks for more.
+- **Laptop not up** (answer): her own answer at once — Haiku +
+  `web_search_20250305`, key read from `.env` for that call only
+  (`scene_describe._api_key`), daily cap, `RATE_LIMITS["research_fallback"]`
+  — prefixed "My laptop isn't available, so here's the direct answer."
+- **Laptop failed / timed out mid-job**: the same fallback, announced later
+  ("My laptop didn't finish researching X, so here's the direct answer.").
+- **Notes and the laptop is not there**: she says so plainly and writes
+  NOTHING locally (notes were asked for on the laptop).
+- **Never a retry.** One health check, one request, then the fallback.
+  `RATE_LIMITS["laptop_research"]` stops her firing research in a loop.
+- Every finished job (laptop or fallback) is remembered as kind `research`
+  (source `laptop` / `fallback`): query, summary, date, notes path.
+
+**Secrets:** `secrets/laptop_agent.json` {url, token} on the Pi and
+`secrets/friday_agent.json` (the laptop's config, same token) — both
+gitignored, 0600. The token is never printed or committed. ⚠ The url is the
+laptop's CURRENT address (10.12.120.204, the SSH client on 2026-09-27); on
+DHCP it can change — then edit the url in `secrets/laptop_agent.json`
+(follow-up: a fixed lease or a hostname).
+
+**Setting up the laptop (Harsh, once):**
+
+    scp harsh@<pi>:friday/laptop/friday_laptop_agent.py .
+    scp harsh@<pi>:friday/secrets/friday_agent.json .
+    pip install anthropic
+    export ANTHROPIC_API_KEY=...        # the laptop's own key
+    python3 friday_laptop_agent.py      # Ctrl-C stops it
+    # allow inbound TCP 8765 from the Pi in the laptop's firewall
+
+    ./venv/bin/python scripts/test_file20.py   # 84 cases, agent in-process, no money

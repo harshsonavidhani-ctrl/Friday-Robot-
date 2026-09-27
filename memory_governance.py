@@ -59,6 +59,9 @@ TYPES: dict[str, str] = {
                    "row per place she lives in -- its map file, landmark "
                    "names, per-place obstacle log. Inactive ones keep their "
                    "map + places in state/environments/<env_id>/.",
+    "research": "facts.kind: what laptop research found (laptop_research.py, "
+                "file 20) -- query, summary, date, notes path; source "
+                "'laptop' or 'fallback'.",
     "place": "the places table: named spots on the ACTIVE environment's map "
              "(file 14; file 19 swaps it when the environment changes).",
     "home": "the places table: the one spot called home.",
