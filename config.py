@@ -469,9 +469,9 @@ HOME_START_PRIOR_M = 0.6              # after a way-back that arrived: the look-
 # written here (Haiku + web search, under the daily cap), saved THERE, and
 # said later between turns (ReminderWatch). One try each, never a retry.
 LAPTOP_AGENT_FILE = ROOT / "secrets" / "laptop_agent.json"   # {url, token} -- gitignored
-LAPTOP_HEALTH_TIMEOUT_S = 2.5         # "is it up?" before anything is done
+LAPTOP_HEALTH_TIMEOUT_S = 4.0         # "is it up?": its Wi-Fi sleeps, first reply 1.6 s
 LAPTOP_REFIND_MAX = 2                 # its address changed: other places to look
-LAPTOP_REFIND_TIMEOUT_S = 1.5
+LAPTOP_REFIND_TIMEOUT_S = 4.0         # 1.5 missed it after a reboot (22:11 09-28)
 LAPTOP_OPEN_TIMEOUT_S = 12.0          # "play X" looks up the top video first
 LAPTOP_SAVE_TIMEOUT_S = 10.0
 LAPTOP_NOTES_MODEL = MODEL_FAST       # Haiku: web_search_20250305
