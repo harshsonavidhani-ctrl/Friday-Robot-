@@ -491,6 +491,11 @@ def main(argv: list[str] | None = None) -> int:
     # is a flag that does nothing on the robot.
     loop.navigator_enabled = not args.no_navigator
     cfg.nav_speed_authority = float(getattr(args, "navigator_speed_authority", 0.0))
+    # The seventh and eighth: the way back (2026-09-26) and undoing the last move
+    # (2026-09-28). Without these lines --no-way-back / --no-unstick did nothing on
+    # the robot, because run_localnav.sh drives THIS main().
+    loop.way_back_enabled = not getattr(args, "no_way_back", False)
+    loop.unstick_enabled = not getattr(args, "no_unstick", False)
     # --map-file and --state-file were the fifth and sixth. --map-file being ignored
     # meant a diagnostic run pointed at a scratch map OVERWROTE the real one.
     if getattr(args, "map_file", None):

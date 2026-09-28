@@ -103,6 +103,7 @@ import cameras as _cameras  # noqa: E402
 from dwa import DynamicWindowPlanner  # noqa: E402
 from narrator import P_RECOVERY, Narrator  # noqa: E402
 import way_back as _way_back  # noqa: E402
+import unstick as _unstick  # noqa: E402
 from navigator import Navigator  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
@@ -2978,6 +2979,15 @@ class ControlLoop:
         self.way_back: "_way_back.WayBack | None" = None
         self.way_back_enabled = True
         self._home_target: "_way_back.HomeTarget | None" = None
+        # UNDO THE LAST MOVE (Harsh, 2026-09-28). When the ToF reflex, its turn
+        # freeze and the rear gate all say "no" at once, she retraces the move that
+        # got her there -- space her own body has just left -- and after two tries
+        # at one place asks to be moved. See rl/unstick.py.
+        self.unstick_enabled = True
+        self.unstick = _unstick.Unstick(cfg.robot_radius, cfg.v_min, cfg.omega_max,
+                                        cfg.tof_pivot_min_clearance)
+        self._undo_active = False
+        self._avoid_seen = 0
         # LOCAL NAVIGATION. The planner says WHERE (a frontier, at 0.5 Hz); this says
         # HOW to get there right now, by simulating candidate arcs against the live
         # scan at full control rate. It sits between the policy and the governor and,
@@ -3236,10 +3246,34 @@ class ControlLoop:
             depth, age = self.slots["tof"].read()
             if depth is not None and age <= self.cfg.tof_deadline:
                 _, emergency = self.reflex.evaluate(depth)
-                if emergency:
+                if emergency and self._fast_reflex_should_stop():
                     self.motors.emergency_stop()
                     self.limiter.reset()
             time.sleep(period)
+
+    def _fast_reflex_should_stop(self) -> bool:
+        """The 30 Hz reflex applies the TICK's emergency rule, not a harsher one.
+
+        Found 2026-09-28. The tick's reflex was changed on 2026-09-02 (approved by
+        Harsh) to let a sanctioned REVERSE through an emergency, and a PIVOT when the
+        bumper is clear of tof_pivot_min_clearance -- but this thread was not, and it
+        stopped the motors 30 times a second whatever the tick had decided. So every
+        escape the chain allowed near an obstacle ran for 0-33 ms of each 100 ms
+        tick. Measured in the black boxes: sanctioned pivots held for 1.8 s with the
+        bumper reading 0.142-0.148 m (a robot turning at 0.8 rad/s would have swung
+        ~80 deg); on 2026-09-26 839 sanctioned reverses left her 2-13 mm from what
+        she was touching. The limiter had the same bug once and was fixed with it;
+        this thread was missed.
+
+        Forward is still killed at once -- that is what this thread is for.
+        """
+        v, w = self.motors.last_cmd
+        if v > 1e-6:
+            return True
+        if (abs(w) > 1e-6 and not self._undo_active
+                and self.reflex.last_min <= self.cfg.tof_pivot_min_clearance):
+            return True
+        return False
 
     # ------------------------------------------------------------ observation ------
     def _lidar_body_rejects(self) -> int:
@@ -3969,6 +4003,35 @@ class ControlLoop:
                 f"{c.tof_stop_distance:.2f} / slow {c.tof_slow_distance:.2f}"
                 if (emergency or tof_scale < 1.0) else "")
 
+        # ---- 4b. UNDO THE LAST MOVE: every rule above said "no" -------------------
+        #
+        # Harsh, 2026-09-28: "it gets stucked at one place sometimes rather than
+        # trying to avoid it ... dont bump". MEASURED 2026-09-27 22:00:44: bumper
+        # 0.09 m froze turning (<= tof_pivot_min_clearance) and forward, the rear
+        # gate refused reverse at 0.33 m, and she output (0, 0) for 2 min 40 s. She
+        # had turned INTO it. rl/unstick.py retraces the last move -- only through
+        # space her body has just left, never forward, the rear LiDAR guarding any
+        # reverse -- and after two tries at one place stops and asks to be moved.
+        # This is the ONE stage allowed to issue motion the reflex refused, and only
+        # that retrace; `--no-unstick` is the old run exactly.
+        self._undo_active = False
+        if self.unstick_enabled:
+            frozen = bool(emergency and v >= 0.0
+                          and self.reflex.last_min <= c.tof_pivot_min_clearance)
+            undo = self.unstick.update(
+                frozen=frozen,
+                tof_min=self.reflex.last_min if depth is not None else None,
+                rear_min=self.governor.last_rear_min, pose=self.map.pose)
+            if undo is not None:
+                v, omega, why_undo = undo
+                v = min(v, 0.0)                     # never forward, whoever asked
+                pivot_allowed = omega != 0.0
+                self._undo_active = True
+                self.stats["undo_ticks"] = self.stats.get("undo_ticks", 0) + 1
+                gate = "undo"
+                rec.add("undo", v, omega, why_undo)
+            self._drain_unstick()
+
         lap("reflex")
         # ---- 5. slew limit + actuate ----------------------------------------------
         v, omega = self.limiter(v, omega, dt_real, emergency=emergency,
@@ -3993,9 +4056,13 @@ class ControlLoop:
         if self.sim is not None:
             self.sim.step(v, omega, c.dt)
             self.map.dead_reckon(v, omega, c.dt)
+            if self.unstick_enabled:
+                self.unstick.record(v, omega, c.dt)
         else:
             ex_v, ex_omega = self.motors.executed()
             self.map.dead_reckon(ex_v, ex_omega, c.dt)
+            if self.unstick_enabled:
+                self.unstick.record(ex_v, ex_omega, c.dt)
 
         # ---- 6b. persistent memory ------------------------------------------------
         # Same pose as the observation map, so the two never disagree about where the
@@ -4235,6 +4302,37 @@ class ControlLoop:
                           if why == "explored"
                           else "Heading back to where I started.", P_RECOVERY)
 
+    def _say(self, key: str, text: str) -> None:
+        """One line out loud, through whichever voice this run has. The localnav
+        run speaks through `self.voice` (friday_voice); pi_deploy's own narrator is
+        the fallback."""
+        voice = getattr(self, "voice", None)
+        if voice is not None:
+            voice.say(key, text, priority=2, cooldown_s=0.0)
+        else:
+            self.narrator.say(key, text, P_RECOVERY)
+
+    def _drain_unstick(self) -> None:
+        """Say what unstick decided, and keep the planner away from where she got
+        stuck. Cheap: nothing to do on almost every tick."""
+        u = self.unstick
+        while u.events:
+            key, text = u.events.pop(0)
+            LOGGER.info("UNSTICK %s: %s (%s)", key, text, u.snapshot())
+            self._say(key, text)
+        if len(u.avoid) > self._avoid_seen and self.planner is not None:
+            keys = u.avoid_keys()
+            with self.planner._lock:
+                self.planner.blacklist |= keys
+                t = self.planner.target
+                if (t is not None and self.planner.home is None
+                        and t.key() in keys):
+                    self.planner.target = None
+                    self.planner.targets_abandoned += 1
+            LOGGER.info("UNSTICK: avoiding %d stuck spot(s) -- %d frontier keys "
+                        "blacklisted", len(u.avoid), len(keys))
+            self._avoid_seen = len(u.avoid)
+
     def _steer_home(self) -> None:
         home = self.way_back.home()
         if home is not None and self._home_target is not None:
@@ -4278,6 +4376,8 @@ class ControlLoop:
         if self.way_back is not None:
             self.way_back.tracker.stop()
             LOGGER.info("Way back: %s", self.way_back.snapshot())
+        if self.unstick_enabled:
+            LOGGER.info("Unstick: %s", self.unstick.snapshot())
         if self.planner is not None:
             self.planner.stop()
             self.planner.join(timeout=3.0)
@@ -5474,6 +5574,78 @@ def selftest(cfg: RobotConfig, loop: ControlLoop) -> int:
           f"|nudge|={abs(nudge):.2f} cap={cfg.freespace_max_nudge:.2f} "
           f"omega_max={cfg.omega_max:.2f}")
 
+    # 10. UNDO THE LAST MOVE (2026-09-28). First the 30 Hz reflex: it must apply
+    #     the TICK's emergency rule. It used to stop the motors whatever the tick
+    #     decided, so every escape the chain sanctioned near an obstacle ran for
+    #     0-33 ms of each tick and she sat still "recovering".
+    saved_cmd, saved_min = loop.motors.last_cmd, loop.reflex.last_min
+    loop.reflex.last_min = cfg.tof_stop_distance - 0.04        # emergency, turn allowed
+    loop.motors.last_cmd = (0.10, 0.0)
+    check("fast reflex stops FORWARD in an emergency", loop._fast_reflex_should_stop())
+    loop.motors.last_cmd = (0.10, 1.0)
+    check("fast reflex stops a forward ARC in an emergency",
+          loop._fast_reflex_should_stop())
+    loop.motors.last_cmd = (cfg.v_min, 0.0)
+    check("fast reflex lets a sanctioned reverse run", not loop._fast_reflex_should_stop())
+    loop.motors.last_cmd = (0.0, cfg.omega_max)
+    check("fast reflex lets a turn run outside the turn freeze",
+          not loop._fast_reflex_should_stop())
+    loop.reflex.last_min = cfg.tof_pivot_min_clearance - 0.02
+    check("fast reflex stops a turn inside the turn freeze", loop._fast_reflex_should_stop())
+    loop._undo_active = True
+    check("...unless it is the undo retracing her last turn",
+          not loop._fast_reflex_should_stop())
+    loop.motors.last_cmd = (0.10, 0.0)
+    check("...and never forward, undo or not", loop._fast_reflex_should_stop())
+    loop._undo_active = False
+    loop.motors.last_cmd, loop.reflex.last_min = saved_cmd, saved_min
+
+    # 10b. THE 09-27 LOCK THROUGH THE WHOLE CHAIN. Bumper inside the turn freeze,
+    #      blocked ahead, rear inside rear_stop; she had just turned into it. The
+    #      chain must issue the undo turn (the other way), the limiter must let it
+    #      out, and nothing may go forward.
+    if loop.unstick_enabled:
+        def _hold(name, value):
+            slot = loop.slots[name]
+            real = slot.publish
+            real(value)
+            slot.publish = lambda *a, **k: None
+            return lambda: setattr(slot, "publish", real)
+
+        stuck_depth = np.full((8, 8), 2.0, np.float32)
+        stuck_depth[3:6, 3:6] = cfg.tof_pivot_min_clearance - 0.03
+        stuck_scan = np.full(cfg.n_beams, 3.0, np.float32)
+        stuck_scan[:2] = stuck_scan[-2:] = cfg.hard_stop - 0.05
+        rear_i = cfg.n_beams // 2
+        stuck_scan[rear_i - 2:rear_i + 3] = cfg.rear_stop - 0.03
+        real_unstick = loop.unstick
+        loop.unstick = _unstick.Unstick(cfg.robot_radius, cfg.v_min, cfg.omega_max,
+                                        cfg.tof_pivot_min_clearance)
+        for _ in range(8):
+            loop.unstick.record(0.0, -1.5, cfg.dt)          # turned right into it
+        thaw_t, thaw_l = _hold("tof", stuck_depth), _hold("lidar", stuck_scan)
+        real_update = loop.recovery.update
+        loop.recovery.update = lambda *a, **k: None         # the undo's own test
+        worst_v, undo_w, undo_gate = 0.0, 0.0, ""
+        try:
+            for _ in range(_unstick.LOCK_TICKS + 2):
+                row = loop.tick()
+                worst_v = max(worst_v, float(row["v"]))
+                if row["gate"] == "undo":
+                    undo_gate, undo_w = "undo", loop.motors.last_cmd[1]
+        finally:
+            loop.recovery.update = real_update
+            thaw_t()
+            thaw_l()
+        check("the triple lock is undone by turning back the other way",
+              undo_gate == "undo" and undo_w > 0.0, f"omega={undo_w:+.2f}")
+        check("...and the undo never goes forward", worst_v <= 0.0, f"max v={worst_v:+.3f}")
+        check("...and the 30 Hz reflex lets the undo run",
+              not loop._fast_reflex_should_stop() if loop._undo_active else False)
+        loop.unstick, loop._undo_active = real_unstick, False
+        loop.limiter.reset()
+        loop.motors.emergency_stop()
+
     # 9. the LD19's FIRST revolution is partial and must never be published. The thread
     #    attaches mid-sweep, so the bins behind the first wrap cover only the arc the
     #    sensor happened to sweep after start-up; every other bin still holds inf and
@@ -5556,6 +5728,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "governor, exactly as before. Use it to A/B the thing it was "
                         "built to fix: turning per metre, and what fraction of ticks "
                         "end in a safety override.")
+    p.add_argument("--no-unstick", action="store_true",
+                   help="Do not undo the last move when the ToF reflex, its turn "
+                        "freeze and the rear gate all refuse at once (rl/unstick.py). "
+                        "The 30 Hz reflex still applies the tick's rule.")
     p.add_argument("--no-way-back", action="store_true",
                    help="Do not drive back to where the run started when it ends. "
                         "By default a run with the map and planner on keeps going "
@@ -5906,6 +6082,7 @@ def main(argv: list[str] | None = None) -> int:
         loop.map_enabled = not args.no_map
         loop.planner_enabled = not args.no_planner
         loop.way_back_enabled = not args.no_way_back
+        loop.unstick_enabled = not args.no_unstick
         loop.navigator_enabled = not args.no_navigator
         cfg.nav_speed_authority = float(args.navigator_speed_authority)
         loop.recovery_enabled = not args.no_recovery
