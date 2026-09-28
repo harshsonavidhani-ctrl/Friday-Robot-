@@ -50,7 +50,11 @@ if str(_FRIDAY_ROOT) not in sys.path:
 # own arrival tolerance for a round trip is the same order.
 HOME_REACHED_M = 0.25
 # How long the way back may take before she stops and says how far off she is.
-RETURN_BUDGET_S = 120.0
+# Harsh, 2026-09-28: "she should try try till she reaches the starting position".
+# 120 s gave up while she was still working at it; the undo (rl/unstick.py) and
+# her asking to be moved now handle being stuck on the way. Ten minutes is the
+# battery's limit, not a planning one -- the Pi has lost power mid-run twice.
+RETURN_BUDGET_S = 600.0
 # Frontier exhaustion must hold this long (and the run be this old) before it ends
 # the exploring early -- the planner reports "exhausted" for a cycle or two while
 # the map is still arriving.

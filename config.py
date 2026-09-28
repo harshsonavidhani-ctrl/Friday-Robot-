@@ -456,7 +456,11 @@ AGENCY_EXPLORE_S = 30.0
 # Home/Dock, and after exploring let the path planner find the way back,
 # re-planning around new obstacles. The exploration run itself is untouched.
 HOME_SAVE_AT_BOOT = True             # only when the environment has NO home yet
-EXPLORE_ENDS_AT_HOME = True          # a run that ended ON ITS OWN drives home
+# Harsh, 2026-09-28, after watching it: "returning where I started" -- he chose
+# "stop at the start" over also driving to the dock. The run's own way back
+# does that; the hand-over to file 14's engine (which went FAILSAFE at 23:29,
+# "blocked ... 102 mm ahead", right after the way back had arrived) is off.
+EXPLORE_ENDS_AT_HOME = False         # True: a run that ended ON ITS OWN then drives home
 HOME_ARRIVE_M = 0.45                 # this close to home: already there
 HOME_AFTER_EXPLORE_SETTLE_S = 5.0    # the run just released the LiDAR: let it settle
 HOME_AFTER_EXPLORE_TRIES = 5         # standing looks before giving up (sensor trouble only)

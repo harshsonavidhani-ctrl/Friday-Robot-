@@ -2407,7 +2407,8 @@ class FridayMotorDriver(MotorDriver):
                  turn_min_omega: float = 0.15,
                  turn_kick_duty: float | None = None,
                  turn_kick_cooldown_s: float = 1.0,
-                 pulse_creep_duty: int = 0) -> None:
+                 pulse_creep_duty: int = 0, pulse_burst_ticks: int = 1,
+                 kick_rest_s: float = 0.0, plug_guard: bool = False) -> None:
         super().__init__(cfg)
         import serial
 
@@ -2488,6 +2489,29 @@ class FridayMotorDriver(MotorDriver):
         self.kick_ticks, self.kick_scale = kick_ticks, kick_scale
         self._kick_left = 0
         self._moving = False
+        # QUIETER MOTORS (Harsh, 2026-09-28: "the motors are like making too noise").
+        # MEASURED in the 23:24 run (190 s): 252 motor starts, 159 of them after a
+        # single stopped tick; 102 of those one-tick gaps were the creep pulse
+        # coasting while the chain still asked to move. ~300 ticks ran at kick
+        # duty (216-229) because the standstill kick fired after EVERY stop, however
+        # short -- the pivot kick's 1 s cooldown never applied to it. 51 times a
+        # powered wheel went straight from one direction to the other (plugging:
+        # a clunk and a current spike on a battery that has cut the Pi twice).
+        # Each fix only ever REMOVES energy from the wheels; a stop request is
+        # honoured on the tick it arrives, exactly as before.
+        #   pulse_burst_ticks -- a creep pulse lasts this many ticks, with the same
+        #       average speed (1 = the old one-tick pulse)
+        #   kick_rest_s -- the standstill kick needs this long stopped first; a
+        #       robot still coasting has no static friction to break (0 = old)
+        #   plug_guard -- a wheel about to reverse under power coasts one tick
+        self.pulse_burst_ticks = max(1, int(pulse_burst_ticks))
+        self._burst_left = 0
+        self.kick_rest_s = max(0.0, float(kick_rest_s))
+        self._stopped_at = -1e9                   # a fresh driver has been at rest
+        self.plug_guard = bool(plug_guard)
+        self._prev_duties = (0, 0)
+        self.noise_stats = {"starts": 0, "kicks": 0, "plug_coasts": 0,
+                            "pulse_bursts": 0}
         self._err_count = 0
         self._cmds = 0
         self._closed = False
@@ -2668,9 +2692,21 @@ class FridayMotorDriver(MotorDriver):
         pulse = self.pulse_speed_mps()
         peak = max(abs(left), abs(right))
         if pulse <= 0.0 or peak <= 0.0 or peak >= self.min_speed_mps():
+            self._burst_left = 0
+            if peak <= 0.0:
+                self._pulse_acc = 0.0               # a stop owes no pulses
             return left, right                      # fast enough to execute directly
         self._pulse_acc += min(peak / pulse, 1.0)
-        if self._pulse_acc < 1.0:
+        # A burst of pulse_burst_ticks, started when one tick's worth has built up
+        # (as responsive as the old pulse) and paid for afterwards: the accumulator
+        # may go negative during a burst, and the coast that follows is longer. The
+        # average is the request, with a third as many starts at 3.
+        if self._burst_left > 0:
+            self._burst_left -= 1
+        elif self._pulse_acc >= 1.0:
+            self._burst_left = self.pulse_burst_ticks - 1
+            self.noise_stats["pulse_bursts"] += 1
+        else:
             return 0.0, 0.0                         # coast this tick
         self._pulse_acc -= 1.0
         scale = pulse / peak                        # both wheels: geometry preserved
@@ -2694,17 +2730,36 @@ class FridayMotorDriver(MotorDriver):
         l_duty = self._mps_to_duty(left, floor, cut)
         r_duty = self._mps_to_duty(right, floor, cut)
 
+        # No plugging: a wheel that would go straight from one direction to the
+        # other under power coasts for this tick instead. Only ever a stop.
+        pl, pr = self._prev_duties
+        if (self.plug_guard and (l_duty or r_duty)
+                and (l_duty * pl < 0 or r_duty * pr < 0)):
+            self.noise_stats["plug_coasts"] += 1
+            l_duty = r_duty = 0
+            self._burst_left = 0
+
         if l_duty == 0 and r_duty == 0:
+            if self._moving:
+                self._stopped_at = now
             self._moving = False
+            self._was_pivot = False
             self._kick_left = 0
+            self._prev_duties = (0, 0)
             self.last_executed = (0.0, 0.0)               # the creep cutoff bites here
             self.last_duties = (0, 0)
             self._write_raw("S")                          # firmware's dedicated stop
             return
 
         # Boost out of standstill, spread across ticks so the loop never blocks.
-        if not self._moving or entering_pivot:
+        # A REAL standstill: after a one-tick coast she is still rolling and there
+        # is no static friction to break -- kicking there was most of the noise.
+        if not self._moving:
+            self.noise_stats["starts"] += 1
+        rested = now - self._stopped_at >= self.kick_rest_s
+        if (not self._moving and rested) or entering_pivot:
             self._kick_left = self.kick_ticks
+            self.noise_stats["kicks"] += 1
             if entering_pivot:
                 self._last_turn_kick = now
         if self._kick_left > 0:
@@ -2716,6 +2771,7 @@ class FridayMotorDriver(MotorDriver):
             l_duty = int(max(-ceiling, min(ceiling, l_duty * self.kick_scale)))
             r_duty = int(max(-ceiling, min(ceiling, r_duty * self.kick_scale)))
         self._moving = True
+        self._prev_duties = (l_duty, r_duty)
 
         # What these duties actually mean in m/s, for dead reckoning. Taken BEFORE
         # the inversions, which are wiring corrections and not changes in motion.
@@ -2787,6 +2843,7 @@ class FridayMotorDriver(MotorDriver):
         """Idempotent: safe to call from several shutdown paths."""
         if self._closed:
             return
+        LOGGER.info("Motor noise: %s", self.noise_stats)
         try:
             self._write_raw("S")                          # last command is always a stop
         except Exception:                                 # noqa: BLE001
@@ -4297,20 +4354,18 @@ class ControlLoop:
         LOGGER.info("WAY BACK (%s): heading to where I started, %s away by the start "
                     "tracker (%s).", why,
                     "?" if d is None else f"{d:.2f} m", wb.tracker.snapshot())
-        self.narrator.say("way_back",
-                          "Nothing more to explore here. Heading back early."
-                          if why == "explored"
-                          else "Heading back to where I started.", P_RECOVERY)
+        # Through the run's own voice. `self.narrator` is disabled in the localnav
+        # run, so until 2026-09-28 none of these lines was ever heard on the robot.
+        self._say("way_back", "Exploration completed. Returning to where I started.")
 
-    def _say(self, key: str, text: str) -> None:
+    def _say(self, key: str, text: str) -> bool:
         """One line out loud, through whichever voice this run has. The localnav
         run speaks through `self.voice` (friday_voice); pi_deploy's own narrator is
-        the fallback."""
+        the fallback. True if a voice took the line."""
         voice = getattr(self, "voice", None)
         if voice is not None:
-            voice.say(key, text, priority=2, cooldown_s=0.0)
-        else:
-            self.narrator.say(key, text, P_RECOVERY)
+            return bool(voice.say(key, text, priority=2, cooldown_s=0.0))
+        return bool(self.narrator.say(key, text, P_RECOVERY))
 
     def _drain_unstick(self) -> None:
         """Say what unstick decided, and keep the planner away from where she got
@@ -4348,17 +4403,19 @@ class ControlLoop:
         LOGGER.info("WAY BACK %s after %.0f s, %s from the start (%s).",
                     outcome.upper(), took, "?" if d is None else f"{d:.2f} m",
                     wb.tracker.snapshot())
-        said = self.narrator.spoken
-        if self.narrator.say(
-                "way_back_done",
-                "I am back where I started." if outcome == "arrived" else
-                (f"I could not get all the way back. I am about {d:.1f} metres "
-                 "from where I started." if d is not None else
-                 "I could not get all the way back."), P_RECOVERY):
-            # Let the line be heard before shutdown stops the narrator.
-            deadline = time.monotonic() + 8.0
-            while self.narrator.spoken == said and time.monotonic() < deadline:
-                time.sleep(0.1)
+        voice = getattr(self, "voice", None) or self.narrator
+        said = getattr(voice, "spoken", 0)
+        taken = self._say("way_back_done",
+                          "I am back where I started." if outcome == "arrived" else
+                          (f"I could not get all the way back. I am about {d:.1f} "
+                           "metres from where I started." if d is not None else
+                           "I could not get all the way back."))
+        # Let the line be heard before shutdown stops the voice. Both voices count
+        # what they have finished saying in `spoken`.
+        deadline = time.monotonic() + 12.0
+        while (taken and getattr(voice, "spoken", said) == said
+               and time.monotonic() < deadline):
+            time.sleep(0.1)
 
     def shutdown(self) -> None:
         self._stop.set()
@@ -5129,6 +5186,9 @@ def build_motors(cfg: RobotConfig, args) -> MotorDriver:
             turn_kick_duty=args.motor_turn_kick_duty,
             turn_kick_cooldown_s=args.motor_turn_kick_cooldown,
             pulse_creep_duty=args.motor_pulse_duty,
+            pulse_burst_ticks=args.motor_pulse_burst,
+            kick_rest_s=args.motor_kick_rest,
+            plug_guard=args.motor_plug_guard,
         )
         LOGGER.warning("MOTORS ARE LIVE (max_duty=%.2f). Wheels can turn.",
                        args.motor_max_duty)
@@ -5900,6 +5960,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--motor-turn-kick-cooldown", type=float, default=1.0,
                    help="Minimum seconds between pivot boosts, so an oscillating "
                         "policy cannot turn a transient into sustained current.")
+    p.add_argument("--motor-pulse-burst", type=int, default=3,
+                   help="Ticks per creep pulse (same average speed). 1 = the old "
+                        "one-tick pulse, which started the motors ~3x as often.")
+    p.add_argument("--motor-kick-rest", type=float, default=0.3,
+                   help="Seconds stopped before the standstill kick fires again. "
+                        "0 = kick after every stop, however short (the old, noisy way).")
+    p.add_argument("--motor-plug-guard", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="Coast one tick instead of reversing a wheel under power.")
     p.add_argument("--motor-invert-left", action=argparse.BooleanOptionalAction,
                    default=False)
     p.add_argument("--motor-invert-right", action=argparse.BooleanOptionalAction,
@@ -5990,6 +6059,9 @@ def main(argv: list[str] | None = None) -> int:
             turn_kick_duty=args.motor_turn_kick_duty,
             turn_kick_cooldown_s=args.motor_turn_kick_cooldown,
             pulse_creep_duty=args.motor_pulse_duty,
+            pulse_burst_ticks=args.motor_pulse_burst,
+            kick_rest_s=args.motor_kick_rest,
+            plug_guard=args.motor_plug_guard,
         )
         try:
             if args.motor_calibrate is not None:

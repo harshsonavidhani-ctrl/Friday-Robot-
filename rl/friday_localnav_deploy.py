@@ -526,7 +526,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         loop.run(duration=getattr(args, "duration", None))
     finally:
-        if supervisor.st.phase == Phase.COMPLETE:
+        wb = getattr(loop, "way_back", None)
+        if wb is not None and wb.phase == "done":
+            pass        # she has just said where she ended up; nothing to add
+        elif supervisor.st.phase == Phase.COMPLETE:
             voice.say("done", "Exploration complete. Shutting down.",
                       priority=2, cooldown_s=0.0)
         else:
