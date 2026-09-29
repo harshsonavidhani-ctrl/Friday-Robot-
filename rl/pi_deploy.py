@@ -3045,6 +3045,10 @@ class ControlLoop:
                                         cfg.tof_pivot_min_clearance)
         self._undo_active = False
         self._avoid_seen = 0
+        # FILE 21 HOLD (Harsh, 2026-09-29): the exploration mission may ask her to
+        # stand still -- to ask what an area is called, for "go to X", for a pause.
+        # Inert unless state/exploration_mission/hold.json is fresh. rl/way_back.py.
+        self.hold = _way_back.Hold()
         # LOCAL NAVIGATION. The planner says WHERE (a frontier, at 0.5 Hz); this says
         # HOW to get there right now, by simulating candidate arcs against the live
         # scan at full control rate. It sits between the policy and the governor and,
@@ -3510,6 +3514,14 @@ class ControlLoop:
         # original stop back exactly as it was.
         lidar_stale = scan is None or scan_age > c.lidar_deadline
         tof_stale = c.tof_enabled and (depth is None or depth_age > c.tof_deadline)
+        # ---- FILE 21 HOLD: the exploration mission asked her to stand still -------
+        # Motors zero and NOTHING ELSE DECIDES this tick: the policy, navigator,
+        # recovery, unstick and the vision fallback below do not run, so a question
+        # is never read as "I am stalled" and she never creeps on cameras while
+        # held. Zero is zero whatever the sensors say. Lapses by itself
+        # (rl/way_back.py Hold).
+        if self.hold.active():
+            return self._hold_row(scan, depth, t_start)
         if lidar_stale != tof_stale:
             row = self._vision_drive("vision_" + ("lidar" if lidar_stale else "tof"),
                                      scan, scan_age, depth_age)
@@ -4203,6 +4215,30 @@ class ControlLoop:
         self.stage_wall_s += time.perf_counter() - t_start
         return row
 
+    def _hold_row(self, scan, depth, t_start: float) -> dict[str, Any]:
+        """FILE 21: one held tick. Zero on the wire; a record says why."""
+        c = self.cfg
+        self.motors.drive(0.0, 0.0)
+        self.limiter.reset()
+        self.stats["mission_hold_ticks"] = self.stats.get("mission_hold_ticks", 0) + 1
+        self.stats["ticks"] += 1
+        loop_ms = (time.perf_counter() - t_start) * 1000.0
+        lidar_min = float(np.min(scan)) if scan is not None else float("nan")
+        rec = tlm.DecisionRecord(tick=self.stats["ticks"], obs_dim=c.obs_dim,
+                                 model_name=self.policy.model_name, model_loaded=True,
+                                 gate="mission_hold", lidar_min=lidar_min)
+        rec.final_v, rec.final_omega = 0.0, 0.0
+        rec.wire = self.motors.last_wire
+        rec.loop_ms = loop_ms
+        rec.pose = tuple(float(x) for x in self.map.pose)
+        self.last_record = rec
+        return {"gate": "mission_hold", "v": 0.0, "omega": 0.0,
+                "lidar_min": lidar_min,
+                "tof_min": self.reflex.last_min if depth is not None else float("nan"),
+                "visual": 0.0, "v_policy": 0.0, "omega_policy": 0.0,
+                "v_raw": float("nan"), "omega_raw": float("nan"),
+                "authority": tlm.SRC_SAFETY, "loop_ms": loop_ms}
+
     # ------------------------------------------------------------------- run --------
     def run(self, duration: float | None = None, verbose: bool = True) -> None:
         if self.cfg.tof_enabled:
@@ -4274,6 +4310,9 @@ class ControlLoop:
                                 "(within %.2f m, up to %.0f s).",
                                 self.way_back.reached_m, self.way_back.budget_s)
 
+        self.hold.start()                   # FILE 21: polls the mission's hold file
+        held_left = None                    # FILE 21: run time left when a hold began
+
         period = self.cfg.dt
         next_tick = time.monotonic()
         t_start = time.monotonic()
@@ -4283,6 +4322,15 @@ class ControlLoop:
         try:
             while not self._stop.is_set():
                 now = time.monotonic()
+                # FILE 21: time standing still for the mission (a question, a pause)
+                # does not use up the run's exploring time.
+                if self.hold.active():
+                    if held_left is None and t_end is not None:
+                        held_left = max(t_end - now, 0.0)
+                    if held_left is not None:
+                        t_end = now + held_left
+                else:
+                    held_left = None
                 wb = self.way_back
                 if wb is not None and wb.phase == "exploring":
                     if t_end is not None and now >= t_end:

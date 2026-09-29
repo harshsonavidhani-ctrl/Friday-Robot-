@@ -323,6 +323,94 @@ class StartTracker(threading.Thread):
                 "error": self.error, "home_rl": self.home_rl()}
 
 
+# --- FILE 21: the exploration mission's seam (Harsh approved, 2026-09-29) --------
+# Two small additions, and neither changes how she explores:
+#   * the tracker process PUBLISHES its latest fix + sweep (<= 1 Hz) for the
+#     mission (exploration_mission/adapters.py reads it): the mission needs a
+#     scan-matched pose and the sweeps to map areas, and only this process has them;
+#   * `Hold`: while the mission's hold file is fresh, pi_deploy's tick holds the
+#     motors at zero and decides nothing (a question, "go to X", a pause).
+MISSION_DIR = _FRIDAY_ROOT / "state" / "exploration_mission"
+PUBLISH_PERIOD_S = 1.0
+# A hold further ahead than this is refused, however it was written: a wall clock
+# stepping backwards must not turn a 3 s hold into an hour of standing still.
+HOLD_MAX_AHEAD_S = 30.0
+HOLD_POLL_S = 0.2
+
+
+def _publish(scan, rl, blind, start_rl, res: dict, max_range: float,
+             path: Path | None = None) -> bool:
+    """Write the latest fix for the mission. NEVER RAISES.
+
+    Called in the TRACKER PROCESS after the fix has already gone back to the run,
+    so the control loop never waits on this write. Not fsynced: it is replaced
+    every second and a power cut costing the last one loses nothing.
+    """
+    import json
+    import os
+    try:
+        sweep = scan if isinstance(scan, dict) else scan_to_dict(scan, max_range, blind)
+        payload = {"v": 1, "t": time.time(),
+                   "pose": [float(v) for v in res["pose"]],
+                   "reason": str(res.get("reason", "")),
+                   "rl": [float(v) for v in rl],
+                   "start_rl": None if start_rl is None else [float(v) for v in start_rl],
+                   "fold_ms": round(float(res.get("ms", 0.0)), 1),
+                   "scan": {str(int(round(float(k)))): int(v) for k, v in sweep.items()}}
+        target = path or MISSION_DIR / "live.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        with open(tmp, "w") as handle:
+            json.dump(payload, handle)
+        os.replace(tmp, target)
+        return True
+    except Exception:                                     # noqa: BLE001
+        return False
+
+
+class Hold(threading.Thread):
+    """The mission asking the run to stand still. Polled here, read in O(1).
+
+    The mission writes {"until": <wall time>, "why": ...} and keeps refreshing it
+    while it wants her still; `active()` is True only while that deadline is in
+    the future (and no more than HOLD_MAX_AHEAD_S away). Nothing refreshes it =
+    it lapses by itself, so a crashed mission cannot leave her frozen. No file =
+    inactive, which is every run that has nothing to do with a mission.
+    """
+
+    def __init__(self, path: Path | None = None, period_s: float = HOLD_POLL_S):
+        super().__init__(name="mission-hold", daemon=True)
+        self.path = path or MISSION_DIR / "hold.json"
+        self.period_s = float(period_s)
+        self._until = 0.0                                 # time.monotonic() deadline
+        self.why = ""
+
+    def poll(self) -> None:
+        import json
+        try:
+            data = json.loads(self.path.read_text())
+            ahead = float(data["until"]) - time.time()
+        except Exception:                                 # noqa: BLE001
+            self._until = 0.0
+            return
+        if 0.0 < ahead <= HOLD_MAX_AHEAD_S:
+            self.why = str(data.get("why", ""))
+            self._until = time.monotonic() + ahead
+        else:
+            self._until = 0.0
+
+    def run(self) -> None:
+        while True:
+            self.poll()
+            time.sleep(self.period_s)
+
+    def active(self) -> bool:
+        return time.monotonic() < self._until
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"active": self.active(), "why": self.why if self.active() else ""}
+
+
 def _serve(max_range: float) -> int:
     """The tracker process: pickled jobs on stdin, pickled fixes on stdout."""
     import os
@@ -332,6 +420,7 @@ def _serve(max_range: float) -> int:
     os.dup2(2, 1)                   # a stray print must not corrupt the pipe
     inp = sys.stdin.buffer
     folder = _Folder(max_range)
+    last_pub = 0.0                  # FILE 21
     while True:
         try:
             scan, rl, blind, start_rl = pickle.load(inp)
@@ -343,6 +432,10 @@ def _serve(max_range: float) -> int:
             res = {"error": f"{type(exc).__name__}: {exc}"}
         pickle.dump(res, out, protocol=4)
         out.flush()
+        # FILE 21: after the reply, so the run never waits on it.
+        if res and "pose" in res and time.monotonic() - last_pub >= PUBLISH_PERIOD_S:
+            last_pub = time.monotonic()
+            _publish(scan, rl, blind, start_rl, res, max_range)
 
 
 def _match(field, local: np.ndarray, centre, window_m: float, window_deg: float,

@@ -3067,3 +3067,55 @@ LIDAR_BUMP_STOP_MM = 200
 # more than the D500's few millimetres of jitter.
 SAFETY_STALL_AFTER_S = 0.5   # give the motors time to actually start
 SAFETY_STALL_MM = 15         # median range change below this means stuck
+
+# --- File 21: the exploration mission (exploration_mission/) ---------------
+# The uploaded spec "15_exploration_mission.md" (15 was taken, so it is 21 here).
+# Mark the start, explore with the RL policy, ask what each area is called,
+# finish when nothing reachable is left, drive back to the start -- offline, no
+# model, no key. These are the spec's 4.17 defaults; exploration_mission/config.py
+# only VALIDATES them (types, ranges), it holds no numbers of its own.
+#   grid.free_below / occupied_above apply only to a plain probability grid: the
+#   SLAM map is read through slam's own masks (SLAM_P_FREE / SLAM_P_OCCUPIED) so
+#   FREE here is FREE for the planner. Traversable uses NAV_INFLATE_M (File 14's
+#   own inflation); robot_radius_m + safety_margin_m are only the fallback.
+#   curiosity.mode ships "off" (the spec says "ask"): a robot proposing trips on
+#   its own is Harsh's call after a supervised test, like AGENCY_MOTION.
+#   run: the seam with the RL run (rl/way_back.py publisher + Hold, 2026-09-29).
+EXPLORATION_MISSION = {
+    "env_id": "auto",
+    "loop_hz": 10,
+    "checkpoint_s": 10,
+    "events_cap": 500,
+    "grid": {"free_below": 0.25, "occupied_above": 0.65, "seg_resolution_m": 0.10,
+             "robot_radius_m": 0.15, "safety_margin_m": 0.05},
+    "explore": {"mission_cap_min": 25, "stagnation_m2": 0.5,
+                "stagnation_window_s": 60, "frontier_hz": 1.0,
+                "min_frontier_size_m": 0.30, "gain_scale": 1.0,
+                "potential_scale": 3.0, "heading_scale": 0.5, "revisit_scale": 1.0,
+                "progress_timeout_s": 20, "progress_min_m": 0.2,
+                "blacklist_after_fails": 2, "blacklist_radius_m": 0.5,
+                "done_after_empty_checks": 3, "assist_arrive_m": 0.30},
+    "segmentation": {"period_s": 10, "door_half_width_m": 0.40, "min_seed_m2": 0.5,
+                     "min_room_m2": 1.5, "polygon_epsilon_m": 0.10,
+                     "max_polygon_vertices": 40, "same_area_iou": 0.5,
+                     "grow_update_ratio": 1.2},
+    "label": {"trigger": "segmentation", "min_area_m2": 2.5, "min_dwell_s": 15,
+              "recent_exit_s": 20, "cooldown_s": 30, "distance_prompt_m": 4.0,
+              "reask_once": True, "max_name_words": 4, "max_name_chars": 30,
+              "suggest_from_objects": True, "suggestion_min_conf": 0.6,
+              "suggestion_min_sightings": 2},
+    "voice": {"listen_s": 10, "listen_after_tts_s": 0.3, "whisper_language": "en"},
+    "signature": {"scans": 20, "arrival_scans": 5, "max_range_m": 8.0,
+                  "match_mad_m": 0.20, "min_overlap": 0.60},
+    "breadcrumbs": {"spacing_m": 0.25, "checkpoint_keep": 500, "loop_cut_m": 0.30},
+    "return": {"arrive_tolerance_m": 0.35, "arrive_hysteresis_m": 0.10,
+               "arrive_dwell_s": 2.0, "wait_s": 5, "backup_m": 0.25,
+               "backup_rear_clear_m": 0.35, "ring_step_m": 0.05, "help_retry_s": 30,
+               "help_max_cycles": 20, "help_speak_every": 3},
+    "boot": {"slam_wait_s": 60, "home_check_period_s": 30},
+    "curiosity": {"mode": "off", "threshold": 0.8, "weights": [0.5, 0.3, 0.2],
+                  "min_idle_min": 10, "min_quiet_conversation_min": 5,
+                  "quiet_hours": ["22:00", "08:00"], "no_cooldown_h": 2,
+                  "silence_cooldown_min": 30, "check_period_s": 60},
+    "run": {"live_max_age_s": 3.0, "hold_ttl_s": 3.0, "hold_refresh_s": 1.0},
+}
