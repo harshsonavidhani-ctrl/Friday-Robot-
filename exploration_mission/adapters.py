@@ -30,7 +30,6 @@ import json
 import math
 import os
 import sqlite3
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -38,6 +37,7 @@ from typing import Any, Callable
 import numpy as np
 
 from exploration_mission import grid_utils
+from exploration_mission.durable import atomic_write_json  # noqa: F401 (re-export)
 
 LIVE_NAME = "live.json"
 HOLD_NAME = "hold.json"
@@ -54,34 +54,6 @@ def _friday_root() -> Path:
 
 def mission_state_dir() -> Path:
     return _friday_root() / "state" / "exploration_mission"
-
-
-def atomic_write_json(path: Path, payload: Any) -> None:
-    """tmp in the same directory -> flush -> fsync -> replace -> fsync dir."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.",
-                               suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as handle:
-            json.dump(payload, handle)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    try:
-        dfd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
-    except OSError:
-        pass
 
 
 def _read_json(path: Path) -> Any | None:
@@ -366,11 +338,68 @@ class PowerAdapter:
         return None
 
 
+class PlacesAdapter:
+    """File 14's landmarks: slam/places.py's `places` table, which always
+    belongs to the ACTIVE environment (File 19). Called, never changed.
+
+    Exact names only. `places.find` falls back to a unique SUBSTRING, which is
+    right for "go to the kitch" and wrong for deciding whether two names are
+    the same place, so identity here never goes through it.
+    """
+
+    def __init__(self, bundle: Callable[[str], None] | None = None):
+        self._bundle = bundle
+
+    def all(self) -> list[dict]:
+        from slam import places
+        return places.all()
+
+    def find_exact(self, name: str) -> dict | None:
+        want = " ".join(str(name).strip().lower().split())
+        for row in self.all():
+            if row["name"] == want:
+                return row
+        return None
+
+    def upsert(self, name: str, x: float, y: float, radius_m: float,
+               note: str) -> dict:
+        from slam import places
+        row = places.remember_here(name, (float(x), float(y), 0.0), kind="area",
+                                   note=note, radius_m=float(radius_m))
+        self._refresh(f"area saved: {row['name']}")
+        return row
+
+    def remove(self, name: str) -> bool:
+        from slam import places
+        gone = places.forget(name)
+        if gone:
+            self._refresh(f"area forgotten: {name}")
+        return gone
+
+    def stamp(self, map_id: str | None, text: str) -> str:
+        """The note File 14 reads its map session from ([map:<id>] ...)."""
+        import landmarks
+        return landmarks.stamp_note(map_id or "unknown", text)
+
+    def _refresh(self, reason: str) -> None:
+        """Keep File 14's navigation bundle current, as remember_place does.
+        Never raises: losing the bundle copy must not lose the area."""
+        try:
+            if self._bundle is not None:
+                self._bundle(reason)
+            else:
+                import nav_bundle
+                nav_bundle.save_quietly(reason)
+        except Exception:                             # noqa: BLE001
+            pass
+
+
 class Adapters:
     """Everything the mission may touch, in one bundle."""
 
     def __init__(self, *, clock=None, run=None, slam=None, face=None,
-                 voice=None, detector=None, memory=None, env=None, power=None):
+                 voice=None, detector=None, memory=None, env=None, power=None,
+                 places=None):
         self.clock = clock or Clock()
         self.run = run or RunAdapter(clock=self.clock)
         self.slam = slam or SlamAdapter()
@@ -380,11 +409,45 @@ class Adapters:
         self.memory = memory or MemoryAdapter()
         self.env = env or EnvAdapter()
         self.power = power or PowerAdapter()
+        self.places = places or PlacesAdapter()
 
 
 # =============================================================================
 # fakes -- scripted, in-memory, for tests and sim
 # =============================================================================
+
+class FakePlaces:
+    """File 14's places table as a dict (name -> row)."""
+
+    def __init__(self, rows: list[dict] | None = None):
+        self.rows: dict[str, dict] = {}
+        for r in rows or []:
+            self.rows[r["name"]] = dict(r)
+        self.refreshes = 0
+
+    def all(self):
+        return [dict(r) for r in self.rows.values()]
+
+    def find_exact(self, name):
+        row = self.rows.get(" ".join(str(name).strip().lower().split()))
+        return None if row is None else dict(row)
+
+    def upsert(self, name, x, y, radius_m, note):
+        name = " ".join(name.strip().lower().split())
+        self.rows[name] = {"name": name, "x": float(x), "y": float(y),
+                           "radius_m": float(radius_m), "kind": "area",
+                           "note": note}
+        self.refreshes += 1
+        return dict(self.rows[name])
+
+    def remove(self, name):
+        gone = self.rows.pop(" ".join(name.strip().lower().split()), None)
+        if gone is not None:
+            self.refreshes += 1
+        return gone is not None
+
+    def stamp(self, map_id, text):
+        return f"[map:{map_id or 'unknown'}] {text}".strip()
 
 class FakeClock(Clock):
     def __init__(self, start: float = 1_000_000.0):
@@ -545,7 +608,8 @@ def fake_adapters(**kw) -> Adapters:
                     detector=kw.pop("detector", None) or FakeDetector(),
                     memory=kw.pop("memory", None) or FakeMemory(),
                     env=kw.pop("env", None) or FakeEnv(),
-                    power=kw.pop("power", None) or FakePower())
+                    power=kw.pop("power", None) or FakePower(),
+                    places=kw.pop("places", None) or FakePlaces())
 
 
 # =============================================================================
