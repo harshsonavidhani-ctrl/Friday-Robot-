@@ -63,20 +63,7 @@ def _read_json(path: Path) -> Any | None:
         return None
 
 
-def scan_to_bins(scan: dict | None) -> np.ndarray:
-    """{bearing_deg: mm} (robot frame, 0 = forward) -> float32[360] metres,
-    NaN where there was no return. The signature's per-1-degree form."""
-    out = np.full(360, np.nan, dtype=np.float32)
-    if not scan:
-        return out
-    for deg, mm in scan.items():
-        try:
-            d, r = int(round(float(deg))) % 360, float(mm)
-        except (TypeError, ValueError):
-            continue
-        if r > 0 and math.isfinite(r):
-            out[d] = r / 1000.0
-    return out
+from exploration_mission.home_anchor import scan_to_bins  # noqa: E402,F401
 
 
 # =============================================================================
@@ -328,6 +315,55 @@ class EnvAdapter:
         except sqlite3.Error:
             row = None
         return str(row[0]) if row and row[0] else "home"
+
+
+class LidarAdapter:
+    """Robot-frame sweeps (0 = ahead, CCW) for the start signature.
+
+    Two sources, never both: while an RL run holds the hardware lease, the
+    run's published sweep (already robot frame); otherwise friday-mcp's own
+    LiDAR through mcp_server/tools/mapping.py's `_sweep` (the File 19 boot
+    check's path), turned from raw bearings by config.LIDAR_FORWARD_DEG.
+
+    ⚠ `in_server` MUST be True only inside friday-mcp. Anywhere else,
+    hardware.ranges() would open a SECOND reader on the LiDAR's serial port
+    that friday-mcp already holds; the default refuses instead.
+    """
+
+    def __init__(self, run: RunAdapter | None = None, in_server: bool = False,
+                 sweep_fn: Callable[[], dict] | None = None,
+                 forward_deg: float | None = None, live_max_age_s: float = 1.5):
+        self.run = run
+        self.in_server = in_server
+        self._sweep_fn = sweep_fn
+        self._forward = forward_deg
+        self.live_max_age_s = live_max_age_s
+
+    def _forward_deg(self) -> float:
+        if self._forward is None:
+            import config
+            self._forward = float(config.LIDAR_FORWARD_DEG)
+        return self._forward
+
+    def _leased(self) -> bool:
+        from mcp_server import hardware
+        return hardware.lease_active() > 0.0
+
+    def sweep(self) -> dict[float, int] | None:
+        """One robot-frame sweep, or None when no source can give one."""
+        from exploration_mission.home_anchor import raw_to_robot
+        if self._sweep_fn is not None:                   # tests
+            raw = self._sweep_fn()
+            return None if raw is None else raw_to_robot(raw, self._forward_deg())
+        if self.run is not None:
+            fix = self.run.live(self.live_max_age_s)
+            if fix is not None:
+                return {float(k): int(v) for k, v in fix["scan"].items()}
+        if not self.in_server or self._leased():
+            return None
+        from mcp_server.tools.mapping import _sweep
+        raw = _sweep() or None
+        return None if raw is None else raw_to_robot(raw, self._forward_deg())
 
 
 class PowerAdapter:
