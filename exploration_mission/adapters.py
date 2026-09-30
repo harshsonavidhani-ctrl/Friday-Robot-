@@ -41,6 +41,9 @@ from exploration_mission.durable import atomic_write_json  # noqa: F401 (re-expo
 
 LIVE_NAME = "live.json"
 HOLD_NAME = "hold.json"
+RETURN_NAME = "return.json"
+# rl/telemetry.py REASON_CODES: the gates that mean "stopped for safety".
+ESTOP_GATES = frozenset({"REFLEX_STOP", "visual_stop", "stale_lidar", "stale_tof"})
 # The run refuses a hold further in the future than this, however it was
 # written (see rl/way_back.py Hold) -- a wall clock stepping backwards must not
 # turn a 3 s hold into an hour of standing still. Kept in step with it here.
@@ -76,6 +79,9 @@ class Clock:
 
     def wall(self) -> float:
         return time.time()
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
 
 
 class RunAdapter:
@@ -172,6 +178,35 @@ class RunAdapter:
             return None
         return data
 
+    # The run announces its own return and arrival ("Exploration completed.
+    # Returning to where I started." / "I am back where I started."), so the
+    # mission must not say those two lines again.
+    announces_return = True
+
+    @property
+    def return_file(self) -> Path:
+        return self.state_dir / RETURN_NAME
+
+    def request_return(self, mission_id: str | None = None) -> None:
+        """Ask the run to start ITS OWN way back now (rl/way_back.py reads
+        this; honoured only while fresh and only if written after the run
+        began)."""
+        atomic_write_json(self.return_file, {"at": self.clock.wall(),
+                                             "mission": mission_id,
+                                             "pid": os.getpid()})
+
+    def clear_return(self) -> None:
+        try:
+            self.return_file.unlink()
+        except FileNotFoundError:
+            pass
+
+    @staticmethod
+    def estop(status: dict | None) -> bool:
+        """Is the run's OWN safety layer holding her right now (ToF reflex, a
+        floor hazard, a stale sensor)? Read from its published gate."""
+        return bool(status) and status.get("reason_code") in ESTOP_GATES
+
 
 class SlamAdapter:
     """The saved SLAM map (File 14's frame). Read, never written."""
@@ -213,10 +248,34 @@ class SlamAdapter:
         clean = path_planner.despeckle(og)[0]
         return grid_utils.from_occupancy_grid(clean)
 
+    def new_grid(self):
+        """An empty slam OccupancyGrid for the mission's own map."""
+        from slam.grid import OccupancyGrid
+        return OccupancyGrid()
+
+    def localise(self, scan_robot: dict) -> tuple[float, float, float] | None:
+        """Where a robot-frame sweep was taken on the SAVED map, if -- and only
+        if -- global_localise is sure (it refuses when two spots look alike).
+        None = not placed; the mission then keeps its areas in its own frame."""
+        og = self.load()
+        if og is None or not scan_robot:
+            return None
+        import global_localise
+        scan = {int(round(float(k))) % 360: int(v) for k, v in scan_robot.items()}
+        try:
+            fix = global_localise.localise(og, scan, forward_deg=0.0)
+        except Exception:                             # noqa: BLE001
+            return None
+        return tuple(float(v) for v in fix.pose) if fix.ok() else None
+
     def inflate_m(self) -> float:
         """File 14's own inflation (slam/plan.py::passable_mask)."""
         import config
         return float(config.NAV_INFLATE_M)
+
+    def body_radius_m(self) -> float:
+        import config
+        return float(config.NAV_ROBOT_RADIUS_M)
 
     def map_id(self, read_only: bool = False) -> str | None:
         """File 14's map_session_id. `read_only` reads the session file and
@@ -443,12 +502,70 @@ class PlacesAdapter:
             pass
 
 
+class NavAdapter:
+    """File 14's engine, as far as the mission may use it in step 7.
+
+    ⚠ NOT DURING A RUN. The RL run holds the hardware lease (LiDAR + motors),
+    so File 14 cannot drive while it is out, held or not. A go-to in the
+    middle of exploring is therefore refused ("I can't do that right now")
+    rather than faked; the spec's pause -> TARGET_NAV -> resume needs the run
+    to give up the wheels, which it cannot do without losing its start frame.
+    The return ladder (step 8) drives with File 14 only once the run has ended.
+    """
+
+    def available_during_run(self) -> bool:
+        return False
+
+    def go(self, target: dict) -> bool:
+        """Start a journey to a saved place. Wired in step 11 with the voice
+        hook (it needs friday-mcp's event loop); until then: not available."""
+        return False
+
+    def busy(self) -> bool:
+        return False
+
+    def outcome(self) -> str | None:
+        return None
+
+    # --- the return ladder's engine (rth_ladder.Ladder) ---
+    # File 14's NavController lives on friday-mcp's event loop; the mission is
+    # given that loop when it is started inside friday-mcp (the launcher line,
+    # step 9). Until then there is no engine, and the ladder says so: it goes
+    # straight to HELP instead of pretending to try.
+    def available(self) -> bool:
+        return False
+
+    def attempt(self, goal_xy, waypoints=None) -> bool:
+        return False
+
+    def clear_runtime_obstacles(self) -> None:
+        pass
+
+    def spin_relocalise(self) -> bool:
+        return False
+
+    def back_up(self, metres: float) -> bool:
+        return False
+
+    def rear_clear_m(self) -> float | None:
+        return None
+
+    def distance_to(self, goal_xy) -> float | None:
+        return None
+
+    def pose(self):
+        return None
+
+    def stop(self) -> None:
+        pass
+
+
 class Adapters:
     """Everything the mission may touch, in one bundle."""
 
     def __init__(self, *, clock=None, run=None, slam=None, face=None,
                  voice=None, detector=None, memory=None, env=None, power=None,
-                 places=None):
+                 places=None, lidar=None, nav=None):
         self.clock = clock or Clock()
         self.run = run or RunAdapter(clock=self.clock)
         self.slam = slam or SlamAdapter()
@@ -459,6 +576,8 @@ class Adapters:
         self.env = env or EnvAdapter()
         self.power = power or PowerAdapter()
         self.places = places or PlacesAdapter()
+        self.lidar = lidar or LidarAdapter(run=self.run)
+        self.nav = nav or NavAdapter()
 
 
 # =============================================================================
@@ -511,6 +630,9 @@ class FakeClock(Clock):
     def advance(self, seconds: float) -> None:
         self.t += float(seconds)
 
+    def sleep(self, seconds: float) -> None:
+        self.advance(seconds)
+
 
 class FakeRun:
     """A scripted RL run: set `.live_fix`/`.status_data`; records orders."""
@@ -560,6 +682,123 @@ class FakeRun:
         if self._hold and self._hold["until"] > self.clock.wall():
             return dict(self._hold)
         return None
+
+    announces_return = False
+
+    def request_return(self, mission_id=None):
+        self.orders.append(("return", mission_id))
+
+    def clear_return(self):
+        pass
+
+    estop = staticmethod(RunAdapter.estop)
+
+
+class FakeLidar:
+    """Robot-frame sweeps from a list (the last one repeats); None = no LiDAR."""
+
+    def __init__(self, sweeps=None):
+        self.sweeps = list(sweeps or [])
+        self.calls = 0
+
+    def sweep(self):
+        self.calls += 1
+        if not self.sweeps:
+            return None
+        return dict(self.sweeps[min(self.calls - 1, len(self.sweeps) - 1)])
+
+
+class FakeNav:
+    """File 14 for the tests.
+
+    A go-to journey ends when the test says (`finish(outcome)`). The return
+    ladder's attempts are SCRIPTED: `script` is the outcome of each attempt in
+    turn ("FAILED", "ARRIVED", "REFUSED" = attempt() returns False); past the
+    end of the script every attempt fails. Each attempt or manoeuvre takes
+    `attempt_s` / `maneuver_s` of the fake clock. `calls` records the order.
+    """
+
+    def __init__(self, during_run: bool = True, clock=None, script=None,
+                 engine: bool = True, attempt_s: float = 4.0,
+                 maneuver_s: float = 2.0, rear_m: float | None = 1.0,
+                 position=(1.5, 0.0, 0.0)):
+        self.during_run = during_run
+        self.journeys: list[dict] = []
+        self._busy = False
+        self._outcome: str | None = None
+        self.clock = clock
+        self.script = list(script or [])
+        self.engine = engine
+        self.attempt_s, self.maneuver_s, self.rear_m = attempt_s, maneuver_s, rear_m
+        self.position = tuple(position)
+        self.calls: list[tuple] = []
+        self._until = 0.0
+        self._pending: str | None = None
+
+    # --- the ladder's engine ---
+    def available(self):
+        return self.engine
+
+    def _start(self, seconds: float, outcome: str | None) -> None:
+        self._until = self.clock.monotonic() + seconds
+        self._pending, self._busy, self._outcome = outcome, True, None
+
+    def attempt(self, goal_xy, waypoints=None):
+        result = self.script.pop(0) if self.script else "FAILED"
+        self.calls.append(("attempt", tuple(round(float(v), 2) for v in goal_xy),
+                           None if waypoints is None else len(waypoints), result))
+        if result == "REFUSED":
+            return False
+        self._start(self.attempt_s, result)
+        return True
+
+    def clear_runtime_obstacles(self):
+        self.calls.append(("clear",))
+
+    def spin_relocalise(self):
+        self.calls.append(("spin",))
+        self._start(self.maneuver_s, "SPUN")
+        return True
+
+    def back_up(self, metres):
+        self.calls.append(("backup", metres))
+        self._start(self.maneuver_s, "BACKED")
+        return True
+
+    def rear_clear_m(self):
+        return self.rear_m
+
+    def distance_to(self, goal_xy):
+        return math.hypot(self.position[0] - goal_xy[0], self.position[1] - goal_xy[1])
+
+    def pose(self):
+        return self.position
+
+    def stop(self):
+        self.calls.append(("stop",))
+        self._busy = False
+
+    def available_during_run(self):
+        return self.during_run
+
+    def go(self, target):
+        self.journeys.append(dict(target))
+        self._busy, self._outcome = True, None
+        return True
+
+    def busy(self):
+        if self._busy and self._pending is not None and self.clock is not None \
+                and self.clock.monotonic() >= self._until:
+            self._busy, self._outcome, self._pending = False, self._pending, None
+            if self._outcome == "ARRIVED":
+                self.position = (0.05, 0.0, 0.0)
+        return self._busy
+
+    def outcome(self):
+        return self._outcome
+
+    def finish(self, outcome: str = "ARRIVED"):
+        self._busy, self._outcome, self._pending = False, outcome, None
 
 
 class FakeSlam:
@@ -661,7 +900,9 @@ def fake_adapters(**kw) -> Adapters:
                     memory=kw.pop("memory", None) or FakeMemory(),
                     env=kw.pop("env", None) or FakeEnv(),
                     power=kw.pop("power", None) or FakePower(),
-                    places=kw.pop("places", None) or FakePlaces())
+                    places=kw.pop("places", None) or FakePlaces(),
+                    lidar=kw.pop("lidar", None) or FakeLidar(),
+                    nav=kw.pop("nav", None) or FakeNav())
 
 
 # =============================================================================

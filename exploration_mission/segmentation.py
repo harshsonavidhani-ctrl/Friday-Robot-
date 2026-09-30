@@ -406,9 +406,13 @@ class LabelChoice:
     complete: bool
 
 
-def why_not(s: Segment, dwell: Dwell, now: float, p: LabelParams) -> list[str]:
+def why_not(s: Segment, dwell: Dwell, now: float, p: LabelParams,
+            final: bool = False) -> list[str]:
     """The per-room conditions of the segmentation trigger that FAIL (empty =
-    this room qualifies). Cooldown and state are global, checked by the caller."""
+    this room qualifies). Cooldown and state are global, checked by the caller.
+    `final` is the one last ask at completion: the room she is standing in
+    needs no dwell time then ("so the room Friday is in gets asked", 4.6) --
+    a small room seen whole from the doorway is finished in seconds."""
     out = []
     if s.area_m2 < p.min_area_m2:
         out.append("too small")
@@ -420,7 +424,8 @@ def why_not(s: Segment, dwell: Dwell, now: float, p: LabelParams) -> list[str]:
     exited = dwell.exited_at.get(s.key)
     recent = (dwell.current != s.key and exited is not None
               and now - exited < p.recent_exit_s)
-    if not (inside >= p.min_dwell_s or recent):
+    here_at_the_end = final and dwell.current == s.key
+    if not (inside >= p.min_dwell_s or recent or here_at_the_end):
         out.append("not dwelt in, not just left")
     return out
 
@@ -446,7 +451,8 @@ def choose_label_target(seg: Segmentation, dwell: Dwell, now: float,
         return None
 
     if p.trigger in ("segmentation", "both"):
-        ok = [s for s in seg.segments if not why_not(s, dwell, now, p)]
+        ok = [s for s in seg.segments
+              if not why_not(s, dwell, now, p, final=ignore_cooldown)]
         if ok:
             here = [s for s in ok if s.key == dwell.current]
             if here:

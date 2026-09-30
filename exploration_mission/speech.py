@@ -53,6 +53,9 @@ LINES: dict[str, tuple[str, str]] = {
     "battery":        ("My battery is low, so I'm stopping here.", "worried"),
     "arrived":        ("I've reached where I started. Exploration saved.",
                        "happy"),
+    # The second half of "arrived", for when the RL run has just said "I am
+    # back where I started." itself and saying it again would be an echo.
+    "saved_only":     ("Exploration saved.", "happy"),
     "list_none":      ("I haven't saved any areas yet.", "neutral"),
     "renamed":        ("Renamed {old} to {new}.", "happy"),
     "forget_ask":     ("Should I forget {name}?", "neutral"),

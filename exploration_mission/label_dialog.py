@@ -353,6 +353,11 @@ class LabelDialog:
                 return self._named(seg, answer, log_, may_loop=False)
         return self._unnamed(seg, log_)
 
+    def named_now(self, seg: dict, parsed: Parsed) -> DialogResult:
+        """"Save this as X" said out of the blue (LABEL_NOW): no question, the
+        name is already known -- but a taken name still gets "kitchen 2?"."""
+        return self._named(seg, parsed, [])
+
     # -- the flow --
     def run(self, seg: dict, suggestion: str | None = None) -> DialogResult:
         """`seg`: env_id, map_id, polygon, center, area_m2 (+ radius_m,

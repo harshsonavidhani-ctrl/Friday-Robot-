@@ -4338,6 +4338,10 @@ class ControlLoop:
                     elif (self.planner is not None and wb.exhausted_long_enough(
                             self.planner.exhausted, now - t_start, now)):
                         self._begin_way_back("explored")
+                    elif self.hold.return_requested():
+                        # FILE 21: the mission ended exploring early ("go back",
+                        # its time cap, nothing left). The same way back, sooner.
+                        self._begin_way_back("mission")
                 if wb is not None and wb.phase == "returning":
                     self._steer_home()
                     outcome = wb.check(self.map.pose, now)

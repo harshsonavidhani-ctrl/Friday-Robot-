@@ -336,6 +336,12 @@ PUBLISH_PERIOD_S = 1.0
 # stepping backwards must not turn a 3 s hold into an hour of standing still.
 HOLD_MAX_AHEAD_S = 30.0
 HOLD_POLL_S = 0.2
+# "RETURN NOW" (Harsh approved, 2026-09-30): the mission writes return.json when
+# exploring should end early ("Friday, go back", its time cap, nothing left to
+# explore) and the run starts ITS OWN way back -- the same one the timer starts.
+# Honoured only while fresh, and only if written after this run began, so a
+# request left over from an earlier mission can never turn a new run round.
+RETURN_FRESH_S = 60.0
 
 
 def _publish(scan, rl, blind, start_rl, res: dict, max_range: float,
@@ -384,6 +390,9 @@ class Hold(threading.Thread):
         self.period_s = float(period_s)
         self._until = 0.0                                 # time.monotonic() deadline
         self.why = ""
+        self.return_path = self.path.with_name("return.json")
+        self._born = time.time()                          # requests older than this: ignored
+        self._return = False
 
     def poll(self) -> None:
         import json
@@ -399,13 +408,27 @@ class Hold(threading.Thread):
         else:
             self._until = 0.0
 
+    def poll_return(self) -> None:
+        import json
+        try:
+            at = float(json.loads(self.return_path.read_text())["at"])
+        except Exception:                                 # noqa: BLE001
+            self._return = False
+            return
+        self._return = (at >= self._born
+                        and 0.0 <= time.time() - at <= RETURN_FRESH_S)
+
     def run(self) -> None:
         while True:
             self.poll()
+            self.poll_return()
             time.sleep(self.period_s)
 
     def active(self) -> bool:
         return time.monotonic() < self._until
+
+    def return_requested(self) -> bool:
+        return self._return
 
     def snapshot(self) -> dict[str, Any]:
         return {"active": self.active(), "why": self.why if self.active() else ""}
