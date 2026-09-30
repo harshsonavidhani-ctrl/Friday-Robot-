@@ -1271,6 +1271,26 @@ works on the Pi from the laptop) — and saves one ONLY if the helper there
 answers /health with our token. A 401 at the saved address is never looked
 for elsewhere.
 
+**The laptop says where it is (2026-09-30).** Both of those only work AFTER
+the laptop has talked to the Pi. That evening its address changed three times
+(a new one on every Wi-Fi reconnect), the Pi had just booted, and she said
+"not available" after one 4.09 s timeout with the helper running fine. Now the
+helper (`Hello`, `FridayLaptopHelper/3` in its Server header) sends one small
+UDP packet every 30 s — `{ts, ip, port, sig}`, signed with the token, never
+the token — to the Pi where it last heard from it (the address of the last
+request that carried the token, kept in `friday_pi.json` beside the script)
+and to the broadcast address. `laptop_research.start_listener()` (a thread in
+friday-mcp, UDP `LAPTOP_HELLO_PORT` 8766) hears it. ⚠ A hello is only a HINT:
+it must be signed, under `LAPTOP_HELLO_MAX_AGE_S` old and come from the
+address it names, and that address is saved ONLY after the helper there
+answers /health with our token — the same rule as above, so a forged or
+replayed hello cannot move her to another machine. `state/laptop_seen.json`
+is its last hello: no recent one there means the helper is not running (or is
+still the old version), whatever the saved url says. The helper takes nothing
+in on that port; the Pi's address was 10.12.122.156 for 5 days running, and
+the broadcast copy is for the day it is not (not yet seen to cross the hostel
+Wi-Fi).
+
 **Working since 2026-09-27 22:59** (a live `laptop_search` opened Google on
 his screen). Setup lessons: `scp` needs the trailing ` .`; `powershell` typed
 inside Command Prompt is NOT administrator (the firewall rule needs a real
@@ -1289,4 +1309,12 @@ laptop: "Friday laptop helper", inbound TCP 8765 from LocalSubnet.
     # Administrator PowerShell:
     New-NetFirewallRule -DisplayName "Friday laptop helper" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8765 -RemoteAddress LocalSubnet -Profile Any
 
-    ./venv/bin/python scripts/test_file20.py   # 97 cases, helper in-process, no browser, no money
+**Updating the helper** (a new `friday_laptop_agent.py`): in the Friday
+folder, copy it again, stop the running copy, start the new one. The old copy
+holds port 8765, so the new one cannot start beside it.
+
+    scp harsh@<pi>:friday/laptop/friday_laptop_agent.py .
+    taskkill /F /IM pythonw*
+    python friday_laptop_agent.py --install
+
+    ./venv/bin/python scripts/test_file20.py   # 127 cases, helper in-process, no browser, no money

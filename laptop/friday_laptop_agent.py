@@ -24,6 +24,16 @@ WHAT IT DOES -- AND ONLY THIS
   Every request must carry the shared token in the X-Friday-Token header;
   anything without it gets 401 and nothing else. No other endpoints.
 
+IT ALSO SAYS WHERE IT IS. The hostel Wi-Fi gives this laptop a new address
+every time it reconnects, and the Pi could only find it again AFTER the
+laptop had talked to the Pi (2026-09-30: "My laptop isn't available right
+now" with this helper running fine). So every hello_every_s it sends one
+small UDP packet -- "I am at <address>, port <port>", signed with the token,
+never the token itself -- to the Pi where it last heard from it (the address
+of the last request that carried the token, kept in friday_pi.json next to
+this script) and to the whole network. It sends nothing else, and it takes
+nothing in on that port.
+
 WHY A PROGRAM IN YOUR LOGIN AND NOT SSH: a program started through Windows'
 SSH server runs in a session with no desktop, so a browser it opens never
 appears on your screen.
@@ -31,6 +41,8 @@ appears on your screen.
 CONFIG: friday_agent.json next to this script (copied from the Pi's
 secrets/friday_agent.json): {"token": "...", "port": 8765, "bind": "0.0.0.0",
 "notes_dir": "~/Friday_Notes"}. Keep it private: it holds the token.
+Optional: "hello_port" (8766), "hello_every_s" (30), "hello_broadcast"
+(true), "pi" (the Pi's address, only needed before the Pi has ever called).
 Log: friday_laptop_helper.log next to this script.
 """
 
@@ -43,8 +55,11 @@ import logging
 import logging.handlers
 import os
 import re
+import socket
 import subprocess
 import sys
+import threading
+import time
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -57,6 +72,8 @@ MAX_BODY = 256 * 1024
 MAX_QUERY = 300
 MAX_TITLE = 200
 STARTUP_NAME = "friday_laptop_helper.cmd"
+PI_FILE = "friday_pi.json"                  # where the Pi last called from
+NOWHERE = "192.0.2.1"                       # never sent to: only picks a route
 
 log = logging.getLogger("friday_laptop")
 
@@ -69,7 +86,98 @@ def load_config(path: Path) -> dict:
     cfg.setdefault("port", 8765)
     cfg.setdefault("bind", "0.0.0.0")
     cfg.setdefault("notes_dir", "~/Friday_Notes")
+    cfg.setdefault("hello_port", 8766)
+    cfg.setdefault("hello_every_s", 30)
+    cfg.setdefault("hello_broadcast", True)
     return cfg
+
+
+# --- hello: telling the Pi where this laptop is -------------------------------
+
+def sign(token: str, ts: int, ip: str, port: int) -> str:
+    text = f"friday-laptop|{ts}|{ip}|{port}"
+    return hmac.new(token.encode(), text.encode(), "sha256").hexdigest()
+
+
+def hello_packet(token: str, ip: str, port: int, via: str = "direct",
+                 now: float | None = None) -> bytes:
+    """One "I am at ip:port", signed. The token itself is never in it."""
+    ts = int(time.time() if now is None else now)
+    return json.dumps({"friday": "laptop", "ts": ts, "ip": ip, "port": port,
+                       "via": via, "sig": sign(token, ts, ip, port)}).encode()
+
+
+def own_address(toward: str) -> str:
+    """This laptop's address on the network that leads to `toward`. A UDP
+    connect sends nothing; it only asks Windows which way it would go."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.connect((toward, 9))
+        return probe.getsockname()[0]
+
+
+class Hello:
+    def __init__(self, cfg: dict, port: int, store: Path) -> None:
+        self.cfg = cfg
+        self.port = port                    # where the helper listens (TCP)
+        self.store = store
+        self.pi = str(cfg.get("pi") or "")
+        try:
+            self.pi = str(json.loads(store.read_text()).get("pi") or self.pi)
+        except (OSError, ValueError, AttributeError):
+            pass
+        self._wake = threading.Event()
+        self._said = ""
+
+    def seen(self, ip: str) -> None:
+        """A request with the token came from `ip`: that is the Pi."""
+        if ip == self.pi:
+            return
+        self.pi = ip
+        try:
+            self.store.write_text(json.dumps({"pi": ip}) + "\n")
+        except OSError as exc:
+            log.info("hello: the Pi's address was not saved (%s)", exc)
+        self._wake.set()                    # tell it where we are, now
+
+    def _note(self, text: str) -> None:    # the log keeps changes, not beats
+        if text != self._said:
+            self._said = text
+            log.info("hello: %s", text)
+
+    def beat(self) -> list[str]:
+        """One hello. Returns where it was sent."""
+        pi = self.pi
+        where = [(pi, "direct")] if pi else []
+        if self.cfg.get("hello_broadcast", True):
+            where.append(("255.255.255.255", "broadcast"))
+        sent: list[str] = []
+        try:
+            ip = own_address(pi or NOWHERE)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as out:
+                out.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                out.bind((ip, 0))           # the card that reaches the Pi
+                for target, via in where:
+                    try:
+                        out.sendto(hello_packet(self.cfg["token"], ip,
+                                                self.port, via),
+                                   (target, int(self.cfg["hello_port"])))
+                        sent.append(target)
+                    except OSError:
+                        continue
+        except OSError as exc:
+            self._note(f"no network ({exc})")
+            return []
+        self._note(f"I am at {ip}, telling {' and '.join(sent) or 'nobody'}")
+        return sent
+
+    def run(self) -> None:
+        while True:
+            try:
+                self.beat()
+            except Exception as exc:                    # noqa: BLE001
+                self._note(f"failed ({type(exc).__name__}: {exc})")
+            self._wake.wait(max(5.0, float(self.cfg["hello_every_s"])))
+            self._wake.clear()
 
 
 # --- /open: a search, built here, on one of two sites --------------------------
@@ -136,17 +244,18 @@ def show_file(path: Path) -> None:
 
 class Agent:
     def __init__(self, cfg: dict, opener=webbrowser.open, shower=show_file,
-                 fetch=_fetch) -> None:
+                 fetch=_fetch, hello: Hello | None = None) -> None:
         self.cfg = cfg
         self.opener = opener
         self.shower = shower
         self.fetch = fetch
+        self.hello = hello
 
     def handler(self):
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/2"
+            server_version = "FridayLaptopHelper/3"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -161,8 +270,11 @@ class Agent:
 
             def _authorised(self) -> bool:
                 given = self.headers.get("X-Friday-Token", "")
-                return hmac.compare_digest(given.encode(),
-                                           agent.cfg["token"].encode())
+                ok = hmac.compare_digest(given.encode(),
+                                         agent.cfg["token"].encode())
+                if ok and agent.hello is not None:
+                    agent.hello.seen(self.client_address[0])
+                return ok
 
             def do_GET(self):                           # noqa: N802
                 if not self._authorised():
@@ -297,10 +409,12 @@ def main() -> int:
 
     cfg = load_config(Path(args.config).expanduser())
     notes_dir(cfg)
+    hello = Hello(cfg, int(cfg["port"]), HERE / PI_FILE)
     server = ThreadingHTTPServer((cfg["bind"], int(cfg["port"])),
-                                 Agent(cfg).handler())
+                                 Agent(cfg, hello=hello).handler())
     log.info("listening on %s:%s, notes -> %s", cfg["bind"], cfg["port"],
              notes_dir(cfg))
+    threading.Thread(target=hello.run, name="hello", daemon=True).start()
     if sys.stdout is not None:
         print(f"Friday's laptop helper: listening on {cfg['bind']}:"
               f"{cfg['port']}, notes -> {notes_dir(cfg)}. Ctrl-C to stop.")

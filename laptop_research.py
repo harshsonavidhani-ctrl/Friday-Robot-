@@ -32,13 +32,26 @@ answering, available() tries at most LAPTOP_REFIND_MAX other addresses where
 the laptop was last seen -- the Pi's ARP table for its network card's `mac`,
 then the newest SSH logins to the Pi (he works on the Pi FROM the laptop) --
 and adopts one ONLY if the helper there answers /health with our token.
+
+THE LAPTOP SAYS WHERE IT IS (2026-09-30). Both of those only know the new
+address AFTER the laptop has talked to the Pi; that evening it moved three
+times and had not, so she said "not available" with the helper running. The
+helper now sends a small signed UDP hello every 30 s ("I am at ip:port",
+never the token) and start_listener() -- a thread in friday-mcp -- hears it.
+A hello is only a hint: it must be signed with our token, fresh, and come
+from the address it names, and the address is saved ONLY after the helper
+there answers /health with our token, the same rule as above. So the saved
+url is already right when he asks. state/laptop_seen.json is its last hello.
 """
 
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import json
 import logging
 import re
+import socket
 import subprocess
 import threading
 import time
@@ -77,25 +90,36 @@ def configured() -> bool:
     return _settings() is not None
 
 
+def _call(base: str, token: str, path: str, body: dict | None,
+          timeout: float) -> dict:
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(
+        base.rstrip("/") + path, data=data,
+        method="POST" if body is not None else "GET",
+        headers={"X-Friday-Token": token,
+                 "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as reply:
+        return json.loads(reply.read().decode("utf-8", "replace"))
+
+
 def _request(path: str, body: dict | None, timeout: float) -> dict:
     """One HTTP call to the laptop helper. Raises on any failure."""
     s = _settings()
     if s is None:
         raise ConnectionError("the laptop is not set up "
                               "(secrets/laptop_agent.json)")
-    data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(
-        s["url"].rstrip("/") + path, data=data,
-        method="POST" if body is not None else "GET",
-        headers={"X-Friday-Token": s["token"],
-                 "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as reply:
-        return json.loads(reply.read().decode("utf-8", "replace"))
+    return _call(s["url"], s["token"], path, body, timeout)
 
 
-def _health(timeout: float) -> tuple[bool, str]:
+def _health(timeout: float, base: str | None = None) -> tuple[bool, str]:
+    """Is the helper up at the saved url -- or at `base`, another address it
+    may have now, which is asked WITHOUT being saved."""
     try:
-        got = _request("/health", None, timeout)
+        if base is None:
+            got = _request("/health", None, timeout)
+        else:
+            got = _call(base, (_settings() or {}).get("token", ""),
+                        "/health", None, timeout)
     except urllib.error.HTTPError as exc:
         return False, f"the laptop refused us ({exc.code})"
     except Exception as exc:                        # noqa: BLE001
@@ -116,6 +140,9 @@ def candidates(host_now: str) -> list[str]:
     s = _settings() or {}
     mac = str(s.get("mac") or "").lower()
     found: list[str] = []
+    said = seen()
+    if said and time.time() - said["at"] <= float(config.LAPTOP_HELLO_MAX_AGE_S):
+        found.append(said["ip"])            # where it just said it is
     if mac:
         for line in _sh(["ip", "neigh", "show"]).splitlines():
             if mac in line.lower() and "FAILED" not in line:
@@ -151,12 +178,124 @@ def available() -> tuple[bool, str]:
     parts = urllib.parse.urlsplit(s["url"])
     for ip in candidates(parts.hostname or ""):
         moved = parts._replace(netloc=f"{ip}:{parts.port or 8765}").geturl()
-        _save_url(moved)
-        if _health(float(config.LAPTOP_REFIND_TIMEOUT_S))[0]:
+        if _health(float(config.LAPTOP_REFIND_TIMEOUT_S), moved)[0]:
+            _save_url(moved)
             log.info("the laptop moved: %s -> %s", parts.hostname, ip)
             return True, ""
-        _save_url(s["url"])
     return False, why
+
+
+# --- the laptop says where it is ------------------------------------------------
+
+def _sign(token: str, ts: int, ip: str, port: int) -> str:
+    # The same line as laptop/friday_laptop_agent.py::sign (the helper is
+    # copied to the laptop alone, so it cannot be imported from here).
+    text = f"friday-laptop|{ts}|{ip}|{port}"
+    return hmac.new(token.encode(), text.encode(), "sha256").hexdigest()
+
+
+def read_hello(data: bytes, sender: str,
+               now: float | None = None) -> tuple[dict | None, str]:
+    """({ip, port, via}, "") for a hello from OUR helper, else (None, why)."""
+    s = _settings()
+    if s is None:
+        return None, "the laptop is not set up"
+    try:
+        got = json.loads(data[:1024])
+        ts, port = int(got["ts"]), int(got["port"])
+        ip = str(ipaddress.IPv4Address(got["ip"]))
+        sig = str(got["sig"])
+        if got.get("friday") != "laptop" or not 0 < port < 65536:
+            raise ValueError
+    except (ValueError, TypeError, KeyError):
+        return None, "not a hello"
+    if not hmac.compare_digest(sig.encode(),
+                               _sign(s["token"], ts, ip, port).encode()):
+        return None, "not signed with our token"
+    age = (time.time() if now is None else now) - ts
+    if abs(age) > float(config.LAPTOP_HELLO_MAX_AGE_S):
+        return None, f"{age:+.0f} s old (a replay, or a clock is wrong)"
+    if ip != sender:
+        return None, f"says {ip} but came from {sender}"
+    return {"ip": ip, "port": port, "via": str(got.get("via") or "")[:12]}, ""
+
+
+def seen() -> dict | None:
+    """The laptop's last hello: {ip, port, via, at}."""
+    try:
+        got = json.loads(Path(config.LAPTOP_SEEN_FILE).read_text())
+        return {"ip": str(got["ip"]), "port": int(got["port"]),
+                "via": str(got.get("via", "")), "at": float(got["at"])}
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+_tried: dict[str, float] = {}          # url -> when it last did not answer
+
+
+def note_hello(data: bytes, sender: str) -> tuple[bool, str]:
+    """One datagram. A good hello is written down, and when it names an
+    address other than the saved one that address is asked for /health and
+    saved if our helper answers. (it was a hello from our laptop?, why not)."""
+    hello, why = read_hello(data, sender)
+    if hello is None:
+        return False, why
+    last = seen()
+    now = time.time()
+    if last is None or last["ip"] != hello["ip"] or now - last["at"] >= 20.0:
+        path = Path(config.LAPTOP_SEEN_FILE)
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(json.dumps({**hello, "at": now}))
+        tmp.replace(path)
+    s = _settings() or {}
+    url = f"http://{hello['ip']}:{hello['port']}"
+    if s.get("url", "").rstrip("/") == url:
+        return True, ""
+    if now - _tried.get(url, 0.0) < float(config.LAPTOP_HELLO_RETRY_S):
+        return True, ""
+    if _health(float(config.LAPTOP_REFIND_TIMEOUT_S), url)[0]:
+        _tried.pop(url, None)
+        _save_url(url)
+        log.info("the laptop said hello from a new address: %s -> %s",
+                 s.get("url"), url)
+    else:
+        _tried.clear()                      # bounded: one address at a time
+        _tried[url] = now
+        log.info("a hello from %s, but no helper answered there", url)
+    return True, ""
+
+
+def start_listener(port: int | None = None) -> int:
+    """Hear the helper's hellos on a daemon thread. Returns the UDP port it
+    is listening on, or 0 when it is switched off or the port is taken."""
+    if not config.LAPTOP_HELLO:
+        return 0
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("0.0.0.0", int(config.LAPTOP_HELLO_PORT
+                                  if port is None else port)))
+    except OSError as exc:
+        sock.close()
+        log.warning("not listening for the laptop's hello: %s", exc)
+        return 0
+
+    def listen() -> None:
+        said = 0.0
+        while True:
+            try:
+                data, (sender, _) = sock.recvfrom(2048)
+                ok, why = note_hello(data, sender)
+                if not ok and time.time() - said > 60.0:    # never a log flood
+                    said = time.time()
+                    log.info("a hello from %s was ignored: %s", sender, why)
+            except Exception as exc:                        # noqa: BLE001
+                log.warning("hello listener: %s: %s", type(exc).__name__, exc)
+                time.sleep(1.0)
+
+    threading.Thread(target=listen, name="laptop-hello", daemon=True).start()
+    bound = sock.getsockname()[1]
+    log.info("listening for the laptop's hello on udp %s", bound)
+    return bound
 
 
 def open_search(query: str, site: str = "web",

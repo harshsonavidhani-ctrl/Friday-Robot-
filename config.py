@@ -476,6 +476,14 @@ LAPTOP_AGENT_FILE = ROOT / "secrets" / "laptop_agent.json"   # {url, token} -- g
 LAPTOP_HEALTH_TIMEOUT_S = 4.0         # "is it up?": its Wi-Fi sleeps, first reply 1.6 s
 LAPTOP_REFIND_MAX = 2                 # its address changed: other places to look
 LAPTOP_REFIND_TIMEOUT_S = 4.0         # 1.5 missed it after a reboot (22:11 09-28)
+# The helper says where it is (a signed UDP hello every 30 s) and friday-mcp
+# listens: the address changes on every Wi-Fi reconnect, and the look above
+# only works AFTER the laptop has talked to the Pi (19:08 09-30: it had not).
+LAPTOP_HELLO = True
+LAPTOP_HELLO_PORT = 8766              # UDP, on the Pi
+LAPTOP_HELLO_MAX_AGE_S = 300.0        # an older hello is a replay, or a wrong clock
+LAPTOP_HELLO_RETRY_S = 20.0           # one look per address that did not answer
+LAPTOP_SEEN_FILE = ROOT / "state" / "laptop_seen.json"   # its last hello
 LAPTOP_OPEN_TIMEOUT_S = 12.0          # "play X" looks up the top video first
 LAPTOP_SAVE_TIMEOUT_S = 10.0
 LAPTOP_NOTES_MODEL = MODEL_FAST       # Haiku: web_search_20250305

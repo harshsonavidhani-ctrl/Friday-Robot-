@@ -182,6 +182,15 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("environment watch did not start: %s: %s",
                     type(exc).__name__, exc)
 
+    # WHERE HIS LAPTOP IS (file 20): its helper says hello over UDP whenever
+    # its address changes, and this keeps the saved one right. Guarded too.
+    try:
+        import laptop_research
+        laptop_research.start_listener()
+    except Exception as exc:                # noqa: BLE001
+        log.warning("laptop hello listener did not start: %s: %s",
+                    type(exc).__name__, exc)
+
     try:
         if args.http:
             server.run("streamable-http",

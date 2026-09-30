@@ -38,6 +38,7 @@ config.MEMORY_DB = TMP / "memory.db"
 config.RATE_LIMIT_FILE = TMP / "rate_limits.json"
 config.RESEARCH_DIR = TMP / "research"
 config.LAPTOP_AGENT_FILE = TMP / "secrets" / "laptop_agent.json"
+config.LAPTOP_SEEN_FILE = TMP / "laptop_seen.json"
 config.LISTENING_FILE = TMP / "listening.json"
 config.SPEAKING_FILE = TMP / "speaking.json"
 config.MODE_FILE = TMP / "mode.json"
@@ -302,6 +303,140 @@ check("a laptop that REFUSED our token is not looked for elsewhere",
       not ok and "401" in why and json.loads(
           config.LAPTOP_AGENT_FILE.read_text())["url"] == BASE)
 FAKE_SH.clear()
+
+# ---------------------------------------------------------------------------
+print("\nthe laptop says where it is: a signed hello, heard by the Pi")
+
+
+def saved_url() -> str:
+    return json.loads(config.LAPTOP_AGENT_FILE.read_text())["url"]
+
+
+ELSEWHERE = f"http://127.0.0.2:{PORT}"
+settings(ELSEWHERE)
+packet = agent_mod.hello_packet(TOKEN, "127.0.0.1", PORT)
+check("the token itself is never in the packet", TOKEN.encode() not in packet)
+hello, why = lr.read_hello(packet, "127.0.0.1")
+check("the helper's hello is read by the Pi (both sides sign alike)",
+      hello == {"ip": "127.0.0.1", "port": PORT, "via": "direct"}, why)
+moved_after = json.loads(packet)
+moved_after["ip"] = "127.0.0.9"
+bad = {
+    "signed with another token":
+        (agent_mod.hello_packet("x" * 40, "127.0.0.1", PORT), "127.0.0.1"),
+    "an address changed after signing":
+        (json.dumps(moved_after).encode(), "127.0.0.9"),
+    "replayed from another machine": (packet, "127.0.0.9"),
+    "an hour old":
+        (agent_mod.hello_packet(TOKEN, "127.0.0.1", PORT,
+                                now=time.time() - 3600), "127.0.0.1"),
+    "a clock an hour ahead":
+        (agent_mod.hello_packet(TOKEN, "127.0.0.1", PORT,
+                                now=time.time() + 3600), "127.0.0.1"),
+    "empty": (b"", "127.0.0.1"),
+    "not JSON": (b"not json", "127.0.0.1"),
+    "a JSON list": (b"[1]", "127.0.0.1"),
+    "no fields": (b'{"friday": "laptop"}', "127.0.0.1"),
+    "a name where the address goes":
+        (json.dumps({"friday": "laptop", "ts": 1, "ip": "evil.example",
+                     "port": 1, "sig": ""}).encode(), "127.0.0.1"),
+    "3000 bytes of noise": (b"\xff" * 3000, "127.0.0.1"),
+    "a signature that is not even ASCII":
+        (json.dumps({"friday": "laptop", "ts": int(time.time()),
+                     "ip": "127.0.0.1", "port": PORT, "sig": "é" * 64},
+                    ensure_ascii=False).encode(), "127.0.0.1"),
+}
+for name, (data, sender) in bad.items():
+    check(f"{name} -> ignored", lr.note_hello(data, sender)[0] is False)
+check("...and none of that was written down or moved the saved address",
+      lr.seen() is None and saved_url() == ELSEWHERE)
+
+calls: list[str] = []
+real_call = lr._call
+
+
+def counted(base, *rest):
+    calls.append(base)
+    return real_call(base, *rest)
+
+
+lr._call = counted
+ok, _ = lr.note_hello(packet, "127.0.0.1")
+check("a good hello from a new address: the helper there is asked, then saved",
+      ok and saved_url() == BASE and calls == [BASE], str(calls))
+check("...with the token kept, and the hello written down",
+      json.loads(config.LAPTOP_AGENT_FILE.read_text())["token"] == TOKEN
+      and (lr.seen() or {}).get("ip") == "127.0.0.1")
+calls.clear()
+lr.note_hello(packet, "127.0.0.1")
+check("a hello from the address already saved asks nothing", calls == [])
+nobody = agent_mod.hello_packet(TOKEN, "127.0.0.1", dead_port)
+ok, _ = lr.note_hello(nobody, "127.0.0.1")
+check("a hello naming a port where no helper answers is never saved",
+      ok and saved_url() == BASE
+      and calls == [f"http://127.0.0.1:{dead_port}"], str(calls))
+lr.note_hello(nobody, "127.0.0.1")
+check("...and it is not asked again straight away", len(calls) == 1)
+lr._call = real_call
+lr._tried.clear()
+settings(ELSEWHERE, token="w" * 40)
+lr.note_hello(agent_mod.hello_packet("w" * 40, "127.0.0.1", PORT), "127.0.0.1")
+check("a helper there that refuses our token is never saved",
+      saved_url() == ELSEWHERE)
+lr._tried.clear()
+
+config.LAPTOP_AGENT_FILE.write_text(json.dumps(
+    {"url": ELSEWHERE, "token": TOKEN, "mac": MAC}))
+FAKE_SH["ip"] = f"10.0.0.7 dev wlan0 lladdr {MAC} STALE\n"
+config.LAPTOP_SEEN_FILE.write_text(json.dumps(
+    {"ip": "10.0.0.8", "port": PORT, "via": "direct", "at": time.time()}))
+check("where to look: where it just said it is comes first",
+      lr.candidates("127.0.0.2") == ["10.0.0.8", "10.0.0.7"],
+      str(lr.candidates("127.0.0.2")))
+config.LAPTOP_SEEN_FILE.write_text(json.dumps(
+    {"ip": "10.0.0.8", "port": PORT, "via": "direct",
+     "at": time.time() - 3600}))
+check("...but an hour-old hello is not somewhere to look",
+      lr.candidates("127.0.0.2") == ["10.0.0.7"])
+FAKE_SH.clear()
+config.LAPTOP_SEEN_FILE.unlink()
+
+print("\nthe helper's side of the hello")
+HELLO_CFG = dict(CFG, hello_port=9, hello_every_s=30, hello_broadcast=False)
+pi_file = TMP / "friday_pi.json"
+beacon = agent_mod.Hello(HELLO_CFG, PORT, pi_file)
+server2 = ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    agent_mod.Agent(CFG, opener=opened.append, shower=shown.append,
+                    fetch=fake_fetch, hello=beacon).handler())
+threading.Thread(target=server2.serve_forever, daemon=True).start()
+FIRST, BASE = BASE, f"http://127.0.0.1:{server2.server_address[1]}"
+check("before the Pi has ever called it tells nobody",
+      beacon.pi == "" and beacon.beat() == [])
+raw("/health", token="x" * 40)
+check("a request WITHOUT the token does not teach it where the Pi is",
+      beacon.pi == "" and not pi_file.exists())
+raw("/health")
+check("a request with the token does, and that is kept",
+      beacon.pi == "127.0.0.1"
+      and json.loads(pi_file.read_text()) == {"pi": "127.0.0.1"})
+BASE = FIRST
+check("...so a helper started later knows it at once",
+      agent_mod.Hello(HELLO_CFG, PORT, pi_file).pi == "127.0.0.1")
+config.LAPTOP_HELLO = False
+check("the Pi's listener can be switched off", lr.start_listener(0) == 0)
+config.LAPTOP_HELLO = True
+settings(ELSEWHERE)
+HELLO_CFG["hello_port"] = udp_port = lr.start_listener(0)
+sent = beacon.beat()
+check("end to end: one hello over UDP and the Pi has the new address",
+      udp_port > 0 and sent == ["127.0.0.1"]
+      and wait_for(lambda: saved_url() == BASE, 5.0), f"{sent} {saved_url()}")
+check("...and that beat was written down as the laptop's last hello",
+      wait_for(lambda: (lr.seen() or {}).get("ip") == "127.0.0.1", 2.0))
+check("the helper only ever SENDS on that port",
+      "recvfrom" not in source and source.count("sendto(") == 1)
+server2.shutdown()
 
 # ---------------------------------------------------------------------------
 print("\nthe laptop ONLY: down means she says so, and nothing else")
