@@ -53,6 +53,9 @@ SCHEMA: dict[str, Any] = {
         "stagnation_window_s": (_F, 1.0, 3600.0),
         "frontier_hz": (_F, 0.01, 5.0),
         "min_frontier_size_m": (_F, 0.0, 10.0),
+        # Not in the spec: an unknown pocket smaller than this makes no
+        # frontier (frontiers.py). 0 turns the rule off.
+        "min_unknown_m2": (_F, 0.0, 10.0),
         "gain_scale": (_F, 0.0, 100.0),
         "potential_scale": (_F, 0.0, 100.0),
         "heading_scale": (_F, 0.0, 100.0),

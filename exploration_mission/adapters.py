@@ -200,6 +200,19 @@ class SlamAdapter:
         g = self.load()
         return None if g is None else grid_utils.from_occupancy_grid(g)
 
+    def planner_grid(self, og=None) -> grid_utils.Grid | None:
+        """The map AS FILE 14's PLANNER SEES IT: isolated 1-2 cell wall specks
+        cleared first (path_planner.despeckle -- each would otherwise inflate
+        into a 60 cm disc of phantom wall), then normalised. This is the grid
+        to hand frontiers/segmentation, so "reachable" there is reachable for
+        the planner. `og` may be any slam OccupancyGrid (the mission's own)."""
+        og = og if og is not None else self.load()
+        if og is None:
+            return None
+        import path_planner
+        clean = path_planner.despeckle(og)[0]
+        return grid_utils.from_occupancy_grid(clean)
+
     def inflate_m(self) -> float:
         """File 14's own inflation (slam/plan.py::passable_mask)."""
         import config
@@ -558,6 +571,9 @@ class FakeSlam:
         return None
 
     def grid(self):
+        return self._grid
+
+    def planner_grid(self, og=None):
         return self._grid
 
     def inflate_m(self):

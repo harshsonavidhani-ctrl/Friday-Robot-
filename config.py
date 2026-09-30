@@ -3088,6 +3088,9 @@ SAFETY_STALL_MM = 15         # median range change below this means stuck
 #   own inflation); robot_radius_m + safety_margin_m are only the fallback.
 #   curiosity.mode ships "off" (the spec says "ask"): a robot proposing trips on
 #   its own is Harsh's call after a supervised test, like AGENCY_MOTION.
+#   explore.min_unknown_m2 is NOT in the spec: an unknown pocket smaller than
+#   her own footprint (beam gaps at range, the shadow of a chair leg) makes no
+#   frontier, or "nothing left to explore" would never come. 0 = rule off.
 #   run: the seam with the RL run (rl/way_back.py publisher + Hold, 2026-09-29).
 EXPLORATION_MISSION = {
     "env_id": "auto",
@@ -3098,7 +3101,8 @@ EXPLORATION_MISSION = {
              "robot_radius_m": 0.15, "safety_margin_m": 0.05},
     "explore": {"mission_cap_min": 25, "stagnation_m2": 0.5,
                 "stagnation_window_s": 60, "frontier_hz": 1.0,
-                "min_frontier_size_m": 0.30, "gain_scale": 1.0,
+                "min_frontier_size_m": 0.30, "min_unknown_m2": 0.15,
+                "gain_scale": 1.0,
                 "potential_scale": 3.0, "heading_scale": 0.5, "revisit_scale": 1.0,
                 "progress_timeout_s": 20, "progress_min_m": 0.2,
                 "blacklist_after_fails": 2, "blacklist_radius_m": 0.5,
