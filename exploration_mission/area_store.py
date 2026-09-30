@@ -73,7 +73,11 @@ RESERVED = frozenset({
     "stop", "cancel", "yes", "no", "haan", "nahi", "skip", "save", "friday",
     "explore", "home", "help", "continue",
     "what", "why", "who", "how", "huh", "sorry", "kya", "kaun"})
-_ALLOWED = re.compile(r"^[^\W_]+(?:[ '\-][^\W_]+|')*$", re.UNICODE)
+# LATIN SCRIPT ONLY. The transcript comes from faster-whisper with language "en"
+# (spec 4.7: "so Hinglish comes out in Latin script"), so a name in any other
+# script is not something Harsh said -- it is one of whisper's hallucinations
+# on noise (14 of them in his own turn log, 2026-09-30).
+_ALLOWED = re.compile(r"^[a-z0-9]+(?:[ '\-][a-z0-9]+|')*$")
 _UNNAMED = re.compile(r"^area (\d+)$")
 
 SCHEMA_V1 = f"""
@@ -217,7 +221,7 @@ def validate_name(text: str, max_words: int = 4,
     if not any(ch.isalpha() for ch in name):
         raise InvalidName("no letters")
     if not _ALLOWED.match(name):
-        raise InvalidName("only letters, digits, spaces, ' and -")
+        raise InvalidName("only a-z, digits, spaces, ' and -")
     if name in RESERVED or name in LEADING:
         raise InvalidName(f"{name!r} is a reserved word")
     return name, display
