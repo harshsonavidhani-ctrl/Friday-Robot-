@@ -284,9 +284,14 @@ class SlamAdapter:
         import map_growth
         try:
             fix = map_growth.fit(saved, og_mission)
-        except Exception:                             # noqa: BLE001
+        except Exception as exc:                      # noqa: BLE001
+            log.warning("whole-map fit failed: %s: %s", type(exc).__name__, exc)
             return None
-        return tuple(float(v) for v in fix.pose) if fix.pose is not None else None
+        if fix.pose is None:
+            log.info("whole-map fit refused: %s (best %.2f, runner-up %.2f)",
+                     fix.why or "not sure", fix.score, fix.runner_up_score)
+            return None
+        return tuple(float(v) for v in fix.pose)
 
     def load_grid(self, path):
         """A saved slam OccupancyGrid (the mission's own map), or None."""
