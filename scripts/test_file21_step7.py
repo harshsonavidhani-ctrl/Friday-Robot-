@@ -390,25 +390,38 @@ check("...arrived: released, EXPLORE again with the same trail and blacklist "
 
 
 # =============================================================================
-print("--- frames: placed on the saved map, or not ---")
+print("--- frames: the home spot's frame, never a one-sweep map fix ---")
 
-T = (10.0, 5.0, math.pi / 2)                            # the start, on the saved map
-w = World(["save it as kitchen"], world=ROOM, path=ROOM_PATH, anchor=T)
+import simworld as _sw                                  # noqa: E402
+
+w = World(["save it as hall", "isko kitchen bolo", "ye bedroom hai", "study"],
+          world=mm.uneven_rooms(), path=_sw.UNEVEN_TOUR)
+localise_calls = []
+w.a.slam.localise = lambda scan: localise_calls.append(1) or (10.0, 5.0, 0.0)
 w.mgr.start()
 w.run()
-area = w.areas()[0]
-want = mmap.transform_points([(0.0, 0.0)], T)[0]
-check("the start was placed on the saved map: the area is saved in the MAP frame",
-      area["frame"] == "map" and area["map_id"] == "map-test")
-check("...its centre is the room's centre carried through the transform",
-      math.hypot(area["center_x"] - want[0], area["center_y"] - want[1]) < 0.6,
-      f"{(area['center_x'], area['center_y'])} vs {want}")
-lm = w.a.places.find_exact("kitchen")
-check("...and it is a File 14 landmark at once ('go to the kitchen' works)",
-      lm is not None and (lm["x"], lm["y"]) == (area["center_x"], area["center_y"]))
-check("...the home anchor is in the map frame at the placed pose",
-      w.store.home_anchor("home")["frame"] == "map"
-      and abs(w.store.home_anchor("home")["x"] - 10.0) < 1e-9)
+check("the first mission: its areas are saved in its OWN frame (no saved map "
+      "here to fit onto), named, not landmarks",
+      len(w.areas()) == 3 and all(a["frame"].startswith("mission:") for a in w.areas())
+      and not w.a.places.all())
+check("...and the start is NEVER placed on the saved map from one sweep (File 14's "
+      "whole-map search was sure and wrong at 3 of 6 real spots)", localise_calls == [])
+anchor1 = w.store.home_anchor("home")
+check("...its start became the home anchor, in its frame",
+      anchor1["frame"] == w.areas()[0]["frame"] and anchor1["x"] == 0.0)
+n = len(w.voice.said)
+end = w.run(lambda x: False, max_s=0.1)
+w.mgr.start()                                           # again, from where she stopped
+end = w.run()
+said2 = w.voice.said[n:]
+ev = [e for e in w.mission()["events"] if e["kind"] == "start"][0]
+check("a second mission from the same spot recognises it: the home anchor's frame "
+      "is adopted (she arrived facing another way; the signature measured the turn)",
+      ev["at_home"] and ev["frame"] == anchor1["frame"], str(ev))
+check("...every room the first mission named is recognised: no question at all",
+      "What should I call it?" not in " ".join(said2)
+      and any("I didn't find any new areas" in x for x in said2), str(said2))
+check("...and nothing was saved twice", len(w.areas()) == 3)
 
 
 # =============================================================================

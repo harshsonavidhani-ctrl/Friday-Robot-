@@ -182,6 +182,16 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("environment watch did not start: %s: %s",
                     type(exc).__name__, exc)
 
+    # THE EXPLORATION MISSION (file 21): boot restore, then idle until he says
+    # explore. Off unless config.EXPLORATION_MISSION_SERVICE; guarded like the
+    # others -- it can cost a mission, never the server.
+    try:
+        from exploration_mission import service as mission_service
+        mission_service.start()
+    except Exception as exc:                # noqa: BLE001
+        log.warning("exploration mission did not start: %s: %s",
+                    type(exc).__name__, exc)
+
     # WHERE HIS LAPTOP IS (file 20): its helper says hello over UDP whenever
     # its address changes, and this keeps the saved one right. Guarded too.
     try:

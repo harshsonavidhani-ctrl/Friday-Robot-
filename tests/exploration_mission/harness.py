@@ -64,7 +64,8 @@ class World:
         self.store = st.AreaStore(db_path=d / "m.db", data_dir=d / "data",
                                   places=self.a.places)
         self.store.ensure_schema()
-        self.mgr = M.MissionManager(self.a, self.store, mcfg.load(cfg or {}),
+        self.cfg, self.policy = mcfg.load(cfg or {}), policy
+        self.mgr = M.MissionManager(self.a, self.store, self.cfg,
                                     runner=runner or M.InlineRunner(),
                                     inline_analysis=True, map_policy=policy)
         self.states: list[tuple[float, str]] = []
@@ -94,6 +95,24 @@ class World:
             elif s == "IDLE" and self.t - started > 3.0:
                 return s
         return self.mgr.state
+
+    def power_cut(self, rest_of_path=None, off_s: float = 60.0):
+        """The Pi loses power mid-mission: the run and the manager are gone,
+        nothing was closed cleanly, and what is on disk is all there is. A new
+        manager comes up on the same disk `off_s` later (call .boot() on it).
+        She has not moved: a later run starts where she is standing."""
+        sim = self.sim
+        sim.is_running, sim.phase, sim._hold = False, "idle", None
+        sim.return_asked, sim.outcome, sim.why = False, "", ""
+        sim.start_pose = sim.truth
+        sim.path = [sim.truth[:2]] + [tuple(p) for p in (rest_of_path or [])]
+        sim.orders.clear()
+        self.clock.advance(off_s)
+        self.mgr = M.MissionManager(self.a, self.store, self.cfg,
+                                    runner=M.InlineRunner(), inline_analysis=True,
+                                    map_policy=self.policy)
+        self.states = []
+        return self.mgr
 
     def seen(self) -> list[str]:
         return [s for _, s in self.states]

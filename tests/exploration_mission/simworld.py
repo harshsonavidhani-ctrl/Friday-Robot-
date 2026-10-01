@@ -89,8 +89,17 @@ class SimRun(ad.FakeRun):
         self.is_running = True
         self._duration = float(minutes) * 60.0
         self._t_started = self.clock.monotonic()
-        self.phase, self._leg, self.truth = "exploring", 1, self.start_pose
+        # The run's frame begins WHERE SHE STANDS, heading and all -- never a
+        # teleport back to the path's first point.
+        self.start_pose = self.truth
+        self.phase, self._leg = "exploring", 1
+        self.outcome, self.why = "", ""
+        # rl/way_back.py ignores a return request written before the run began.
+        self.return_asked = False
         return {"started": True, "minutes": minutes}
+
+    def clear_return(self):
+        self.return_asked = False
 
     def stop(self):
         self.orders.append(("stop",))
@@ -188,3 +197,12 @@ THREE_ROOM_TOUR = [
     (8.9, 3.0), (8.9, 2.0), (10.6, 2.0), (10.6, 4.0), (8.9, 4.0), (9.8, 3.0),
 ]
 ROOM_CENTRES = {"A": (2.75, 3.0), "B": (6.25, 3.0), "C": (9.75, 3.0)}
+
+# A tour of make_maps.uneven_rooms(): A is x 1-4.5, B 4.5-7, C 7-11.5; the A-B
+# door is at y = 2 and the B-C door at y = 4.
+UNEVEN_TOUR = [
+    (2.5, 3.0), (2.0, 4.0), (3.6, 4.0), (3.6, 2.0), (2.2, 2.0), (3.4, 2.0),
+    (5.4, 2.0), (6.1, 2.0), (6.1, 4.0), (5.4, 4.0), (5.75, 3.0), (5.75, 4.0),
+    (7.9, 4.0), (10.6, 4.0), (10.6, 2.0), (8.0, 2.0), (9.2, 3.0),
+]
+UNEVEN_CENTRES = {"A": (2.75, 3.0), "B": (5.75, 3.0), "C": (9.25, 3.0)}

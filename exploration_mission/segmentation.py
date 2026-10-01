@@ -282,9 +282,25 @@ def iou(a: np.ndarray, b: np.ndarray) -> float:
     return 0.0 if union == 0 else float(np.count_nonzero(a & b)) / union
 
 
+# A room seen only in part overlaps its saved area by less than 0.5 (half a
+# room is IoU ~0.5 at best), yet it is plainly that room: most of it lies
+# INSIDE the saved outline. Not in the spec, which has IoU only; without it
+# she asked "what should I call it?" about half of a kitchen she had already
+# been told was the kitchen (simulated second mission, 2026-09-30).
+INSIDE_FRACTION = 0.70
+
+
+def inside_fraction(seg_mask: np.ndarray, ref: np.ndarray) -> float:
+    n = int(np.count_nonzero(seg_mask))
+    return 0.0 if n == 0 else float(np.count_nonzero(seg_mask & ref)) / n
+
+
 def _best_pairs(segments: list[Segment], refs: list[np.ndarray],
-                min_iou: float) -> list[tuple[int, int, float]]:
-    """One-to-one (segment index, ref index, iou), best overlap first."""
+                min_iou: float, inside: float | None = None
+                ) -> list[tuple[int, int, float]]:
+    """One-to-one (segment index, ref index, iou), best overlap first. With
+    `inside`, a segment lying at least that fraction within a ref also pairs
+    with it (several segments may then share one ref: parts of one room)."""
     scored = []
     for i, s in enumerate(segments):
         for j, ref in enumerate(refs):
@@ -299,6 +315,15 @@ def _best_pairs(segments: list[Segment], refs: list[np.ndarray],
         used_s.add(i)
         used_r.add(j)
         out.append((i, j, v))
+    if inside is not None:
+        for i, s in enumerate(segments):
+            if i in used_s:
+                continue
+            best = max(((inside_fraction(s.mask, ref), j) for j, ref in enumerate(refs)),
+                       default=(0.0, -1))
+            if best[0] >= inside:
+                used_s.add(i)
+                out.append((i, best[1], iou(s.mask, refs[best[1]])))
     return out
 
 
@@ -330,20 +355,27 @@ def match_areas(seg: Segmentation, areas: Iterable[dict],
     refs = [rasterize(a["polygon"], seg.coarse) for a in areas]
     for s in seg.segments:
         s.area_id, s.area_iou = None, 0.0
-    for i, j, v in _best_pairs(seg.segments, refs, same_area_iou):
+    for i, j, v in _best_pairs(seg.segments, refs, same_area_iou, INSIDE_FRACTION):
         seg.segments[i].area_id = areas[j]["id"]
         seg.segments[i].area_iou = v
 
 
 def growth_updates(seg: Segmentation, areas: Iterable[dict],
-                   grow_update_ratio: float = 1.2) -> list[tuple[str, Segment]]:
+                   grow_update_ratio: float = 1.2, same_area_iou: float = 0.5
+                   ) -> list[tuple[str, Segment]]:
     """spec 3.5 growing map: a saved area whose room (same place, IoU >= 0.5,
     already set by match_areas) is now >= 20% bigger -> update it silently."""
     by_id = {a["id"]: a for a in areas}
     out = []
     for s in seg.segments:
         a = by_id.get(s.area_id) if s.area_id else None
-        if a is not None and s.area_m2 >= grow_update_ratio * float(a["area_m2"]):
+        # ONLY A COMPLETE ROOM, and only the same place by IoU. Mid-mission two
+        # rooms whose shared wall is not mapped yet are one transient blob; it
+        # overlapped a saved kitchen and "grew" it across the next room
+        # (simulated second mission, 2026-09-30). A room with no frontier left
+        # in it has its walls, and its shape is worth keeping.
+        if (a is not None and s.complete and s.area_iou >= same_area_iou
+                and s.area_m2 >= grow_update_ratio * float(a["area_m2"])):
             out.append((a["id"], s))
     return out
 

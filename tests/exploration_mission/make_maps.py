@@ -88,6 +88,23 @@ def three_rooms(explored=(True, True, True)) -> Map:
     return Map(g, (2.5, 3.0, 0.0), f"three rooms, explored={explored}")
 
 
+def uneven_rooms(explored=(True, True, True)) -> Map:
+    """A | B | C with DIFFERENT widths (3.5, 2.5, 4.5 m) and doors at different
+    heights (A-B at y = 2, B-C at y = 4): nothing about it repeats, so a map of
+    it fits the saved one in exactly one way. three_rooms() is three identical
+    rooms, which a map fit rightly refuses as look-alikes."""
+    g = blank(12.5, 6)
+    xs = [(1.0, 4.5), (4.5, 7.0), (7.0, 11.5)]
+    for (x0, x1), seen in zip(xs, explored):
+        room(g, x0, 1, x1, 5, seen)
+    for i, (x, y) in enumerate(((4.5, 2.0), (7.0, 4.0))):
+        if explored[i] and explored[i + 1]:
+            door_v(g, x, y)
+        elif explored[i]:
+            rect(g, x - WALL, y - DOOR / 2, x, y + DOOR / 2, gu.FREE)
+    return Map(g, (2.5, 3.0, 0.0), f"uneven rooms, explored={explored}")
+
+
 def open_door() -> Map:
     g = blank(8, 5)
     room(g, 1, 1, 5, 4)

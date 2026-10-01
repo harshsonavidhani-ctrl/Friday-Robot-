@@ -3092,6 +3092,12 @@ SAFETY_STALL_MM = 15         # median range change below this means stuck
 #   her own footprint (beam gaps at range, the shadow of a chair leg) makes no
 #   frontier, or "nothing left to explore" would never come. 0 = rule off.
 #   run: the seam with the RL run (rl/way_back.py publisher + Hold, 2026-09-29).
+# ⛔ THE MISSION THREAD SHIPS OFF. True starts exploration_mission/service.py
+# inside friday-mcp (boot restore, then idle until told to explore) and adds the
+# areas / missions / home_anchor tables to memory.db after a backup. It has not
+# run on the robot yet, so turning it on is Harsh's call, with the voice hook.
+EXPLORATION_MISSION_SERVICE = False
+
 EXPLORATION_MISSION = {
     "env_id": "auto",
     "loop_hz": 10,

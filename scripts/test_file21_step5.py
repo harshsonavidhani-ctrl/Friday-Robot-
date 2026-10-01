@@ -227,7 +227,7 @@ eb = room_at(early, 5.2, 3)
 saved = store.add_area("home", "map-1", polygon=eb.polygon, center=eb.center,
                        area_m2=eb.area_m2, radius_m=eb.radius_m, name="bedroom",
                        complete=False)
-_, later = run(mm.three_rooms((True, True, False)))
+_, later = run(mm.three_rooms())                        # the whole house, walls and all
 sg.match_areas(later, store.list_areas("home"), 0.5)
 lb = room_at(later, 6.2, 3)
 ups = sg.growth_updates(later, store.list_areas("home"), 1.2)
@@ -254,6 +254,31 @@ third_saved = [{"id": "y", "polygon": tb.polygon, "area_m2": tb.area_m2}]
 sg.match_areas(later, third_saved, 0.5)
 check("seen a third -> whole overlaps under 0.5: not the same area by the rule",
       room_at(later, 6.2, 3).area_id is None)
+_, open_c = run(mm.three_rooms((True, True, False)))
+sg.match_areas(open_c, [{"id": "b", "polygon": eb.polygon, "area_m2": eb.area_m2}], 0.5)
+check("a room that is NOT complete (a frontier inside) never 'grows' a saved area: "
+      "mid-exploration shapes are transient",
+      room_at(open_c, 6.2, 3).area_id == "b" and not room_at(open_c, 6.2, 3).complete
+      and sg.growth_updates(open_c, [{"id": "b", "polygon": eb.polygon,
+                                      "area_m2": eb.area_m2}], 1.2) == [])
+whole_b = room_at(later, 6.2, 3)
+_, half = run(partial_b(0.5))
+hb = room_at(half, 5.2, 3)
+sg.match_areas(half, [{"id": "kitchen", "polygon": whole_b.polygon,
+                       "area_m2": whole_b.area_m2}], 0.5)
+check("the reverse: a saved WHOLE room seen only in half now (IoU ~0.5 or less) "
+      "is still that room -- it lies inside the saved outline",
+      hb.area_id == "kitchen" and sg.iou(hb.mask, sg.rasterize(whole_b.polygon,
+                                                             half.coarse)) < 0.6,
+      f"iou {hb.area_iou:.2f}")
+check("...so she does not ask about it again, and it does not shrink the saved one",
+      sg.growth_updates(half, [{"id": "kitchen", "polygon": whole_b.polygon,
+                                "area_m2": whole_b.area_m2}], 1.2) == [])
+check("a room mostly OUTSIDE a saved area (30% in) is not it",
+      sg.inside_fraction(np.array([1, 1, 1, 0, 0, 0, 0, 0, 0, 0], bool),
+                         np.array([1, 1, 1, 1, 0, 0, 0, 0, 0, 0], bool)) == 1.0
+      and sg.inside_fraction(np.array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1], bool),
+                             np.array([1, 1, 1, 0, 0, 0, 0, 0, 0, 0], bool)) == 0.3)
 
 
 # =============================================================================

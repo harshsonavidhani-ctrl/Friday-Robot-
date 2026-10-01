@@ -266,7 +266,56 @@ class SlamAdapter:
             fix = global_localise.localise(og, scan, forward_deg=0.0)
         except Exception:                             # noqa: BLE001
             return None
-        return tuple(float(v) for v in fix.pose) if fix.ok() else None
+        # Fix.ok is a property; the pose is None whenever it refused.
+        return tuple(float(v) for v in fix.pose) if fix.pose is not None else None
+
+    def fit_onto_saved(self, og_mission):
+        """Where a mission's START is on the saved map, by fitting the whole
+        mission map onto it (map_growth.fit: File 14's global search on a
+        room's worth of walls, then its matcher's polish). Far more distinctive
+        than one sweep, which is why it can succeed where the start-of-mission
+        fix refused. Reads the saved map, never writes it. Sure, or None."""
+        saved = self.load()
+        if saved is None or og_mission is None:
+            return None
+        import map_growth
+        try:
+            fix = map_growth.fit(saved, og_mission)
+        except Exception:                             # noqa: BLE001
+            return None
+        return tuple(float(v) for v in fix.pose) if fix.pose is not None else None
+
+    def load_grid(self, path):
+        """A saved slam OccupancyGrid (the mission's own map), or None."""
+        from slam.grid import OccupancyGrid
+        try:
+            return OccupancyGrid.load(path)
+        except (FileNotFoundError, OSError, ValueError, KeyError):
+            return None
+
+    def localise_on(self, og, scan_robot: dict, near_xy=None,
+                    radius_m: float | None = None):
+        """Where a robot-frame sweep was taken on `og`, by File 14's global
+        search -- optionally only within `radius_m` of `near_xy`, which is what
+        separates two rooms that look alike. Sure, or None: it never guesses."""
+        if og is None or not scan_robot:
+            return None
+        import global_localise
+        scan = {int(round(float(k))) % 360: int(v) for k, v in scan_robot.items()}
+        allowed = None
+        if near_xy is not None and radius_m is not None:
+            nx, ny = og.shape
+            xs = og.origin[0] + (np.arange(nx) + 0.5) * og.cell
+            ys = og.origin[1] + (np.arange(ny) + 0.5) * og.cell
+            allowed = (np.hypot(xs[:, None] - float(near_xy[0]),
+                                ys[None, :] - float(near_xy[1])) <= float(radius_m))
+        try:
+            fix = global_localise.localise(og, scan, forward_deg=0.0,
+                                           restrict_to=allowed)
+        except Exception:                             # noqa: BLE001
+            return None
+        # Fix.ok is a property; the pose is None whenever it refused.
+        return tuple(float(v) for v in fix.pose) if fix.pose is not None else None
 
     def inflate_m(self) -> float:
         """File 14's own inflation (slam/plan.py::passable_mask)."""

@@ -607,6 +607,25 @@ class AreaStore:
         self._sync_landmark(area)
         return area
 
+    def reframe(self, area_id: str, *, polygon, center, frame: str,
+                map_id: str | None) -> dict:
+        """Move an area into another frame (a mission's own -> the saved map's),
+        once the mission has been fitted onto the saved map. Same area, same
+        name; a named one becomes a File 14 landmark from here on."""
+        with self._lock:
+            if self.get(area_id) is None:
+                raise StoreError("no such area")
+            with self._tx() as con:
+                con.execute(
+                    "UPDATE areas SET polygon=?, center_x=?, center_y=?, frame=?, "
+                    "map_id=?, updated_at=? WHERE id=?",
+                    (json.dumps([[float(p[0]), float(p[1])] for p in polygon]),
+                     float(center[0]), float(center[1]), frame, map_id, now_iso(),
+                     area_id))
+            area = self.get(area_id)
+        self._sync_landmark(area)
+        return area
+
     def add_alias(self, area_id: str, alias: str) -> dict:
         alias = normalize_name(alias)
         with self._tx() as con:
@@ -840,6 +859,30 @@ class AreaStore:
         if data is None:
             return None, None
         return migrate_record("checkpoint", data), source
+
+    def map_file(self, env_id: str) -> Path:
+        """The mission's OWN map (start frame), saved with each checkpoint so a
+        power cut keeps it -- and so she can be found on it again."""
+        return self.env_dir(env_id) / "mission_map.npz"
+
+    def pose_file(self, env_id: str) -> Path:
+        return self.env_dir(env_id) / "mission_pose.json"
+
+    def save_pose(self, env_id: str, mission_id: str, pose, t: float) -> None:
+        """Her pose in the mission's frame, once a second, fsynced: after a
+        power cut it says where to LOOK for her (within a metre or so), which
+        is what tells two look-alike rooms apart."""
+        durable.atomic_write_json(self.pose_file(env_id), {
+            "mission_id": mission_id, "pose": [float(v) for v in pose], "t": float(t)})
+
+    def load_pose(self, env_id: str, mission_id: str) -> dict | None:
+        try:
+            data = json.loads(self.pose_file(env_id).read_text())
+        except (OSError, ValueError):
+            return None
+        if data.get("mission_id") != mission_id or len(data.get("pose") or []) != 3:
+            return None
+        return data
 
     def save_trail(self, env_id: str, mission_id: str, crumbs: list) -> Path:
         path = self.env_dir(env_id) / "trails" / f"{mission_id}.json"

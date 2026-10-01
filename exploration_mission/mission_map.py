@@ -79,6 +79,18 @@ class MissionMap:
         self.used += 1
         return True
 
+    def restore(self, og) -> None:
+        """Carry on with a map saved before a power cut."""
+        self.og = og
+        self.used = max(int(getattr(og, "scans", 0) or 0), 1)
+
+    def save(self, path) -> bool:
+        """slam's own atomic save (temp file, fsync, rename)."""
+        if self.used == 0:
+            return False
+        self.og.save(path)
+        return True
+
     def planner_grid(self):
         """The map as File 14's planner would see it (despeckled, normalised),
         or None before the first sweep."""
