@@ -233,4 +233,6 @@ secrets/
 state/exploration_mission/live.json
 state/exploration_mission/hold.json
 state/exploration_mission/heard.json
+state/exploration_mission/watch_alive.json
+state/exploration_mission/asking.json
 state/exploration_mission/.*.tmp
