@@ -65,7 +65,14 @@ mission only counts as arrived if that is within tolerance of the mission's
 real start; otherwise the ladder (or, with no engine, HELP_WAIT with the true
 distance) takes it from there.
 
-Not here yet: curiosity (step 10), the voice hook (step 11).
+CURIOSITY (step 10, curiosity.py). While IDLE, at most once per
+check_period_s, a job gathers the score's inputs and every gate; only if all
+pass does it look with the LiDAR (is she at the home anchor?) and then ask --
+or, in auto mode, announce -- and a yes starts the mission through the same
+_begin() as "explore". The question is a job like the label dialog, so the
+tick never waits on it; "stop" while it is asked is a no.
+
+Not here yet: the voice hook (step 11).
 """
 
 from __future__ import annotations
@@ -77,9 +84,9 @@ import threading
 import time
 from collections import deque
 
-from exploration_mission import (area_store, boot, breadcrumbs, frontiers,
-                                 home_anchor, intents, label_dialog, mission_map,
-                                 rth_ladder, segmentation, speech)
+from exploration_mission import (area_store, boot, breadcrumbs, curiosity,
+                                 frontiers, home_anchor, intents, label_dialog,
+                                 mission_map, rth_ladder, segmentation, speech)
 
 log = logging.getLogger("friday.exploration_mission")
 
@@ -274,6 +281,14 @@ class MissionManager:
         self.booted = False
         self._boot: dict | None = None
         self._t_home_check = -1e9
+        self.curiosity = curiosity.Curiosity(
+            cfg.curiosity, lambda env: curiosity.state_path(store, env))
+        self._curious_job: Job | None = None
+        self._curious_stage = ""            # "" | "checking" | "asking"
+        self._curious_cancel = False        # "stop" while she asks = no
+        self._curious_why = None
+        self._t_curious = -1e9
+        self._t_not_idle: float | None = None
         self.tick_ms: deque = deque(maxlen=2000)
         self._reset_mission()
 
@@ -327,6 +342,7 @@ class MissionManager:
         self._nav_back = "EXPLORE"
         self._pause_after_ask = False
         self._last_scan: dict | None = None
+        self._started_by = "voice"          # | "curiosity"
 
     # ======================================================================
     # what the voice side calls (any thread)
@@ -336,16 +352,25 @@ class MissionManager:
             state=self.state, localized=self.localized, interrupted=self.interrupted,
             moving=self.state in MOVING_STATES,
             dialog="label" if self.state == "ASK_LABEL" and self._stage == "dialog"
-            else None)
+            else "curiosity" if self._curious_stage == "asking" else None)
 
     def halt(self) -> None:
         # Stand still NOW, not at the next tick: the hold is written here.
         if self.mission is not None and self.state not in ("HELP_WAIT", "FAILSAFE"):
             self._hold("halt", force=True)
+        self._decline_curiosity()
         self._cmds.put(("halt",))
 
     def finish(self) -> None:
+        self._decline_curiosity()
         self._cmds.put(("finish",))
+
+    def _decline_curiosity(self) -> None:
+        """"Stop" while she asks to explore is a no -- marked HERE, on the
+        voice's thread, because the question's job is still listening and
+        reads the mark when it returns (the tick would be too late)."""
+        if self._curious_stage == "asking":
+            self._curious_cancel = True
 
     def resume(self) -> None:
         self._cmds.put(("resume",))
@@ -513,6 +538,9 @@ class MissionManager:
         with self._lock:
             self._commands(now)
             getattr(self, "_st_" + self.state.lower())(now)
+            if (self._t_not_idle is None or self.state != "IDLE"
+                    or self.mission is not None):
+                self._t_not_idle = now          # curiosity's "idle for N min"
             if self.analysis.inline and self.state in ("EXPLORE", "ASK_LABEL", "PAUSED"):
                 t1 = time.perf_counter()
                 self.analysis.step(now)         # the worker's job, done here in tests
@@ -610,9 +638,12 @@ class MissionManager:
                     log.info("placed at home on a later look")
             return
         if (self.booted and self.placed is None and self.mission is None
+                and self._curious_job is None
                 and now - self._t_home_check >= self.cfg.boot.home_check_period_s):
             self._t_home_check = now
             self._boot = {"job": self.runner.start(self._home_look, "mission-home")}
+            return
+        self._curiosity_tick(now)
 
     def _home_look(self) -> dict:
         env = self.a.env.env_id()
@@ -626,6 +657,145 @@ class MissionManager:
                     "pose": (anchor["x"], anchor["y"], anchor["theta"]),
                     "how": "the view matches the home anchor"}
         return {"localized": True, "placed": None, "look": look}
+
+    # ---- curiosity (step 10, spec 4.15) ------------------------------------------
+    def _curiosity_tick(self, now: float) -> None:
+        job = self._curious_job
+        if job is not None:
+            if job.done:
+                self._curious_job, self._curious_stage = None, ""
+                self._curious_done(job, now)
+            return
+        c = self.cfg.curiosity
+        if (c.mode == "off" or not self.booted or self.mission is not None
+                or now - self._t_curious < c.check_period_s):
+            return
+        self._t_curious = now
+        seen = {"idle_s": now - (self._t_not_idle if self._t_not_idle is not None
+                                 else now),
+                "interrupted": self.interrupted, "localized": self.localized}
+        self._curious_stage, self._curious_cancel = "checking", False
+        self._curious_job = self.runner.start(lambda: self._curiosity_check(seen),
+                                              "mission-curiosity")
+
+    def _robot_busy(self, seen: dict) -> str | None:
+        """Not in the spec's list, and each one blocks: the robot is not free
+        or he asked for quiet. A check that fails counts as busy."""
+        if seen["interrupted"]:
+            return "an interrupted mission is waiting for continue / go back"
+        if not seen["localized"]:
+            return "no LiDAR sweeps"
+        try:
+            if self.a.run.running():
+                return "a run has the robot"
+            journey = self.a.nav.journey_running()
+            if journey:
+                return f"a journey has the robot ({journey})"
+            if self.a.talk.quiet_mode():
+                return "quiet mode"
+        except Exception as exc:                        # noqa: BLE001
+            return f"could not check the robot is free ({type(exc).__name__})"
+        return None
+
+    def _curiosity_facts(self, env: str, seen: dict, wall: float):
+        missions = self.store.missions(env, limit=1)
+        hours = None
+        if missions:
+            m = missions[0]
+            try:
+                hours = (wall - area_store.iso_to_wall(m.get("ended_at")
+                                                       or m["started_at"])) / 3600.0
+            except (TypeError, ValueError):
+                hours = 0.0                 # unreadable: as if just now, never "long ago"
+        areas = self.store.list_areas(env)
+        try:
+            quiet = self.a.talk.quiet_s()
+        except Exception:                               # noqa: BLE001
+            quiet = None
+        try:
+            can_listen = bool(self.a.voice.can_listen())
+        except Exception:                               # noqa: BLE001
+            can_listen = False
+        return curiosity.Facts(
+            mode=self.cfg.curiosity.mode,
+            has_home=self.store.home_anchor(env) is not None,
+            idle_s=seen["idle_s"], quiet_s=quiet, busy=self._robot_busy(seen),
+            can_listen=can_listen, frontier_m=self.curiosity.frontier_m(env),
+            hours_since_mission=hours,
+            stale_unnamed=sum(1 for a in areas if a["status"] in ("unnamed", "stale")),
+            areas=len(areas))
+
+    def _curiosity_check(self, seen: dict) -> dict:
+        """The job: every gate, the LiDAR look last, then the question."""
+        env, wall = self.a.env.env_id(), self.a.clock.wall()
+        facts = self._curiosity_facts(env, seen, wall)
+        why = self.curiosity.why_not(facts, env, wall)
+        out = {"env": env, "why": why, "score": round(self.curiosity.score_of(facts), 3),
+               "facts": curiosity.facts_dict(facts)}
+        if why is not None:
+            return out
+        # Localized, as the spec means it: the view matches the home anchor
+        # NOW. A look, never a move -- and the only gate that costs anything.
+        sweeps = boot.wait_for_lidar(self.a, self.cfg.signature.arrival_scans, 2.0)
+        look = boot.home_check(sweeps, self.store.home_anchor(env), self.cfg) \
+            if sweeps else {}
+        if not look.get("verified"):
+            out["why"] = "not localized: the view does not match the home anchor"
+            return out
+        if self.cfg.curiosity.mode == "auto":
+            self.say("curiosity_auto")
+            out["outcome"] = "auto"
+            return out
+        self._curious_stage = "asking"
+        self.say("curiosity_ask")
+        try:
+            answer = self.a.voice.listen_once(self.cfg.voice.listen_s)
+        except Exception as exc:                        # noqa: BLE001
+            log.warning("curiosity: no answer could be heard: %s", exc)
+            answer = None
+        out["answer"] = answer
+        out["outcome"] = "no" if self._curious_cancel else curiosity.classify(answer)
+        return out
+
+    def _curious_done(self, job: Job, now: float) -> None:
+        res = job.result if job.error is None else None
+        if not res:
+            return
+        wall = self.a.clock.wall()
+        outcome = res.get("outcome")
+        self.curiosity.note(at=wall, why=res.get("why"), score=res.get("score"),
+                            outcome=outcome)
+        if outcome is None:
+            if res.get("why") != self._curious_why:     # a changed reason, once
+                log.info("curiosity: not now -- %s (score %.2f)", res.get("why"),
+                         res.get("score") or 0.0)
+            self._curious_why = res.get("why")
+            return
+        self._curious_why = None
+        log.info("curiosity: %s (score %.2f, answer %r)", outcome,
+                 res.get("score") or 0.0, res.get("answer"))
+        self.curiosity.answered(res["env"], outcome, wall)
+        if outcome not in ("yes", "auto"):
+            return
+        if self.state != "IDLE" or self.mission is not None:
+            log.info("curiosity: a mission is already under way")
+            return
+        self._begin(None, now)
+        self._started_by = "curiosity"
+
+    def _note_frontiers_left(self) -> None:
+        """What this mission left reachable -- the score's first term the next
+        time she is idle. "No frontiers" is 0 by definition."""
+        try:
+            if self.stop_reason == "no_frontiers":
+                left = 0.0
+            else:
+                res = self.analysis.latest
+                left = res["frontiers"].reachable_length_m() if res else None
+            self.curiosity.mission_ended(self.env_id, self.mission["id"], left,
+                                         self.a.clock.wall())
+        except Exception as exc:                        # noqa: BLE001
+            log.warning("frontiers left not saved: %s", exc)
 
     # ---- BOOT_RESTORE -> RELOCALIZE -> IDLE (spec 4.14) ---------------------------
     def boot(self, now: float | None = None) -> None:
@@ -893,7 +1063,7 @@ class MissionManager:
                                            self.map_id, "auto", self._frame())
             self.analysis.attach(self.store, self.env_id, self.mission["id"])
             self._event("start", at_home=home is not None, frame=self._frame(),
-                        sweeps=res["anchor"].scans)
+                        sweeps=res["anchor"].scans, by=self._started_by)
             self._checkpoint(now)
             self.say("mission_start")
             cap = self.cfg.explore.mission_cap_min
@@ -1385,6 +1555,7 @@ class MissionManager:
             rungs_used=rungs, **{k: v for k, v in extra.items() if v is not None})
         self.store.save_trail(self.env_id, m["id"], self.trail.to_list())
         self._event("mission_saved", status=status)
+        self._note_frontiers_left()
         self._anchor_late()
 
     def _anchor_late(self) -> None:
@@ -1548,6 +1719,9 @@ class MissionManager:
                     "cycle": self.ladder.cycle, "in_help": self.ladder.in_help,
                     "attempts": self.ladder.rungs_used()},
                 "verified": self.verified,
+                "curiosity": {"mode": self.cfg.curiosity.mode,
+                              "stage": self._curious_stage,
+                              "last": dict(self.curiosity.last)},
                 "frontiers_left": len(res["frontiers"].remaining) if res else None,
                 "rooms": len(res["seg"].segments) if res else None,
                 "map": res["map"] if res else None}

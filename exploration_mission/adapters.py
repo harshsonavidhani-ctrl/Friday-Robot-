@@ -27,6 +27,7 @@ THE SEAM WITH THE RL RUN (approved by Harsh 2026-09-29, flagged in rl/):
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -38,6 +39,8 @@ import numpy as np
 
 from exploration_mission import grid_utils
 from exploration_mission.durable import atomic_write_json  # noqa: F401 (re-export)
+
+log = logging.getLogger("friday.exploration_mission.adapters")
 
 LIVE_NAME = "live.json"
 HOLD_NAME = "hold.json"
@@ -371,6 +374,84 @@ class VoiceAdapter:
         raise NotImplementedError("listening arrives with the voice hook "
                                   "(File 21 step 11)")
 
+    def can_listen(self) -> bool:
+        """Can a question be answered? Not until the voice hook (step 11):
+        curiosity's ask mode checks this BEFORE it says a word, so she never
+        asks a question nobody can hear the answer to."""
+        return False
+
+
+def _heard_file() -> Path:
+    import config
+    return Path(config.ROOT) / "state" / "exploration_mission" / "heard.json"
+
+
+class TalkAdapter:
+    """When anyone last talked, readable from friday-mcp (curiosity's "no
+    conversation for 5 min", spec 4.15).
+
+    His side: every "he spoke" clock lives inside friday-brain's wake sources,
+    so the voice hook (step 11) calls `mark_heard()` there on every turn. Her
+    side: tts.speak() already writes state/speaking.json from whatever process
+    speaks. No heard.json = UNKNOWN (None), and unknown is never quiet."""
+
+    def __init__(self, heard_file: Path | None = None,
+                 speaking_file: Path | None = None, clock: Clock | None = None):
+        self._heard = heard_file
+        self._speaking = speaking_file
+        self.clock = clock or Clock()
+
+    def heard_file(self) -> Path:
+        return self._heard or _heard_file()
+
+    def _speaking_file(self) -> Path:
+        if self._speaking is None:
+            import config
+            self._speaking = Path(config.ROOT) / "state" / "speaking.json"
+        return self._speaking
+
+    @staticmethod
+    def _read(path: Path) -> dict:
+        try:
+            data = json.loads(Path(path).read_text())
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def mark_heard(self, at: float | None = None) -> None:
+        """friday-brain, at the end of every turn (step 11). Never raises."""
+        try:
+            path = self.heard_file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(".heard.json.tmp")
+            tmp.write_text(json.dumps({"at": self.clock.wall() if at is None
+                                       else float(at)}))
+            os.replace(tmp, path)
+        except OSError as exc:
+            log.debug("heard mark not written: %s", exc)
+
+    def quiet_s(self) -> float | None:
+        """Seconds since anyone talked, or None when nobody has ever marked
+        a turn."""
+        heard = self._read(self.heard_file()).get("at")
+        if not isinstance(heard, (int, float)):
+            return None
+        last = float(heard)
+        voice = self._read(self._speaking_file())
+        for key in ("until", "at"):
+            v = voice.get(key)
+            if isinstance(v, (int, float)):
+                last = max(last, float(v))
+                break
+        return max(0.0, self.clock.wall() - last)
+
+    def quiet_mode(self) -> bool:
+        try:
+            import mode                                 # noqa: PLC0415
+            return bool(mode.quiet())
+        except Exception:                               # noqa: BLE001
+            return False
+
 
 class DetectorAdapter:
     """scene.py's detector, read from state/scene.json. Never loaded here."""
@@ -576,6 +657,12 @@ class NavAdapter:
     def outcome(self) -> str | None:
         return None
 
+    def journey_running(self) -> str:
+        """A File 14 journey (go to, go home, come back) has the robot: its
+        name, else "". The same question map_in_use asks; read-only."""
+        from mcp_server.tools import nav_tools          # noqa: PLC0415
+        return str(nav_tools._journey_running() or "")
+
     # --- the return ladder's engine (rth_ladder.Ladder) ---
     # File 14's NavController lives on friday-mcp's event loop; the mission is
     # given that loop when it is started inside friday-mcp (the launcher line,
@@ -614,7 +701,7 @@ class Adapters:
 
     def __init__(self, *, clock=None, run=None, slam=None, face=None,
                  voice=None, detector=None, memory=None, env=None, power=None,
-                 places=None, lidar=None, nav=None):
+                 places=None, lidar=None, nav=None, talk=None):
         self.clock = clock or Clock()
         self.run = run or RunAdapter(clock=self.clock)
         self.slam = slam or SlamAdapter()
@@ -627,6 +714,7 @@ class Adapters:
         self.places = places or PlacesAdapter()
         self.lidar = lidar or LidarAdapter(run=self.run)
         self.nav = nav or NavAdapter()
+        self.talk = talk or TalkAdapter(clock=self.clock)
 
 
 # =============================================================================
@@ -783,6 +871,10 @@ class FakeNav:
         self.calls: list[tuple] = []
         self._until = 0.0
         self._pending: str | None = None
+        self.journey = ""                   # a File 14 journey the mission did not start
+
+    def journey_running(self):
+        return self.journey
 
     # --- the ladder's engine ---
     def available(self):
@@ -906,6 +998,23 @@ class FakeVoice:
         self.listened.append(timeout_s)
         return self.replies.pop(0) if self.replies else None
 
+    def can_listen(self):
+        return getattr(self, "listening", True)
+
+
+class FakeTalk:
+    """`quiet` = seconds since anyone talked (None = unknown)."""
+
+    def __init__(self, quiet=None, quiet_mode=False):
+        self.quiet = quiet
+        self.mode_quiet = quiet_mode
+
+    def quiet_s(self):
+        return self.quiet
+
+    def quiet_mode(self):
+        return self.mode_quiet
+
 
 class FakeDetector:
     def __init__(self, running=False, labels=()):
@@ -951,7 +1060,8 @@ def fake_adapters(**kw) -> Adapters:
                     power=kw.pop("power", None) or FakePower(),
                     places=kw.pop("places", None) or FakePlaces(),
                     lidar=kw.pop("lidar", None) or FakeLidar(),
-                    nav=kw.pop("nav", None) or FakeNav())
+                    nav=kw.pop("nav", None) or FakeNav(),
+                    talk=kw.pop("talk", None) or FakeTalk())
 
 
 # =============================================================================
@@ -1012,6 +1122,12 @@ def probe(out: Callable[[str], None] = print) -> dict:
     line("memory", a.memory.backend())
     line("env_id", a.env.env_id())
     line("power_low", "unavailable (no battery gauge)")
+    quiet = a.talk.quiet_s()
+    line("conversation", {"quiet_for_s": None if quiet is None else round(quiet),
+                          "quiet_mode": a.talk.quiet_mode(),
+                          "can_listen": a.voice.can_listen(),
+                          "note": "no heard.json until the voice hook marks "
+                                  "turns (step 11)" if quiet is None else ""})
     return report
 
 

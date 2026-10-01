@@ -183,6 +183,12 @@ def now_iso() -> str:
     return _dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def iso_to_wall(text: str) -> float:
+    """now_iso()'s string back to a time.time() number. ValueError if it is
+    not one."""
+    return _dt.datetime.fromisoformat(str(text)).timestamp()
+
+
 # =============================================================================
 # names
 # =============================================================================

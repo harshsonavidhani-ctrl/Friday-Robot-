@@ -225,10 +225,12 @@ logs/*.wav
 # Google Calendar OAuth token and client secret (file 16) -- never commit.
 secrets/
 
-# File 21: the exploration mission's two EPHEMERAL files -- the RL run's latest
-# published fix (rewritten every second) and the mission's hold request.
+# File 21: the exploration mission's EPHEMERAL files -- the RL run's latest
+# published fix (rewritten every second), the mission's hold request, and when
+# someone last talked (curiosity's conversation clock, step 10).
 # Recordings and state/exploration_mission/envs/ (areas' files, checkpoints,
-# forgotten.jsonl) are data and are NOT ignored.
+# forgotten.jsonl, curiosity.json) are data and are NOT ignored.
 state/exploration_mission/live.json
 state/exploration_mission/hold.json
+state/exploration_mission/heard.json
 state/exploration_mission/.*.tmp
