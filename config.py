@@ -3104,7 +3104,7 @@ SAFETY_STALL_MM = 15         # median range change below this means stuck
 #   * the dashboard's Explore button starts a mission (not with "thinking").
 # To try it: set True, then restart friday-mcp, friday-brain and
 # friday-dashboard (systemctl --user restart ...). False puts all four back.
-EXPLORATION_MISSION_SERVICE = False
+EXPLORATION_MISSION_SERVICE = True
 # The mission's MCP tools are plumbing between friday-brain, the dashboard and
 # friday-mcp (step 11), never the model's: brain._to_anthropic_tools drops them.
 BRAIN_HIDDEN_TOOLS = ("mission_voice", "mission_answer", "mission_status",
