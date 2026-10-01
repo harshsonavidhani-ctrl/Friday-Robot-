@@ -133,7 +133,13 @@ def _to_anthropic_tools(mcp_tools: list[Any]) -> list[dict[str, Any]]:
     guaranteed stable — and an unstable tool list silently destroys the cache.
     """
     tools = []
+    # Plumbing tools other processes call (File 21's mission_*) are never the
+    # model's: it would otherwise be offered a way to start a mission or
+    # answer one of her own questions.
+    hidden = set(getattr(config, "BRAIN_HIDDEN_TOOLS", ()))
     for tool in sorted(mcp_tools, key=lambda t: t.name):
+        if tool.name in hidden:
+            continue
         # BOTH SPELLINGS, because the MCP SDK renamed this field. 1.x hands
         # back `inputSchema`, 2.x `input_schema`, and with 2.x installed every
         # brain turn died on AttributeError before a single request was sent --

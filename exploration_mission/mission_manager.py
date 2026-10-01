@@ -72,7 +72,10 @@ or, in auto mode, announce -- and a yes starts the mission through the same
 _begin() as "explore". The question is a job like the label dialog, so the
 tick never waits on it; "stop" while it is asked is a no.
 
-Not here yet: the voice hook (step 11).
+THE VOICE (step 11): main.handle() hands every transcript to intents.Router
+through service.voice() (the MCP tool mission_voice) before the brain; the
+questions this class asks are answered through voice_link (MissionWatch in
+friday-brain). See service.py.
 """
 
 from __future__ import annotations
@@ -1314,7 +1317,17 @@ class MissionManager:
 
     def _st_paused(self, now: float) -> None:
         self._hold("paused", now)
-        self._take_fix(now)
+        if self._take_fix(now) or now - self._t_last_fix <= LOST_AFTER_S:
+            return
+        # Held runs keep publishing (sensing + tracking go on), so a long
+        # silence is worth one look: a person's "stop" or the dashboard's Stop
+        # ended the run under the pause, and a mission left PAUSED on a dead
+        # run would wait for "continue" forever. (running() asks systemd, so
+        # it is asked only after the silence, as in EXPLORE.)
+        if not self.a.run.running():
+            self._run_gone(now)
+        else:
+            self._t_last_fix = now
 
     def _resume(self, now: float) -> None:
         back = self.paused_from or "EXPLORE"

@@ -1109,6 +1109,53 @@ async def api_nav_post(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "result": said})
 
 
+# --- the exploration mission's panel (file 21 step 11, spec 4.16) ---------------
+#
+# GET reads everything through friday-mcp (where the mission runs); POST is
+# NAMING ONLY -- exactly {area_id, name}, anything else is a 400 -- through
+# the same area_store rename and landmark sync as her voice. ⛔ Never add a
+# drive, start or stop to this route: the Explore panel already has those.
+
+MISSION_NAME_KEYS = {"area_id", "name"}
+
+
+async def api_mission_get(request: web.Request) -> web.Response:
+    try:
+        data = json.loads(await robot.call("mission_status", {}, timeout=5.0))
+    except robot.RobotUnavailable as exc:
+        data = {"enabled": bool(getattr(config, "EXPLORATION_MISSION_SERVICE",
+                                        False)),
+                "running": False, "why": f"friday-mcp is not answering ({exc})"}
+    except (json.JSONDecodeError, ValueError, TypeError):
+        data = {"running": False, "why": "the mission's answer was unreadable"}
+    return web.json_response(data)
+
+
+async def api_mission_post(request: web.Request) -> web.Response:
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    if not isinstance(payload, dict) or set(payload) != MISSION_NAME_KEYS:
+        raise web.HTTPBadRequest(text="naming only: send exactly {area_id, name}")
+    area_id, name = str(payload["area_id"]).strip(), str(payload["name"]).strip()
+    if not area_id or not name:
+        raise web.HTTPBadRequest(text="area_id and name must not be empty")
+    try:
+        answer = json.loads(await robot.call(
+            "mission_name_area", {"area_id": area_id, "name": name}))
+    except robot.RobotUnavailable as exc:
+        raise web.HTTPServiceUnavailable(text=f"friday-mcp is not answering ({exc})")
+    except (json.JSONDecodeError, ValueError, TypeError):
+        raise web.HTTPBadRequest(text="the mission's answer was unreadable")
+    if not answer.get("ok"):
+        why = str(answer.get("why", "not saved"))
+        if answer.get("suggestion"):
+            why += f" — try {answer['suggestion']!r}"
+        raise web.HTTPBadRequest(text=why[:300])
+    return web.json_response({"ok": True, "area": answer.get("area")})
+
+
 async def api_explore_post(request: web.Request) -> web.Response:
     """Start or stop a run. Two actions, both of them one systemctl call."""
     try:
@@ -1178,6 +1225,34 @@ async def api_explore_post(request: web.Request) -> web.Response:
     # With the lease out, run_localnav.sh takes its LEASED branch and leaves
     # friday-mcp UP: the brain keeps its hands, the dashboard keeps the manual
     # controls, and the face keeps its voice, while the run owns the ports.
+    # THE EXPLORATION MISSION (file 21 step 11). Harsh, 2026-09-29: "Friday,
+    # explore" AND this button both start the mission (mark the start, ask the
+    # rooms' names, come back). Only with config.EXPLORATION_MISSION_SERVICE
+    # on, and not for `thinking` (the mission runs the plain run); otherwise
+    # -- or with friday-mcp down, where the mission lives -- the button does
+    # exactly what it did before.
+    if getattr(config, "EXPLORATION_MISSION_SERVICE", False) and not thinking:
+        try:
+            answer = json.loads(await robot.call("mission_start",
+                                                 {"minutes": minutes}))
+            if not answer.get("ok"):
+                raise web.HTTPBadRequest(
+                    text=str(answer.get("why", "the mission refused"))[:300])
+            # The mission's run needs the cameras exactly like a plain one
+            # (see HAND THE CAMERAS BACK below): a camera-blind run looks
+            # like a working one in the log.
+            with contextlib.suppress(Exception):    # noqa: BLE001
+                await request.app["cams"].stop_all()
+            return web.json_response({"ok": True, "mission": True,
+                                      "result": "exploration mission started",
+                                      **_explore_state()})
+        except robot.RobotUnavailable as exc:
+            log.warning("friday-mcp is not answering, so no mission: starting "
+                        "the plain run: %s", exc)
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            log.error("mission_start returned unreadable JSON: %s", exc)
+            raise web.HTTPBadRequest(text="the mission did not answer clearly")
+
     leased = False
     try:
         answer = json.loads(await robot.call(
@@ -1298,6 +1373,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/maps", api_maps)
     app.router.add_get("/api/maps/png", api_maps_png)
     app.router.add_post("/api/explore", api_explore_post)
+    app.router.add_get("/api/mission", api_mission_get)
+    app.router.add_post("/api/mission", api_mission_post)
 
     async def index(request: web.Request) -> web.StreamResponse:
         # A PHONE ON THE PLAIN-HTTP PORT CAN ONLY EVER MAKE A SHORTCUT, because

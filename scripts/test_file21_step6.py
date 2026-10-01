@@ -342,7 +342,9 @@ EXAMPLES = {
     "LIST": ["what have you saved", "list areas", "which rooms do you know",
              "kya kya save kiya"],
     "STATUS": ["status", "how much have you explored", "kitna explore hua"],
-    "SET_HOME": ["set home here", "this is home", "yahan home hai"],
+    # Harsh, 2026-10-01: "this is home" / "yahan home hai" stay his PERMANENT
+    # home (File 10); the mission's start has its own words.
+    "SET_HOME": ["set home here", "mark the start here", "set the start here"],
 }
 for name, texts in EXAMPLES.items():
     got = [(t, (it.classify(t) or it.Intent("-")).name) for t in texts]
@@ -375,8 +377,9 @@ check("out of the blue, 'this is the bathroom' / \"it's good\" / \"that's it\" "
       all("LABEL_NOW" not in [c.name for c in it.candidates(t)]
           for t in ("this is the bathroom", "it's good", "That's it.",
                     "ye drawing room hai", "yeah it's the kitchen")))
-check("'this is home' is SET_HOME, never an area called home",
-      [c.name for c in it.candidates("this is home")] == ["SET_HOME"])
+check("'this is home' / 'yahan home hai' match NOTHING of the mission's (his "
+      "permanent home, File 10), and never an area called home",
+      it.candidates("this is home") == [] and it.candidates("yahan home hai") == [])
 
 
 # =============================================================================
@@ -486,12 +489,20 @@ check("'save this as kitchen' while returning -> can't",
 for state, want in (("IDLE", ("set_home",)), ("PAUSED", ("set_home",)),
                     ("EXPLORE", ("say", "cant_now"))):
     acts, ro = router()
-    check(f"'this is home' in {state} -> {want[-1]} (never an area named home)",
-          ro.handle("this is home", ctx(state)) and acts.calls == [want], str(acts.calls))
+    check(f"'mark the start here' in {state} -> {want[-1]}",
+          ro.handle("mark the start here", ctx(state)) and acts.calls == [want],
+          str(acts.calls))
+for state in ("IDLE", "EXPLORE", "PAUSED"):
+    acts, ro = router()
+    check(f"'this is home' in {state} is NOT ours (his permanent home)",
+          ro.handle("this is home", ctx(state)) is False and not acts.calls)
 
 acts, ro = router()
-ok = ro.handle("Friday, go to the kitchen", ctx("IDLE"))
-check("'go to the kitchen' -> go_to with the saved area's centre",
+check("'go to the kitchen' with NO mission is NOT ours: File 14's nav_go drives it",
+      ro.handle("Friday, go to the kitchen", ctx("IDLE")) is False and not acts.calls)
+acts, ro = router()
+ok = ro.handle("Friday, go to the kitchen", ctx("PAUSED"))
+check("'go to the kitchen' in a mission -> go_to with the saved area's centre",
       ok and acts.calls[0][:2] == ("go_to", "kitchen")
       and (acts.calls[0][2]["x"], acts.calls[0][2]["y"], acts.calls[0][2]["kind"])
       == (2.0, 1.5, "area"), str(acts.calls))
@@ -505,7 +516,7 @@ check("a File 14 landmark ('the desk') resolves too, exact names only",
       and acts.calls[0][2]["kind"] == "landmark", str(acts.calls))
 acts, ro = router()
 check("'go to the kitchen and say hello' -> kitchen, the rest ignored",
-      ro.handle("go to the kitchen and say hello", ctx("IDLE"))
+      ro.handle("go to the kitchen and say hello", ctx("EXPLORE"))
       and acts.calls[0][:2] == ("go_to", "kitchen"))
 acts, ro = router()
 check("'go to sleep' with no mission is NOT ours",
@@ -522,9 +533,19 @@ check("'go to the kitchen' while returning -> can't",
       ro.handle("go to the kitchen", ctx("RETURN_TO_START"))
       and acts.calls == [("say", "cant_now")])
 acts, ro = router()
-check("'go to the kitchen' while not localized -> place me at my home spot",
-      ro.handle("go to the kitchen", ctx("IDLE", localized=False))
-      and acts.calls == [("say", "cant_start")])
+check("'go to the kitchen' while not localized and idle is NOT ours either",
+      ro.handle("go to the kitchen", ctx("IDLE", localized=False)) is False)
+acts, ro = router()
+check("a bare 'status' with no mission is NOT ours (offline.py's robot status)",
+      ro.handle("status", ctx("IDLE")) is False and not acts.calls)
+acts, ro = router()
+check("...but in a mission 'status' is the mission's",
+      ro.handle("status", ctx("EXPLORE")) and acts.calls == [("say_status",)],
+      str(acts.calls))
+acts, ro = router()
+check("'how much have you explored' is the mission's even when idle",
+      ro.handle("how much have you explored", ctx("IDLE"))
+      and acts.calls == [("say_status",)], str(acts.calls))
 
 acts, ro = router()
 check("'forget it' is NOT ours (nothing called 'it')",

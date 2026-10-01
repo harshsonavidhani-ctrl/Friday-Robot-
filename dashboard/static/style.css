@@ -868,3 +868,12 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
   padding:1px 6px;font-size:12px;line-height:1.4;cursor:pointer;opacity:.7}
 .lanebtn:hover{opacity:1}
 .lanebtn.on{border-color:var(--c-call);opacity:1}
+
+/* File 21 step 11 — the exploration mission's panel (drawn like Navigation). */
+.navplan .area { fill: #ff6a00; fill-opacity: .18; stroke: #ff6a00; stroke-width: .5; }
+.navplan .area.unnamed { fill: #8b949e; stroke: #8b949e; }
+.navplan .area.stale { fill: #ff5c5c; stroke: #ff5c5c; stroke-dasharray: 1.5 1; }
+.navplan .trail { fill: none; stroke: #c8d2dc; stroke-opacity: .5; stroke-width: .6; }
+.navplan .start { fill: #7bd88f; }
+.navplan .her { fill: #ffffff; }
+.navplan .edge { fill: #ffd166; }

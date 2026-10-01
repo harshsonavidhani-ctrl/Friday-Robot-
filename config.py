@@ -3092,11 +3092,23 @@ SAFETY_STALL_MM = 15         # median range change below this means stuck
 #   her own footprint (beam gaps at range, the shadow of a chair leg) makes no
 #   frontier, or "nothing left to explore" would never come. 0 = rule off.
 #   run: the seam with the RL run (rl/way_back.py publisher + Hold, 2026-09-29).
-# ⛔ THE MISSION THREAD SHIPS OFF. True starts exploration_mission/service.py
-# inside friday-mcp (boot restore, then idle until told to explore) and adds the
-# areas / missions / home_anchor tables to memory.db after a backup. It has not
-# run on the robot yet, so turning it on is Harsh's call, with the voice hook.
+# ⛔ THE MISSION SHIPS OFF (Harsh, 2026-10-01: he turns it on himself for a
+# supervised trip). True does four things, all of them File 21's:
+#   * friday-mcp starts exploration_mission/service.py (boot restore, then idle
+#     until told to explore) and adds the areas / missions / home_anchor tables
+#     to memory.db after a backup;
+#   * main.handle() gives every transcript to the mission's router first
+#     (mission_voice) -- "explore" / "explore karo" become a mission;
+#   * main.py hears the mission's questions without the wake word
+#     (voice_link.MissionWatch) and keeps the wake word ON while she is held;
+#   * the dashboard's Explore button starts a mission (not with "thinking").
+# To try it: set True, then restart friday-mcp, friday-brain and
+# friday-dashboard (systemctl --user restart ...). False puts all four back.
 EXPLORATION_MISSION_SERVICE = False
+# The mission's MCP tools are plumbing between friday-brain, the dashboard and
+# friday-mcp (step 11), never the model's: brain._to_anthropic_tools drops them.
+BRAIN_HIDDEN_TOOLS = ("mission_voice", "mission_answer", "mission_status",
+                      "mission_start", "mission_name_area")
 
 EXPLORATION_MISSION = {
     "env_id": "auto",

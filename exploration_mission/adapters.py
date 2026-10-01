@@ -354,12 +354,14 @@ class FaceAdapter:
 
 
 class VoiceAdapter:
-    """Speaking only, through nav_voice's queue -> tts.speak() (CLAUDE.md
-    PART 4). Listening lives in friday-brain (the mic has one owner) and
-    arrives in Step 11 as MissionWatch; until then `listen_once` says so."""
+    """Speaking through nav_voice's queue -> tts.speak() (CLAUDE.md PART 4).
+    Listening lives in friday-brain (the mic has one owner): with an `asker`
+    (voice_link.Asker, given by service.build inside friday-mcp) a question is
+    answered through MissionWatch there; without one there are no ears."""
 
-    def __init__(self, voice=None):
+    def __init__(self, voice=None, asker=None):
         self._voice = voice
+        self.asker = asker
 
     def _v(self):
         if self._voice is None:
@@ -371,14 +373,16 @@ class VoiceAdapter:
         return self._v().say_text(text)
 
     def listen_once(self, timeout_s: float) -> str | None:
-        raise NotImplementedError("listening arrives with the voice hook "
-                                  "(File 21 step 11)")
+        if self.asker is None:
+            raise NotImplementedError("no ears: the mission's voice link runs "
+                                      "only inside friday-mcp")
+        return self.asker.listen_once(timeout_s)
 
     def can_listen(self) -> bool:
-        """Can a question be answered? Not until the voice hook (step 11):
-        curiosity's ask mode checks this BEFORE it says a word, so she never
-        asks a question nobody can hear the answer to."""
-        return False
+        """Can a question be answered right now? Only while friday-brain's
+        MissionWatch is alive: curiosity's ask mode checks this BEFORE it says
+        a word, so she never asks a question nobody can hear the answer to."""
+        return self.asker is not None and self.asker.can_listen()
 
 
 def _heard_file() -> Path:

@@ -28,6 +28,13 @@ WHO CLAIMS WHAT.
     "this is X" -- are NOT ours and return False. "Continue" said to the brain
     mid-story, "come back" (File 14's own reflex) and "this is the kitchen"
     (File 14's remember_place) keep doing what they do today.
+  * Step 11, with the existing pipeline behind it (offline.py measured on
+    each phrase): GO_TO with no mission running is NOT ours -- File 14's
+    nav_go already drives "go to the kitchen" offline, and the mission's own
+    go-to has no engine outside a run. A bare "status" is offline.py's robot
+    status unless a mission is running. And Harsh, 2026-10-01: "this is home"
+    / "yahan home hai" stay his PERMANENT home (File 10); the mission's start
+    is marked only by "set home here" / "mark the start here".
 
 This module decides and delegates. Everything that moves, saves or speaks
 goes through the `actions` object the mission manager supplies, so the router
@@ -99,8 +106,8 @@ LIST_RE = re.compile(r"^(what have you saved|list areas|list the areas|"
                      r"kya kya save kiya|kya kya save kiya hai)$")
 STATUS_RE = re.compile(r"^(status|how much have you explored|kitna explore hua|"
                        r"kitna explore hua hai)$")
-SET_HOME_RE = re.compile(r"^(set home here|this is home|yahan home hai|"
-                         r"yaha home hai)$")
+SET_HOME_RE = re.compile(r"^(set home here|set the home here|mark the start here|"
+                         r"set the start here|mark this as the start)$")
 HALT_ANY_RE = re.compile(r"(?:^| )(stop|ruko)(?: |$)")
 
 
@@ -156,7 +163,7 @@ def candidates(text: str) -> list[Intent]:
     if LIST_RE.match(norm):
         out.append(Intent("LIST"))
     if STATUS_RE.match(norm):
-        out.append(Intent("STATUS"))
+        out.append(Intent("STATUS", {"text": norm}))
     if SET_HOME_RE.match(norm):
         out.append(Intent("SET_HOME"))
     m = START_RE.match(norm)
@@ -273,6 +280,8 @@ class Router:
                 return True
             return self._cant() if active else self._NOT_OURS
         if n == "GO_TO":
+            if not active:
+                return self._NOT_OURS        # File 14's nav_go drives it today
             target = self._target(it.args["name"])
             if target is None:
                 if st in ("EXPLORE", "PAUSED"):
@@ -303,6 +312,8 @@ class Router:
             a.say_list()
             return True
         if n == "STATUS":
+            if not active and it.args.get("text") == "status":
+                return self._NOT_OURS        # offline.py's robot status today
             a.say_status()
             return True
         if n == "SET_HOME":

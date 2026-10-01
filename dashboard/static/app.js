@@ -1125,6 +1125,130 @@ function paintEnvs(d) {
   }
 }
 
+/* ---------- the exploration mission (file 21 step 11) ----------
+   Read-only except the one naming box per area, which POSTs exactly
+   {area_id, name} to /api/mission. Everything is drawn in the one frame the
+   server chose (the mission's own while it runs, else the home anchor's). */
+
+async function nameMissionArea(id, input) {
+  const name = input.value.trim();
+  if (!name) { toast('Type a name first', true); return; }
+  try {
+    const r = await fetch('/api/mission', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ area_id: id, name }),
+    });
+    if (!r.ok) { toast(await r.text(), true); return; }
+    const j = await r.json();
+    toast(`Saved as ${(j.area || {}).display_name || name}`);
+    refreshMission();
+  } catch (e) { toast(String(e), true); }
+}
+
+function missionMap(d) {
+  const pts = [];
+  for (const a of d.areas || []) for (const q of a.polygon) pts.push(q);
+  for (const k of ['home', 'start', 'pose']) if (d[k]) pts.push([d[k].x, d[k].y]);
+  for (const q of d.trail || []) pts.push(q);
+  if (!pts.length) return '';
+  const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+  const x0 = Math.min(...xs) - 0.5, y1 = Math.max(...ys) + 0.5;
+  const span = Math.max(Math.max(...xs) + 0.5 - x0, y1 - (Math.min(...ys) - 0.5), 1);
+  const u = (x) => ((x - x0) / span * 100).toFixed(2);
+  const v = (y) => ((y1 - y) / span * 100).toFixed(2);
+  const out = [];
+  for (const a of d.areas || []) {
+    if (a.polygon.length < 3) continue;
+    const cls = a.status === 'named' ? '' : ' ' + a.status;
+    out.push(`<polygon class="area${cls}" points="${a.polygon.map(q => u(q[0]) + ',' + v(q[1])).join(' ')}"/>`);
+    if (a.center) out.push(`<text x="${u(a.center[0])}" y="${v(a.center[1])}">${esc(a.display_name)}</text>`);
+  }
+  if ((d.trail || []).length > 1)
+    out.push(`<polyline class="trail" points="${d.trail.map(q => u(q[0]) + ',' + v(q[1])).join(' ')}"/>`);
+  for (const f of d.frontiers || []) out.push(`<circle class="edge" cx="${u(f.x)}" cy="${v(f.y)}" r="1.2"/>`);
+  if (d.home) out.push(`<circle class="lm home" cx="${u(d.home.x)}" cy="${v(d.home.y)}" r="2"/>`);
+  if (d.start) out.push(`<circle class="start" cx="${u(d.start.x)}" cy="${v(d.start.y)}" r="1.6"/>`);
+  if (d.pose) out.push(`<circle class="her" cx="${u(d.pose.x)}" cy="${v(d.pose.y)}" r="1.6"/>`);
+  return out.join('');
+}
+
+async function refreshMission() {
+  if (!$('missionnow')) return;
+  let d;
+  try { d = await (await fetch('/api/mission')).json(); } catch { return; }
+  const badge = $('missionnow');
+  const on = !!(d && d.running);
+  badge.textContent = on ? String(d.state || '').toLowerCase().replace(/_/g, ' ') : 'off';
+  badge.classList.toggle('live', on && d.state !== 'IDLE');
+  if (!on) {
+    $('missionline').textContent = d && d.enabled
+      ? `The mission is not running${d.why ? ' — ' + d.why : ''}.`
+      : 'The mission service is off (EXPLORATION_MISSION_SERVICE).';
+    for (const id of ['missionmap', 'missionkey', 'missionqhead', 'missionareashead',
+                      'missionhisthead']) $(id).hidden = true;
+    for (const id of ['missionqueue', 'missionareas', 'missionhist']) $(id).innerHTML = '';
+    $('missionladder').textContent = '';
+    return;
+  }
+  const s = d.snapshot || {};
+  const bits = [];
+  if (s.mission_id) {
+    bits.push(`out ${d.elapsed_s != null ? Math.round(d.elapsed_s / 60) + ' min' : ''}`);
+    bits.push(`${d.mapped_m2 ?? 0} m² mapped`, `${s.distance_m ?? 0} m driven`);
+    if (s.frontiers_left != null) bits.push(`${s.frontiers_left} edges left`);
+  } else {
+    bits.push(s.placed === 'home' ? 'at her home spot' : 'not placed at home');
+    if (s.interrupted) bits.push('a mission is waiting for “continue” or “go back”');
+  }
+  const cur = s.curiosity || {};
+  if (cur.mode && cur.mode !== 'off') bits.push(`curiosity ${cur.mode}${(cur.last || {}).why ? ' (' + cur.last.why + ')' : ''}`);
+  $('missionline').textContent = bits.join(' · ');
+
+  const svg = $('missionmap');
+  const pic = missionMap(d);
+  svg.hidden = !pic; $('missionkey').hidden = !pic;
+  svg.innerHTML = pic;
+
+  const q = d.naming_queue || [];
+  $('missionqhead').hidden = !q.length;
+  const ql = $('missionqueue');
+  ql.innerHTML = '';
+  for (const a of q) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="kind">${esc(a.status)}</span><span class="lbl">${esc(a.display_name)} · ${esc(a.area_m2)} m²</span>`;
+    const input = document.createElement('input');
+    input.type = 'text'; input.maxLength = 40; input.placeholder = 'Name it';
+    input.onkeydown = (ev) => { if (ev.key === 'Enter') nameMissionArea(a.id, input); };
+    const save = document.createElement('button');
+    save.className = 'kill'; save.title = 'Save name'; save.textContent = '✓';
+    save.onclick = () => nameMissionArea(a.id, input);
+    li.appendChild(input); li.appendChild(save);
+    ql.appendChild(li);
+  }
+
+  const named = (d.areas || []).filter(a => a.status === 'named');
+  $('missionareashead').hidden = !named.length;
+  $('missionareas').innerHTML = named.map(a =>
+    `<li><span class="kind">${esc(a.area_m2)} m²</span><span class="lbl">${esc(a.display_name)}</span></li>`).join('') +
+    (d.areas_elsewhere ? `<li class="none">…and ${d.areas_elsewhere} saved in another frame</li>` : '');
+
+  const lad = d.ladder;
+  $('missionladder').textContent = lad
+    ? `Way back: rung ${lad.rung ?? '—'} · ${lad.phase || ''} · cycle ${lad.cycle ?? 0}` +
+      (lad.in_help ? ' · asking for help' : '')
+    : (s.verified === false ? 'Back at the start, but the view did not match it.' : '');
+
+  const hist = d.missions || [];
+  $('missionhisthead').hidden = !hist.length;
+  $('missionhist').innerHTML = hist.map(m =>
+    `<li><span class="kind">${esc(m.status)}</span><span class="lbl">` +
+    `${esc(ago(m.started_wall))} · ${esc(m.stop_reason || '')}` +
+    `${m.explored_m2 != null ? ' · ' + esc(m.explored_m2) + ' m²' : ''}` +
+    `${m.home_error_m != null ? ' · ended ' + esc(m.home_error_m) + ' m from start' : ''}` +
+    `${m.rth_attempts ? ' · ' + esc(m.rth_attempts) + ' return tries' : ''}` +
+    `${m.by === 'curiosity' ? ' · her own idea' : ''}</span></li>`).join('');
+}
+
 /* ---------- reminders, to-do, routines, calendar (file 16) ----------
    Rides the 4 s heartbeat like the other panels. Times are typed the way
    they are said ("5 pm", "tomorrow morning", "in 20 minutes"); the server
@@ -1516,6 +1640,7 @@ async function heartbeat() {
   refreshMap();                   // one stat() server-side until the map changes
   refreshMaps();
   refreshNav();                   // landmarks + the attempt log, one read
+  refreshMission();               // the exploration mission (file 21)
   if ($('navroundtrip')) $('navroundtrip').onchange = (e) =>
     navSend({ action: 'round_trip', on: e.target.checked },
             e.target.checked ? 'she will come back afterwards…'
@@ -1585,6 +1710,7 @@ function showPane(id) {
   refreshMap();
   refreshMaps();
   refreshNav();
+  refreshMission();
   buildGrowth();
   buildStudy();
   growthNow = state.growth || null;

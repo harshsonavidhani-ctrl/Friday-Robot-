@@ -566,11 +566,12 @@ check("nothing here wrote to the real state folder",
 # =============================================================================
 print("--- nothing else changed ---")
 import subprocess                                       # noqa: E402
+# main.py is step 11's (the voice hook), so it is not in this list.
 diff = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "HEAD", "--",
                        "rl", "slam", "exploration_mode.py",
-                       "mcp_server/tools/explore.py", "main.py", "offline.py"],
+                       "mcp_server/tools/explore.py", "offline.py"],
                       capture_output=True, text=True).stdout.split()
-check("rl/, slam/, exploration_mode.py, explore.py, main.py, offline.py untouched",
+check("rl/, slam/, exploration_mode.py, explore.py, offline.py untouched",
       diff == [], str(diff))
 
 print(f"\n{sum(_results)}/{len(_results)} passed")

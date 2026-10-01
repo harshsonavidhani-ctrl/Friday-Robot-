@@ -1150,7 +1150,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     # crashed this process on that boot. Hearing "hey Friday" needs none of
     # them, so the mic and the detector start first and the rest loads behind.
     stream = source = scene_watch = narration_watch = reminder_watch = None
-    agency_watch = None
+    agency_watch = mission_watch = None
     if typed is None:
         # ONE microphone stream, shared by the wake detector and the capture.
         # Opened here so both get the same one -- see stt.AudioStream for why
@@ -1196,6 +1196,15 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             inner = (source.sources if isinstance(source, wake_word.AnyOf)
                      else (source,))
             source = wake_word.AnyOf(*inner, agency_watch)
+        # THE EXPLORATION MISSION'S QUESTIONS (file 21 step 11): one trigger
+        # per question it asks, heard WITHOUT the wake word. Never hushed by a
+        # run (its sleep() is a no-op) -- a run is exactly when it asks.
+        if _mission_on():
+            from exploration_mission import voice_link
+            mission_watch = voice_link.MissionWatch()
+            inner = (source.sources if isinstance(source, wake_word.AnyOf)
+                     else (source,))
+            source = wake_word.AnyOf(*inner, mission_watch)
         global WAKE
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
@@ -1254,6 +1263,10 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 if (agency_watch is not None
                         and trigger.startswith("agency: ")):
                     await _agency_turn(voice, face, source, trigger)
+                    continue
+                if (mission_watch is not None
+                        and trigger.startswith("mission: ")):
+                    await _mission_turn(voice, face, source, stream, trigger, link)
                     continue
                 turn = stages.Turn(trigger)
                 # AN UNCERTAIN WAKE IS HEARD IN SILENCE (2026-09-27). Below
@@ -1409,6 +1422,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                     if agency_watch is not None and spoken.strip():
                         agency_watch.heard_harsh()
                     _idle_turn_ended(spoken)
+                    _mission_heard(spoken)          # curiosity's clock (file 21)
                     # RE-ARM, ALWAYS. Every path above lands here, including
                     # the timeouts and the crashes, because a turn that ends
                     # without handing the microphone back is exactly the bug
@@ -1431,6 +1445,122 @@ async def run(once: bool = False, typed: str | None = None) -> int:
 
     voice.close()
     return 0
+
+
+# --- the exploration mission's voice (file 21 step 11) ------------------------
+MISSION_VOICE_TIMEOUT_S = 5.0     # a local regex router; slower means it is stuck
+
+
+def _mission_on() -> bool:
+    return bool(getattr(config, "EXPLORATION_MISSION_SERVICE", False))
+
+
+async def _mission_claims(session, spoken: str, turn) -> bool:
+    """Is this the mission's? One MCP call (mission_voice), offline, no model.
+
+    ⚠ ON THE RAW SESSION, NOT _FreshOrders: that wrapper judges an order's age
+    at the FIRST tool of the turn, and this call comes before the brain has
+    even started -- going through it would let every later move in the turn
+    be judged as if it had been made now. The age is passed in instead, and
+    the mission refuses a stale order that would set her driving itself.
+    Any failure is "not ours": the existing pipeline carries on. Never raises.
+    """
+    if not _mission_on() or session is None or not spoken.strip():
+        return False
+    raw = getattr(session, "_session", session)
+    said_at = getattr(session, "_said_at", None)
+    age = 0.0 if said_at is None else max(0.0, time.monotonic() - said_at)
+    try:
+        result = await asyncio.wait_for(
+            raw.call_tool("mission_voice", {"text": spoken, "age_s": round(age, 2)}),
+            MISSION_VOICE_TIMEOUT_S)
+        text = "".join(getattr(part, "text", "") or ""
+                       for part in (result.content or []))
+        data = json.loads(text) if text.strip().startswith("{") else {}
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("mission voice hook skipped: %s: %s", type(exc).__name__, exc)
+        return False
+    if not data.get("handled"):
+        return False
+    turn.note(f"exploration mission — {spoken[:40]!r} handled locally, no model")
+    turn.answered_by("mission, no model", 0.0)
+    turn.done("DONE (mission)")
+    return True
+
+
+def _mission_heard(spoken: str) -> None:
+    """A turn ended: curiosity's conversation clock (file 21 step 10). Never raises."""
+    if _mission_on() and spoken.strip():
+        try:
+            from exploration_mission import voice_link
+            voice_link.mark_heard()
+        except Exception as exc:                # noqa: BLE001
+            log.debug("heard mark failed: %s", exc)
+
+
+def _mission_held() -> bool:
+    """Is the mission holding the run still (a question, a pause)? Then she is
+    not driving, and the wake word may be on (file 21 step 11)."""
+    if not _mission_on():
+        return False
+    try:
+        from exploration_mission import voice_link
+        return voice_link.held()
+    except Exception:                           # noqa: BLE001
+        return False
+
+
+async def _mission_turn(voice: "Voice", face: "Face", source, stream,
+                        trigger: str, link) -> None:
+    """The mission asked a question (file 21 step 11): hear ONE answer.
+
+    Harsh, 2026-09-29: the wake word stays off while she drives, and she
+    listens WITHOUT it only while held for a question. The question was said
+    from friday-mcp (nav_voice -> tts.speak); this waits for her voice to end,
+    captures one utterance, transcribes it, and hands the words back through
+    mission_answer. Nothing heard is an empty answer (silence). Never raises.
+    """
+    import initiative
+    import stt
+    from exploration_mission import voice_link
+
+    ask = voice_link.parse_trigger(trigger)
+    if ask is None:
+        return
+    turn = stages.Turn(f"mission: {ask['kind']}")
+    source.pause()                              # never hear herself
+    text = ""
+    try:
+        deadline = time.monotonic() + 20.0
+        while initiative.she_is_talking() and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        face.set("listening")
+        try:
+            audio = await turn.call(
+                "CAPTURING", functools.partial(
+                    stream.capture, start_timeout=ask["listen_s"],
+                    handover_ms=0, deadtime_ms=0),
+                timeout=config.MAX_UTTERANCE_S + ask["listen_s"] + 5.0)
+            face.set("thinking")
+            text = await turn.call("TRANSCRIBING", stt.transcribe, audio,
+                                   timeout=config.STAGE_STT_TIMEOUT_S)
+            turn.stage("TRANSCRIBED", stages.quote(text))
+        except stt.Silence as exc:
+            turn.stage("NOTHING SAID", str(exc))
+        session = await link.get(MCP_CONNECT_WAIT_S)
+        await asyncio.wait_for(
+            session.call_tool("mission_answer", {"ask_id": ask["id"], "text": text}),
+            config.STAGE_TOOL_TIMEOUT_S)
+        turn.answered_by("mission, no model", 0.0)
+        turn.done("ANSWERED" if text.strip() else "SILENCE")
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("mission question failed: %s: %s", type(exc).__name__, exc)
+        turn.done(f"FAILED ({type(exc).__name__})")
+    finally:
+        _mission_heard(text)
+        face.rest()
+        source.resume()
+        turn.listening()
 
 
 async def handle(brain_obj, session, voice: Voice, face: Face,
@@ -1462,6 +1592,14 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
                                           say="Stopping."),
                            session, voice, face, turn)
         return "stopped"
+
+    # THE EXPLORATION MISSION HEARS IT NEXT (file 21 step 11), and only when
+    # config.EXPLORATION_MISSION_SERVICE is on. Its router claims its own
+    # words ("explore", "save this as the kitchen", "continue", "go back" in a
+    # mission...) and says False to everything else, which then takes exactly
+    # the path below, unchanged. After the stop check, never before it.
+    if await _mission_claims(session, spoken, turn):
+        return "mission"
 
     # No key is the same situation as no internet, from the robot's point of
     # view: there is no reasoning available, so fall through to the reflexes
@@ -1640,7 +1778,9 @@ def _explore_hush(source) -> None:
         hushed = False
         while True:
             try:
-                out = _exploring()
+                # Held by the mission (a question, a pause) she is standing
+                # still: "off while DRIVING" (Harsh, 2026-09-29) -- so on.
+                out = _exploring() and not _mission_held()
                 if out:
                     # Only re-arm as the current slice runs down, so this does
                     # not write "asleep for 20s" to the log every 4 seconds.

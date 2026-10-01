@@ -69,6 +69,11 @@ LINES: dict[str, tuple[str, str]] = {
                        "while?", "curious"),
     "curiosity_auto": ("I'm going to explore for a while.", "excited"),
     "cant_now":       ("I can't do that right now.", "neutral"),
+    # NOT in the spec's table: main.py refuses a move ordered more than
+    # COMMAND_MAX_AGE_S ago (transcription is slow on this Pi); a mission order
+    # that would set her driving is refused the same way, in her own words.
+    "stale_order":    ("That order is too old now, so I didn't move. Please "
+                       "say it again.", "neutral"),
     "failsafe":       ("I've stopped and I need help.", "worried"),
     # NOT in the spec's table: SET_HOME must "confirm" (4.8) and the table has
     # no line for it, so it reuses the mission-start wording.

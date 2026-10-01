@@ -363,6 +363,32 @@
       </div>
     </section>
 
+    <section class="panel" id="panel-mission">
+      <div class="panelhead">
+        <h2>Exploration mission</h2>
+        <span class="badge" id="missionnow">off</span>
+      </div>
+      <div class="screen">
+        <!-- FILE 21 step 11 (exploration_mission/dashboard_panels.py). Read-only
+             except ONE thing: naming / renaming a saved area (POST /api/mission
+             {area_id, name}). Starting and stopping stay on the Explore panel.
+             Drawn in ONE frame: the mission's own while it runs, else the home
+             anchor's; areas saved in another frame are counted, not drawn. -->
+        <p class="drivenote" id="missionline">The mission service is off.</p>
+        <svg id="missionmap" class="navplan" viewBox="0 0 100 100"
+             preserveAspectRatio="xMidYMid meet" aria-label="Saved areas" hidden></svg>
+        <p class="drivenote" id="missionkey" hidden>orange named · grey unnamed ·
+          red stale · blue home · green start · white her · yellow edges left</p>
+        <p class="drivenote" id="missionqhead" hidden>Areas waiting for a name:</p>
+        <ul class="pending" id="missionqueue"></ul>
+        <p class="drivenote" id="missionareashead" hidden>Saved areas:</p>
+        <ul class="pending" id="missionareas"></ul>
+        <p class="drivenote" id="missionladder"></p>
+        <p class="drivenote" id="missionhisthead" hidden>Missions:</p>
+        <ul class="pending" id="missionhist"></ul>
+      </div>
+    </section>
+
     <section class="panel" id="panel-study">
       <div class="panelhead">
         <h2>Study</h2>
