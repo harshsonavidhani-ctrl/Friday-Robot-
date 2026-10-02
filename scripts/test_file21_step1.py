@@ -466,8 +466,10 @@ changed = subprocess.run(
      "mcp_server/tools/explore.py", ":(exclude)rl/modes/*"],  # mode config, his OK
     capture_output=True, text=True,
     cwd=str(ROOT)).stdout.split()
-check("rl/ + slam/ + exploration: only way_back.py and pi_deploy.py differ",
-      set(changed) <= {"rl/way_back.py", "rl/pi_deploy.py"}, str(changed))
+check("rl/ + slam/ + exploration: only way_back.py, pi_deploy.py, friday_voice.py (the hold mute), "
+      "unstick.py + friday_localnav_deploy.py (keep trying) differ",
+      set(changed) <= {"rl/way_back.py", "rl/pi_deploy.py", "rl/friday_voice.py",
+                       "rl/unstick.py", "rl/friday_localnav_deploy.py"}, str(changed))
 diff = subprocess.run(["git", "diff", "-U0", "HEAD", "--", "rl/pi_deploy.py"],
                       capture_output=True, text=True, cwd=str(ROOT)).stdout
 removed = [ln for ln in diff.splitlines()

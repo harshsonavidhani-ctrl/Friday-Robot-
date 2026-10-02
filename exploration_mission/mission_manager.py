@@ -351,6 +351,7 @@ class MissionManager:
         self.last_matched_pose = (0.0, 0.0, 0.0)   # the tracker was SURE here
         self._started_by = "voice"          # | "curiosity"
         self._run_ended = False             # the run finished on its own
+        self._end_asked = False             # the last question was asked at the end
 
     # ======================================================================
     # what the voice side calls (any thread)
@@ -1224,13 +1225,31 @@ class MissionManager:
         """One last ask, cooldown ignored, for the room she is standing in
         (spec 4.6), then the summary."""
         res = self.analysis.latest
-        if res is not None and not self.estop:
+        # NOT gated on the e-stop: exploring is over, the hold keeps her still
+        # either way, and both 2026-10-02 22:43 and 23:21 the time ran out with
+        # her reflex-stopped against something, so no room was ever asked about.
+        if res is not None:
             choice = segmentation.choose_label_target(
                 res["seg"], self.dwell, now, self._t_question, True, self.lparams,
                 ignore_cooldown=True)
             if choice is not None:
+                # The run's own "Returning to where I started." is said while
+                # we hold it for this question -- and its narrator is muted
+                # while held -- so the mission says it after (_start_return).
+                self._end_asked = True
                 self._begin_ask(choice.segment, choice.complete, now, after="SUMMARIZE")
                 return
+            # Why no question -- the first real missions asked nothing and the
+            # log could not say why (2026-10-02 22:43).
+            why = {str(s.key): segmentation.why_not(s, self.dwell, now, self.lparams,
+                                                     final=True)
+                   for s in res["seg"].segments}
+            log.info("no last question: in room %s; %s", self.dwell.current,
+                     {k: v for k, v in why.items()} or "no rooms")
+            self._event("no_last_question", current=str(self.dwell.current),
+                        why={k: v for k, v in why.items()})
+        elif res is None:
+            log.info("no last question: no map analysis yet")
         self._summarize(now)
 
     # ---- ASK_LABEL ----------------------------------------------------------------
@@ -1434,7 +1453,7 @@ class MissionManager:
         if (status or {}).get("way_back_phase") not in ("returning", "done"):
             self.a.run.request_return(self.mission["id"])
         self._release()
-        if not getattr(self.a.run, "announces_return", False):
+        if not getattr(self.a.run, "announces_return", False) or self._end_asked:
             self.say("returning")
         self._t_return = now
         self._t_last_fix = now

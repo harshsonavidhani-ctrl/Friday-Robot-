@@ -227,25 +227,31 @@ _cfg.ROOT = real_root
 # =============================================================================
 print("--- 5. the active exploration back (Harsh, 2026-10-02) ---")
 env = (ROOT / "rl" / "modes" / "confident_explore.env").read_text()
-check("MODE_QUIET_MOTORS=0 and MODE_UNSTICK=0 in the mode file",
-      'MODE_QUIET_MOTORS="0"' in env and 'MODE_UNSTICK="0"' in env)
+# 16:1x Harsh chose the old drive + unstick off; 23:22 (test #5) unstick off
+# brought back the triple lock, so unstick is ON again in keep-trying form.
+check("mode file: old motor drive, unstick ON in keep-trying form",
+      'MODE_QUIET_MOTORS="0"' in env and 'MODE_UNSTICK="1"' in env
+      and 'MODE_UNSTICK_KEEP_TRYING="1"' in env)
 import subprocess                                        # noqa: E402
 out = subprocess.run(["bash", "-c", f'set -a; . "{ROOT}/rl/modes/confident_explore.env"; '
                       'ARGS=(); if [ "${MODE_QUIET_MOTORS:-1}" = "0" ]; then '
                       'ARGS+=(--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard); fi; '
-                      '[ "${MODE_UNSTICK:-1}" = "0" ] && ARGS+=(--no-unstick); echo "${ARGS[*]}"'],
-                     capture_output=True, text=True).stdout.strip()
+                      '[ "${MODE_UNSTICK:-1}" = "0" ] && ARGS+=(--no-unstick); '
+                      '[ "${MODE_UNSTICK_KEEP_TRYING:-0}" = "1" ] && ARGS+=(--unstick-keep-trying); '
+                      'echo "${ARGS[*]}"'], capture_output=True, text=True).stdout.strip()
 sh = (ROOT / "rl" / "modes" / "explore.sh").read_text()
-check("explore.sh passes the old drive and the old blocked behaviour to the run",
+check("explore.sh passes the old drive and keep-trying unstick to the run",
       "--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard" in sh
-      and "--no-unstick" in sh and out == "--motor-kick-rest 0 --motor-pulse-burst 1 "
-      "--no-motor-plug-guard --no-unstick", out)
+      and "--unstick-keep-trying" in sh
+      and out == "--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard "
+      "--unstick-keep-trying", out)
 sys.path.insert(0, str(ROOT / "rl"))
 import friday_localnav_deploy as L                       # noqa: E402
 a = L.build_arg_parser().parse_args(["--motor", "friday", "--i-am-watching"] + out.split())
-check("...and the run's own parser takes them (unstick off, kick every start, "
-      "1-tick pulses, no coast)", a.no_unstick and a.motor_kick_rest == 0.0
-      and a.motor_pulse_burst == 1 and a.motor_plug_guard is False)
+check("...and the run's own parser takes them (unstick on + keep trying, kick every "
+      "start, 1-tick pulses, no coast)", not a.no_unstick and a.unstick_keep_trying
+      and a.motor_kick_rest == 0.0 and a.motor_pulse_burst == 1
+      and a.motor_plug_guard is False)
 
 # =============================================================================
 print("--- 6. her own voice in an answer capture is not his answer ---")
@@ -301,6 +307,105 @@ if _real_stt is not None:
     sys.modules["stt"] = _real_stt
 check("the run narrated during the capture -> the answer sent back is EMPTY "
       "(silence: she asks again), not her own words", got6 == [""], str(got6))
+
+# =============================================================================
+print("--- 7. the run is quiet while the mission asks (2026-10-02 23:00) ---")
+sys.path.insert(0, str(ROOT / "rl"))
+import friday_voice as _fv                                # noqa: E402
+_va = _fv.VoiceAnnouncer(enabled=True, backend="log")
+_held = [True]
+_va.muted = lambda: _held[0]
+check("held: the run's narration is dropped ('I have now mapped 64 square "
+      "metres' twice landed in his answer)",
+      _va.say("coverage", "I have now mapped 64 square metres.") is False
+      and _va.dropped_muted == 1)
+_held[0] = False
+check("...released: she talks again", _va.say("coverage", "I have now mapped 12.") is True)
+_va.muted = lambda: 1 / 0
+check("...a broken mute never silences her", _va.say("boot", "Starting.") is True)
+_va.close() if hasattr(_va, "close") else None
+pd_src = (ROOT / "rl" / "pi_deploy.py").read_text()
+check("the run wires its voice's mute to the mission hold",
+      "self.voice.muted = self.hold.active" in pd_src)
+# the mission says the way back itself when it asked at the end
+from exploration_mission import mission_manager as _MM  # noqa: E402
+_real_choose = _MM.segmentation.choose_label_target
+# Only the LAST question (at the cap) is allowed here, so the run's own
+# "Returning to where I started." falls inside the hold.
+_MM.segmentation.choose_label_target = (
+    lambda *a, **k: _real_choose(*a, **k) if k.get("ignore_cooldown") else None)
+w7 = booted(World(["kitchen"], world=mm.three_rooms(),
+                  cfg={"explore": {"mission_cap_min": 0.5}, "return": {"mode": "run_first"}}))
+w7.a.run.announces_return = True
+w7.mgr.start()
+w7.run()
+_MM.segmentation.choose_label_target = _real_choose
+said7 = w7.voice.said
+check("(the question really came at the end)", w7.mgr._end_asked is True
+      and any(e["kind"] == "state" and e.get("to") == "ASK_LABEL"
+              for e in w7.mission()["events"]))
+check("asked at the end + the run's own line muted -> she says 'Going back' herself",
+      "Going back to where I started." in said7 and ASK in said7, str(said7[-5:]))
+w8 = booted(World(["kitchen"], world=mm.three_rooms(),
+                  cfg={"explore": {"mission_cap_min": 0.5}, "return": {"mode": "run_first"}}))
+w8.a.run.announces_return = True
+w8.mgr.start()
+w8.run()
+check("...but NOT when the room was asked about earlier (no hold at the end: the "
+      "run says its own line, no echo)", "Going back to where I started." not in w8.voice.said,
+      str(w8.voice.said[-4:]))
+
+# =============================================================================
+print("--- 8. blocked: she keeps trying, never 'please move me' (2026-10-02 23:22) ---")
+import unstick as _un                                     # noqa: E402
+def _lock(u, now, n=_un.LOCK_TICKS):
+    out = None
+    for i in range(n):
+        out = u.update(frozen=True, tof_min=0.11, rear_min=0.80, pose=(0.5, -0.3, 3.0),
+                       now=now + i * 0.1)
+    return out
+u = _un.Unstick(0.22, -0.15, 1.6, 0.12, keep_trying=True)
+for _ in range(20):                                       # she drove in at 0.2 m/s
+    u.record(0.2, 0.0, 0.1)
+first = _lock(u, 100.0)
+check("a lock -> the undo reverses along the way she came", first is not None
+      and first[0] < 0, str(first))
+u._end_undo(102.0, freed=False)
+for _ in range(20): u.record(0.2, 0.0, 0.1)
+_lock(u, 103.0)
+u._end_undo(105.0, freed=False)
+_lock(u, 106.0)                                           # MAX_TRIES spent: no history
+said8 = [k for k, _ in u.events]
+check("tries spent -> NOT 'please move me': she rests and says she is trying "
+      "another way", "unstuck_help" not in said8 and "unstuck_retry" in said8
+      and u.state == "resting", f"{said8} {u.state}")
+for _ in range(20): u.record(0.0, 0.8, 0.1)               # whatever moved her meanwhile
+again8 = _lock(u, 106.0 + _un.REST_S + 0.5, n=_un.LOCK_TICKS + 1)
+check(f"...after {_un.REST_S:g} s she tries again by herself (no person needed)",
+      again8 is not None and u.state == "undoing", f"{again8} {u.state}")
+old_u = _un.Unstick(0.22, -0.15, 1.6, 0.12)
+_lock(old_u, 0.0)
+check("without keep_trying the old behaviour is unchanged (asks, waits)",
+      old_u.state == "asking" and ("unstuck_help" in [k for k, _ in old_u.events]))
+envm = (ROOT / "rl" / "modes" / "confident_explore.env").read_text()
+check("the mode runs unstick ON in keep-trying form",
+      'MODE_UNSTICK="1"' in envm and 'MODE_UNSTICK_KEEP_TRYING="1"' in envm)
+
+print("--- 9. the last question is asked even during an e-stop (23:21) ---")
+_MM.segmentation.choose_label_target = (
+    lambda *a, **k: _real_choose(*a, **k) if k.get("ignore_cooldown") else None)
+w9 = booted(World(["kitchen"], world=mm.three_rooms(),
+                  cfg={"explore": {"mission_cap_min": 0.5}, "return": {"mode": "run_first"}}))
+w9.mgr.start()
+w9.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 20, max_s=60)
+w9.sim.estop_on = True                                    # pressed against something
+w9.run(lambda x: x.mgr.state in ("ASK_LABEL", "SUMMARIZE", "RETURN_TO_START"), max_s=60)
+w9.sim.estop_on = False
+w9.run()
+_MM.segmentation.choose_label_target = _real_choose
+check("time cap while reflex-stopped -> she still asks about the room",
+      ASK in w9.voice.said and any(a["name"] == "kitchen" for a in w9.areas()),
+      str(w9.voice.said[-5:]))
 
 print(f"\n{sum(_results)}/{len(_results)} passed")
 sys.exit(0 if all(_results) else 1)

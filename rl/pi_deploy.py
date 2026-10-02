@@ -4311,6 +4311,8 @@ class ControlLoop:
                                 self.way_back.reached_m, self.way_back.budget_s)
 
         self.hold.start()                   # FILE 21: polls the mission's hold file
+        if getattr(self, "voice", None) is not None:
+            self.voice.muted = self.hold.active  # FILE 21: quiet while she asks
         held_left = None                    # FILE 21: run time left when a hold began
 
         period = self.cfg.dt
@@ -5840,6 +5842,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "governor, exactly as before. Use it to A/B the thing it was "
                         "built to fix: turning per metre, and what fraction of ticks "
                         "end in a safety override.")
+    p.add_argument("--unstick-keep-trying", action="store_true",
+                   help="After the undo tries at one place, rest a moment and try "
+                        "again instead of asking to be moved (rl/unstick.py "
+                        "keep_trying; Harsh 2026-10-02).")
     p.add_argument("--no-unstick", action="store_true",
                    help="Do not undo the last move when the ToF reflex, its turn "
                         "freeze and the rear gate all refuse at once (rl/unstick.py). "

@@ -78,6 +78,13 @@ SAME_SPOT_M = 0.30
 MAX_TRIES = 2
 # Free this long and the place's tries are forgiven.
 FREE_RESET_S = 20.0
+# KEEP TRYING (Harsh, 2026-10-02: "actively try ... if it gets blocked", and he
+# had rejected "please move me"). With `keep_trying`, MAX_TRIES at one place no
+# longer ends in a request and a wait for a person: she says once that she is
+# trying another way, the place goes on the avoid list as before, and after
+# REST_S the lock is undone again from whatever she has moved since. Bounded
+# by the run itself (its time, and the way back's own budget).
+REST_S = 3.0
 # While asking, free this many consecutive ticks = someone moved her (or it moved).
 FREED_TICKS = 10
 # Say the request again this often while nobody helps.
@@ -113,8 +120,9 @@ class Unstick:
     v_min: float                  # negative: the one executable reverse
     omega_max: float
     tof_freeze_m: float           # the reflex's tof_pivot_min_clearance
+    keep_trying: bool = False     # no "please move me": rest REST_S, try again
 
-    state: str = "idle"           # idle | undoing | asking
+    state: str = "idle"           # idle | undoing | asking | resting
     history: deque = field(default_factory=lambda: deque(maxlen=200))
     frozen_ticks: int = 0
     free_ticks: int = 0
@@ -243,6 +251,10 @@ class Unstick:
             if now - self.asked_at >= ASK_REPEAT_S:
                 self._ask(now, again=True)
             return None
+        if self.state == "resting":
+            if now - self.asked_at < REST_S:
+                return None
+            self.state, self.tries = "idle", 0     # and try again, below
 
         if self.frozen_ticks < LOCK_TICKS:
             return None
@@ -291,6 +303,15 @@ class Unstick:
         return None
 
     def _ask(self, now: float, again: bool = False) -> None:
+        if self.keep_trying:
+            self.stats["rests"] = self.stats.get("rests", 0) + 1
+            if self.spot is not None and self.spot not in self.avoid:
+                self.avoid.append(self.spot)
+            if self.stats["rests"] == 1 or self.stats["rests"] % 5 == 0:
+                self.events.append(("unstuck_retry",
+                                    "I'm boxed in. Trying another way."))
+            self.state, self.asked_at, self.free_ticks = "resting", now, 0
+            return
         if not again:
             self.stats["asked"] += 1
             if self.spot is not None:

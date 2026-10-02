@@ -3150,10 +3150,16 @@ EXPLORATION_MISSION = {
                # each round the whole ladder: wait, clear, look, back up,
                # retrace, nearest spot), not every 30 s. Spoken every 3rd.
                "help_max_cycles": 30, "help_speak_every": 3,
-               # Harsh, 2026-10-02: home on the MISSION'S MAP first (File 14,
-               # A* + guarded moves); "run_first" = the RL run's own way back
-               # first, the old order. Without an engine it is always run_first.
-               "mode": "map_first"},
+               # "map_first" = File 14 on the MISSION'S MAP first; "run_first"
+               # = the RL run's own way back first (its start tracker, reflexes,
+               # escapes, 600 s budget), then the map ladder, then HELP.
+               # Harsh chose map_first (2026-10-02 afternoon); measured that
+               # evening, the map a 2-minute trip builds is too thin to place
+               # her on (47 sweeps; at her real spot the best two places scored
+               # 0.71 vs 0.70, so File 14 rightly refused every attempt), while
+               # the run's way back got her to 0.09 m. run_first until the
+               # mission's map is good enough.
+               "mode": "run_first"},
     "boot": {"slam_wait_s": 60, "home_check_period_s": 30},
     "curiosity": {"mode": "off", "threshold": 0.8, "weights": [0.5, 0.3, 0.2],
                   "min_idle_min": 10, "min_quiet_conversation_min": 5,

@@ -117,6 +117,13 @@ class VoiceAnnouncer:
                  max_queue: int = 4, voice: str | None = None,
                  rate_wpm: int = 165) -> None:
         self.enabled = bool(enabled)
+        # FILE 21 (2026-10-02): a predicate the run sets to its mission hold.
+        # While it is true every line is DROPPED: the mission is asking Harsh a
+        # question and listening for the answer, and the run's narration ("I
+        # have now mapped 64 square metres") landed in the answer twice. A held
+        # run is standing still, so no safety line is lost.
+        self.muted = None
+        self.dropped_muted = 0
         self.min_gap_s = float(min_gap_s)
         self.default_cooldown_s = float(default_cooldown_s)
         self.voice = voice
@@ -199,6 +206,12 @@ class VoiceAnnouncer:
         """
         if not self.enabled or self._stop.is_set():
             return False
+        try:
+            if self.muted is not None and self.muted():
+                self.dropped_muted += 1
+                return False
+        except Exception:                                   # noqa: BLE001
+            pass                    # a broken predicate must never silence her
 
         now = time.monotonic()
         cd = self.default_cooldown_s if cooldown_s is None else float(cooldown_s)

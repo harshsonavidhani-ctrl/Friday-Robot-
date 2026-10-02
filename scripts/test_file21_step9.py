@@ -250,7 +250,8 @@ check("...the RUN's way back ends where she RESUMED, not at the mission's start:
       and w.store.mission(old_id)["status"] == "help_wait", f"{last[-1:]} vs {far:.1f}")
 
 print("--- ...with File 14 wired, the same resumed mission gets home ---")
-w = World(["save it as hall", "kitchen", "bedroom"])
+w = World(["save it as hall", "kitchen", "bedroom"],
+          cfg={"return": {"mode": "map_first"}})       # the map-first order
 w.mgr.start()
 w.run(lambda x: len(x.areas()) == 1 and x.t > 45)
 w.mgr._checkpoint(w.clock.monotonic())

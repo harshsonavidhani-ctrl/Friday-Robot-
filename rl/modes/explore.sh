@@ -112,6 +112,9 @@ if [ "${MODE_QUIET_MOTORS:-1}" = "0" ]; then
     ARGS+=(--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard)
 fi
 [ "${MODE_UNSTICK:-1}" = "0" ] && ARGS+=(--no-unstick)
+# MODE_UNSTICK_KEEP_TRYING=1 (2026-10-02): the undo stays, the "please move me"
+# wait goes -- after the tries she rests 3 s and tries again.
+[ "${MODE_UNSTICK_KEEP_TRYING:-0}" = "1" ] && ARGS+=(--unstick-keep-trying)
 
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes

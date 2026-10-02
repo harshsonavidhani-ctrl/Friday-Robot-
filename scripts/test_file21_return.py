@@ -72,7 +72,9 @@ class DrivingNav(ad.FakeNav):
 
 
 def world(script, engine=True, **kw):
-    w = World(["kitchen"], world=ROOM, path=PATH, **kw)
+    # This file tests the MAP-FIRST order explicitly (config may say either).
+    cfg = kw.pop("cfg", {"return": {"mode": "map_first"}})
+    w = World(["kitchen"], world=ROOM, path=PATH, cfg=cfg, **kw)
     w.a.nav = DrivingNav(w.sim, during_run=False, clock=w.clock, script=script,
                          engine=engine)
     w.mgr.a.nav = w.a.nav
@@ -163,9 +165,15 @@ nsm.clear_failsafe = lambda: cleared.append(1)
 
 
 class Robot:
-    def __init__(self): self.moves = []
+    """The real GuardedRobot refuses any move with no fresh look first
+    (embodiment.check); this one does too."""
+    def __init__(self): self.moves, self.looked = [], False
     def arm(self): return 0
+    async def observe(self): self.looked = True
     async def drive_seconds(self, direction, seconds):
+        if not self.looked:
+            return "REFUSED — Friday has not looked at the room yet. Call observe() first"
+        self.looked = False
         self.moves.append((direction, round(seconds, 3)))
         return f"moved {direction}"
 
@@ -387,6 +395,31 @@ check("rear_clear_m: the nearest return within +-30 deg BEHIND her (not beside)"
       nav.rear_clear_m() == 0.5, str(nav.rear_clear_m()))
 check("go-to with no mission stays File 14's (MissionNav.go refuses)",
       nav.go({"name": "kitchen"}) is False and nav.available_during_run() is False)
+
+# =============================================================================
+print("--- the ladder waits for a busy engine (2026-10-02 22:45) ---")
+from exploration_mission import rth_ladder as rl, config as mcfg   # noqa: E402
+clk = ad.FakeClock()
+fn = ad.FakeNav(clock=clk, script=["ARRIVED"])
+lad = rl.Ladder(fn, rl.LadderConfig.from_config(mcfg.load()), lambda *a, **k: None,
+                {"goal": (0.0, 0.0), "trail": [], "grid": None, "inflate_m": 0.3,
+                 "body_radius_m": 0.21, "obstacles": None})
+lad.begin(clk.monotonic())
+fn._busy, fn._pending, fn._until = True, "SPUN", clk.monotonic() + 20.0   # a spin still turning
+lad._attempt(clk.monotonic())
+check("an attempt while the engine is still busy WAITS (not 'refused' at once)",
+      lad.phase == "engine_busy" and not lad.attempts, lad.phase)
+out = None
+for _ in range(300):
+    clk.advance(0.1)
+    out = lad.tick(clk.monotonic())
+    if out:
+        break
+check("...and starts as soon as the engine is free, then arrives",
+      out == "arrived" and [a.result for a in lad.attempts] == ["arrived"],
+      f"{out} {[a.result for a in lad.attempts]}")
+check("the look-again rung may take up to 75 s (a full turn, a look per quarter)",
+      rl.MANEUVER_TIMEOUT_S >= 75.0)
 
 # =============================================================================
 print("--- environment_watch leaves a mission's run alone ---")

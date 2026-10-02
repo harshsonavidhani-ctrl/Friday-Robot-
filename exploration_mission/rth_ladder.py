@@ -55,7 +55,11 @@ from exploration_mission import grid_utils as gu
 log = logging.getLogger("friday.exploration_mission.rth")
 
 ATTEMPT_TIMEOUT_S = 180.0       # an engine journey that never ends is a failure
-MANEUVER_TIMEOUT_S = 30.0
+# The look-again rung turns up to a full circle a quarter at a time, with a
+# look and a search after each: ~25-40 s on the Pi. At 30 s the ladder used to
+# give up on it mid-turn and run its next rungs into "busy" (2026-10-02 22:45).
+MANEUVER_TIMEOUT_S = 75.0
+ENGINE_BUSY_WAIT_S = 30.0        # a rung waits this long for the engine to free
 SPOKEN = {3: "rung3", 5: "rung5", 6: "rung6"}
 
 
@@ -307,6 +311,11 @@ class Ladder:
 
     def _attempt(self, now: float, goal=None, waypoints=None) -> None:
         self._t = now
+        if self.e.busy():
+            # The last manoeuvre is still finishing (stopping takes a moment):
+            # wait for it rather than call this rung refused.
+            self.phase, self._pending = "engine_busy", (goal, waypoints)
+            return
         started = self.e.attempt(goal or self.goal, waypoints)
         self.phase = "attempt" if started else "refused"
 
@@ -334,6 +343,13 @@ class Ladder:
                 if self.e.busy():
                     self.e_stop_quietly()
                 self._attempt(now)
+        elif self.phase == "engine_busy":
+            if not self.e.busy():
+                goal, waypoints = getattr(self, "_pending", (None, None))
+                self._attempt(now, goal, waypoints)
+            elif now - self._t > ENGINE_BUSY_WAIT_S:
+                self._record("refused", now)
+                return self._next_rung(now)
         elif self.phase == "refused":
             self._record("refused", now)
             return self._next_rung(now)

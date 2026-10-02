@@ -496,6 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     # the robot, because run_localnav.sh drives THIS main().
     loop.way_back_enabled = not getattr(args, "no_way_back", False)
     loop.unstick_enabled = not getattr(args, "no_unstick", False)
+    loop.unstick.keep_trying = bool(getattr(args, "unstick_keep_trying", False))
     # --map-file and --state-file were the fifth and sixth. --map-file being ignored
     # meant a diagnostic run pointed at a scratch map OVERWROTE the real one.
     if getattr(args, "map_file", None):

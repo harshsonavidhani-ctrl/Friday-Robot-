@@ -257,9 +257,20 @@ class EngineHost:
         self._arm()
         speed = float(getattr(config, "MISSION_BACKUP_SPEED_M_S", 0.45))
         seconds = min(max(float(m), 0.05) / speed, float(config.MAX_REVERSE_SECONDS))
-        said = await self.robot.drive_seconds("backward", seconds)
+        said = await self._move("backward", seconds)
+        if "REFUSED" in said.upper():
+            return "REFUSED", said[:120]
         await self._relocate(back_m=float(m))
-        return "DONE", str(said)[:120]
+        return "DONE", said[:120]
+
+    async def _move(self, direction: str, seconds: float) -> str:
+        """ONE guarded move, looking first -- exactly as File 14's follower
+        does (nav_follower.Follower._execute): embodiment.check refuses any
+        move, turns included, with no fresh observation. 2026-10-02 22:45
+        every look-again turn came back "Friday has not looked at the room
+        yet. Call observe() first" and she never turned."""
+        await self.robot.observe()
+        return str(await self.robot.drive_seconds(direction, seconds))
 
     async def _spin(self):
         """Look again (rung 3): a quarter turn at a time, up to a full turn,
@@ -275,7 +286,9 @@ class EngineHost:
         deg_s = float(getattr(config, "AGENCY_TURN_DEG_PER_S", 75.0))
         said = ""
         for _ in range(LOOK_TURNS):
-            said = await self.robot.drive_seconds("left", SPIN_DEG / deg_s)
+            said = await self._move("left", SPIN_DEG / deg_s)
+            if "REFUSED" in said.upper():
+                return "REFUSED", said[:120]
             if self.mapper is not None:
                 if await self._relocate(turn_deg=SPIN_DEG):
                     return "DONE", str(said)[:120]
