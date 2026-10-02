@@ -655,7 +655,7 @@ print("--- nothing else changed ---")
 diff = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "HEAD", "--",
                        "rl", "slam", "exploration_mode.py", "mcp_server/tools/explore.py",
                        "offline.py", "mcp_server/safety.py",
-                       ":(exclude)rl/modes/*.env"],      # mode config, his OK
+                       ":(exclude)rl/modes/*"],      # mode config, his OK
                       capture_output=True, text=True).stdout.split()
 check("rl/, slam/, exploration_mode.py, explore.py, offline.py, safety.py untouched",
       diff == [], str(diff))

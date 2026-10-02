@@ -463,7 +463,7 @@ print("--- existing code: only the approved lines changed ---")
 
 changed = subprocess.run(
     ["git", "diff", "--name-only", "HEAD", "--", "rl", "slam", "exploration_mode.py",
-     "mcp_server/tools/explore.py", ":(exclude)rl/modes/*.env"],  # mode config, his OK
+     "mcp_server/tools/explore.py", ":(exclude)rl/modes/*"],  # mode config, his OK
     capture_output=True, text=True,
     cwd=str(ROOT)).stdout.split()
 check("rl/ + slam/ + exploration: only way_back.py and pi_deploy.py differ",

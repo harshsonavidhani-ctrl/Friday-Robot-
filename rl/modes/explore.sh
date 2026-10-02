@@ -100,6 +100,19 @@ fi
 # keeps a run without the mode file identical to the frozen configuration.
 [ "${MODE_CAMERAS:-1}" = "0" ] && ARGS+=(--no-cameras)
 
+# Harsh, 2026-10-02: "bring back the active exploration" (short bursts, very
+# slow, did not reverse out when blocked). Both switches select behaviour that
+# already exists in the code; default 1 keeps a run without the mode file as
+# it has been since 09-28/29.
+#   MODE_QUIET_MOTORS=0 -> the drive before a58b9e3 ("quieter gears"): kick on
+#     every start, 1-tick creep pulses, no coast before reversing.
+#   MODE_UNSTICK=0      -> the blocked behaviour before 200769c: the escape +
+#     recovery reverse out, no undo-one-move / "please move me".
+if [ "${MODE_QUIET_MOTORS:-1}" = "0" ]; then
+    ARGS+=(--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard)
+fi
+[ "${MODE_UNSTICK:-1}" = "0" ] && ARGS+=(--no-unstick)
+
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes
 # `explore.sh --duration 600` work without a second mode file.

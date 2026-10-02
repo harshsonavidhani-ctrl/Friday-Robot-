@@ -224,7 +224,7 @@ def start_mission(minutes: float | None = None) -> dict:
         return {"ok": False, "why": f"busy ({mgr.state})"}
     if not mgr.localized:
         return {"ok": False, "why": "no LiDAR sweeps"}
-    mgr.start(minutes, True)
+    mgr.start(minutes, True, by="dashboard")
     return {"ok": True, "state": "MISSION_INIT"}
 
 

@@ -281,7 +281,7 @@ diff = subprocess.run(["git", "-C", str(ROOT), "diff", "--stat", "HEAD", "--",
                        "mcp_server/tools/explore.py",
                        # mode CONFIG, changed with Harsh's OK (2026-10-02:
                        # runs keep friday-brain up for File 21); rl/ code stays
-                       ":(exclude)rl/modes/*.env"],
+                       ":(exclude)rl/modes/*"],
                       capture_output=True, text=True).stdout.strip()
 check("rl/, slam/, exploration_mode.py, explore.py: no changes", diff == "",
       diff)

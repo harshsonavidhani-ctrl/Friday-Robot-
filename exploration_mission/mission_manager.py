@@ -109,6 +109,9 @@ MIN_EXPLORE_S = 20.0
 RESUME_NEAR_M = 1.5
 RESUME_FAR_M = 4.0
 STATUS_MAX_AGE_S = 5.0
+# A run that ended: how long to wait for rl/modes/explore.sh to write how
+# (its EXIT trap restores services first, which can take a while).
+RUN_END_WAIT_S = 30.0
 
 
 # --- blocking work beside the tick ---------------------------------------------------
@@ -346,6 +349,7 @@ class MissionManager:
         self._pause_after_ask = False
         self._last_scan: dict | None = None
         self._started_by = "voice"          # | "curiosity"
+        self._run_ended = False             # the run finished on its own
 
     # ======================================================================
     # what the voice side calls (any thread)
@@ -378,8 +382,8 @@ class MissionManager:
     def resume(self) -> None:
         self._cmds.put(("resume",))
 
-    def start(self, minutes=None, fresh: bool = False) -> None:
-        self._cmds.put(("start", minutes, fresh))
+    def start(self, minutes=None, fresh: bool = False, by: str = "voice") -> None:
+        self._cmds.put(("start", minutes, fresh, by))
 
     def label_now(self, name: str, display: str) -> None:
         self._cmds.put(("label_now", name, display))
@@ -579,14 +583,16 @@ class MissionManager:
                 return
             name, st = cmd[0], self.state
             if name == "start":
-                if st == "IDLE":
-                    self._begin(cmd[1], now)
-                elif st in ("HELP_WAIT", "FAILSAFE"):
+                by = cmd[3] if len(cmd) > 3 else "voice"
+                if st in ("HELP_WAIT", "FAILSAFE"):
                     # Waiting for help is not a mission to protect: a person
                     # asked for a new one. The old one is saved as it is.
                     log.info("a new mission ends the one waiting in %s", st)
                     self._close(now)
+                    st = "IDLE"
+                if st == "IDLE":
                     self._begin(cmd[1], now)
+                    self._started_by = by
                 else:
                     self.say("cant_now")
             elif name == "halt":
@@ -1235,6 +1241,8 @@ class MissionManager:
         self._to("ASK_LABEL", now)
 
     def _motors_stopped(self, status: dict | None) -> bool:
+        if self._run_ended:
+            return True                     # no run: nothing is driving her
         return bool(status) and status.get("reason_code") == "mission_hold" \
             and not status.get("final_v") and not status.get("final_omega")
 
@@ -1695,8 +1703,28 @@ class MissionManager:
         pass                                 # stop, speak, dashboard, no autonomy
 
     def _run_gone(self, now: float) -> None:
-        """The run ended under the mission (the dashboard's Stop, a person).
-        A person's stop is not followed by a drive back."""
+        """The run ended under the mission. A person's stop (the dashboard's
+        Stop, "Friday, stop") is not followed by a drive back; a run that
+        FINISHED ON ITS OWN (its timer, nothing left) ends exploring: the
+        last question, the summary, the way home."""
+        try:
+            since = area_store.iso_to_wall(self.mission["started_at"])
+        except (KeyError, TypeError, ValueError):
+            since = None
+        how = self.a.run.ended_how(since) if hasattr(self.a.run, "ended_how") \
+            else "person"
+        if how == "pending" and now - self._t_last_fix < LOST_AFTER_S + RUN_END_WAIT_S:
+            return                          # its exit record is still coming
+        if how == "self":
+            log.info("the run finished on its own: exploring is over")
+            self._run_ended = True
+            self.stop_reason = self.stop_reason or (
+                "time_cap" if self._minutes and self._t_explore is not None
+                and now - self._t_explore >= self._minutes * 60.0 - 15.0
+                else "no_frontiers")
+            self._event("run_finished", stop_reason=self.stop_reason)
+            self._end_exploring(now, run_returning=True)
+            return
         self.stop_reason = self.stop_reason or "voice_stop"
         self._release()
         self._finish_mission(now, "aborted")

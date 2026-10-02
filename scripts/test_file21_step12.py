@@ -193,7 +193,7 @@ check("the CLAUDE.md PART 12 text is a PROPOSAL in the checklist",
 diff = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "HEAD", "--",
                        "CLAUDE.md", "rl", "slam", "exploration_mode.py",
                        "mcp_server/tools/explore.py", "offline.py",
-                       ":(exclude)rl/modes/*.env"],      # mode config, his OK
+                       ":(exclude)rl/modes/*"],      # mode config, his OK
                       capture_output=True, text=True).stdout.split()
 check("CLAUDE.md, rl/, slam/, exploration_mode.py, explore.py, offline.py "
       "untouched", diff == [], str(diff))

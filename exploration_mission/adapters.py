@@ -148,6 +148,35 @@ class RunAdapter:
         from mcp_server.tools import autonomy
         return bool(autonomy._running())
 
+    def ended_how(self, since_wall: float | None = None) -> str:
+        """How the last run ended, from rl/modes/explore.sh's own record
+        (state/explore_mode.json): "self" (it finished: exit 0, its timer or
+        nothing left), "person" (SIGINT / a stop / a crash -- no drive back),
+        or "pending" (the record still says running: its exit trap has not
+        written yet). A record older than this mission is "person".
+
+        Why: the run's way back can go returning -> arrived -> done in ONE
+        tick and exit without publishing it (2026-10-02 15:43, she was 0.09 m
+        from the start when the timer fired), so rl_autonomy.json still said
+        "exploring" and the mission took the end for a person's stop."""
+        import config
+        from exploration_mission import area_store
+        data = _read_json(Path(config.ROOT) / "state" / "explore_mode.json")
+        if not isinstance(data, dict):
+            return "person"
+        state = str(data.get("state") or "")
+        if state == "running":
+            return "pending"
+        if since_wall is not None:
+            try:
+                if area_store.iso_to_wall(data.get("ended") or "") < since_wall - 5.0:
+                    return "person"
+            except (TypeError, ValueError):
+                return "person"
+        if state.startswith("completed") and data.get("exit_code") in (0, 134):
+            return "self"
+        return "person"
+
     def start(self, minutes: float) -> dict:
         """MOTION: starts the RL run (friday-explore@N) through the MCP tool
         module's own function -- lease first, then the unit."""
@@ -783,6 +812,8 @@ class FakeClock(Clock):
 class FakeRun:
     """A scripted RL run: set `.live_fix`/`.status_data`; records orders."""
 
+    end_how = "person"          # what ended_how() says once it is gone
+
     def __init__(self, clock: FakeClock):
         self.clock = clock
         self.live_fix: dict | None = None
@@ -804,6 +835,9 @@ class FakeRun:
 
     def running(self):
         return self.is_running
+
+    def ended_how(self, since_wall=None):
+        return "pending" if self.is_running else self.end_how
 
     def start(self, minutes):
         self.orders.append(("start", minutes))

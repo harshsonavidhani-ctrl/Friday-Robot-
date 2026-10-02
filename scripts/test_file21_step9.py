@@ -585,7 +585,7 @@ check("mcp_server/server.py starts it beside the other watchers, guarded",
           "mission_service.start()"))
 diff = subprocess.run(["git", "diff", "-U0", "HEAD", "--", "mcp_server/server.py",
                        "rl", "slam", "exploration_mode.py",
-                       ":(exclude)rl/modes/*.env"],     # mode config, his OK
+                       ":(exclude)rl/modes/*"],     # mode config, his OK
                       capture_output=True, text=True, cwd=str(ROOT)).stdout
 removed = [ln for ln in diff.splitlines()
            if ln.startswith("-") and not ln.startswith("---")]

@@ -147,5 +147,105 @@ ro = intents.Router(type("A", (), {"__getattr__": lambda s, n: (lambda *a, **k: 
 check("'explore' is still refused while she is actually exploring",
       ro.handle("explore", intents.Context(state="EXPLORE")) is True)
 
+# =============================================================================
+print("--- 4. the run finishes on its own and says nothing (2026-10-02 15:43) ---")
+from exploration_mission import adapters as ad          # noqa: E402
+
+
+def silent_end(how: str, nav=True) -> World:
+    """Her start reached by chance as the timer fires: the run's way back goes
+    returning -> done in one tick and it exits without publishing it."""
+    # Three rooms: she is still mid-way through them when the run vanishes,
+    # so nothing but the run's end can end exploring.
+    w = booted(World(["kitchen"], world=mm.three_rooms()))
+    if nav:
+        w.a.nav = ad.FakeNav(during_run=False, clock=w.clock, script=["ARRIVED"])
+        w.mgr.a.nav = w.a.nav
+    w.mgr.start()
+    w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 25, max_s=60)
+    assert w.mgr.state == "EXPLORE", w.mgr.state
+    w.sim.is_running, w.sim.publishing = False, False   # gone, status still "exploring"
+    w.sim.end_how = how
+    return w
+
+
+w = silent_end("self")
+w.run(max_s=300)
+m = w.mission()
+said = " ".join(w.voice.said)
+check("finished on its own -> NOT 'aborted': the last question, the summary, home",
+      m["status"] in ("returned", "arrived") and ASK in said
+      and "Exploration complete" in said and "reached where I started" in said,
+      f"{m['status']} | {said[-300:]}")
+check("...the room was named ('kitchen'), the stop reason is not a person's",
+      any(a["name"] == "kitchen" for a in w.areas())
+      and m["stop_reason"] in ("time_cap", "no_frontiers"), str(m["stop_reason"]))
+check("...the question was asked with no run to hold (motors already still)",
+      not any(e["kind"] == "ask_skipped" for e in m["events"]),
+      str([e["kind"] for e in m["events"]][-8:]))
+
+w = silent_end("person")
+w.run(max_s=60)
+m = w.mission()
+check("a person's stop (dashboard Stop / SIGINT) is still 'aborted', no drive back",
+      m["status"] == "aborted" and not w.a.nav.calls if hasattr(w.a.nav, "calls") else True,
+      m["status"])
+
+w = silent_end("pending")
+for _ in range(150):                                    # 15 s: record not written yet
+    w.step()
+check("its exit record not written yet -> she waits, decides nothing",
+      w.mgr.state == "EXPLORE" and w.mission()["status"] == "running", w.mgr.state)
+w.sim.end_how = "self"
+w.run(max_s=300)
+check("...then it says 'completed' -> exploring is over, she gets home",
+      w.mission()["status"] in ("returned", "arrived"), w.mission()["status"])
+
+print("--- the run's record, read for real ---")
+import json, tempfile, config as _cfg                   # noqa: E401,E402
+tmp = Path(tempfile.mkdtemp(prefix="friday-fix4-"))
+(tmp / "state").mkdir()
+real_root = _cfg.ROOT
+_cfg.ROOT = tmp
+run = ad.RunAdapter(state_dir=tmp / "state", clock=ad.Clock())
+def rec(state, code, ended="2026-10-02T15:43:39+05:30"):
+    (tmp / "state" / "explore_mode.json").write_text(json.dumps(
+        {"state": state, "exit_code": code, "ended": ended}))
+since = __import__("datetime").datetime.fromisoformat("2026-10-02T15:40:41+05:30").timestamp()
+rec("completed", 0)
+check("explore_mode 'completed' exit 0 -> self", run.ended_how(since) == "self")
+rec("failed", 130)
+check("'failed' exit 130 (SIGINT, last night's dashboard stop) -> person",
+      run.ended_how(since) == "person")
+rec("running", None)
+check("'running' -> pending", run.ended_how(since) == "pending")
+rec("completed", 0, ended="2026-10-01T10:00:00+05:30")
+check("a record older than the mission -> person (never trust a stale one)",
+      run.ended_how(since) == "person")
+_cfg.ROOT = real_root
+
+# =============================================================================
+print("--- 5. the active exploration back (Harsh, 2026-10-02) ---")
+env = (ROOT / "rl" / "modes" / "confident_explore.env").read_text()
+check("MODE_QUIET_MOTORS=0 and MODE_UNSTICK=0 in the mode file",
+      'MODE_QUIET_MOTORS="0"' in env and 'MODE_UNSTICK="0"' in env)
+import subprocess                                        # noqa: E402
+out = subprocess.run(["bash", "-c", f'set -a; . "{ROOT}/rl/modes/confident_explore.env"; '
+                      'ARGS=(); if [ "${MODE_QUIET_MOTORS:-1}" = "0" ]; then '
+                      'ARGS+=(--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard); fi; '
+                      '[ "${MODE_UNSTICK:-1}" = "0" ] && ARGS+=(--no-unstick); echo "${ARGS[*]}"'],
+                     capture_output=True, text=True).stdout.strip()
+sh = (ROOT / "rl" / "modes" / "explore.sh").read_text()
+check("explore.sh passes the old drive and the old blocked behaviour to the run",
+      "--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard" in sh
+      and "--no-unstick" in sh and out == "--motor-kick-rest 0 --motor-pulse-burst 1 "
+      "--no-motor-plug-guard --no-unstick", out)
+sys.path.insert(0, str(ROOT / "rl"))
+import friday_localnav_deploy as L                       # noqa: E402
+a = L.build_arg_parser().parse_args(["--motor", "friday", "--i-am-watching"] + out.split())
+check("...and the run's own parser takes them (unstick off, kick every start, "
+      "1-tick pulses, no coast)", a.no_unstick and a.motor_kick_rest == 0.0
+      and a.motor_pulse_burst == 1 and a.motor_plug_guard is False)
+
 print(f"\n{sum(_results)}/{len(_results)} passed")
 sys.exit(0 if all(_results) else 1)

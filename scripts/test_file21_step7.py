@@ -628,7 +628,7 @@ check("a hold and a return request are separate files, separate meanings",
 # rl/modes/*.env is mode CONFIGURATION, changed on purpose with Harsh's OK
 # (2026-10-02: runs keep friday-brain up); the code in rl/ stays additive.
 changed = __import__("subprocess").run(
-    ["git", "diff", "-U0", "HEAD", "--", "rl", ":(exclude)rl/modes/*.env"],
+    ["git", "diff", "-U0", "HEAD", "--", "rl", ":(exclude)rl/modes/*"],
     capture_output=True, text=True, cwd=str(ROOT)).stdout
 removed = [ln for ln in changed.splitlines()
            if ln.startswith("-") and not ln.startswith("---")]

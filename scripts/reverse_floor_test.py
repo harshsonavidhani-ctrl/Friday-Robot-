@@ -10,6 +10,12 @@ because the friction floor measured 0.149 m/s -- ON A STAND. On the floor the
 first real mission's 25 escape reverses moved her NOTHING (bumper ToF 8 cm ->
 8 cm every time), and the 2026-09-29 pulses moved 0-0.6 cm at -0.15.
 
+⚠ 2026-10-02: the run logs say the 09-29 floor measurement was taken WITH the
+"quieter gears" drive (a58b9e3, kick only after a real standstill), and
+reverses freed her 38-58% of the time before that change, ~20% after. So
+--drive old (the default now, as the mode runs since Harsh restored it) and
+--drive quiet measure the two side by side.
+
 What it does, nothing else:
   1. With friday-mcp still up: checks there is something flat 15-60 cm in front
      (the ruler) and that the rear is clear (>= 0.6 m) -- and asks Harsh.
@@ -93,8 +99,12 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--i-am-watching", action="store_true")
     ap.add_argument("--dry", action="store_true", help="print the plan, move nothing")
+    ap.add_argument("--drive", choices=("old", "quiet"), default="old",
+                    help="old = the drive the mode uses now (kick every start); "
+                         "quiet = a58b9e3's quieter gears")
     args = ap.parse_args(argv)
     print(__doc__.split("What it does")[0].strip()[:600], "\n")
+    print(f"Drive: {args.drive}")
     print("Plan:", ", ".join(f"{v:+.2f}" for v in SPEEDS), f"m/s, {PULSE_S:g} s each, "
           f"straight back; stop once two speeds move >= {MOVED_M * 100:.0f} cm.")
     if args.dry:
@@ -123,7 +133,11 @@ def main(argv=None) -> int:
         stopped_mcp = True
         time.sleep(2.0)
         cfg = pd.RobotConfig()
-        pargs = pd.build_arg_parser().parse_args(["--motor", "friday", "--i-am-watching"])
+        flags = ["--motor", "friday", "--i-am-watching"]
+        if args.drive == "old":
+            flags += ["--motor-kick-rest", "0", "--motor-pulse-burst", "1",
+                      "--no-motor-plug-guard"]
+        pargs = pd.build_arg_parser().parse_args(flags)
         slot = pd.SensorSlot("tof", cfg.tof_deadline, critical=True)
         tof_thread = pd.DFRobotToFThread(slot, cfg, pd.resolve_serial_port("tof", pargs.tof_port),
                                          pargs.tof_baud)
@@ -171,8 +185,9 @@ def main(argv=None) -> int:
             print("friday-mcp restarted:", subprocess.run(
                 ["systemctl", "--user", "is-active", "friday-mcp"],
                 capture_output=True, text=True).stdout.strip())
-    out = ROOT / "state" / "reverse_floor_test.json"
-    out.write_text(json.dumps({"at": time.time(), "pulse_s": PULSE_S, "rows": rows},
+    out = ROOT / "state" / f"reverse_floor_test_{args.drive}.json"
+    out.write_text(json.dumps({"at": time.time(), "drive": args.drive,
+                               "pulse_s": PULSE_S, "rows": rows},
                               indent=1))
     first = next((r["v"] for r in rows if (r["moved_m"] or 0) >= MOVED_M), None)
     print(f"\nSlowest reverse that really moved her: {first} m/s -> {out}")
