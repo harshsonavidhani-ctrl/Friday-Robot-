@@ -1455,7 +1455,7 @@ def _mission_on() -> bool:
     return bool(getattr(config, "EXPLORATION_MISSION_SERVICE", False))
 
 
-async def _mission_claims(session, spoken: str, turn) -> bool:
+async def _mission_claims(session, spoken: str, turn, announce: bool = True) -> bool:
     """Is this the mission's? One MCP call (mission_voice), offline, no model.
 
     ⚠ ON THE RAW SESSION, NOT _FreshOrders: that wrapper judges an order's age
@@ -1482,6 +1482,9 @@ async def _mission_claims(session, spoken: str, turn) -> bool:
         return False
     if not data.get("handled"):
         return False
+    if not announce:
+        turn.note("exploration mission told about the stop", dash=False)
+        return True
     turn.note(f"exploration mission — {spoken[:40]!r} handled locally, no model")
     turn.answered_by("mission, no model", 0.0)
     turn.done("DONE (mission)")
@@ -1591,6 +1594,10 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
         await _run_offline(offline.Intent(name="stop", tool="stop",
                                           say="Stopping."),
                            session, voice, face, turn)
+        # ...and THEN the mission hears it too (file 21): a mission waiting
+        # for help, or paused, is closed / kept still by a person's stop.
+        # After the motors, never before; a failure here changes nothing.
+        await _mission_claims(session, "stop", turn, announce=False)
         return "stopped"
 
     # THE EXPLORATION MISSION HEARS IT NEXT (file 21 step 11), and only when

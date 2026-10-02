@@ -312,14 +312,26 @@ for _ in range(100):
     w.step()
 check("...and she stays there: no autonomy", w.mgr.state == "FAILSAFE"
       and len(w.orders("start")) == 1)
-w.mgr.start()
-w.step()
-check("...'explore' is refused in FAILSAFE", w.voice.said[-1]
-      == "I can't do that right now." and w.mgr.state == "FAILSAFE")
 w.mgr.halt()
 w.step()
 check("...until a person acknowledges it with 'stop': back to IDLE",
       w.mgr.state == "IDLE")
+
+# 2026-10-02 (after the first real mission): a person's new "explore" is a
+# new order, and a new order ends FAILSAFE (File 14's rule too) -- the old
+# mission stays saved. Before, it was refused and only a restart got out.
+w = World(["hall"])
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 8)
+w.sim.publishing = False
+w.run(in_state("FAILSAFE"), max_s=30)
+w.sim.publishing = True
+w.mgr.start()
+w.step()
+check("...a new 'explore' in FAILSAFE closes it and starts a NEW mission",
+      w.mgr.state in ("MISSION_INIT", "EXPLORE") and len(w.store.missions("home")) == 2
+      and w.store.missions("home")[1]["status"] == "failsafe",
+      f"{w.mgr.state} {[m['status'] for m in w.store.missions('home')]}")
 
 w = World(["hall"])
 w.mgr.start()
@@ -613,9 +625,11 @@ check("clear_return() removes it, twice is harmless",
 check("a hold and a return request are separate files, separate meanings",
       h.path.name == "hold.json" and h.return_path.name == "return.json"
       and not h.active())
+# rl/modes/*.env is mode CONFIGURATION, changed on purpose with Harsh's OK
+# (2026-10-02: runs keep friday-brain up); the code in rl/ stays additive.
 changed = __import__("subprocess").run(
-    ["git", "diff", "-U0", "HEAD", "--", "rl"], capture_output=True, text=True,
-    cwd=str(ROOT)).stdout
+    ["git", "diff", "-U0", "HEAD", "--", "rl", ":(exclude)rl/modes/*.env"],
+    capture_output=True, text=True, cwd=str(ROOT)).stdout
 removed = [ln for ln in changed.splitlines()
            if ln.startswith("-") and not ln.startswith("---")]
 check("rl/: lines only added by this step, none removed or rewritten", not removed,

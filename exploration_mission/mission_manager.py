@@ -581,6 +581,12 @@ class MissionManager:
             if name == "start":
                 if st == "IDLE":
                     self._begin(cmd[1], now)
+                elif st in ("HELP_WAIT", "FAILSAFE"):
+                    # Waiting for help is not a mission to protect: a person
+                    # asked for a new one. The old one is saved as it is.
+                    log.info("a new mission ends the one waiting in %s", st)
+                    self._close(now)
+                    self._begin(cmd[1], now)
                 else:
                     self.say("cant_now")
             elif name == "halt":
@@ -1399,7 +1405,20 @@ class MissionManager:
                                   distance_m=self.distance_m)
         self._start_return(now)
 
+    def _map_first(self) -> bool:
+        """Home on the MISSION'S MAP first (Harsh, 2026-10-02): the RL run's way
+        back aims straight at the start and was pinned 1 m out behind furniture
+        on the first real mission. Only with an engine to drive (friday-mcp)."""
+        try:
+            return (self.cfg["return"].get("mode", "map_first") == "map_first"
+                    and bool(self.a.nav.available()))
+        except Exception:                               # noqa: BLE001
+            return False
+
     def _start_return(self, now: float) -> None:
+        if self._map_first():
+            self._start_return_on_map(now)
+            return
         status = self._read_status(now, force=True)
         if (status or {}).get("way_back_phase") not in ("returning", "done"):
             self.a.run.request_return(self.mission["id"])
@@ -1425,6 +1444,38 @@ class MissionManager:
                                                r.arrive_hysteresis_m, r.arrive_dwell_s)
         self._arrive = None
         self._to("RETURN_TO_START", now)
+
+    def _start_return_on_map(self, now: float) -> None:
+        """Park the run (File 14 needs the wheels AND the LiDAR, which the run
+        holds), then the ladder from its first engine attempt: A* home on the
+        map she built, re-planning, real back-ups, then HELP."""
+        try:
+            self.a.run.stop()               # SIGINT: motors stop, map saved, lease back
+        except Exception as exc:                        # noqa: BLE001
+            log.warning("could not park the run: %s", exc)
+        self._release()
+        self.say("returning")
+        self._event("return_on_map", pose=[round(v, 2) for v in self.pose])
+        if hasattr(self.a.nav, "new_return"):
+            self.a.nav.new_return()
+        r = self.cfg["return"]
+        grid = None
+        try:
+            grid = self.analysis.map.planner_grid()
+        except Exception as exc:                        # noqa: BLE001
+            log.warning("no mission map for the way back: %s", exc)
+        self.ladder = rth_ladder.Ladder(
+            self.a.nav, rth_ladder.LadderConfig.from_config(self.cfg), self.say,
+            {"goal": (0.0, 0.0), "trail": self.trail.crumbs, "grid": grid,
+             "inflate_m": self.a.slam.inflate_m(),
+             "body_radius_m": self.a.slam.body_radius_m(), "obstacles": None})
+        self.ladder.last_distance = math.hypot(self.pose[0], self.pose[1])
+        self.arrival = rth_ladder.ArrivalCheck(r.arrive_tolerance_m,
+                                               r.arrive_hysteresis_m, r.arrive_dwell_s)
+        self._arrive = None
+        self._t_return = now
+        self._to("RETURN_TO_START", now)
+        self._ladder_outcome(self.ladder.restart(now), now)
 
     def _ladder_distance(self):
         if self.ladder is None:

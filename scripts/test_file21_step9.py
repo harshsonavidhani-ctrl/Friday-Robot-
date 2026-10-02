@@ -261,11 +261,18 @@ booted(w)
 w.mgr.resume()
 end = w.run(max_s=500)
 m = w.mission()
-check("continue -> explore -> the run returns to the resume point -> the ladder's "
-      "first File 14 attempt takes her to the real start -> returned",
+# Since 2026-10-02 the way home is MAP FIRST: the run is parked when exploring
+# ends and File 14's first attempt drives to the mission's REAL start -- the
+# resumed run's own start (the resume point) is never the goal.
+attempts = [n for n in w.a.nav.calls if n[0] == "attempt"]
+check("continue -> explore -> the run is PARKED, and File 14's first attempt "
+      "takes her to the mission's real start -> returned",
       end == "IDLE" and m["status"] == "returned"
-      and [(r["rung"], r["result"]) for r in m["rungs_used"][:2]]
-      == [(0, "failed"), (1, "arrived")], str(m["rungs_used"]))
+      and [(r["rung"], r.get("result")) for r in m["rungs_used"]
+           if isinstance(r.get("rung"), int)][:1] == [(0, "arrived")]
+      and attempts and attempts[0][1] == (0.0, 0.0)
+      and not any(o[0] == "return" for o in w.sim.orders),
+      f"{m['rungs_used']} {attempts[:1]} {w.sim.orders[-4:]}")
 
 print("--- she cannot be found on the old map: never a guess ---")
 w = World(["save it as hall", "kitchen", "bedroom"])
@@ -535,11 +542,15 @@ else:
 # =============================================================================
 print("--- the launcher: a thread in friday-mcp, shipped OFF ---")
 
-check("config.EXPLORATION_MISSION_SERVICE ships False (it has not run on the "
-      "robot yet; turning it on is Harsh's call)",
-      config.EXPLORATION_MISSION_SERVICE is False)
+# Harsh turned the service ON on 2026-10-02; these check the switch itself,
+# whichever way the file has it, by setting it here.
+check("the switch is a plain bool in config.py",
+      isinstance(config.EXPLORATION_MISSION_SERVICE, bool))
+_was = config.EXPLORATION_MISSION_SERVICE
+config.EXPLORATION_MISSION_SERVICE = False
 check("switched off, start() does nothing at all",
-      service.start() is None and service.get() is None)
+      service.enabled() is False and service.start() is None and service.get() is None)
+config.EXPLORATION_MISSION_SERVICE = _was
 w = World([], world=ROOM, path=ROOM_PATH)
 w.clock = ad.Clock()                                    # real time for the thread
 w.a.clock = w.clock
@@ -573,7 +584,8 @@ check("mcp_server/server.py starts it beside the other watchers, guarded",
       and server.index("environment_watch.start()") < server.index(
           "mission_service.start()"))
 diff = subprocess.run(["git", "diff", "-U0", "HEAD", "--", "mcp_server/server.py",
-                       "rl", "slam", "exploration_mode.py"],
+                       "rl", "slam", "exploration_mode.py",
+                       ":(exclude)rl/modes/*.env"],     # mode config, his OK
                       capture_output=True, text=True, cwd=str(ROOT)).stdout
 removed = [ln for ln in diff.splitlines()
            if ln.startswith("-") and not ln.startswith("---")]
@@ -582,10 +594,17 @@ check("existing code: the launcher block only ADDS lines; rl/, slam/ untouched "
       "\n".join(removed))
 real_db = Path(config.MEMORY_DB)
 import sqlite3                                          # noqa: E402
-check("the real memory.db still has no exploration tables (nothing ran against it)",
-      not sqlite3.connect(f"file:{real_db}?mode=ro", uri=True).execute(
-          "SELECT 1 FROM sqlite_master WHERE name IN ('areas','missions',"
-          "'home_anchor')").fetchone())
+# Since the switch went on (2026-10-02) the REAL mission created its tables --
+# after a sqlite backup(). What matters here: that backup exists, and these
+# tests never wrote to that database (every World uses a temp one).
+backups = sorted(real_db.parent.glob(real_db.name + ".bak-*-file21"))
+has_tables = sqlite3.connect(f"file:{real_db}?mode=ro", uri=True).execute(
+    "SELECT 1 FROM sqlite_master WHERE name='missions'").fetchone()
+check("the real memory.db got its exploration tables only after a backup",
+      (not has_tables) or bool(backups), str(backups))
+check("these tests never opened the real memory.db for writing",
+      all(Path(s).resolve() != real_db.resolve()
+          for s in (World([]).store.db_path,)))
 check("the network guard saw no attempt", not netguard.attempts)
 
 print(f"\n{sum(_results)}/{len(_results)} passed")

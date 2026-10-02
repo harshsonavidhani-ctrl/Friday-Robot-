@@ -26,6 +26,8 @@ sys.path.insert(0, str(ROOT / "tests" / "exploration_mission"))
 
 import netguard                                         # noqa: E402
 netguard.block()
+import leakcheck                                        # noqa: E402
+LEAK_BEFORE = leakcheck.snapshot()
 
 from exploration_mission import sim                     # noqa: E402
 
@@ -134,8 +136,8 @@ after = {p.name: p.stat().st_mtime for p in (ROOT / "state").glob("*") if p.is_f
 touched = [n for n in after if n in state_before and after[n] != state_before[n]
            and n in ("map.npz", "memory.db", "places.json")]
 check("state/map.npz and memory.db untouched by every sim run", touched == [], str(touched))
-check("no state/exploration_mission folder appeared",
-      not (ROOT / "state" / "exploration_mission").exists())
+check("nothing new appeared in the real state/exploration_mission/",
+      not leakcheck.leaked(LEAK_BEFORE), str(leakcheck.leaked(LEAK_BEFORE)))
 
 # =============================================================================
 print("--- H2's anchor check (its sweep source faked) ---")
@@ -190,14 +192,14 @@ check("the CLAUDE.md PART 12 text is a PROPOSAL in the checklist",
       "proposed CLAUDE.md PART 12 (NOT appended" in body)
 diff = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "HEAD", "--",
                        "CLAUDE.md", "rl", "slam", "exploration_mode.py",
-                       "mcp_server/tools/explore.py", "offline.py"],
+                       "mcp_server/tools/explore.py", "offline.py",
+                       ":(exclude)rl/modes/*.env"],      # mode config, his OK
                       capture_output=True, text=True).stdout.split()
 check("CLAUDE.md, rl/, slam/, exploration_mode.py, explore.py, offline.py "
       "untouched", diff == [], str(diff))
 cfg = (ROOT / "config.py").read_text()
-check("the mission and curiosity both still ship OFF",
-      "EXPLORATION_MISSION_SERVICE = False" in cfg
-      and '"curiosity": {"mode": "off"' in cfg)
+check("curiosity still ships OFF (the mission switch is Harsh's: on since 10-02)",
+      '"curiosity": {"mode": "off"' in cfg)
 
 print(f"\n{sum(_results)}/{len(_results)} passed")
 sys.exit(0 if all(_results) else 1)

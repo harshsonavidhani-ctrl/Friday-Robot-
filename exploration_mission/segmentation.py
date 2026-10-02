@@ -444,11 +444,16 @@ def why_not(s: Segment, dwell: Dwell, now: float, p: LabelParams,
     this room qualifies). Cooldown and state are global, checked by the caller.
     `final` is the one last ask at completion: the room she is standing in
     needs no dwell time then ("so the room Friday is in gets asked", 4.6) --
-    a small room seen whole from the doorway is finished in seconds."""
+    a small room seen whole from the doorway is finished in seconds -- and it
+    need not be COMPLETE either. The first real mission (2026-10-02) ended on
+    its 2-minute cap with frontiers left in the very room she was in, so
+    nothing was asked and the room was saved unnamed; a room cut short by the
+    clock is asked about (and saved as incomplete), never skipped."""
     out = []
+    here_at_the_end = final and dwell.current == s.key
     if s.area_m2 < p.min_area_m2:
         out.append("too small")
-    if not s.complete:
+    if not s.complete and not here_at_the_end:
         out.append("not complete")
     if s.area_id is not None:
         out.append("already saved")
@@ -456,7 +461,6 @@ def why_not(s: Segment, dwell: Dwell, now: float, p: LabelParams,
     exited = dwell.exited_at.get(s.key)
     recent = (dwell.current != s.key and exited is not None
               and now - exited < p.recent_exit_s)
-    here_at_the_end = final and dwell.current == s.key
     if not (inside >= p.min_dwell_s or recent or here_at_the_end):
         out.append("not dwelt in, not just left")
     return out
@@ -488,9 +492,9 @@ def choose_label_target(seg: Segmentation, dwell: Dwell, now: float,
         if ok:
             here = [s for s in ok if s.key == dwell.current]
             if here:
-                return LabelChoice(here[0], "segmentation", True)
+                return LabelChoice(here[0], "segmentation", here[0].complete)
             ok.sort(key=lambda s: -dwell.exited_at.get(s.key, -math.inf))
-            return LabelChoice(ok[0], "segmentation", True)
+            return LabelChoice(ok[0], "segmentation", ok[0].complete)
 
     if p.trigger in ("distance", "both"):
         here = next((s for s in seg.segments if s.key == dwell.current), None)

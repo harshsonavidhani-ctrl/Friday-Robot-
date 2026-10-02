@@ -304,7 +304,8 @@ check("the summary log is bounded; older runs fold into a total",
 print("\nthe hard rule: exploration itself is unchanged")
 diff = subprocess.run(
     ["git", "-C", str(ROOT), "status", "--porcelain", "--", "rl", "slam",
-     "exploration_mode.py", "mcp_server/tools/explore.py"],
+     "exploration_mode.py", "mcp_server/tools/explore.py",
+     ":(exclude)rl/modes/*.env"],   # mode config, Harsh's OK 2026-10-02
     capture_output=True, text=True).stdout.strip()
 check("rl/, slam/, exploration_mode.py, explore.py: no changes", diff == "",
       diff)

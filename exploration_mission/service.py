@@ -87,6 +87,9 @@ def build(adapters=None, store=None, cfg=None, runner=None):
         from exploration_mission import voice_link
         _asker = voice_link.Asker()
         adapters.voice = ad.VoiceAdapter(asker=_asker)
+        # ...and the way home is File 14 on the mission's own map (nav_engine).
+        from exploration_mission import nav_engine
+        adapters.nav = nav_engine.MissionNav(lidar=adapters.lidar)
     if store is None:
         store = area_store.AreaStore(places=adapters.places)
     store.ensure_schema()
@@ -216,7 +219,8 @@ def start_mission(minutes: float | None = None) -> dict:
     mgr = _manager
     if mgr is None:
         return {"ok": False, "why": "mission off"}
-    if mgr.state != "IDLE" or mgr.mission is not None:
+    waiting = mgr.state in ("HELP_WAIT", "FAILSAFE")     # a new one ends it
+    if not waiting and (mgr.state != "IDLE" or mgr.mission is not None):
         return {"ok": False, "why": f"busy ({mgr.state})"}
     if not mgr.localized:
         return {"ok": False, "why": "no LiDAR sweeps"}

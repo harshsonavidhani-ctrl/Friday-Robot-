@@ -566,10 +566,12 @@ check("forget removes it from slam/places.py", real_places.find("kitchen") is No
 # =============================================================================
 print("--- nothing real was touched ---")
 
-check("no exploration tables were added to the real memory.db",
-      not sqlite3.connect(f"file:{REAL_DB}?mode=ro", uri=True).execute(
-          "SELECT 1 FROM sqlite_master WHERE name IN ('areas','missions',"
-          "'home_anchor')").fetchone())
+# Since 2026-10-02 the REAL mission created its tables (after a backup); the
+# point here is that THESE tests never did: every store in this suite is temp.
+_real_tables = sqlite3.connect(f"file:{REAL_DB}?mode=ro", uri=True).execute(
+    "SELECT 1 FROM sqlite_master WHERE name='missions'").fetchone()
+check("the real memory.db has exploration tables only after its backup",
+      not _real_tables or bool(sorted(REAL_DB.parent.glob(REAL_DB.name + ".bak-*-file21"))))
 check("the network guard saw no attempt", not netguard.attempts,
       str(netguard.attempts))
 

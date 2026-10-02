@@ -119,6 +119,7 @@ SCHEMA: dict[str, Any] = {
         "help_retry_s": (_F, 1.0, 3600.0),
         "help_max_cycles": (_I, 1, 1000),
         "help_speak_every": (_I, 1, 1000),
+        "mode": (_S, None, None),
     },
     "boot": {
         "slam_wait_s": (_F, 0.0, 3600.0),
@@ -147,6 +148,7 @@ SCHEMA: dict[str, Any] = {
 _CHOICES = {
     ("label", "trigger"): {"segmentation", "distance", "both"},
     ("curiosity", "mode"): {"off", "ask", "auto"},
+    ("return", "mode"): {"map_first", "run_first"},
 }
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 

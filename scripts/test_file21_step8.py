@@ -281,7 +281,12 @@ PATH = [(3.0, 2.5), (2.0, 2.0), (4.0, 2.0), (4.0, 3.0), (2.0, 3.0), (3.0, 2.5)]
 
 
 def world(script, engine=True, **kw):
-    w = World(["kitchen"], world=ROOM, path=PATH, **kw)
+    # These missions test the run's OWN way back first, then the ladder: the
+    # "run_first" order. Since 2026-10-02 the default is "map_first" (File 14
+    # on the mission's map from the start), tested in test_file21_return.py.
+    cfg = kw.pop("cfg", {})
+    cfg = {**cfg, "return": {**cfg.get("return", {}), "mode": "run_first"}}
+    w = World(["kitchen"], world=ROOM, path=PATH, cfg=cfg, **kw)
     w.a.nav = ad.FakeNav(during_run=False, clock=w.clock, script=script,
                          engine=engine)
     w.mgr.a.nav = w.a.nav

@@ -62,6 +62,16 @@ def _iso(text: str | None) -> float | None:
         return None
 
 
+
+def _mission_owns_the_run() -> bool:
+    """Is the File 21 mission busy (anything but IDLE)? Never raises."""
+    try:
+        from exploration_mission import service
+        mgr = service.get()
+        return mgr is not None and (mgr.mission is not None or mgr.state != "IDLE")
+    except Exception:                               # noqa: BLE001
+        return False
+
 class Watch:
     """The state between polls. Separate from the thread so it can be tested."""
 
@@ -138,6 +148,11 @@ class Watch:
         try:
             import home_dock
             go, why = home_dock.wants_home_after(status, tail)
+            # FILE 21: a run the EXPLORATION MISSION started is the mission's
+            # to bring home (on its own map, nav_engine); a second drive home
+            # from here would fight it for the wheels.
+            if go and _mission_owns_the_run():
+                go, why = False, "the exploration mission brings her home"
             log.info("after the run: %s", why)
             if go:
                 # The run's own way-back arrived at its start: then she is near

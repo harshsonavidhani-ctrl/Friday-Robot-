@@ -322,6 +322,12 @@ class Router:
                 return True
             return self._cant()
         if n == "START":
+            if st in ("HELP_WAIT", "FAILSAFE"):
+                # A person's new order ends a mission that is only waiting for
+                # help (the first real mission sat in HELP_WAIT until friday-mcp
+                # was restarted, refusing "explore"): close it, start afresh.
+                a.start(it.args.get("minutes"), True)
+                return True
             if active:
                 return self._cant()
             # Still booting / relocalising counts as not localized: refused

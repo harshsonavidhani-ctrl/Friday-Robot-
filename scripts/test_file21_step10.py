@@ -25,6 +25,8 @@ sys.path.insert(0, str(ROOT / "tests" / "exploration_mission"))
 
 import netguard                                         # noqa: E402
 netguard.block()
+import leakcheck                                        # noqa: E402
+LEAK_BEFORE = leakcheck.snapshot()
 
 from exploration_mission import adapters as ad          # noqa: E402
 from exploration_mission import area_store as st        # noqa: E402
@@ -561,7 +563,7 @@ check("a torn heard.json is unknown, never quiet", talk.quiet_s() is None)
 check("mark_heard leaves no temp file behind",
       not [f for f in d.iterdir() if f.name.endswith(".tmp")])
 check("nothing here wrote to the real state folder",
-      not (ROOT / "state" / "exploration_mission" / "heard.json").exists())
+      not leakcheck.leaked(LEAK_BEFORE), str(leakcheck.leaked(LEAK_BEFORE)))
 
 # =============================================================================
 print("--- nothing else changed ---")
@@ -569,7 +571,8 @@ import subprocess                                       # noqa: E402
 # main.py is step 11's (the voice hook), so it is not in this list.
 diff = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "HEAD", "--",
                        "rl", "slam", "exploration_mode.py",
-                       "mcp_server/tools/explore.py", "offline.py"],
+                       "mcp_server/tools/explore.py", "offline.py",
+                       ":(exclude)rl/modes/*.env"],      # mode config, his OK
                       capture_output=True, text=True).stdout.split()
 check("rl/, slam/, exploration_mode.py, explore.py, offline.py untouched",
       diff == [], str(diff))

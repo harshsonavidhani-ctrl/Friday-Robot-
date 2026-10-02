@@ -278,7 +278,10 @@ for said in ("go home", "Friday, go to your dock", "return to the dock",
 print("\nthe hard rule: exploration itself is unchanged")
 diff = subprocess.run(["git", "-C", str(ROOT), "diff", "--stat", "HEAD", "--",
                        "rl", "slam", "exploration_mode.py",
-                       "mcp_server/tools/explore.py"],
+                       "mcp_server/tools/explore.py",
+                       # mode CONFIG, changed with Harsh's OK (2026-10-02:
+                       # runs keep friday-brain up for File 21); rl/ code stays
+                       ":(exclude)rl/modes/*.env"],
                       capture_output=True, text=True).stdout.strip()
 check("rl/, slam/, exploration_mode.py, explore.py: no changes", diff == "",
       diff)

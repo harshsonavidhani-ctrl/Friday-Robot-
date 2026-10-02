@@ -3108,7 +3108,11 @@ EXPLORATION_MISSION_SERVICE = True
 # The mission's MCP tools are plumbing between friday-brain, the dashboard and
 # friday-mcp (step 11), never the model's: brain._to_anthropic_tools drops them.
 BRAIN_HIDDEN_TOOLS = ("mission_voice", "mission_answer", "mission_status",
-                      "mission_start", "mission_name_area")
+                      "mission_start", "mission_name_area", "mission_engine")
+# The way home's back-up rung (nav_engine): metres -> seconds of MCP move().
+# 0.45 m/s is the MEASURED forward speed (friday-drivetrain-calibration);
+# backward is assumed the same until the floor test measures it.
+MISSION_BACKUP_SPEED_M_S = 0.45
 
 EXPLORATION_MISSION = {
     "env_id": "auto",
@@ -3141,7 +3145,11 @@ EXPLORATION_MISSION = {
     "return": {"arrive_tolerance_m": 0.35, "arrive_hysteresis_m": 0.10,
                "arrive_dwell_s": 2.0, "wait_s": 5, "backup_m": 0.25,
                "backup_rear_clear_m": 0.35, "ring_step_m": 0.05, "help_retry_s": 30,
-               "help_max_cycles": 20, "help_speak_every": 3},
+               "help_max_cycles": 20, "help_speak_every": 3,
+               # Harsh, 2026-10-02: home on the MISSION'S MAP first (File 14,
+               # A* + guarded moves); "run_first" = the RL run's own way back
+               # first, the old order. Without an engine it is always run_first.
+               "mode": "map_first"},
     "boot": {"slam_wait_s": 60, "home_check_period_s": 30},
     "curiosity": {"mode": "off", "threshold": 0.8, "weights": [0.5, 0.3, 0.2],
                   "min_idle_min": 10, "min_quiet_conversation_min": 5,

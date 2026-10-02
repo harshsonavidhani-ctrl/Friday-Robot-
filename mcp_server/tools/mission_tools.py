@@ -1,6 +1,6 @@
 """File 21's doorway: the exploration mission, for main.py and the dashboard.
 
-PLUMBING, NOT THE BRAIN'S. All five are in config.BRAIN_HIDDEN_TOOLS, so the
+PLUMBING, NOT THE BRAIN'S. All six are in config.BRAIN_HIDDEN_TOOLS, so the
 model never sees them: the mission is driven by his words through the offline
 router (main.handle -> mission_voice), by her own questions (mission_answer)
 and by the dashboard (mission_status / mission_start / mission_name_area).
@@ -42,6 +42,20 @@ def mission_status() -> str:
 def mission_start(minutes: float = 0.0) -> str:
     """Internal (dashboard): the Explore button starts a mission."""
     return _j(service.start_mission(minutes or None))
+
+
+@tool
+async def mission_engine(action: str, args: str = "{}") -> str:
+    """Internal (the mission's way home): start one File 14 action on the
+    mission's map -- attempt / back_up / spin. Returns at once."""
+    from exploration_mission import nav_engine
+    try:
+        parsed = json.loads(args or "{}")
+    except ValueError:
+        return _j({"started": False, "why": "bad args"})
+    if service.get() is None:
+        return _j({"started": False, "why": "mission off"})
+    return _j(nav_engine.HOST.request(action, parsed))
 
 
 @tool

@@ -30,6 +30,8 @@ sys.path.insert(0, str(ROOT / "tests" / "exploration_mission"))
 
 import netguard                                         # noqa: E402
 netguard.block()
+import leakcheck                                        # noqa: E402
+LEAK_BEFORE = leakcheck.snapshot()
 
 import config                                           # noqa: E402
 from exploration_mission import adapters as ad          # noqa: E402
@@ -382,9 +384,10 @@ for text in ("explore the house", "explore karo", "ghoom ke dekho",
     check(f"{text!r}: handled by the mission, the brain is never asked",
           out == "mission" and not brain.asked and not calls, f"{out} {calls}")
 out, calls, brain, s = run_handle("stop")
-check("'stop' still goes straight to the motors first (offline stop), "
-      "the mission hook is never reached", calls == [("reflex", "stop")]
-      and "mission_voice" not in s.calls, str(calls))
+check("'stop' still goes straight to the motors FIRST (offline stop); only "
+      "then is the mission told (2026-10-02 fix: a stop must reach a mission "
+      "waiting for help)", calls == [("reflex", "stop")]
+      and s.calls == ["mission_voice"], f"{calls} {s.calls}")
 
 w5 = World([], world=ROOM, path=ROOM_PATH)
 w5.mgr.boot()
@@ -651,7 +654,8 @@ check("POST /api/mission is registered once", routes.count('"/api/mission"') == 
 print("--- nothing else changed ---")
 diff = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "HEAD", "--",
                        "rl", "slam", "exploration_mode.py", "mcp_server/tools/explore.py",
-                       "offline.py", "mcp_server/safety.py"],
+                       "offline.py", "mcp_server/safety.py",
+                       ":(exclude)rl/modes/*.env"],      # mode config, his OK
                       capture_output=True, text=True).stdout.split()
 check("rl/, slam/, exploration_mode.py, explore.py, offline.py, safety.py untouched",
       diff == [], str(diff))
@@ -661,11 +665,11 @@ removed = {ln.split()[2]: int(ln.split()[1]) for ln in num.splitlines() if ln.st
 check("main.py and brain.py: additions only, plus two changed lines in main.py "
       "(the hush condition, one more '= None')",
       removed.get("main.py", 0) <= 2 and removed.get("brain.py", 0) == 0, str(removed))
-check("the switch still ships False", "EXPLORATION_MISSION_SERVICE = False"
-      in (ROOT / "config.py").read_text())
+check("the switch is set in config.py, one line (Harsh turned it on 2026-10-02)",
+      len(re.findall(r"^EXPLORATION_MISSION_SERVICE = (True|False)$",
+                     (ROOT / "config.py").read_text(), re.M)) == 1)
 check("nothing here wrote to the real state folder",
-      not (ROOT / "state" / "exploration_mission" / "asking.json").exists()
-      and not (ROOT / "state" / "exploration_mission" / "heard.json").exists())
+      not leakcheck.leaked(LEAK_BEFORE), str(leakcheck.leaked(LEAK_BEFORE)))
 
 print(f"\n{sum(_results)}/{len(_results)} passed")
 sys.exit(0 if all(_results) else 1)
