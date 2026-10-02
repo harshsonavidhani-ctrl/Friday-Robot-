@@ -247,5 +247,60 @@ check("...and the run's own parser takes them (unstick off, kick every start, "
       "1-tick pulses, no coast)", a.no_unstick and a.motor_kick_rest == 0.0
       and a.motor_pulse_burst == 1 and a.motor_plug_guard is False)
 
+# =============================================================================
+print("--- 6. her own voice in an answer capture is not his answer ---")
+import asyncio, time as _time, types                     # noqa: E401,E402
+import config as _c2                                      # noqa: E402
+import main as _main                                      # noqa: E402
+from exploration_mission import voice_link as _vl         # noqa: E402
+_tmp6 = Path(tempfile.mkdtemp(prefix="friday-fix6-"))
+_c2.SPEAKING_FILE = _tmp6 / "speaking.json"
+_c2.SPEAKING_FILE.write_text(json.dumps({"state": "quiet", "at": _time.time() - 60}))
+check("no speech since the capture opened -> not her voice",
+      _main._own_voice_since(_time.time() - 1) is False)
+
+
+class _Stream:
+    def capture(self, **kw):                              # the run says a line mid-capture
+        _c2.SPEAKING_FILE.write_text(json.dumps({"state": "speaking", "at": _time.time()}))
+        return b"audio"
+
+
+class _Turn:
+    def __init__(self, *a): self.notes = []
+    async def call(self, name, fn, *a, timeout, detail=""): return fn(*a)
+    def stage(self, *a): pass
+    def note(self, text, dash=True): self.notes.append(text)
+    def answered_by(self, *a): pass
+    def done(self, *a): pass
+    def listening(self): pass
+
+
+got6 = []
+class _Sess:
+    async def call_tool(self, name, args): got6.append(args["text"]); return None
+class _Link:
+    async def get(self, w): return _Sess()
+class _Src:
+    def pause(self): pass
+    def resume(self): pass
+class _Face:
+    def set(self, *a): pass
+    def rest(self): pass
+fake_stt = types.ModuleType("stt"); fake_stt.Silence = type("Silence", (Exception,), {})
+fake_stt.transcribe = lambda audio: "I found an unexplored area 3 metres to the west"
+_real_stt = sys.modules.get("stt"); sys.modules["stt"] = fake_stt
+import initiative as _ini                                 # noqa: E402
+_ini.she_is_talking = lambda: False
+_real_turn = _main.stages.Turn; _main.stages.Turn = _Turn
+_main._mission_heard = lambda s: None
+asyncio.run(_main._mission_turn(None, _Face(), _Src(), _Stream(),
+                                _vl.TRIGGER_PREFIX + "abc label 10", _Link()))
+_main.stages.Turn = _real_turn
+if _real_stt is not None:
+    sys.modules["stt"] = _real_stt
+check("the run narrated during the capture -> the answer sent back is EMPTY "
+      "(silence: she asks again), not her own words", got6 == [""], str(got6))
+
 print(f"\n{sum(_results)}/{len(_results)} passed")
 sys.exit(0 if all(_results) else 1)

@@ -200,16 +200,19 @@ lad, nav, clock, said = ladder([])
 out, t = climb(lad, clock, max_s=40_000)
 helps = [i for i, (k, _) in enumerate(said) if k == "help"]
 check("everything fails: HELP cycles, then HELP_WAIT", out == "help_wait")
-check("...after exactly help_max_cycles (20) more goes at rungs 1-6",
-      lad.cycle == 20 and max(a.cycle for a in lad.attempts) == 20, str(lad.cycle))
+_n = CFG.help_max_cycles                      # 30 since 2026-10-02 (was 20)
+check(f"...after exactly help_max_cycles ({_n}) more goes at rungs 1-6",
+      lad.cycle == _n and max(a.cycle for a in lad.attempts) == _n, str(lad.cycle))
 check("...each cycle re-runs rungs 1-6 (6 attempts a cycle, back-up included)",
       sum(1 for a in lad.attempts if a.cycle == 7) == 6
-      and kinds(nav).count("backup") == 21, f"{kinds(nav).count('backup')}")
+      and kinds(nav).count("backup") == _n + 1, f"{kinds(nav).count('backup')}")
 check("...the help line is repeated every 3rd cycle, not every retry",
-      len(helps) == 1 + 6, f"{len(helps)} help lines")
+      # the last cycle ends in HELP_WAIT and says its own line instead
+      len(helps) == 1 + (_n - 1) // CFG.help_speak_every, f"{len(helps)} help lines")
 check("...and the rung lines are said once, never again in HELP",
       [k for k, _ in said].count("rung3") == 1 and [k for k, _ in said].count("rung5") == 1)
-check("...30 s apart: about 20 cycles x (30 s + the rungs' own time)", t > 20 * 30, str(t))
+check(f"...{CFG.help_retry_s:g} s apart: {_n} cycles x (the pause + the rungs' own time)",
+      t > _n * CFG.help_retry_s, str(t))
 lad, nav, clock, said = ladder(["FAILED"] * 6 + ["FAILED"] * 8 + ["ARRIVED"])
 out, t = climb(lad, clock, max_s=5000)
 check("a HELP cycle that gets through arrives (she was freed on cycle 2)",

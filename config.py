@@ -3144,8 +3144,12 @@ EXPLORATION_MISSION = {
     "breadcrumbs": {"spacing_m": 0.25, "checkpoint_keep": 500, "loop_cut_m": 0.30},
     "return": {"arrive_tolerance_m": 0.35, "arrive_hysteresis_m": 0.10,
                "arrive_dwell_s": 2.0, "wait_s": 5, "backup_m": 0.25,
-               "backup_rear_clear_m": 0.35, "ring_step_m": 0.05, "help_retry_s": 30,
-               "help_max_cycles": 20, "help_speak_every": 3,
+               "backup_rear_clear_m": 0.35, "ring_step_m": 0.05, "help_retry_s": 10,
+               # Harsh, 2026-10-02: "actively try till it reaches where it
+               # started": every 10 s for up to 30 rounds (~5 min of trying,
+               # each round the whole ladder: wait, clear, look, back up,
+               # retrace, nearest spot), not every 30 s. Spoken every 3rd.
+               "help_max_cycles": 30, "help_speak_every": 3,
                # Harsh, 2026-10-02: home on the MISSION'S MAP first (File 14,
                # A* + guarded moves); "run_first" = the RL run's own way back
                # first, the old order. Without an engine it is always run_first.

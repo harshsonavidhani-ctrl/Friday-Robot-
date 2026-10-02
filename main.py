@@ -1513,6 +1513,17 @@ def _mission_held() -> bool:
         return False
 
 
+def _own_voice_since(since_wall: float) -> bool:
+    """Did she speak (any process, through tts.speak) after `since_wall`?
+    Reads state/speaking.json: its `at` is when the mark was last written --
+    "speaking" when a line starts, "quiet" when it ends. Never raises."""
+    try:
+        mark = json.loads(config.SPEAKING_FILE.read_text())
+        return float(mark.get("at", 0.0)) > since_wall
+    except Exception:                           # noqa: BLE001
+        return False
+
+
 async def _mission_turn(voice: "Voice", face: "Face", source, stream,
                         trigger: str, link) -> None:
     """The mission asked a question (file 21 step 11): hear ONE answer.
@@ -1539,6 +1550,7 @@ async def _mission_turn(voice: "Voice", face: "Face", source, stream,
             await asyncio.sleep(0.1)
         face.set("listening")
         try:
+            heard_from = time.time()
             audio = await turn.call(
                 "CAPTURING", functools.partial(
                     stream.capture, start_timeout=ask["listen_s"],
@@ -1548,6 +1560,15 @@ async def _mission_turn(voice: "Voice", face: "Face", source, stream,
             text = await turn.call("TRANSCRIBING", stt.transcribe, audio,
                                    timeout=config.STAGE_STT_TIMEOUT_S)
             turn.stage("TRANSCRIBED", stages.quote(text))
+            # HER OWN VOICE IN THE CAPTURE IS NOT HIS ANSWER. The exploration
+            # run keeps narrating while the mission holds her ("I found an
+            # unexplored area..."), from another process, and 2026-10-02 16:18
+            # a line of hers came back as the answer. Any of her speech after
+            # the capture opened -> no answer, so the dialog asks again.
+            if text.strip() and _own_voice_since(heard_from):
+                turn.note(f"her own voice was in the capture; {text[:40]!r} "
+                          f"is not taken as his answer", dash=False)
+                text = ""
         except stt.Silence as exc:
             turn.stage("NOTHING SAID", str(exc))
         session = await link.get(MCP_CONNECT_WAIT_S)

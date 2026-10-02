@@ -45,7 +45,12 @@ import time
 
 log = logging.getLogger("friday.exploration_mission.engine")
 
-FIND_RADII_M = (1.5, 3.0)        # where to look for her round her last pose
+# Where to look for her: round the last pose the run's tracker was SURE of.
+# 1.5 m only -- File 14's restricted search there was never wrong on the real
+# map (0 of 6); 2026-10-02 16:19 a 3 m fallback put her 2 m from where she
+# was, on a look-alike, and every attempt after drove at the wrong place.
+FIND_RADIUS_M = 1.5
+LOOK_TURNS = 4                   # the look-again rung: up to a full turn
 RUN_GONE_WAIT_S = 60.0
 SETTLE_S = 4.0                   # the LiDAR's first sweeps after a run are partial
 SPIN_DEG = 90.0
@@ -173,30 +178,39 @@ class EngineHost:
         import nav_voice
         from mcp_server import hardware
         from slam.mapper import Mapper
-        near = tuple(mgr.pose)
-        fix = None
-        for radius in FIND_RADII_M:
-            scan = await asyncio.to_thread(self._sweep, mgr)
-            if not scan:
-                continue
-            fix = await asyncio.to_thread(mgr.a.slam.localise_on, og, scan,
-                                          near[:2], radius)
-            if fix is not None:
-                break
+        near = tuple(getattr(mgr, "last_matched_pose", None) or mgr.pose)
+        fix = await self._find(mgr, og, near)
         if fix is None:
             return "not sure where I am on the map I built"
         log.info("found on the mission map at (%.2f, %.2f) %.0f deg (tracked "
                  "(%.2f, %.2f))", fix[0], fix[1], math.degrees(fix[2]), near[0], near[1])
-        robot = nav_follower.GuardedRobot()
-        hardware.ABORT.clear()
-        robot.arm()
         with self._lock:
-            self.robot = robot
-            self.controller = nsm.NavController(robot=robot,
+            self.robot = self.robot or nav_follower.GuardedRobot()
+            self.controller = nsm.NavController(robot=self.robot,
                                                 voice=_QuietVoice(nav_voice.VOICE))
             self.mapper = Mapper(grid=copy.deepcopy(og), pose=tuple(fix))
             self.og_id = id(og)
         return ""
+
+    async def _find(self, mgr, og, near):
+        scan = await asyncio.to_thread(self._sweep, mgr)
+        if not scan:
+            return None
+        return await asyncio.to_thread(mgr.a.slam.localise_on, og, scan,
+                                       tuple(near)[:2], FIND_RADIUS_M)
+
+    def _arm(self) -> None:
+        """Every action starts armed, as File 14 arms every journey
+        (nav_tools._controller). File 14's own give-up (FAILSAFE) calls stop,
+        and that flag would otherwise end every later rung in under a second
+        ("stop was called", 2026-10-02 16:20). A PERSON's stop never reaches
+        here: the mission leaves RETURN_TO_START first."""
+        import nav_follower
+        from mcp_server import hardware
+        if self.robot is None:
+            self.robot = nav_follower.GuardedRobot()
+        hardware.ABORT.clear()
+        self.robot.arm()
 
     @staticmethod
     def _sweep(mgr):
@@ -214,6 +228,13 @@ class EngineHost:
         if why:
             return "REFUSED", why
         import nav_state_machine as nsm
+        import nav_voice
+        self._arm()
+        # A fresh controller per attempt: File 14 counts stuck-recoveries per
+        # controller, and the ladder's next rung is a new try, not the old one's
+        # leftovers (the same reset "try again" gives).
+        self.controller = nsm.NavController(robot=self.robot,
+                                            voice=_QuietVoice(nav_voice.VOICE))
         legs = [tuple(w) for w in (waypoints or [])] + [tuple(goal)]
         for i, xy in enumerate(legs):
             last = i == len(legs) - 1
@@ -233,6 +254,7 @@ class EngineHost:
         if why:
             return "REFUSED", why
         import config
+        self._arm()
         speed = float(getattr(config, "MISSION_BACKUP_SPEED_M_S", 0.45))
         seconds = min(max(float(m), 0.05) / speed, float(config.MAX_REVERSE_SECONDS))
         said = await self.robot.drive_seconds("backward", seconds)
@@ -240,14 +262,26 @@ class EngineHost:
         return "DONE", str(said)[:120]
 
     async def _spin(self):
-        why = await self._ready()
-        if why:
-            return "REFUSED", why
+        """Look again (rung 3): a quarter turn at a time, up to a full turn,
+        finding her after each -- on the tracker's map when she has one, else
+        from scratch round the last sure pose. Every turn a guarded move."""
         import config
+        from exploration_mission import service
+        mgr = service.get()
+        why = await self._ready()
+        if why and "not sure" not in why:
+            return "REFUSED", why
+        self._arm()
         deg_s = float(getattr(config, "AGENCY_TURN_DEG_PER_S", 75.0))
-        said = await self.robot.drive_seconds("left", SPIN_DEG / deg_s)
-        ok = await self._relocate(turn_deg=SPIN_DEG)
-        return ("DONE" if ok else "FAILED"), str(said)[:120]
+        said = ""
+        for _ in range(LOOK_TURNS):
+            said = await self.robot.drive_seconds("left", SPIN_DEG / deg_s)
+            if self.mapper is not None:
+                if await self._relocate(turn_deg=SPIN_DEG):
+                    return "DONE", str(said)[:120]
+            elif mgr is not None and not await self._ready():
+                return "DONE", "found on the map I built"
+        return "FAILED", f"not found after a full turn ({str(said)[:80]})"
 
     async def _relocate(self, back_m: float = 0.0, turn_deg: float = 0.0) -> bool:
         """After a manoeuvre File 14's follower did not command: find her again

@@ -348,6 +348,7 @@ class MissionManager:
         self._nav_back = "EXPLORE"
         self._pause_after_ask = False
         self._last_scan: dict | None = None
+        self.last_matched_pose = (0.0, 0.0, 0.0)   # the tracker was SURE here
         self._started_by = "voice"          # | "curiosity"
         self._run_ended = False             # the run finished on its own
 
@@ -1116,6 +1117,8 @@ class MissionManager:
         if self.frame_offset is not None:
             pose = mission_map.compose(self.frame_offset, pose)
             fix = dict(fix, pose=list(pose))
+        if self._matched:
+            self.last_matched_pose = pose
         self.distance_m += math.hypot(pose[0] - self.pose[0], pose[1] - self.pose[1])
         self.pose = pose
         self._last_scan = fix.get("scan")

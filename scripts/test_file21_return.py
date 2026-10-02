@@ -306,6 +306,75 @@ check("spin -> one guarded left turn of 90 deg at the measured 75 deg/s, then a 
       str(ROBOTS[-1].moves))
 check("an unknown action is refused", host.request("dance", {})["started"] is False)
 
+# --- the 16:15 live test's three failures ---
+print("--- what the 2026-10-02 16:15 test found ---")
+DRIVES.clear()
+host, _ = run("attempt", goal=[0.0, 0.0])
+hardware.ABORT.set()                                    # File 14's FAILSAFE left it set
+first_ctrl = host.controller
+again(host, "attempt", goal=[0.0, 0.0])
+check("a stop flag left set by File 14's give-up no longer ends the next rung "
+      "('stop was called' in 0.6 s): the attempt is re-armed and drives",
+      not hardware.ABORT.is_set() and len(DRIVES) == 2 and host.outcome == "ARRIVED",
+      f"{hardware.ABORT.is_set()} {len(DRIVES)} {host.outcome}")
+check("...and each attempt gets a FRESH File 14 controller (its stuck allowance "
+      "starts over)", host.controller is not first_ctrl)
+
+SLAM.calls.clear()
+MGR.last_matched_pose = (0.3, -0.2, 0.0)
+run("attempt", goal=[0.0, 0.0])
+check("she is looked for round the LAST POSE THE TRACKER WAS SURE OF, 1.5 m only "
+      "(no 3 m fallback: it found a look-alike 2 m away)",
+      SLAM.calls == [((0.3, -0.2), 1.5)], str(SLAM.calls))
+del MGR.last_matched_pose
+
+answers = [None, None, None, (0.2, 0.1, 0.0)]           # found after the 4th sweep
+class TurningSlam(Slam):
+    def localise_on(self, grid, scan, near, radius):
+        self.calls.append((tuple(near), radius))
+        return answers.pop(0) if answers else None
+MGR.a.slam = TurningSlam()
+ROBOTS.clear()
+host = ne.EngineHost()
+res = again(host, "spin")
+turns = [m for m in ROBOTS[-1].moves if m[0] == "left"] if ROBOTS else []
+check("not sure where she is -> the look-again rung turns a quarter at a time and "
+      "looks after each, until found", host.outcome == "DONE" and len(turns) == 3
+      and host.mapper is not None, f"{host.outcome} {host.why} turns={turns}")
+answers[:] = []
+host = ne.EngineHost()
+ROBOTS.clear()
+again(host, "spin")
+check("...never found -> FAILED after a full turn (4 quarters), never a guess",
+      host.outcome == "FAILED" and len(ROBOTS[-1].moves) == 4 and host.mapper is None,
+      f"{host.outcome} {ROBOTS[-1].moves if ROBOTS else None}")
+MGR.a.slam = SLAM
+
+import queue as _q                                       # noqa: E402
+import time as _t                                        # noqa: E402
+import tts                                               # noqa: E402
+class QVoice:
+    def __init__(self): self._queue = _q.Queue()
+    def say_text(self, text): self._queue.put(text); return text
+qv = QVoice()
+qv._queue.put("Sorry, I didn't catch that. What should I call this area?")
+speaking_until = [_t.time() + 0.6]
+tts.quiet_at = lambda: speaking_until[0]
+asked_at = []
+class Asker:
+    def listen_once(self, timeout_s): asked_at.append(_t.time()); return "kitchen"
+    def can_listen(self): return True
+va = ad.VoiceAdapter(voice=qv, asker=Asker())
+import threading as _th                                  # noqa: E402
+t0 = _t.time()
+_th.Timer(0.4, lambda: qv._queue.get()).start()         # the worker starts speaking
+heard = va.listen_once(10.0)
+check("her re-ask is SAID and out of the room before the mic opens (16:18 she "
+      "heard her own 'Sorry, I didn't catch that')",
+      heard == "kitchen" and asked_at and asked_at[0] >= speaking_until[0] - 0.05,
+      f"opened {asked_at[0] - t0 if asked_at else None:.2f}s, quiet at "
+      f"{speaking_until[0] - t0:.2f}s")
+
 # MissionNav: the ladder's side
 calls = []
 nav = ne.MissionNav(lidar=Lidar({0.0: 3000, 170.0: 800, 185.0: 500, 90.0: 300}),

@@ -46,6 +46,18 @@
 // same duty delivers far less -- and needing ~230 to turn means MORE gear noise,
 // not less, which was the point ("gears make noise"). 490 Hz stays.
 #define PWM_31KHZ 0
+//
+// ⚠ AND IT STAYED FLASHED FOR FOUR DAYS (found 2026-10-02). The "revert" at
+// 23:55 that night set this to 0 and ran `arduino-cli upload` WITHOUT
+// `compile`: upload re-flashes the LAST BUILD, which was the 31 kHz one (4732
+// bytes; the 490 Hz build is 4708). Every run since was weak in every
+// direction -- slow, bursty, reverses that would not move her -- while this
+// file said 490 Hz. Re-flashed 490 Hz 2026-10-02 22:24. ALWAYS compile and
+// upload together, from an explicit build:
+//   ./tools/arduino-cli compile --fqbn arduino:avr:uno --output-dir B firmware/friday_motors
+//   ./tools/arduino-cli upload  --fqbn arduino:avr:uno -p <by-id port> --input-dir B
+// (The bootloader on this clone cannot read the flash back, so what is on the
+// board can only be known from what was last built and uploaded.)
 
 const uint8_t ENA = 9, IN1 = 8, IN2 = 7;     // left
 const uint8_t IN3 = 6, IN4 = 5, ENB = 3;     // right

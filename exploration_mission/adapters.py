@@ -410,7 +410,30 @@ class VoiceAdapter:
         if self.asker is None:
             raise NotImplementedError("no ears: the mission's voice link runs "
                                       "only inside friday-mcp")
+        self.wait_until_quiet()
         return self.asker.listen_once(timeout_s)
+
+    def wait_until_quiet(self, max_s: float = 30.0) -> None:
+        """Her question must be SAID, and out of the room, before anyone listens
+        for the answer. The line is queued (nav_voice speaks on its own thread),
+        so right after say() nothing is playing yet and the mark still reads
+        quiet: 2026-10-02 16:18 the capture opened at once and her own re-ask
+        ("Sorry, I didn't catch that") was taken as his answer."""
+        v = self._v()
+        q = getattr(v, "_queue", None)
+        t0 = time.monotonic()
+        time.sleep(0.3)                     # the worker picks the line up
+        while time.monotonic() - t0 < max_s:
+            pending = q is not None and q.qsize() > 0
+            try:
+                import tts                                  # noqa: PLC0415
+                speaking = tts.quiet_at() > time.time()
+            except Exception:                               # noqa: BLE001
+                speaking = False
+            if not pending and not speaking:
+                return
+            time.sleep(0.1)
+        log.warning("her voice did not go quiet in %.0f s; listening anyway", max_s)
 
     def can_listen(self) -> bool:
         """Can a question be answered right now? Only while friday-brain's
