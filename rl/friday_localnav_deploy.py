@@ -497,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
     loop.way_back_enabled = not getattr(args, "no_way_back", False)
     loop.unstick_enabled = not getattr(args, "no_unstick", False)
     loop.unstick.keep_trying = bool(getattr(args, "unstick_keep_trying", False))
+    loop.turn_commit_s = max(0.0, float(getattr(args, "turn_commit", 0.0)))
     # --map-file and --state-file were the fifth and sixth. --map-file being ignored
     # meant a diagnostic run pointed at a scratch map OVERWROTE the real one.
     if getattr(args, "map_file", None):

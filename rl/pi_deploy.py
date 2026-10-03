@@ -2409,7 +2409,8 @@ class FridayMotorDriver(MotorDriver):
                  turn_kick_cooldown_s: float = 1.0,
                  pulse_creep_duty: int = 0, pulse_burst_ticks: int = 1,
                  kick_rest_s: float = 0.0, plug_guard: bool = False,
-                 steady_pivots: bool = False, pivot_hold_ticks: int = 3) -> None:
+                 steady_pivots: bool = False, pivot_hold_ticks: int = 3,
+                 start_debounce_ticks: int = 1) -> None:
         super().__init__(cfg)
         import serial
 
@@ -2529,10 +2530,21 @@ class FridayMotorDriver(MotorDriver):
         # obstacle and it must not become a lurch at floor speed.
         self.steady_pivots = bool(steady_pivots)
         self.pivot_hold_ticks = max(0, int(pivot_hold_ticks))
+        # THE NEXT LAYER (Harsh, 2026-10-04: "DO whats still left"): the rest of
+        # the stop-go was in the COMMAND stream, measured in the same black boxes:
+        #   (Tried and REMOVED: running a too-slow forward arc as a turn in place.
+        #   Replayed, it made the stop/go WORSE -- 140 vs 133 switches a minute.)
+        #   * one-tick stop/go blinks between stages. start_debounce_ticks: from a
+        #     standstill, motion starts only once it has been asked for that many
+        #     ticks running. A STOP is never delayed -- this only ever turns a start
+        #     into a stop, i.e. removes energy, like every other fix here.
+        self.start_debounce_ticks = max(1, int(start_debounce_ticks))
+        self._go_ticks = 0
         self._pivot_hold = 0
         self._pivot_sign = 0
         self.noise_stats = {"starts": 0, "kicks": 0, "plug_coasts": 0,
-                            "pulse_bursts": 0, "pivot_holds": 0}
+                            "pulse_bursts": 0, "pivot_holds": 0,
+                            "starts_debounced": 0}
         self._err_count = 0
         self._cmds = 0
         self._closed = False
@@ -2741,6 +2753,14 @@ class FridayMotorDriver(MotorDriver):
         return (left > 0) != (right > 0) and abs(left) > 1e-6 and abs(right) > 1e-6
 
     def _apply(self, left: float, right: float) -> None:
+        if self.start_debounce_ticks > 1:
+            if left == 0.0 and right == 0.0:
+                self._go_ticks = 0                  # a stop: always at once
+            elif not self._moving:
+                self._go_ticks += 1
+                if self._go_ticks < self.start_debounce_ticks:
+                    self.noise_stats["starts_debounced"] += 1
+                    left = right = 0.0              # not yet: a start, held back
         asked_pivot_sign = (0 if not self._is_pivot(left, right)
                             else (1 if right > left else -1))
         left, right = self._creep_pulse(left, right)
@@ -3093,6 +3113,10 @@ class ControlLoop:
                                         cfg.tof_pivot_min_clearance)
         self._undo_active = False
         self._avoid_seen = 0
+        # TURN COMMITMENT (Harsh, 2026-10-04): see _commit_turn. 0 = off.
+        self.turn_commit_s = 0.0
+        self._turn_sign = 0
+        self._turn_since = -1e9
         # FILE 21 HOLD (Harsh, 2026-09-29): the exploration mission may ask her to
         # stand still -- to ask what an area is called, for "go to X", for a pause.
         # Inert unless state/exploration_mission/hold.json is fresh. rl/way_back.py.
@@ -4167,6 +4191,25 @@ class ControlLoop:
                 rec.add("undo", v, omega, why_undo)
             self._drain_unstick()
 
+        # ---- 4c. TURN COMMITMENT: no dithering left/right while blocked ------------
+        #
+        # Harsh, 2026-10-04: "noise more than movement ... very harsh ... it should
+        # be smooth", then "DO whats still left". MEASURED in the 490 Hz black boxes:
+        # blocked (|v| < 0.15), the POLICY flips its turn between +1.6 and -1.6
+        # rad/s 10-38 times a minute, 35-45% of them back again within a second,
+        # and every flip passes through (0, 0) at the slew limiter -- the one-tick
+        # stop "blips" (30 of 35 in the 23:03 run, 40 of 48 at 15:43). So a turn
+        # taken while blocked is KEPT for turn_commit_s: a request to turn the
+        # other way inside that window turns the committed way at the same rate.
+        # Only the DIRECTION of a turn the chain already asked for -- never a turn
+        # it did not ask for, never through a stop (a turn under 0.15 rad/s or a
+        # zero passes as it is), never faster. The deliberate turns that pick their
+        # side (escape, recovery, unstick's undo, the mission's path, the
+        # open-side pivot) are exempt; driving (|v| >= 0.15) drops the commitment.
+        # The ToF reflex already ran: a turn it froze is a zero here and stays one.
+        if self.turn_commit_s > 0.0 and not self._undo_active:
+            omega = self._commit_turn(v, omega, gate, rec)
+
         lap("reflex")
         # ---- 5. slew limit + actuate ----------------------------------------------
         v, omega = self.limiter(v, omega, dt_real, emergency=emergency,
@@ -4499,6 +4542,31 @@ class ControlLoop:
         if voice is not None:
             return bool(voice.say(key, text, priority=2, cooldown_s=0.0))
         return bool(self.narrator.say(key, text, P_RECOVERY))
+
+    TURN_COMMIT_EXEMPT = frozenset({"escape_turn", "recovery", "undo",
+                                    "mission_drive", "no_reverse_turn"})
+    TURN_COMMIT_MAX_V = 0.15        # slower than this: blocked, turning (nearly) in place
+    TURN_COMMIT_MIN_OMEGA = 0.15    # a smaller turn is a nudge, passed as it is
+
+    def _commit_turn(self, v: float, omega: float, gate: str, rec) -> float:
+        now = time.monotonic()
+        if gate in self.TURN_COMMIT_EXEMPT or abs(v) >= self.TURN_COMMIT_MAX_V:
+            self._turn_sign = 0             # driving, or a deliberate turn: nothing kept
+            return omega
+        if abs(omega) < self.TURN_COMMIT_MIN_OMEGA:
+            return omega                    # a stop / nudge passes; the commitment stays
+        s = 1 if omega > 0 else -1
+        if self._turn_sign == 0 or now - self._turn_since >= self.turn_commit_s:
+            if s != self._turn_sign:
+                self._turn_sign, self._turn_since = s, now
+            return omega
+        if s == self._turn_sign:
+            return omega
+        self.stats["turn_commits"] = self.stats.get("turn_commits", 0) + 1
+        rec.add("turn_commit", v, -omega,
+                f"kept turning {'left' if self._turn_sign > 0 else 'right'} "
+                f"({now - self._turn_since:.1f} s of {self.turn_commit_s:.1f} s)")
+        return -omega
 
     def _drain_unstick(self) -> None:
         """Say what unstick decided, and keep the planner away from where she got
@@ -5335,6 +5403,7 @@ def build_motors(cfg: RobotConfig, args) -> MotorDriver:
             plug_guard=args.motor_plug_guard,
             steady_pivots=args.motor_steady_pivots,
             pivot_hold_ticks=args.motor_pivot_hold,
+            start_debounce_ticks=args.motor_start_debounce,
         )
         LOGGER.warning("MOTORS ARE LIVE (max_duty=%.2f). Wheels can turn.",
                        args.motor_max_duty)
@@ -5934,6 +6003,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         "governor, exactly as before. Use it to A/B the thing it was "
                         "built to fix: turning per metre, and what fraction of ticks "
                         "end in a safety override.")
+    p.add_argument("--turn-commit", type=float, default=0.0,
+                   help="Seconds a turn taken while blocked is kept against a request "
+                        "to turn the other way (no left/right dithering). 0 = off.")
     p.add_argument("--unstick-keep-trying", action="store_true",
                    help="After the undo tries at one place, rest a moment and try "
                         "again instead of asking to be moved (rl/unstick.py "
@@ -6123,6 +6195,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    default=False,
                    help="Turns in place run steadily at the pivot floor instead of "
                         "being pulsed on and off (Harsh 2026-10-04: smooth, not harsh).")
+    p.add_argument("--motor-start-debounce", type=int, default=1,
+                   help="From a standstill, start only after motion has been asked "
+                        "for this many ticks running (stops are never delayed).")
     p.add_argument("--motor-pivot-hold", type=int, default=3,
                    help="With steady pivots: ticks a started turn holds through a "
                         "same-direction dip under the floor (never through a stop).")
@@ -6221,6 +6296,7 @@ def main(argv: list[str] | None = None) -> int:
             plug_guard=args.motor_plug_guard,
             steady_pivots=args.motor_steady_pivots,
             pivot_hold_ticks=args.motor_pivot_hold,
+            start_debounce_ticks=args.motor_start_debounce,
         )
         try:
             if args.motor_calibrate is not None:
@@ -6314,6 +6390,7 @@ def main(argv: list[str] | None = None) -> int:
         loop.planner_enabled = not args.no_planner
         loop.way_back_enabled = not args.no_way_back
         loop.unstick_enabled = not args.no_unstick
+        loop.turn_commit_s = max(0.0, float(getattr(args, "turn_commit", 0.0)))
         loop.navigator_enabled = not args.no_navigator
         cfg.nav_speed_authority = float(args.navigator_speed_authority)
         loop.recovery_enabled = not args.no_recovery

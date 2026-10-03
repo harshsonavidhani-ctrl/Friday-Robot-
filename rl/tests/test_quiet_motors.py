@@ -276,6 +276,28 @@ src = Path(pi_deploy.__file__).read_text()
 check("both FridayMotorDriver constructions pass the switch through",
       src.count("steady_pivots=args.motor_steady_pivots") == 2)
 
+print("--- start debounce ---")
+DEB = dict(STEADY, start_debounce_ticks=2)
+d, mock = make(**DEB)
+tick(d, 0.3, 0.0)
+first = mock.sent[-1]
+tick(d, 0.3, 0.0)
+check("from a standstill: the first tick of 'go' waits, the second goes",
+      first == "S" and mock.sent[-1] != "S", f"{first} then {mock.sent[-1]}")
+tick(d, 0.0, 0.0)
+check("a stop is never delayed", mock.sent[-1] == "S")
+tick(d, 0.3, 0.0)
+d.emergency_stop()
+check("...nor the emergency stop", mock.sent[-1] == "S")
+d, mock = make(**DEB)
+tick(d, 0.3, 0.0)
+tick(d, 0.3, 0.0)
+tick(d, 0.3, 0.0)
+check("once moving, motion is never held back", mock.sent[-1] != "S"
+      and d.noise_stats["starts_debounced"] == 1)
+check("off unless asked for (the parser default 1)",
+      build_arg_parser().parse_args([]).motor_start_debounce == 1)
+
 pi_deploy.time.monotonic = real_monotonic
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

@@ -119,6 +119,12 @@ fi
 # smooth"): a turn in place runs steadily at the pivot floor instead of being
 # pulsed on and off, and holds through a same-direction dip. Stops unchanged.
 [ "${MODE_STEADY_TURNS:-0}" = "1" ] && ARGS+=(--motor-steady-pivots)
+# MODE_START_DEBOUNCE=N (2026-10-04): from a standstill, start only after motion
+# has been asked for N ticks running; stops are never delayed.
+[ -n "${MODE_START_DEBOUNCE:-}" ] && ARGS+=(--motor-start-debounce "$MODE_START_DEBOUNCE")
+# MODE_TURN_COMMIT=S (2026-10-04): a turn taken while blocked is kept S seconds
+# against a request to turn the other way -- no left/right dithering.
+[ -n "${MODE_TURN_COMMIT:-}" ] && ARGS+=(--turn-commit "$MODE_TURN_COMMIT")
 
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes

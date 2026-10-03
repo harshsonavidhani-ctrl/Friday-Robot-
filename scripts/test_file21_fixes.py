@@ -244,13 +244,17 @@ out = subprocess.run(["bash", "-c", f'set -a; . "{ROOT}/rl/modes/confident_explo
                       '[ "${MODE_UNSTICK:-1}" = "0" ] && ARGS+=(--no-unstick); '
                       '[ "${MODE_UNSTICK_KEEP_TRYING:-0}" = "1" ] && ARGS+=(--unstick-keep-trying); '
                       '[ "${MODE_STEADY_TURNS:-0}" = "1" ] && ARGS+=(--motor-steady-pivots); '
+                      '[ -n "${MODE_START_DEBOUNCE:-}" ] && ARGS+=(--motor-start-debounce "$MODE_START_DEBOUNCE"); '
+                      '[ -n "${MODE_TURN_COMMIT:-}" ] && ARGS+=(--turn-commit "$MODE_TURN_COMMIT"); '
                       'echo "${ARGS[*]}"'], capture_output=True, text=True).stdout.strip()
 sh = (ROOT / "rl" / "modes" / "explore.sh").read_text()
 check("explore.sh keeps the old drive as a switch, and passes the quiet drive "
       "(the run's defaults) and keep-trying unstick to the run",
       "--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard" in sh
       and "--unstick-keep-trying" in sh and "--motor-steady-pivots" in sh
-      and out == "--unstick-keep-trying --motor-steady-pivots", out)
+      and "--motor-start-debounce" in sh and "--turn-commit" in sh
+      and out == "--unstick-keep-trying --motor-steady-pivots --motor-start-debounce 2 "
+      "--turn-commit 1.0", out)
 sys.path.insert(0, str(ROOT / "rl"))
 import friday_localnav_deploy as L                       # noqa: E402
 a = L.build_arg_parser().parse_args(["--motor", "friday", "--i-am-watching"] + out.split())
@@ -258,7 +262,8 @@ check("...and the run's own parser takes them (unstick on + keep trying; kick on
       "after 0.3 s at rest, 3-tick pulses, coast before reversing)",
       not a.no_unstick and a.unstick_keep_trying
       and a.motor_kick_rest == 0.3 and a.motor_pulse_burst == 3
-      and a.motor_plug_guard is True and a.motor_steady_pivots is True)
+      and a.motor_plug_guard is True and a.motor_steady_pivots is True
+      and a.motor_start_debounce == 2 and a.turn_commit == 1.0)
 
 # =============================================================================
 print("--- 6. her own voice in an answer capture is not his answer ---")
