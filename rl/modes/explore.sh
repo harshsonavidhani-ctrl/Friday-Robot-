@@ -115,6 +115,10 @@ fi
 # MODE_UNSTICK_KEEP_TRYING=1 (2026-10-02): the undo stays, the "please move me"
 # wait goes -- after the tries she rests 3 s and tries again.
 [ "${MODE_UNSTICK_KEEP_TRYING:-0}" = "1" ] && ARGS+=(--unstick-keep-trying)
+# MODE_STEADY_TURNS=1 (2026-10-04, "noise more than movement ... it should be
+# smooth"): a turn in place runs steadily at the pivot floor instead of being
+# pulsed on and off, and holds through a same-direction dip. Stops unchanged.
+[ "${MODE_STEADY_TURNS:-0}" = "1" ] && ARGS+=(--motor-steady-pivots)
 
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes

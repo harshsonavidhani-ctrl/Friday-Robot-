@@ -233,8 +233,9 @@ env = (ROOT / "rl" / "modes" / "confident_explore.env").read_text()
 # brought back the triple lock, so unstick is ON again in keep-trying form.
 # 2026-10-04 ("noise more than movement ... it should be smooth"): the QUIET
 # drive is back -- the old drive was only chosen on the weak 31 kHz firmware.
-check("mode file: QUIET motor drive, unstick ON in keep-trying form",
-      'MODE_QUIET_MOTORS="1"' in env and 'MODE_UNSTICK="1"' in env
+check("mode file: QUIET motor drive + steady turns, unstick ON in keep-trying form",
+      'MODE_QUIET_MOTORS="1"' in env and 'MODE_STEADY_TURNS="1"' in env
+      and 'MODE_UNSTICK="1"' in env
       and 'MODE_UNSTICK_KEEP_TRYING="1"' in env)
 import subprocess                                        # noqa: E402
 out = subprocess.run(["bash", "-c", f'set -a; . "{ROOT}/rl/modes/confident_explore.env"; '
@@ -242,12 +243,14 @@ out = subprocess.run(["bash", "-c", f'set -a; . "{ROOT}/rl/modes/confident_explo
                       'ARGS+=(--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard); fi; '
                       '[ "${MODE_UNSTICK:-1}" = "0" ] && ARGS+=(--no-unstick); '
                       '[ "${MODE_UNSTICK_KEEP_TRYING:-0}" = "1" ] && ARGS+=(--unstick-keep-trying); '
+                      '[ "${MODE_STEADY_TURNS:-0}" = "1" ] && ARGS+=(--motor-steady-pivots); '
                       'echo "${ARGS[*]}"'], capture_output=True, text=True).stdout.strip()
 sh = (ROOT / "rl" / "modes" / "explore.sh").read_text()
 check("explore.sh keeps the old drive as a switch, and passes the quiet drive "
       "(the run's defaults) and keep-trying unstick to the run",
       "--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard" in sh
-      and "--unstick-keep-trying" in sh and out == "--unstick-keep-trying", out)
+      and "--unstick-keep-trying" in sh and "--motor-steady-pivots" in sh
+      and out == "--unstick-keep-trying --motor-steady-pivots", out)
 sys.path.insert(0, str(ROOT / "rl"))
 import friday_localnav_deploy as L                       # noqa: E402
 a = L.build_arg_parser().parse_args(["--motor", "friday", "--i-am-watching"] + out.split())
@@ -255,7 +258,7 @@ check("...and the run's own parser takes them (unstick on + keep trying; kick on
       "after 0.3 s at rest, 3-tick pulses, coast before reversing)",
       not a.no_unstick and a.unstick_keep_trying
       and a.motor_kick_rest == 0.3 and a.motor_pulse_burst == 3
-      and a.motor_plug_guard is True)
+      and a.motor_plug_guard is True and a.motor_steady_pivots is True)
 
 # =============================================================================
 print("--- 6. her own voice in an answer capture is not his answer ---")

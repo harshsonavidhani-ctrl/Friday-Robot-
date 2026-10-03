@@ -2408,7 +2408,8 @@ class FridayMotorDriver(MotorDriver):
                  turn_kick_duty: float | None = None,
                  turn_kick_cooldown_s: float = 1.0,
                  pulse_creep_duty: int = 0, pulse_burst_ticks: int = 1,
-                 kick_rest_s: float = 0.0, plug_guard: bool = False) -> None:
+                 kick_rest_s: float = 0.0, plug_guard: bool = False,
+                 steady_pivots: bool = False, pivot_hold_ticks: int = 3) -> None:
         super().__init__(cfg)
         import serial
 
@@ -2510,8 +2511,28 @@ class FridayMotorDriver(MotorDriver):
         self._stopped_at = -1e9                   # a fresh driver has been at rest
         self.plug_guard = bool(plug_guard)
         self._prev_duties = (0, 0)
+        # STEADY TURNS (Harsh, 2026-10-04: "they make noise more than movement
+        # ... very harsh movements, it should be smooth"). MEASURED in the 490 Hz
+        # runs' black boxes: 71-144 stop<->move switches a minute, nearly all in
+        # open space with forward cut by the governor and a TURN IN PLACE asked
+        # for -- and the creep pulse below chopped that turn into on/off stabs at
+        # the pivot floor (190+ duty for a tick, then a stop), because it compares
+        # each wheel against the STRAIGHT floor before the pivot rule ("at or above
+        # turn_min_omega executes at turn_min_duty, below it is dropped") is ever
+        # reached. With steady_pivots:
+        #   * a pivot is never pulsed: worth turning -> steady at the pivot floor;
+        #     a nudge below turn_min_omega -> dropped, as the rule always said;
+        #   * a pivot once started holds pivot_hold_ticks if the request dips
+        #     just under the floor IN THE SAME DIRECTION -- never through a stop
+        #     request (0, 0), never into the other direction, never into driving.
+        # Forward creep keeps its pulses: that is the governor's braking near an
+        # obstacle and it must not become a lurch at floor speed.
+        self.steady_pivots = bool(steady_pivots)
+        self.pivot_hold_ticks = max(0, int(pivot_hold_ticks))
+        self._pivot_hold = 0
+        self._pivot_sign = 0
         self.noise_stats = {"starts": 0, "kicks": 0, "plug_coasts": 0,
-                            "pulse_bursts": 0}
+                            "pulse_bursts": 0, "pivot_holds": 0}
         self._err_count = 0
         self._cmds = 0
         self._closed = False
@@ -2691,6 +2712,9 @@ class FridayMotorDriver(MotorDriver):
         """
         pulse = self.pulse_speed_mps()
         peak = max(abs(left), abs(right))
+        if self.steady_pivots and self._is_pivot(left, right):
+            self._burst_left = 0
+            return left, right                      # steady turns: never pulsed
         if pulse <= 0.0 or peak <= 0.0 or peak >= self.min_speed_mps():
             self._burst_left = 0
             if peak <= 0.0:
@@ -2712,7 +2736,13 @@ class FridayMotorDriver(MotorDriver):
         scale = pulse / peak                        # both wheels: geometry preserved
         return left * scale, right * scale
 
+    @staticmethod
+    def _is_pivot(left: float, right: float) -> bool:
+        return (left > 0) != (right > 0) and abs(left) > 1e-6 and abs(right) > 1e-6
+
     def _apply(self, left: float, right: float) -> None:
+        asked_pivot_sign = (0 if not self._is_pivot(left, right)
+                            else (1 if right > left else -1))
         left, right = self._creep_pulse(left, right)
         # Pivoting scrubs all four wheels sideways at once, which needs materially more
         # torque than rolling straight -- your own motor_1.py calls it the worst case on
@@ -2729,6 +2759,24 @@ class FridayMotorDriver(MotorDriver):
         cut = self.turn_cutoff_duty if pivot else None
         l_duty = self._mps_to_duty(left, floor, cut)
         r_duty = self._mps_to_duty(right, floor, cut)
+
+        if self.steady_pivots:
+            if pivot and (l_duty or r_duty):
+                if (1 if r_duty > l_duty else -1) != self._pivot_sign:
+                    self._pivot_hold = self.pivot_hold_ticks  # a new turn: commit
+                self._pivot_sign = 1 if r_duty > l_duty else -1
+            elif (self._pivot_hold > 0 and l_duty == 0 and r_duty == 0
+                  and asked_pivot_sign == self._pivot_sign):
+                # The same turn, dipped under the floor for a tick: keep turning
+                # steadily rather than stop and kick back in. Only for a nonzero
+                # same-direction turn request -- a stop (0, 0) never lands here.
+                self._pivot_hold -= 1
+                self.noise_stats["pivot_holds"] += 1
+                d = min(self.turn_min_duty, int(255 * self.max_duty))
+                l_duty, r_duty = -self._pivot_sign * d, self._pivot_sign * d
+                pivot = True
+            else:
+                self._pivot_hold, self._pivot_sign = 0, 0
 
         # No plugging: a wheel that would go straight from one direction to the
         # other under power coasts for this tick instead. Only ever a stop.
@@ -5285,6 +5333,8 @@ def build_motors(cfg: RobotConfig, args) -> MotorDriver:
             pulse_burst_ticks=args.motor_pulse_burst,
             kick_rest_s=args.motor_kick_rest,
             plug_guard=args.motor_plug_guard,
+            steady_pivots=args.motor_steady_pivots,
+            pivot_hold_ticks=args.motor_pivot_hold,
         )
         LOGGER.warning("MOTORS ARE LIVE (max_duty=%.2f). Wheels can turn.",
                        args.motor_max_duty)
@@ -6069,6 +6119,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--motor-plug-guard", action=argparse.BooleanOptionalAction,
                    default=True,
                    help="Coast one tick instead of reversing a wheel under power.")
+    p.add_argument("--motor-steady-pivots", action=argparse.BooleanOptionalAction,
+                   default=False,
+                   help="Turns in place run steadily at the pivot floor instead of "
+                        "being pulsed on and off (Harsh 2026-10-04: smooth, not harsh).")
+    p.add_argument("--motor-pivot-hold", type=int, default=3,
+                   help="With steady pivots: ticks a started turn holds through a "
+                        "same-direction dip under the floor (never through a stop).")
     p.add_argument("--motor-invert-left", action=argparse.BooleanOptionalAction,
                    default=False)
     p.add_argument("--motor-invert-right", action=argparse.BooleanOptionalAction,
@@ -6162,6 +6219,8 @@ def main(argv: list[str] | None = None) -> int:
             pulse_burst_ticks=args.motor_pulse_burst,
             kick_rest_s=args.motor_kick_rest,
             plug_guard=args.motor_plug_guard,
+            steady_pivots=args.motor_steady_pivots,
+            pivot_hold_ticks=args.motor_pivot_hold,
         )
         try:
             if args.motor_calibrate is not None:

@@ -218,6 +218,64 @@ src = Path(pi_deploy.__file__).read_text(encoding="utf-8-sig")
 check("both driver constructions pass the quiet flags",
       src.count("plug_guard=args.motor_plug_guard") == 2)
 
+# --- steady turns (Harsh, 2026-10-04: "it should be smooth") -------------------
+print("--- steady turns ---")
+STEADY = dict(NEW, steady_pivots=True, pivot_hold_ticks=3)
+w_turn = 0.6        # a turn in place well above turn_min_omega, slow at each wheel
+for label, kw in (("quiet", NEW), ("steady", STEADY)):
+    d, mock = make(**kw)
+    seen = []
+    for _ in range(20):
+        tick(d, 0.0, w_turn)
+        seen.append(mock.sent[-1])
+    stops = sum(1 for s in seen[3:] if s == "S")
+    if label == "quiet":
+        quiet_stops = stops
+    else:
+        steady_stops, steady_seen = stops, seen
+check("a slow turn in place is pulsed on/off by the creep pulse without steady turns",
+      quiet_stops > 0, f"{quiet_stops} stops in 17 ticks")
+check("...and runs STEADILY (no stop ticks) with them", steady_stops == 0,
+      str(steady_seen[3:8]))
+d, mock = make(**STEADY)
+for _ in range(5):
+    tick(d, 0.0, w_turn)
+tick(d, 0.0, 0.0)
+check("a stop request (0, 0) mid-turn is honoured on the tick it arrives",
+      mock.sent[-1] == "S")
+d, mock = make(**STEADY)
+for _ in range(5):
+    tick(d, 0.0, w_turn)
+tick(d, 0.0, 0.05)                              # same direction, under turn_min_omega
+held = mock.sent[-1] != "S"
+for _ in range(4):
+    tick(d, 0.0, 0.05)
+check("a same-direction dip under the floor is held for the hold ticks, then dropped",
+      held and mock.sent[-1] == "S" and d.noise_stats["pivot_holds"] == 3,
+      f"held={held} last={mock.sent[-1]} holds={d.noise_stats['pivot_holds']}")
+d, mock = make(**STEADY)
+for _ in range(5):
+    tick(d, 0.0, w_turn)
+tick(d, 0.0, -0.05)                             # a tiny turn the OTHER way
+check("...never into the other direction (that is a stop, then a new turn)",
+      mock.sent[-1] == "S")
+d, mock = make(**STEADY)
+starts, prev_on = 0, False
+for _ in range(60):
+    tick(d, 0.05, 0.0)                          # straight creep: braking near a wall
+    on = mock.sent[-1] != "S"
+    starts += on and not prev_on
+    prev_on = on
+check("forward creep is still pulsed (the governor's braking never becomes a lurch)",
+      starts >= 3, f"{starts} starts")
+d, mock = make(**NEW)
+check("off unless asked for (the parser default)",
+      build_arg_parser().parse_args([]).motor_steady_pivots is False
+      and d.steady_pivots is False)
+src = Path(pi_deploy.__file__).read_text()
+check("both FridayMotorDriver constructions pass the switch through",
+      src.count("steady_pivots=args.motor_steady_pivots") == 2)
+
 pi_deploy.time.monotonic = real_monotonic
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)
