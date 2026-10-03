@@ -3049,6 +3049,9 @@ class ControlLoop:
         # stand still -- to ask what an area is called, for "go to X", for a pause.
         # Inert unless state/exploration_mission/hold.json is fresh. rl/way_back.py.
         self.hold = _way_back.Hold()
+        # FILE 21 U1: the mission's drive order (a path, a turn, a back-up) while
+        # it holds the run -- see rl/way_back.py MissionDrive. Never while exploring.
+        self.mission_drive = _way_back.MissionDrive()
         # LOCAL NAVIGATION. The planner says WHERE (a frontier, at 0.5 Hz); this says
         # HOW to get there right now, by simulating candidate arcs against the live
         # scan at full control rate. It sits between the policy and the governor and,
@@ -3520,7 +3523,9 @@ class ControlLoop:
         # is never read as "I am stalled" and she never creeps on cameras while
         # held. Zero is zero whatever the sensors say. Lapses by itself
         # (rl/way_back.py Hold).
-        if self.hold.active():
+        # FILE 21 U1: ...unless the hold carries a DRIVE ORDER: then this tick
+        # runs in full, as the way back's does, with the order as the request.
+        if self.hold.active() and self.hold.driving() is None:
             return self._hold_row(scan, depth, t_start)
         if lidar_stale != tof_stale:
             row = self._vision_drive("vision_" + ("lidar" if lidar_stale else "tof"),
@@ -3732,6 +3737,19 @@ class ControlLoop:
                 rec.add("planner", v_pol, omega_pol, why)
             self.planner.note_progress(self.map.pose)
         rec.planner = planner_ctx
+        # ---- FILE 21 U1: THE MISSION'S DRIVE ORDER (only while it holds the run) --
+        # Replaces the request exactly as the way back's homing_command does, and
+        # after it, so it wins over both the planner's nudge and the way back.
+        # Every stage below -- arc planner, governor, recovery, unstick, the rear
+        # gate, the ToF reflex, the limiter -- still has the last word.
+        order = self.hold.driving()
+        if order is not None:
+            v_pol, omega_pol, why = self.mission_drive.command(
+                order, self.way_back.tracker if self.way_back is not None else None,
+                self.map.pose, c.omega_max, self.motors.min_speed_mps(), c.v_min)
+            gate = "mission_drive"
+            rec.add("mission_drive", v_pol, omega_pol, why)
+            self.stats["mission_drive_ticks"] = self.stats.get("mission_drive_ticks", 0) + 1
 
         lap("planner-bias")
         # ---- 1d. LOCAL NAVIGATOR (is the command she just asked for DRIVABLE?) -----
@@ -4337,19 +4355,24 @@ class ControlLoop:
                 if wb is not None and wb.phase == "exploring":
                     if t_end is not None and now >= t_end:
                         self._begin_way_back("time")
-                    elif (self.planner is not None and wb.exhausted_long_enough(
-                            self.planner.exhausted, now - t_start, now)):
+                    elif (self.planner is not None and not self.hold.active()
+                          and wb.exhausted_long_enough(
+                              self.planner.exhausted, now - t_start, now)):
                         self._begin_way_back("explored")
                     elif self.hold.return_requested():
                         # FILE 21: the mission ended exploring early ("go back",
                         # its time cap, nothing left). The same way back, sooner.
                         self._begin_way_back("mission")
+                # FILE 21 U1: while the mission holds her (asking, or driving its
+                # own way home) the run's way back waits: the mission decides
+                # when she is home, and she must not end the run under it.
                 if wb is not None and wb.phase == "returning":
-                    self._steer_home()
-                    outcome = wb.check(self.map.pose, now)
-                    if outcome is not None:
-                        self._finish_way_back(outcome)
-                        break
+                    if not self.hold.active():
+                        self._steer_home()
+                        outcome = wb.check(self.map.pose, now)
+                        if outcome is not None:
+                            self._finish_way_back(outcome)
+                            break
                 elif t_end is not None and now >= t_end:
                     break
                 row = self.tick()

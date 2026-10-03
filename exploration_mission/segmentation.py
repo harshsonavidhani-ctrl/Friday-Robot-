@@ -79,6 +79,7 @@ class Segment:
     key: int | None = None                  # stable across ticks (Tracker)
     area_id: str | None = None              # the saved area it IS, if any
     area_iou: float = 0.0
+    area_contains: bool = False             # ...because that area lies inside it
 
     def as_dict(self) -> dict:
         return {"key": self.key, "area_m2": round(self.area_m2, 2),
@@ -288,6 +289,10 @@ def iou(a: np.ndarray, b: np.ndarray) -> float:
 # she asked "what should I call it?" about half of a kitchen she had already
 # been told was the kitchen (simulated second mission, 2026-09-30).
 INSIDE_FRACTION = 0.70
+# The mirror case (match_areas) is for a saved room that was HALF mapped and a
+# start a few cm off, which lands the IoU just under 0.5 (0.48 measured) -- not
+# for a third of a room, which the file's IoU rule rightly calls another area.
+MIRROR_MIN_IOU = 0.40
 
 
 def inside_fraction(seg_mask: np.ndarray, ref: np.ndarray) -> float:
@@ -354,10 +359,27 @@ def match_areas(seg: Segmentation, areas: Iterable[dict],
     areas = [a for a in areas if a.get("polygon")]
     refs = [rasterize(a["polygon"], seg.coarse) for a in areas]
     for s in seg.segments:
-        s.area_id, s.area_iou = None, 0.0
+        s.area_id, s.area_iou, s.area_contains = None, 0.0, False
     for i, j, v in _best_pairs(seg.segments, refs, same_area_iou, INSIDE_FRACTION):
         seg.segments[i].area_id = areas[j]["id"]
         seg.segments[i].area_iou = v
+    # THE MIRROR CASE (2026-10-03): a room NAMED while only part of it was
+    # mapped lies INSIDE the whole room the next mission maps, at IoU ~0.5 at
+    # best -- so a start a few cm off the first one tipped it under and she
+    # asked again about a room she had been told was the bedroom. Only a
+    # COMPLETE room (its walls mapped; never a transient blob across two rooms,
+    # the 2026-09-30 kitchen bug) and only with exactly ONE saved area in it.
+    taken = {s.area_id for s in seg.segments if s.area_id}
+    for s in seg.segments:
+        if s.area_id is not None or not s.complete:
+            continue
+        held = [j for j, ref in enumerate(refs) if areas[j]["id"] not in taken
+                and inside_fraction(ref, s.mask) >= INSIDE_FRACTION
+                and iou(s.mask, ref) >= MIRROR_MIN_IOU]
+        if len(held) == 1:
+            j = held[0]
+            s.area_id, s.area_iou, s.area_contains = areas[j]["id"], iou(s.mask, refs[j]), True
+            taken.add(areas[j]["id"])
 
 
 def growth_updates(seg: Segmentation, areas: Iterable[dict],
@@ -374,7 +396,8 @@ def growth_updates(seg: Segmentation, areas: Iterable[dict],
         # overlapped a saved kitchen and "grew" it across the next room
         # (simulated second mission, 2026-09-30). A room with no frontier left
         # in it has its walls, and its shape is worth keeping.
-        if (a is not None and s.complete and s.area_iou >= same_area_iou
+        if (a is not None and s.complete
+                and (s.area_iou >= same_area_iou or s.area_contains)
                 and s.area_m2 >= grow_update_ratio * float(a["area_m2"])):
             out.append((a["id"], s))
     return out

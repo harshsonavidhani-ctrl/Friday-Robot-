@@ -187,12 +187,16 @@ class RunAdapter:
         from mcp_server.tools import autonomy
         return autonomy.stop_exploration()
 
-    def hold(self, why: str, ttl_s: float) -> None:
-        """Ask the run to stand still for `ttl_s` (refreshed by the caller)."""
+    def hold(self, why: str, ttl_s: float, drive: dict | None = None) -> None:
+        """Ask the run to stand still for `ttl_s` (refreshed by the caller) --
+        or, with `drive` (File 21 U1, run_drive.py), to drive that order: a
+        path in the start frame, a turn, a back-up. rl/way_back.py drive_order."""
         now = self.clock.wall()
-        atomic_write_json(self.hold_file, {
-            "until": now + min(float(ttl_s), HOLD_MAX_AHEAD_S),
-            "why": str(why), "t": now, "pid": os.getpid()})
+        data = {"until": now + min(float(ttl_s), HOLD_MAX_AHEAD_S),
+                "why": str(why), "t": now, "pid": os.getpid()}
+        if drive:
+            data["drive"] = drive
+        atomic_write_json(self.hold_file, data)
 
     def release(self) -> None:
         try:
@@ -872,10 +876,12 @@ class FakeRun:
         self.is_running = False
         return "Stopped exploring."
 
-    def hold(self, why, ttl_s):
+    def hold(self, why, ttl_s, drive=None):
         self.orders.append(("hold", why))
         self._hold = {"until": self.clock.wall() + min(ttl_s, HOLD_MAX_AHEAD_S),
                       "why": why}
+        if drive:
+            self._hold["drive"] = dict(drive)
 
     def release(self):
         self.orders.append(("release",))

@@ -286,13 +286,18 @@ w.mgr.start()
 w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 15)
 w.mgr.finish()
 w.run(in_state("RETURN_TO_START"), max_s=20)
-check("'Friday, go back': summary, then the run is asked to return NOW",
-      w.mgr.state == "RETURN_TO_START" and len(w.orders("return")) == 1
+# U1 (2026-10-03, "exactly as file"): the way home is the mission's own --
+# File 14's planner on her map, the HELD run driving it -- not the run's.
+check("'Friday, go back': summary, then the mission drives her home itself "
+      "(the run is held with a path, never told to return)",
+      w.mgr.state == "RETURN_TO_START" and not w.orders("return")
+      and (w.sim.held() or {}).get("drive") is not None
       and w.mgr.stop_reason == "voice_stop", str(w.sim.orders[-5:]))
 end = w.run()
 check("...she arrives and the mission is saved as voice_stop / returned",
       end == "IDLE" and w.mission()["stop_reason"] == "voice_stop"
-      and w.mission()["status"] == "returned" and w.sim.why == "mission")
+      and w.mission()["status"] == "returned" and w.sim.drive_ticks > 0
+      and ("stop",) in w.sim.orders, f"{w.mission()['status']} {w.sim.orders[-4:]}")
 
 
 # =============================================================================

@@ -89,7 +89,8 @@ from collections import deque
 
 from exploration_mission import (area_store, boot, breadcrumbs, curiosity,
                                  frontiers, home_anchor, intents, label_dialog,
-                                 mission_map, rth_ladder, segmentation, speech)
+                                 mission_map, rth_ladder, run_drive, segmentation,
+                                 speech)
 
 log = logging.getLogger("friday.exploration_mission")
 
@@ -112,6 +113,12 @@ STATUS_MAX_AGE_S = 5.0
 # A run that ended: how long to wait for rl/modes/explore.sh to write how
 # (its EXIT trap restores services first, which can take a while).
 RUN_END_WAIT_S = 30.0
+# HELP_WAIT keeps the run HELD (motors zero, no autonomy) this long, so "Friday,
+# come back" can restart the ladder on the same tracked map; after it the run is
+# parked (it costs a core and heats the Pi) and "come back" uses File 14 alone.
+HELP_WAIT_KEEP_S = 600.0
+PARK_WAIT_S = 20.0               # arrival: the run giving the LiDAR back
+PARK_SETTLE_S = 4.0              # ...and its first sweeps after a run are partial
 
 
 # --- blocking work beside the tick ---------------------------------------------------
@@ -344,6 +351,8 @@ class MissionManager:
         self.arrival: rth_ladder.ArrivalCheck | None = None
         self._arrive: dict | None = None
         self.verified: bool | None = None
+        self.drive: run_drive.RunDrive | None = None   # U1: the way home by path
+        self._by_path = False
         self._t_counted = None
         self._nav_back = "EXPLORE"
         self._pause_after_ask = False
@@ -1037,10 +1046,43 @@ class MissionManager:
         try:
             home = self.store.home_anchor(self.a.env.env_id())
             look = boot.home_check(scans, home, self.cfg)
+            if look.get("verified"):
+                fine = self._refine_home(anchor, home)
+                if fine is not None:
+                    look = dict(look, fine=fine)
         except Exception as exc:                        # noqa: BLE001
             log.warning("home check failed: %s", exc)
         return {"ok": True, "anchor": anchor, "home": home if look.get("verified")
                 else None, "look": look}
+
+    def _refine_home(self, anchor, home) -> tuple | None:
+        """SPEC 4.9: the signature is only the cheap check -- "the precise pose
+        always comes from SLAM". The anchor's own stored sweep is a one-sweep
+        map of the home spot, in the home frame; this start's sweep is matched
+        on it, within 0.5 m of the anchor, by the scan matcher File 14 uses.
+        Sure, or None (then the coarse pose stands, as before). A start a few
+        cm off the anchor and a degree or two out turns every far room with
+        it: found 2026-10-03, when the way home by path (U1) stopped landing
+        her exactly on the anchor and a second mission re-asked a named room."""
+        sig = home.get("signature") or []
+        rng = float(self.cfg.signature.max_range_m)
+        ref = {deg: int(float(v) * 1000) for deg, v in enumerate(sig)
+               if v is not None and math.isfinite(float(v)) and 0.05 < float(v) < rng}
+        cur = {deg: int(float(v) * 1000) for deg, v in enumerate(anchor.signature)
+               if math.isfinite(float(v)) and 0.05 < float(v) < rng}
+        if len(ref) < 90 or len(cur) < 90:
+            return None
+        og = self.a.slam.new_grid()
+        at = (float(home["x"]), float(home["y"]), float(home["theta"]))
+        for _ in range(4):                  # walls count as walls at once
+            og.integrate_scan(ref, at, forward_deg=0.0)
+        fix = self.a.slam.localise_on(og, cur, near_xy=at[:2], radius_m=0.5)
+        if fix is None:
+            log.info("home spot: the fine match was not sure; the signature's pose stands")
+            return None
+        log.info("home spot: placed by the scan matcher at (%.2f, %.2f, %.0f deg)",
+                 fix[0], fix[1], math.degrees(fix[2]))
+        return fix
 
     def _st_mission_init(self, now: float) -> None:
         if self._stage == "resuming":
@@ -1064,6 +1106,12 @@ class MissionManager:
                 # anchor's position with the heading she has turned to.
                 turn = math.radians(res["look"].get("shift_deg", 0.0))
                 self.T = (home["x"], home["y"], home["theta"] + turn)
+                fine = res["look"].get("fine")
+                # The matcher's pose, if it agrees with the signature's turn
+                # (spec 4.9's sanity check: within 20 deg); else the coarse one.
+                if fine is not None and abs(math.remainder(fine[2] - self.T[2],
+                                                           2 * math.pi)) <= math.radians(20):
+                    self.T = tuple(float(v) for v in fine)
                 self.frame_label = home["frame"]
             if self.store.mark_stale(self.env_id, self.map_id):
                 self.say("map_reset")
@@ -1435,17 +1483,82 @@ class MissionManager:
                                   distance_m=self.distance_m)
         self._start_return(now)
 
-    def _map_first(self) -> bool:
-        """Home on the MISSION'S MAP first (Harsh, 2026-10-02): the RL run's way
-        back aims straight at the start and was pinned 1 m out behind furniture
-        on the first real mission. Only with an engine to drive (friday-mcp)."""
+    def _return_mode(self) -> str:
         try:
-            return (self.cfg["return"].get("mode", "map_first") == "map_first"
+            return str(self.cfg["return"].get("mode", "path"))
+        except Exception:                               # noqa: BLE001
+            return "path"
+
+    def _path_mode(self) -> bool:
+        """THE FILE'S PATTERN (3.2, 4.11; U1, Harsh 2026-10-03 "exactly as
+        file"): an attempt is File 14's planner on the map she built, driven by
+        the HELD run, which never stops tracking her -- so she is never "found
+        again" on a two-minute map. Needs the run still out, in this mission's
+        own frame."""
+        try:
+            return (self._return_mode() == "path" and self.frame_offset is None
+                    and bool(self.a.run.running()))
+        except Exception:                               # noqa: BLE001
+            return False
+
+    def _map_first(self) -> bool:
+        """Home on the MISSION'S MAP with File 14's own engine (friday-mcp): the
+        "map_first" mode (Harsh, 2026-10-02), and path mode's fallback when the
+        run has already ended and there is nothing left to hold."""
+        try:
+            return (self._return_mode() in ("map_first", "path")
                     and bool(self.a.nav.available()))
         except Exception:                               # noqa: BLE001
             return False
 
+    def _new_ladder(self, engine) -> None:
+        grid = None
+        try:
+            grid = self.analysis.map.planner_grid()
+        except Exception as exc:                        # noqa: BLE001
+            log.warning("no mission map for the way back: %s", exc)
+        # The ladder works in the START frame: the start is (0, 0).
+        self.ladder = rth_ladder.Ladder(
+            engine, rth_ladder.LadderConfig.from_config(self.cfg), self.say,
+            {"goal": (0.0, 0.0), "trail": self.trail.crumbs, "grid": grid,
+             "inflate_m": self.a.slam.inflate_m(),
+             "body_radius_m": self.a.slam.body_radius_m(), "obstacles": None})
+
+    def _start_return_by_path(self, now: float) -> None:
+        """U1: hold the run (it does not end), plan on the mission's map, the
+        held run drives each attempt, the ladder climbs round failures."""
+        status = self._read_status(now, force=True)
+        self.a.run.clear_return()
+        self.drive = run_drive.RunDrive(
+            self.a.run, lambda: self.analysis.map.og, self.cfg, self.a.clock,
+            self.runner, self.a.slam.inflate_m())
+        self.drive.engage(now, self.pose)
+        self._by_path = True
+        # The run said "Returning to where I started." only if ITS way back
+        # began unheld -- and not if we held it for a last question first.
+        run_said = ((status or {}).get("way_back_phase") == "returning"
+                    and not self._end_asked)
+        if not run_said:
+            self.say("returning")
+        self._event("return_by_path", pose=[round(v, 2) for v in self.pose])
+        self._new_ladder(self.drive)
+        self.ladder.last_distance = math.hypot(self.pose[0], self.pose[1])
+        r = self.cfg["return"]
+        self.arrival = rth_ladder.ArrivalCheck(r.arrive_tolerance_m,
+                                               r.arrive_hysteresis_m, r.arrive_dwell_s)
+        self._arrive = None
+        self._t_return = now
+        self._to("RETURN_TO_START", now)
+        self._ladder_outcome(self.ladder.restart(now), now)
+
+    def _drop_drive(self) -> None:
+        if self.drive is not None and self.drive.engaged:
+            self.drive.disengage()
+
     def _start_return(self, now: float) -> None:
+        if self._path_mode():
+            self._start_return_by_path(now)
+            return
         if self._map_first():
             self._start_return_on_map(now)
             return
@@ -1514,10 +1627,18 @@ class MissionManager:
             return self.ladder.attempts[-1].distance_m
         return math.hypot(self.pose[0], self.pose[1])
 
+    def _drive_tick(self, now: float) -> None:
+        """U1: her trail and the mission map keep growing on the way home, and
+        the engine keeps the hold (and its drive order) fresh."""
+        if self.drive is not None and self.drive.engaged:
+            self._take_fix(now)
+            self.drive.step(now)
+
     def _st_return_to_start(self, now: float) -> None:
         if self._arrive is not None:
             self._arrival_steps(now)
             return
+        self._drive_tick(now)
         out = None
         if self.ladder.phase == "external":
             # The first attempt: the run's own way back.
@@ -1559,7 +1680,17 @@ class MissionManager:
 
     def _ladder_outcome(self, out, now: float) -> None:
         if out == "arrived":
-            self._arrive = {"stage": "look", "job": None, "spun": False,
+            stage = "look"
+            if self.drive is not None and self.drive.engaged:
+                # The look is friday-mcp's own LiDAR against the start's (taken
+                # the same way): park the run first so it gives the LiDAR back.
+                self._drop_drive()
+                try:
+                    self.a.run.stop()
+                except Exception as exc:                # noqa: BLE001
+                    log.warning("could not park the run: %s", exc)
+                stage = "park"
+            self._arrive = {"stage": stage, "job": None, "spun": False, "t": now,
                             "distance": self._ladder_distance()}
         elif out == "help_wait":
             self._help_wait(now, self._ladder_distance(), speak=False)
@@ -1572,6 +1703,7 @@ class MissionManager:
         if self._arrive is not None:
             self._arrival_steps(now)
             return
+        self._drive_tick(now)
         self._ladder_outcome(self.ladder.tick(now), now)
 
     def _return_again(self, now: float) -> None:
@@ -1579,6 +1711,14 @@ class MissionManager:
         if self.ladder is None:
             self.say("cant_now")
             return
+        if self.ladder.e is self.drive and not (
+                self.drive is not None and self.drive.engaged and self.a.run.running()):
+            # The held run is gone (parked after HELP_WAIT_KEEP_S, or stopped):
+            # File 14's own engine on the mission's map takes the ladder on.
+            self._drop_drive()
+            self.ladder.e = self.a.nav
+            if hasattr(self.a.nav, "new_return"):
+                self.a.nav.new_return()
         self.store.update_mission(self.mission["id"], status="running")
         self._to("RETURN_TO_START", now)
         self._ladder_outcome(self.ladder.restart(now), now)
@@ -1600,6 +1740,14 @@ class MissionManager:
         one spin + relocalise and look again; then arrive EITHER WAY -- the
         second mismatch is `verified = false`, never a third try."""
         a = self._arrive
+        if a["stage"] == "park":
+            running = self.a.run.running()
+            if not running and "parked" not in a:
+                a["parked"] = now
+            if (("parked" in a and now - a["parked"] >= PARK_SETTLE_S)
+                    or now - a["t"] > PARK_WAIT_S):
+                a["stage"] = "look"
+            return
         if a["stage"] == "look":
             if a["job"] is None:
                 a["job"] = self.runner.start(self._look, "mission-arrival")
@@ -1629,7 +1777,10 @@ class MissionManager:
         self.state = "ARRIVED_START"
         self.verified = verified
         self._finish_mission(now, "returned", home_error_m=distance)
-        self.say("arrived" if not getattr(self.a.run, "announces_return", False)
+        # The run announces its own arrival only when ITS way back drove her;
+        # on the path the mission does the arriving, so the mission says it.
+        self.say("arrived" if (self._by_path
+                               or not getattr(self.a.run, "announces_return", False))
                  else "saved_only")
         self._close(now)
 
@@ -1706,10 +1857,22 @@ class MissionManager:
         self._to("HELP_WAIT", now)
 
     def _st_help_wait(self, now: float) -> None:
-        pass                                 # motors off, no autonomy: waits for him
+        # motors off, no autonomy: waits for him. A held run is kept (plain
+        # hold, zero on the wire) for HELP_WAIT_KEEP_S, then parked.
+        if self.drive is not None and self.drive.engaged:
+            if now - self._t_state > HELP_WAIT_KEEP_S:
+                log.info("HELP_WAIT: parking the held run")
+                self._drop_drive()
+                try:
+                    self.a.run.stop()
+                except Exception as exc:                # noqa: BLE001
+                    log.warning("could not park the run: %s", exc)
+            else:
+                self.drive.step(now)
 
     def _failsafe(self, now: float, why: str) -> None:
         log.error("FAILSAFE: %s", why)
+        self._drop_drive()
         try:
             self.a.run.stop()
         except Exception as exc:                        # noqa: BLE001
@@ -1753,6 +1916,7 @@ class MissionManager:
         self._close(now)
 
     def _abort(self, now: float, reason: str) -> None:
+        self._drop_drive()
         try:
             self.a.run.stop()
         except Exception as exc:                        # noqa: BLE001
@@ -1765,6 +1929,7 @@ class MissionManager:
 
     def _close(self, now: float) -> None:
         """Back to IDLE. The mission row and its areas are already saved."""
+        self._drop_drive()
         self.a.run.clear_return()
         self._release()
         self.state = "IDLE"
@@ -1832,6 +1997,7 @@ class MissionManager:
                     "rung": self.ladder.rung, "phase": self.ladder.phase,
                     "cycle": self.ladder.cycle, "in_help": self.ladder.in_help,
                     "attempts": self.ladder.rungs_used()},
+                "drive": None if self.drive is None else self.drive.snapshot(),
                 "verified": self.verified,
                 "curiosity": {"mode": self.cfg.curiosity.mode,
                               "stage": self._curious_stage,

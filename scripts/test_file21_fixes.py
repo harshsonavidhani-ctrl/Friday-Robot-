@@ -106,8 +106,10 @@ print("--- 3. HELP_WAIT has ways out ---")
 
 
 def help_world() -> World:
-    """A one-room mission whose way back gives up 1.1 m out -> HELP_WAIT."""
-    w = booted(World(["study"], world=ROOM, path=ROOM_PATH, fail_return_at_m=1.5))
+    """A one-room mission whose way back gives up 1.1 m out -> HELP_WAIT.
+    (run_first: the shortest way into HELP_WAIT; these are its ways OUT.)"""
+    w = booted(World(["study"], world=ROOM, path=ROOM_PATH, fail_return_at_m=1.5,
+                     cfg={"return": {"mode": "run_first"}}))
     w.mgr.start()
     w.run(lambda x: x.mgr.state == "HELP_WAIT", max_s=400)
     return w

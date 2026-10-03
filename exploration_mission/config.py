@@ -148,7 +148,7 @@ SCHEMA: dict[str, Any] = {
 _CHOICES = {
     ("label", "trigger"): {"segmentation", "distance", "both"},
     ("curiosity", "mode"): {"off", "ask", "auto"},
-    ("return", "mode"): {"map_first", "run_first"},
+    ("return", "mode"): {"path", "map_first", "run_first"},
 }
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 

@@ -317,6 +317,15 @@ class StartTracker(threading.Thread):
             return s0
         return _compose(fr, _inverse(ft))
 
+    def to_rl(self, xy) -> tuple[float, float] | None:
+        """FILE 21 U1: a point of the START frame (the mission's map) in the
+        RUN's frame, by the same transform as home_rl(): home_rl() is (0, 0)."""
+        base = self.home_rl()
+        if base is None:
+            return None
+        p = _compose(base, (float(xy[0]), float(xy[1]), 0.0))
+        return (p[0], p[1])
+
     def snapshot(self) -> dict[str, Any]:
         return {"updates": self.updates, "matched": self.matched,
                 "reason": self.last_reason, "fold_ms": round(self.last_ms, 1),
@@ -342,6 +351,27 @@ HOLD_POLL_S = 0.2
 # Honoured only while fresh, and only if written after this run began, so a
 # request left over from an earlier mission can never turn a new run round.
 RETURN_FRESH_S = 60.0
+# THE MISSION'S DRIVE ORDER (FILE 21 U1, Harsh 2026-10-03: "make exactly as
+# file ... dont change the exploration behaviour"). Spec 3.2/4.11: the mission
+# drives through File 14 (frontier-assist, go-to, the way home), but while the
+# run is out it owns the LiDAR and the motors, so File 14 cannot. Instead the
+# mission plans with File 14's planner on the map she is building and hands the
+# HELD run the path, in the START frame, inside the hold file:
+#     {"until": ..., "why": ..., "drive": {"id": "...", "kind": "path",
+#                                          "path": [[x, y], ...], "tol": 0.3}}
+#     kind "turn" (dir +1/-1): turn in place  -- rung 3's look round
+#     kind "back": straight back              -- rung 4
+# The run steers at it with the way back's own command (homing_command) and
+# every stage below the policy still has the last word: the arc planner, the
+# governor, the recovery controller, unstick, the rear gate, the ToF reflex and
+# the rate limiter. Only while the hold is FRESH: the mission stopping or dying
+# lapses it, and a lapsed hold is exploring again, exactly as before. No drive
+# order = the plain hold = stand still, as before. Exploring never sees any of
+# this: nothing here runs unless the mission wrote it.
+DRIVE_KINDS = ("path", "turn", "back")
+DRIVE_MAX_POINTS = 200
+DRIVE_TOL_M = (0.10, 1.0)        # what a path's tolerance may be set to
+DRIVE_FINAL_TOL_M = 0.10         # the last point: she closes in while the 0.35 m / 2 s arrival dwell runs
 
 
 def _publish(scan, rl, blind, start_rl, res: dict, max_range: float,
@@ -393,6 +423,7 @@ class Hold(threading.Thread):
         self.return_path = self.path.with_name("return.json")
         self._born = time.time()                          # requests older than this: ignored
         self._return = False
+        self.drive: dict | None = None                    # FILE 21 U1: the drive order
 
     def poll(self) -> None:
         import json
@@ -401,12 +432,15 @@ class Hold(threading.Thread):
             ahead = float(data["until"]) - time.time()
         except Exception:                                 # noqa: BLE001
             self._until = 0.0
+            self.drive = None
             return
         if 0.0 < ahead <= HOLD_MAX_AHEAD_S:
             self.why = str(data.get("why", ""))
+            self.drive = drive_order(data.get("drive"))
             self._until = time.monotonic() + ahead
         else:
             self._until = 0.0
+            self.drive = None
 
     def poll_return(self) -> None:
         import json
@@ -430,8 +464,81 @@ class Hold(threading.Thread):
     def return_requested(self) -> bool:
         return self._return
 
+    def driving(self) -> dict | None:
+        """FILE 21 U1: the mission's drive order while the hold is fresh."""
+        return self.drive if self.active() else None
+
     def snapshot(self) -> dict[str, Any]:
-        return {"active": self.active(), "why": self.why if self.active() else ""}
+        snap = {"active": self.active(), "why": self.why if self.active() else ""}
+        if self.driving() is not None:
+            snap["drive"] = self.drive.get("kind")
+        return snap
+
+
+def drive_order(raw) -> dict | None:
+    """A drive order from the hold file, checked; None if absent or malformed
+    (a malformed order is the plain hold: she stands still)."""
+    if not isinstance(raw, dict) or raw.get("kind") not in DRIVE_KINDS:
+        return None
+    try:
+        order = {"id": str(raw.get("id", ""))[:64], "kind": raw["kind"]}
+        if raw["kind"] == "path":
+            pts = [(float(p[0]), float(p[1])) for p in raw["path"]][:DRIVE_MAX_POINTS]
+            if not pts or not all(math.isfinite(v) for p in pts for v in p):
+                return None
+            lo, hi = DRIVE_TOL_M
+            order["path"] = pts
+            order["tol"] = min(max(float(raw.get("tol", 0.3)), lo), hi)
+        elif raw["kind"] == "turn":
+            order["dir"] = 1.0 if float(raw.get("dir", 1.0)) >= 0.0 else -1.0
+        return order
+    except Exception:                                     # noqa: BLE001
+        # Anything malformed is no order. This runs on the hold's polling
+        # thread: an exception escaping here would end that thread.
+        return None
+
+
+class MissionDrive:
+    """FILE 21 U1: one drive order -> the request that replaces the policy's,
+    exactly as the way back's homing_command replaces it. Owned by the control
+    loop; cheap (a few points transformed per tick)."""
+
+    def __init__(self) -> None:
+        self.id: str | None = None
+        self.i = 0                      # the path point she is heading for
+        self.ticks = 0
+
+    def command(self, order: dict, tracker: "StartTracker | None", rl_pose,
+                omega_max: float, v_floor: float, v_back: float
+                ) -> tuple[float, float, str]:
+        if order.get("id") != self.id:
+            self.id, self.i = order.get("id"), 0
+        self.ticks += 1
+        kind = order["kind"]
+        if kind == "turn":
+            return (0.0, order["dir"] * omega_max, "mission: turning to look round")
+        if kind == "back":
+            return (-max(abs(v_back), v_floor), 0.0, "mission: backing up")
+        if tracker is None:
+            return (0.0, 0.0, "mission path: no start tracker, standing still")
+        pts = [tracker.to_rl(p) for p in order["path"]]
+        if any(p is None for p in pts):
+            return (0.0, 0.0, "mission path: no start fix yet, standing still")
+        x, y, th = (float(v) for v in rl_pose)
+        last = len(pts) - 1
+        self.i = min(self.i, last)
+        while self.i < last and math.hypot(pts[self.i][0] - x,
+                                           pts[self.i][1] - y) <= order["tol"]:
+            self.i += 1
+        gx, gy = pts[self.i]
+        d = math.hypot(gx - x, gy - y)
+        if self.i == last and d <= DRIVE_FINAL_TOL_M:
+            return (0.0, 0.0, f"mission path: at its end, {d:.2f} m")
+        err = _wrap(math.atan2(gy - y, gx - x) - th)
+        cmd = homing_command(err, d if self.i == last else None, omega_max, v_floor)
+        v, omega, why = cmd
+        why = why.replace("way back", f"mission path {self.i + 1}/{last + 1}")
+        return (v, omega, why.replace("the start", "the next point"))
 
 
 def _serve(max_range: float) -> int:

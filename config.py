@@ -3144,22 +3144,20 @@ EXPLORATION_MISSION = {
     "breadcrumbs": {"spacing_m": 0.25, "checkpoint_keep": 500, "loop_cut_m": 0.30},
     "return": {"arrive_tolerance_m": 0.35, "arrive_hysteresis_m": 0.10,
                "arrive_dwell_s": 2.0, "wait_s": 5, "backup_m": 0.25,
-               "backup_rear_clear_m": 0.35, "ring_step_m": 0.05, "help_retry_s": 10,
-               # Harsh, 2026-10-02: "actively try till it reaches where it
-               # started": every 10 s for up to 30 rounds (~5 min of trying,
-               # each round the whole ladder: wait, clear, look, back up,
-               # retrace, nearest spot), not every 30 s. Spoken every 3rd.
-               "help_max_cycles": 30, "help_speak_every": 3,
-               # "map_first" = File 14 on the MISSION'S MAP first; "run_first"
-               # = the RL run's own way back first (its start tracker, reflexes,
-               # escapes, 600 s budget), then the map ladder, then HELP.
-               # Harsh chose map_first (2026-10-02 afternoon); measured that
-               # evening, the map a 2-minute trip builds is too thin to place
-               # her on (47 sweeps; at her real spot the best two places scored
-               # 0.71 vs 0.70, so File 14 rightly refused every attempt), while
-               # the run's way back got her to 0.09 m. run_first until the
-               # mission's map is good enough.
-               "mode": "run_first"},
+               "backup_rear_clear_m": 0.35, "ring_step_m": 0.05,
+               # The file's own numbers (spec 4.11/4.17; Harsh 2026-10-03,
+               # "make exactly as file"): rungs 1-6 again every 30 s, 20
+               # times (~10 min), the help line every 3rd round.
+               "help_retry_s": 30, "help_max_cycles": 20, "help_speak_every": 3,
+               # "path" = THE FILE'S PATTERN (U1): each attempt is File 14's
+               # planner on the map she built, driven by the HELD run (which
+               # never stops tracking her, so she is never placed again on a
+               # thin map), the ladder round it, HELP last. If the run has
+               # already ended: File 14's own engine on that map.
+               # "map_first" = park the run, File 14's engine only (failed
+               # 2026-10-02 22:4x: a 2-minute map was too thin to place her,
+               # 0.71 vs 0.70). "run_first" = the run's own way back first.
+               "mode": "path"},
     "boot": {"slam_wait_s": 60, "home_check_period_s": 30},
     "curiosity": {"mode": "off", "threshold": 0.8, "weights": [0.5, 0.3, 0.2],
                   "min_idle_min": 10, "min_quiet_conversation_min": 5,

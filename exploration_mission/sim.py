@@ -245,6 +245,10 @@ def run(args, out=print) -> dict:
         over = {}
         if args.minutes:
             over["explore"] = {"mission_cap_min": float(args.minutes)}
+        if args.fail_return:
+            # The file's HELP is 20 rounds 30 s apart; a demo has to end.
+            over["return"] = {"help_max_cycles": 2}
+            out("(the sim shortens HELP to 2 rounds so the demonstration ends)")
         cfg = mcfg.load(over)
         mgr = M.MissionManager(a, store, cfg, runner=M.InlineRunner(),
                                inline_analysis=True, map_policy=args.policy)

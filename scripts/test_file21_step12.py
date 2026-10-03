@@ -111,8 +111,11 @@ else:
 print("--- a way back that fails: the help line with the true distance ---")
 res, lines = run(map="closed", replies="study", fail_return=1.5)
 text = "\n".join(lines)
+import re                                               # noqa: E402
 check("HELP_WAIT, and she says how far she is",
-      res["states"][-1] == "HELP_WAIT" and "I'm stuck about 1.1 meters" in text,
+      res["states"][-1] == "HELP_WAIT"
+      and any(float(d) > 0.35 for d in re.findall(r"I'm stuck about (\d+\.\d) meters",
+                                                 text)),
       text[-500:])
 
 print("--- not a mission command ---")

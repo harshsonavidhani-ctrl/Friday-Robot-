@@ -61,6 +61,8 @@ class SimRun(ad.FakeRun):
         # Its own way back gives up ("timeout") this far from the start -- the
         # wedged-in-clutter ending the real robot has had.
         self.fail_return_at_m = fail_return_at_m
+        self._drive_id, self._drive_i = None, 0
+        self.drive_ticks = 0                    # steps spent on a mission drive order
 
     # --- what the mission reads ---
     def lidar(self):
@@ -147,12 +149,43 @@ class SimRun(ad.FakeRun):
         self.phase, self.why = "returning", why
         self._back = list(reversed(self.path[:self._leg]))
 
+    def _drive(self, order: dict, dt: float) -> None:
+        """rl/way_back.py MissionDrive, in the sim: a held run with a drive
+        order steers at the mission's path (start frame) / turns / backs up."""
+        self.drive_ticks += 1
+        if order.get("id") != self._drive_id:
+            self._drive_id, self._drive_i = order.get("id"), 0
+        x, y, th = self.truth
+        if (self.fail_return_at_m is not None and order["kind"] != "turn"
+                and math.hypot(x - self.start_pose[0], y - self.start_pose[1])
+                <= self.fail_return_at_m):
+            return                              # wedged: no way past from here
+        if order["kind"] == "turn":
+            self.truth = (x, y, math.atan2(math.sin(th + 1.3 * dt), math.cos(th + 1.3 * dt)))
+            return
+        if order["kind"] == "back":
+            self.truth = (x - math.cos(th) * 0.15 * dt, y - math.sin(th) * 0.15 * dt, th)
+            return
+        pts = [mmap.compose(self.start_pose, (p[0], p[1], 0.0))[:2] for p in order["path"]]
+        last = len(pts) - 1
+        while (self._drive_i < last and math.hypot(pts[self._drive_i][0] - x,
+                                                   pts[self._drive_i][1] - y)
+               <= order.get("tol", 0.3)):
+            self._drive_i += 1
+        gx, gy = pts[self._drive_i]
+        if self._drive_i == last and math.hypot(gx - x, gy - y) <= 0.10:
+            return                              # rl/way_back.py DRIVE_FINAL_TOL_M
+        self._toward((gx, gy), dt)
+
     def step(self, dt: float) -> None:
         if not self.is_running or self.phase in ("idle", "done"):
             return
         now = self.clock.monotonic()
         if now - self._t_started < self.start_delay_s:
             return                                  # still loading its detector
+        order = (self.held() or {}).get("drive")
+        if order and not self.estop_on and now >= self.freeze_until:
+            self._drive(order, dt)
         if self.held() is None and not self.estop_on and now >= self.freeze_until:
             if self.phase == "exploring":
                 if self.return_asked:
@@ -177,7 +210,8 @@ class SimRun(ad.FakeRun):
                     self._back.pop(0)
         # An e-stopped run still ticks and publishes; a HELD one returns before
         # its tracker is fed, so it publishes nothing (rl/pi_deploy.py).
-        if (self.held() is None and self.publishing and self.is_running
+        # ...but a held run DRIVING an order ticks in full, and publishes.
+        if ((self.held() is None or order) and self.publishing and self.is_running
                 and now - self._t_pub >= PUBLISH_S):
             self._t_pub = now
             pose = mmap.compose(mmap.inverse(self.start_pose), self.truth)
