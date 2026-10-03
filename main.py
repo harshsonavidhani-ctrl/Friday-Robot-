@@ -812,6 +812,43 @@ async def _reminder_turn(voice: "Voice", face: "Face", source,
         turn.listening()
 
 
+async def _heat_turn(voice: "Voice", face: "Face", source, trigger: str,
+                     watch) -> None:
+    """Her CPU is hot (cpu_heat.py): one fixed line, no model. Never raises.
+
+    Said from the wake loop, so never over a turn; if he started talking while
+    it waited it is handed back (watch.missed) and offered again shortly.
+    """
+    import cpu_heat
+    import initiative
+
+    temp = cpu_heat.parse_trigger(trigger)
+    if temp is None:
+        return
+    turn = stages.Turn(f"cpu heat: {temp:.0f} C")
+    if initiative.he_is_talking():
+        watch.missed()
+        turn.done("DROPPED (he is talking — offered again shortly)")
+        return
+    source.pause()                              # never hear herself
+    try:
+        face.feel("scared")                     # the file 21 "worried"
+        voice.say(config.CPU_HOT_LINE)
+        turn.spoke(config.CPU_HOT_LINE)
+        turn.answered_by("locally, no model", 0.0)
+        voice.wait_until_quiet()
+        watch.delivered()
+        turn.done()
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("cpu heat line failed: %s: %s", type(exc).__name__, exc)
+        watch.missed()
+        turn.done(f"FAILED ({type(exc).__name__})")
+    finally:
+        face.rest()
+        source.resume()
+        turn.listening()
+
+
 async def _agency_turn(voice: "Voice", face: "Face", source,
                        trigger: str) -> None:
     """What her own initiative decided to say or show on her face. Never raises.
@@ -1150,7 +1187,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     # crashed this process on that boot. Hearing "hey Friday" needs none of
     # them, so the mic and the detector start first and the rest loads behind.
     stream = source = scene_watch = narration_watch = reminder_watch = None
-    agency_watch = mission_watch = None
+    agency_watch = mission_watch = heat_watch = None
     if typed is None:
         # ONE microphone stream, shared by the wake detector and the capture.
         # Opened here so both get the same one -- see stt.AudioStream for why
@@ -1205,6 +1242,14 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             inner = (source.sources if isinstance(source, wake_word.AnyOf)
                      else (source,))
             source = wake_word.AnyOf(*inner, mission_watch)
+        # HER CPU IS HOT (Harsh, 2026-10-03): said between turns like the
+        # others -- and also during a run, which is when the Pi is hottest.
+        if getattr(config, "CPU_HEAT_WARN", False):
+            import cpu_heat
+            heat_watch = cpu_heat.HeatWatch()
+            inner = (source.sources if isinstance(source, wake_word.AnyOf)
+                     else (source,))
+            source = wake_word.AnyOf(*inner, heat_watch)
         global WAKE
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
@@ -1267,6 +1312,10 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 if (mission_watch is not None
                         and trigger.startswith("mission: ")):
                     await _mission_turn(voice, face, source, stream, trigger, link)
+                    continue
+                if (heat_watch is not None
+                        and trigger.startswith("cpu_heat: ")):
+                    await _heat_turn(voice, face, source, trigger, heat_watch)
                     continue
                 turn = stages.Turn(trigger)
                 # AN UNCERTAIN WAKE IS HEARD IN SILENCE (2026-09-27). Below

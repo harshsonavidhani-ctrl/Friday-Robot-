@@ -2646,6 +2646,19 @@ BATTERY_SENSOR = None
 CPU_TEMP_PATH = "/sys/class/thermal/thermal_zone0/temp"
 CPU_TEMP_WARN_C = 75.0
 
+# --- She says when her CPU is hot (cpu_heat.py) ------------------------------
+# Harsh, 2026-10-03: "if pi temp reaches above 60 degree so friday will say my
+# cpu is hot pls turn on the fan". Offline: the kernel's reading + one fixed
+# line, spoken between turns (a wake source in friday-brain), also during runs.
+CPU_HEAT_WARN = True
+CPU_HOT_SAY_C = 60.0            # his number
+CPU_HOT_CLEAR_C = 57.0          # cooled only below this: a wobble round 60 is one spell
+CPU_HOT_SUSTAIN_S = 15.0        # hot this long first -- one busy second is not "hot"
+CPU_HOT_REPEAT_S = 600.0        # while it STAYS hot, again at most every 10 min
+CPU_HOT_RETRY_S = 30.0          # he was talking / quiet mode: offered again after this
+CPU_HOT_POLL_S = 5.0
+CPU_HOT_LINE = "My CPU is hot. Please turn on the fan."
+
 
 def load_calibration() -> dict:
     """Current motor calibration, falling back to the defaults for any key
