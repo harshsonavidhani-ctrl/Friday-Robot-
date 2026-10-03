@@ -231,8 +231,10 @@ print("--- 5. the active exploration back (Harsh, 2026-10-02) ---")
 env = (ROOT / "rl" / "modes" / "confident_explore.env").read_text()
 # 16:1x Harsh chose the old drive + unstick off; 23:22 (test #5) unstick off
 # brought back the triple lock, so unstick is ON again in keep-trying form.
-check("mode file: old motor drive, unstick ON in keep-trying form",
-      'MODE_QUIET_MOTORS="0"' in env and 'MODE_UNSTICK="1"' in env
+# 2026-10-04 ("noise more than movement ... it should be smooth"): the QUIET
+# drive is back -- the old drive was only chosen on the weak 31 kHz firmware.
+check("mode file: QUIET motor drive, unstick ON in keep-trying form",
+      'MODE_QUIET_MOTORS="1"' in env and 'MODE_UNSTICK="1"' in env
       and 'MODE_UNSTICK_KEEP_TRYING="1"' in env)
 import subprocess                                        # noqa: E402
 out = subprocess.run(["bash", "-c", f'set -a; . "{ROOT}/rl/modes/confident_explore.env"; '
@@ -242,18 +244,18 @@ out = subprocess.run(["bash", "-c", f'set -a; . "{ROOT}/rl/modes/confident_explo
                       '[ "${MODE_UNSTICK_KEEP_TRYING:-0}" = "1" ] && ARGS+=(--unstick-keep-trying); '
                       'echo "${ARGS[*]}"'], capture_output=True, text=True).stdout.strip()
 sh = (ROOT / "rl" / "modes" / "explore.sh").read_text()
-check("explore.sh passes the old drive and keep-trying unstick to the run",
+check("explore.sh keeps the old drive as a switch, and passes the quiet drive "
+      "(the run's defaults) and keep-trying unstick to the run",
       "--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard" in sh
-      and "--unstick-keep-trying" in sh
-      and out == "--motor-kick-rest 0 --motor-pulse-burst 1 --no-motor-plug-guard "
-      "--unstick-keep-trying", out)
+      and "--unstick-keep-trying" in sh and out == "--unstick-keep-trying", out)
 sys.path.insert(0, str(ROOT / "rl"))
 import friday_localnav_deploy as L                       # noqa: E402
 a = L.build_arg_parser().parse_args(["--motor", "friday", "--i-am-watching"] + out.split())
-check("...and the run's own parser takes them (unstick on + keep trying, kick every "
-      "start, 1-tick pulses, no coast)", not a.no_unstick and a.unstick_keep_trying
-      and a.motor_kick_rest == 0.0 and a.motor_pulse_burst == 1
-      and a.motor_plug_guard is False)
+check("...and the run's own parser takes them (unstick on + keep trying; kick only "
+      "after 0.3 s at rest, 3-tick pulses, coast before reversing)",
+      not a.no_unstick and a.unstick_keep_trying
+      and a.motor_kick_rest == 0.3 and a.motor_pulse_burst == 3
+      and a.motor_plug_guard is True)
 
 # =============================================================================
 print("--- 6. her own voice in an answer capture is not his answer ---")
