@@ -377,33 +377,38 @@ check("...and with no fresh status she cannot confirm the motors are stopped, so
 # =============================================================================
 print("--- go-to in the middle of exploring ---")
 
-w = World(["hall"], nav=ad.FakeNav(during_run=False))
+# U2 (2026-10-03, Harsh "exactly as file", spec 3.3): EXPLORE --("go to X")-->
+# TARGET_NAV --> EXPLORE. File 14's planner on the mission's map, the HELD run
+# driving it (run_drive.py); test_file21_exact.py has the whole journey.
+w = World(["hall"])
 w.mgr.start()
 w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 8)
 w.mgr.go_to("kitchen", {"name": "kitchen", "x": 1.0, "y": 1.0})
 w.step()
-check("with the real run holding the wheels, File 14 cannot drive: refused, "
-      "exploring carries on", w.mgr.state == "EXPLORE"
-      and w.voice.said[-1] == "I can't do that right now.")
-nav = ad.FakeNav(during_run=True)
-w = World(["hall", "kitchen", "bedroom"], nav=nav)
+check("a place outside this mission's frame (the saved map's, while this mission has "
+      "its own): 'I don't know where kitchen is yet.', exploring carries on",
+      w.mgr.state == "EXPLORE" and w.voice.said[-1] == "I don't know where kitchen is yet.",
+      str(w.voice.said[-2:]))
+w = World(["hall", "kitchen", "bedroom"])
 w.mgr.start()
 w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 8)
-trail_before, crumbs_before = w.mgr.trail, len(w.mgr.trail)
-w.mgr.go_to("kitchen", {"name": "kitchen", "x": 1.0, "y": 1.0})
-w.step()
-check("where File 14 CAN take the wheels: TARGET_NAV, exploration held",
-      w.mgr.state == "TARGET_NAV" and w.sim.held() is not None
-      and nav.journeys == [{"name": "kitchen", "x": 1.0, "y": 1.0}])
-for _ in range(100):
-    w.step()
+trail_before, bl_before = w.mgr.trail, w.mgr.blacklist
+spot = {"kind": "area", "name": "spot", "x": 1.0, "y": 0.0,
+        "area": {"frame": w.mgr._frame(), "display_name": "spot"}}
+w.mgr.go_to("spot", spot)
+w.run(lambda x: ((x.sim.held() or {}).get("drive") or {}).get("kind") == "path",
+      max_s=3)
+check("a place in this mission's frame: TARGET_NAV, the run held with a path to it, "
+      "'Heading to spot.'", w.mgr.state == "TARGET_NAV"
+      and ((w.sim.held() or {}).get("drive") or {}).get("kind") == "path"
+      and "Heading to spot." in w.voice.said, str(w.voice.said[-2:]))
 check("...held for as long as the journey lasts", w.sim.held() is not None
       and w.mgr.state == "TARGET_NAV")
-nav.finish("ARRIVED")
-w.step()
+w.run(lambda x: x.mgr.state != "TARGET_NAV", max_s=120)
 check("...arrived: released, EXPLORE again with the same trail and blacklist "
-      "(the snapshot)", w.mgr.state == "EXPLORE" and w.sim.held() is None
-      and w.mgr.trail is trail_before and len(w.mgr.trail) >= crumbs_before)
+      "(the snapshot)", w.mgr.state in ("EXPLORE", "ASK_LABEL")
+      and "I have arrived at spot." in w.voice.said
+      and w.mgr.trail is trail_before and w.mgr.blacklist is bl_before)
 
 
 # =============================================================================
@@ -489,8 +494,11 @@ w.run(lambda x: x.t > 150)                              # the 2nd 60 s window
 ev = [e for e in w.mission()["events"] if e["kind"] == "stagnation"]
 check("no new floor for 60 s with a reachable frontier left: a stagnation event",
       len(ev) >= 1 and ev[0]["reachable_frontiers"] >= 1, str(ev))
-check("...and the mission commands NOTHING for it (the run's own planner drives)",
-      not w.orders("hold", "return", "stop") and w.mgr.state == "EXPLORE")
+check("...and FRONTIER_ASSIST takes her to it (spec 4.2; U2, Harsh 2026-10-03 "
+      "'exactly as file'): the run held with a path, never stopped or turned back",
+      any(e["kind"] == "frontier_assist" for e in w.mission()["events"])
+      and not w.orders("return", "stop") and w.mgr.state == "EXPLORE",
+      str([e["kind"] for e in w.mission()["events"]][-6:]))
 
 w = World(["save it as hall", "kitchen", "bedroom"])
 w.mgr.start()

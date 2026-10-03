@@ -2658,6 +2658,11 @@ CPU_HOT_REPEAT_S = 600.0        # while it STAYS hot, again at most every 10 min
 CPU_HOT_RETRY_S = 30.0          # he was talking / quiet mode: offered again after this
 CPU_HOT_POLL_S = 5.0
 CPU_HOT_LINE = "My CPU is hot. Please turn on the fan."
+# Harsh, 2026-10-03: "if she says it at 60 and I forgot, and the temp reaches
+# 70, then again the alarm" -- said at once at 70, not after the 10 minutes.
+CPU_HOT_AGAIN_C = 70.0
+CPU_HOT_AGAIN_CLEAR_C = 67.0    # cooled from "very hot" only below this
+CPU_HOT_LINE_AGAIN = "My CPU is very hot now. Please turn on the fan."
 
 
 def load_calibration() -> dict:
@@ -3172,7 +3177,9 @@ EXPLORATION_MISSION = {
                # 0.71 vs 0.70). "run_first" = the run's own way back first.
                "mode": "path"},
     "boot": {"slam_wait_s": 60, "home_check_period_s": 30},
-    "curiosity": {"mode": "off", "threshold": 0.8, "weights": [0.5, 0.3, 0.2],
+    # "ask" = the file's default (4.15; Harsh 2026-10-03 "exactly as file"):
+    # she ASKS and goes only after his "yes" -- no motion without it.
+    "curiosity": {"mode": "ask", "threshold": 0.8, "weights": [0.5, 0.3, 0.2],
                   "min_idle_min": 10, "min_quiet_conversation_min": 5,
                   "quiet_hours": ["22:00", "08:00"], "no_cooldown_h": 2,
                   "silence_cooldown_min": 30, "check_period_s": 60},

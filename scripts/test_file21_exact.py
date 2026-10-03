@@ -57,7 +57,8 @@ _results: list[bool] = []
 # suite did exactly that to the dashboard's map (2026-10-03 15:37, put back the
 # same minute). Every run() here is isolated, and this proves it afterwards.
 REAL = sorted(p for p in (ROOT / "state").glob("rl_*") if p.is_file()) + [
-    ROOT / "state" / "explore_mode.json"]
+    ROOT / "state" / "explore_mode.json",
+    ROOT / "state" / "exploration_mission" / "pause.json"]
 REAL_BEFORE = {p: (p.stat().st_mtime_ns, p.stat().st_size) for p in REAL if p.exists()}
 ARCHIVES_BEFORE = set((ROOT / "state").glob("map-archive-*"))
 
@@ -161,6 +162,8 @@ def new_loop():
     loop = ControlLoop(rcfg, PolicyRunner(HERE / "exploration_model.onnx", rcfg, 1),
                        NullMotorDriver(rcfg), slots)
     loop.hold.path = TMP / f"loop_hold_{id(loop)}.json"
+    # ...and its PAUSE file: Hold took that from the REAL folder when built.
+    loop.hold.pause_path = loop.hold.path.with_name(f"pause_{id(loop)}.json")
     # The run's frame starts where the loop's pose does ((12, 12, 0), the
     # middle of its map); the start frame's origin is that pose.
     loop.way_back = wb.WayBack(FakeTracker(tuple(float(v) for v in loop.map.pose)))
@@ -474,6 +477,556 @@ w.run(lambda x: x.mgr.state == "HELP_WAIT", max_s=3600)
 w.run(lambda x: ("stop",) in x.sim.orders, max_s=M.HELP_WAIT_KEEP_S + 30)
 check("HELP_WAIT parks the held run after HELP_WAIT_KEEP_S (it costs a core)",
       ("stop",) in w.sim.orders and not w.mgr.drive.engaged)
+
+# =============================================================================
+print("--- U2 (spec 4.2): FRONTIER_ASSIST when the RL finds nothing new ---")
+
+
+def events(w, kind):
+    return [e for e in (w.mission() or {}).get("events", []) if e["kind"] == kind]
+
+
+w = World(["hall", "kitchen", "bedroom"])
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 12)
+check("exploring normally: no assist, the run never held for one",
+      w.mgr.assist is None and not events(w, "frontier_assist"))
+w.sim.rl_stall_until = w.clock.monotonic() + 1e9          # the RL finds nothing new
+t0 = w.t
+w.run(lambda x: x.mgr.assist is not None, max_s=200)
+t_assist = w.t
+w.run(lambda x: ((x.sim.held() or {}).get("drive") or {}).get("kind") == "path"
+      or x.mgr.assist is None, max_s=2)
+order = (w.sim.held() or {}).get("drive") or {}
+check("the map grew < 0.5 m2 in 60 s with a frontier left: FRONTIER_ASSIST -- the RL "
+      "is held and File 14's planner drives her to the best frontier",
+      order.get("kind") == "path" and 55.0 <= t_assist - t0 <= 140.0,
+      f"{t_assist - t0:.0f} s, {order}")
+w.run(lambda x: x.mgr.assist is None, max_s=120)
+last = (w.mgr.assists or [{}])[-1]
+check("...it ends at the frontier, once that frontier is explored, or for a room's "
+      "question (which comes first, 4.6); exploring goes on",
+      last.get("why") in ("arrived", "explored", "asking")
+      and (w.sim.held() is None or w.mgr.state == "ASK_LABEL"), str(last))
+grew_before = w.mgr.explored_m2
+w.run(lambda x: len(x.mgr.assists) >= 3
+      or x.mgr.state not in ("EXPLORE", "ASK_LABEL", "TARGET_NAV"), max_s=900)
+done = [a for a in w.mgr.assists if a["why"] in ("arrived", "explored")]
+check("RL_DRIVE <-> FRONTIER_ASSIST again and again while frontiers are left, at "
+      "least one reaching its frontier, and the map grows",
+      len(w.mgr.assists) >= 2 and done and w.mgr.explored_m2 >= grew_before,
+      f"{w.mgr.assists} {w.mgr.state}")
+
+# a frontier she cannot reach: fails twice, then it is blacklisted for the mission
+w = World(["hall", "kitchen", "bedroom"])
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 12)
+w.sim.rl_stall_until = w.clock.monotonic() + 1e9
+w.run(lambda x: x.mgr.assist is not None, max_s=200)
+first = tuple(w.mgr.assist["centroid"])
+w.sim.freeze_until = w.clock.monotonic() + 1e9            # wedged: nothing moves
+w.run(lambda x: len(x.mgr.assists) >= 2 or x.mgr.state != "EXPLORE", max_s=400)
+rows = w.mgr.assists
+check("wedged on the way: no progress in 20 s -> one failure for that frontier, the "
+      "RL gets its turn, then the second failure blacklists it",
+      len(rows) >= 2 and rows[0]["why"] == "stalled" and rows[1]["blacklisted"]
+      and w.mgr.blacklist.blocks(first), str(rows))
+
+# the hand-over is gap-free: ending an assist for a question leaves her HELD
+w = World(["hall", "kitchen", "bedroom"])
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 12)
+w.sim.rl_stall_until = w.clock.monotonic() + 1e9
+w.run(lambda x: x.mgr.assist is not None, max_s=200)
+w.mgr._end_assist(w.clock.monotonic(), "asking", release=False)
+held = w.sim.held() or {}
+check("an assist ended for a question / a go-to / the end leaves her on the PLAIN "
+      "hold -- never a gap for the RL, never a drive order left behind",
+      w.mgr.assist is None and held and "drive" not in held, str(held))
+
+
+# =============================================================================
+print("--- U2 (spec 3.3): 'go to X' in the middle of a mission ---")
+
+
+def target_for(w, name):
+    a = w.store.by_name("home", name)
+    return {"kind": "area", "name": a["name"], "x": a["center_x"], "y": a["center_y"],
+            "radius_m": a["radius_m"], "area": a}
+
+
+def world_xy(w, xy):
+    p = M.mission_map.compose(w.sim.start_pose, (xy[0], xy[1], 0.0))
+    return p[:2]
+
+
+w = World(["hall", "kitchen", "bedroom"])
+w.mgr.start()
+w.run(lambda x: len(x.areas()) >= 2 and x.mgr.state == "EXPLORE", max_s=300)
+trail_before, bl_before = w.mgr.trail, w.mgr.blacklist
+hall = target_for(w, "hall")
+n = len(w.voice.said)
+w.mgr.go_to("hall", hall)
+w.run(lambda x: x.mgr.state == "TARGET_NAV", max_s=5)
+check("'go to the hall' mid-mission: TARGET_NAV, the run held with a path, "
+      "File 14's line", w.mgr.state == "TARGET_NAV"
+      and ((w.sim.held() or {}).get("drive") or {}).get("kind") == "path"
+      and "Heading to hall." in w.voice.said[n:], str(w.voice.said[n:]))
+w.run(lambda x: x.mgr.state != "TARGET_NAV", max_s=200)
+hx, hy = world_xy(w, (hall["x"], hall["y"]))
+d = math.hypot(w.sim.truth[0] - hx, w.sim.truth[1] - hy)
+check("...she gets there and says so, then EXPLORE again with the RL driving",
+      "I have arrived at hall." in w.voice.said[n:] and w.mgr.state in ("EXPLORE", "ASK_LABEL")
+      and d <= 0.5, f"{d:.2f} m {w.voice.said[n:]} {w.mgr.state}")
+check("...the snapshot is kept: the same trail (loop-cut as it should be), the "
+      "same blacklist, the same mission -- nothing reset",
+      w.mgr.trail is trail_before and w.mgr.blacklist is bl_before
+      and len(w.mgr.trail.crumbs) > 0 and w.mgr.mission is not None)
+
+n = len(w.voice.said)
+w.mgr.go_to("desk", {"kind": "landmark", "name": "desk", "x": 1.0, "y": 1.0})
+w.run(lambda x: False, max_s=1.0)
+check("a place saved in ANOTHER frame (the saved map's, this mission has its own): "
+      "'I don't know where desk is yet.' -- never driven to a wrong address",
+      "I don't know where desk is yet." in w.voice.said[n:] and w.mgr.state != "TARGET_NAV",
+      str(w.voice.said[n:]))
+
+w.run(lambda x: x.mgr.state == "EXPLORE", max_s=60)
+kitchen = target_for(w, "kitchen")
+n = len(w.voice.said)
+w.mgr.go_to("kitchen", kitchen)
+w.run(lambda x: x.mgr.state == "TARGET_NAV", max_s=5)
+w.sim.freeze_until = w.clock.monotonic() + 1e9
+w.run(lambda x: x.mgr.state != "TARGET_NAV", max_s=200)
+check("wedged on the way: one re-plan, then 'I cannot find a route to kitchen.' and "
+      "'Continuing exploration.' -- back to EXPLORE, the RL let go",
+      "I cannot find a route to kitchen." in w.voice.said[n:]
+      and "Continuing exploration." in w.voice.said[n:] and w.mgr.state == "EXPLORE"
+      and w.sim.held() is None
+      and [e for e in events(w, "go_to_done")][-1]["outcome"] != "ARRIVED",
+      str(w.voice.said[n:]))
+w.sim.freeze_until = -1e9
+
+w = World(["hall", "kitchen", "bedroom"])
+w.mgr.start()
+w.run(lambda x: len(x.areas()) >= 2 and x.mgr.state == "EXPLORE", max_s=300)
+hall = target_for(w, "hall")
+w.mgr.go_to("hall", hall)
+w.run(lambda x: x.mgr.state == "TARGET_NAV", max_s=5)
+w.run(lambda x: x.sim.drive_ticks > 15, max_s=30)
+w.mgr.halt()
+w.run(lambda x: x.mgr.state == "PAUSED", max_s=5)
+w.run(lambda x: False, max_s=40)                            # paused a while
+w.mgr.resume()
+w.run(lambda x: x.mgr.state != "PAUSED", max_s=5)
+check("stop during a go-to, then continue: the same journey picks up (a pause is "
+      "not a failure)", w.mgr.state == "TARGET_NAV", w.mgr.state)
+w.run(lambda x: x.mgr.state != "TARGET_NAV", max_s=200)
+check("...and arrives", [e for e in events(w, "go_to_done")][-1]["outcome"] == "ARRIVED")
+
+
+# =============================================================================
+print("--- U3 (spec 4.8): 'Friday stop' pauses a mission, 'continue' carries on ---")
+
+ph = TMP / "pause" / "hold.json"
+ph.parent.mkdir(parents=True, exist_ok=True)
+h = wb.Hold(path=ph)
+check("no pause file: not paused", not h.paused())
+pp = ph.with_name(wb.PAUSE_NAME)
+ad.atomic_write_json(pp, {"at": time.time(), "by": "voice"})
+h.poll_pause()
+check("a person's pause: held -- and it has no expiry", h.paused() and h.active())
+ad.atomic_write_json(ph, {"until": time.time() + 3.0, "why": "m",
+                          "drive": {"kind": "path", "id": "x", "path": [[1, 1]]}})
+h.poll()
+check("...a drive order beside it is NOT driven: the person's pause wins",
+      h.driving() is None and h.active())
+pp.write_text("{torn")
+h.poll_pause()
+check("...a torn read keeps the pause (never dropped on a half-written file)", h.paused())
+pp.unlink()
+h.poll_pause()
+check("cleared by the mission: the pause is over", not h.paused())
+ad.atomic_write_json(pp, {"at": time.time() - 3600.0, "by": "voice"})
+h2 = wb.Hold(path=ph)
+h2.poll_pause()
+check("a pause written before this run began is ignored (an old pause never "
+      "freezes a new run)", not h2.paused())
+pp.unlink()
+
+loop6, slots6 = new_loop()
+ad.atomic_write_json(loop6.hold.pause_path, {"at": time.time(), "by": "voice"})
+loop6.hold.poll_pause()
+ad.atomic_write_json(loop6.hold.path, {"until": time.time() + 3.0, "why": "m",
+                                       "drive": {"kind": "path", "id": "y",
+                                                 "path": [[15.0, 12.0]]}})
+loop6.hold.poll()
+rows = []
+for _ in range(5):
+    slots6["lidar"].publish(open_scan)
+    rows.append(loop6.tick())
+check("the run's tick while paused: zero on the wire, whatever else is asked",
+      all(r["gate"] == "mission_hold" and r["v"] == 0.0 and r["omega"] == 0.0
+          for r in rows))
+# Paused past PAUSE_MAX_S: the run ENDS standing still (isolated run(), as above).
+loop7, slots7 = new_loop()
+loop7.map_enabled = False
+loop7.planner = None
+loop7.state_file = None
+loop7.blackbox.dump = lambda _p: None
+loop7.report = lambda: None
+loop7.shutdown = lambda: None
+loop7.hold.start = lambda: None
+loop7.hold.pause_path = loop7.hold.path.with_name("pause7.json")
+ad.atomic_write_json(loop7.hold.pause_path, {"at": time.time(), "by": "voice"})
+loop7.hold.poll_pause()
+loop7.hold._paused_since = time.monotonic() - wb.PAUSE_MAX_S - 1.0
+t7 = threading.Thread(target=loop7.run, kwargs={"duration": 60.0, "verbose": False},
+                      daemon=True)
+t7.start()
+t7.join(3.0)
+check("paused for over 30 min with nobody saying continue: the run ENDS (she never "
+      "sets off again on her own)", not t7.is_alive())
+loop7._stop.set()
+
+from exploration_mission import voice_link as vl            # noqa: E402
+vdir = TMP / "vl"
+check("friday-brain writes the pause straight to the run's folder",
+      vl.pause_run("voice", folder=vdir) and (vdir / vl.PAUSE_NAME).exists()
+      and vl.PAUSE_NAME == wb.PAUSE_NAME)
+ad.atomic_write_json(vdir / vl.STATE_NAME, {"state": "EXPLORE"})
+check("...and reads the mission's published state", vl.mission_state(vdir) == "EXPLORE"
+      and "EXPLORE" in vl.RUN_STATES and "IDLE" not in vl.RUN_STATES)
+
+# --- the mission ---
+w = World(["hall", "kitchen", "bedroom"])
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 15)
+check("the mission publishes its state for friday-brain",
+      "EXPLORE" in w.sim.states_published, str(w.sim.states_published))
+w.sim.pause("voice")                    # what friday-brain writes on "Friday stop"
+w.mgr.halt()
+w.run(lambda x: x.mgr.state == "PAUSED", max_s=5)
+here = w.sim.truth
+n = len(w.voice.said)
+w.run(lambda x: False, max_s=90)        # far longer than any hold's 3 s
+check("'Friday stop' while exploring: PAUSED, she says so, and stays put -- the "
+      "pause never lapses", w.mgr.state == "PAUSED" and w.sim.truth == here
+      and "Stopping. Say continue when you're ready." in w.voice.said[-3:]
+      and ("stop",) not in w.sim.orders, f"{w.mgr.state} {w.voice.said[-3:]}")
+w.mgr.resume()
+w.run(lambda x: x.mgr.state != "PAUSED", max_s=5)
+w.run(lambda x: False, max_s=10)
+check("'continue': 'Continuing exploration.', the pause is cleared, the RL drives on",
+      w.mgr.state in ("EXPLORE", "ASK_LABEL") and not w.sim.paused()
+      and w.sim.truth != here and "Continuing exploration." in w.voice.said,
+      f"{w.mgr.state} {w.sim.orders[-3:]}")
+end = w.run()
+check("...and the mission finishes as normal", end == "IDLE"
+      and w.mission()["status"] == "returned", w.mission()["status"])
+
+w = World(["hall", "kitchen", "bedroom"])
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 15)
+w.mgr.finish()
+w.run(lambda x: x.sim.drive_ticks > 15, max_s=60)
+w.sim.pause("voice")
+w.mgr.halt()
+w.run(lambda x: x.mgr.state == "PAUSED", max_s=5)
+here = w.sim.truth
+w.run(lambda x: False, max_s=30)
+check("'Friday stop' on the way home: paused, standing", w.sim.truth == here
+      and w.mgr.paused_from in ("RETURN_TO_START", None))
+w.mgr.resume()
+end = w.run()
+check("...'continue': the way home picks up again and she arrives",
+      end == "IDLE" and w.mission()["status"] == "returned" and not w.sim.paused(),
+      w.mission()["status"])
+
+w = World(["hall", "kitchen", "bedroom"])
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 15)
+w.sim.pause("voice")
+w.mgr.halt()
+w.run(lambda x: x.mgr.state == "PAUSED", max_s=5)
+w.mgr.finish()                          # "go back" / "stop exploring" while paused
+end = w.run()
+check("paused, then 'go back': summary, home, the pause cleared on the way",
+      end == "IDLE" and w.mission()["status"] == "returned" and not w.sim.paused())
+
+w = World(["hall", "kitchen", "bedroom"], cfg={"return": {"help_max_cycles": 1}})
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE" and x.t > 15)
+w.mgr.finish()
+w.run(lambda x: x.sim.drive_ticks > 10, max_s=40)
+w.sim.freeze_until = w.clock.monotonic() + 1e9
+w.run(lambda x: x.mgr.state == "HELP_WAIT", max_s=3600)
+w.sim.pause("voice")
+w.mgr.halt()
+w.run(lambda x: x.mgr.state == "IDLE", max_s=10)
+check("'Friday stop' in HELP_WAIT: IDLE (the file's rule), and the mission's run "
+      "ends with it -- never left out to explore on its own",
+      w.mgr.state == "IDLE" and ("stop",) in w.sim.orders and not w.sim.paused()
+      and w.mission()["status"] == "help_wait", w.mgr.state)
+
+# A power cut leaves pause.json behind: cleared at boot -- unless a run is out.
+w = World([])
+w.sim.pause("voice")
+w.sim.is_running = False
+w.mgr.boot(w.clock.monotonic())
+check("boot after a power cut: the dead run's pause is cleared",
+      not w.sim.paused())
+w = World([])
+w.sim.pause("voice")
+w.sim.is_running = True
+w.mgr.boot(w.clock.monotonic())
+check("...but if a run is still out (friday-mcp restarted under it) she STAYS "
+      "paused: a restart never undoes a person's stop", w.sim.paused())
+
+# --- friday-brain's side (main.py), the run faked ---
+import asyncio                                                   # noqa: E402
+import config                                                    # noqa: E402
+import main                                                      # noqa: E402
+
+
+class Turn:
+    def __init__(self):
+        self.notes, self.result = [], None
+
+    def note(self, text, dash=True):
+        self.notes.append(text)
+
+    def answered_by(self, *a):
+        pass
+
+    def done(self, text=""):
+        self.result = text
+
+
+calls = []
+real = (vl.pause_run, main._mission_claims, main._narration_off, main._run_standing_since)
+
+
+async def fake_claims(session, spoken, turn, announce=True):
+    calls.append(("claims", spoken))
+    return True
+
+
+try:
+    vl.pause_run = lambda by="voice", folder=None: calls.append(("pause", by)) or True
+    main._mission_claims = fake_claims
+    main._narration_off = lambda *a, **k: None
+    main._run_standing_since = lambda t0: True
+    tr = Turn()
+    ok = asyncio.run(main._mission_pause(None, tr))
+    check("main: the pause file FIRST, then the mission told, then the run's "
+          "confirmation -> paused, no full stop", ok and calls[:2] == [
+              ("pause", "voice"), ("claims", "stop")] and "paused" in (tr.result or ""),
+          str(calls))
+    main._run_standing_since = lambda t0: False
+    calls.clear()
+    t0 = time.monotonic()
+    ok = asyncio.run(main._mission_pause(None, Turn()))
+    check("main: the run never confirms it stopped -> False within ~2 s: the caller "
+          "does the FULL stop (a stop never depends on the new path)",
+          ok is False and time.monotonic() - t0 <= main.MISSION_PAUSE_CONFIRM_S + 0.5)
+finally:
+    (vl.pause_run, main._mission_claims, main._narration_off,
+     main._run_standing_since) = real
+
+real_root = config.ROOT
+try:
+    config.ROOT = TMP / "fakeroot"
+    (config.ROOT / "state").mkdir(parents=True, exist_ok=True)
+    rlpath = config.ROOT / "state" / "rl_autonomy.json"
+    t_before = time.time() - 1.0
+    ad.atomic_write_json(rlpath, {"REASON_CODE": "mission_hold",
+                                  "FINAL_EXECUTED_ACTION": {"v": 0.0, "omega": 0.0}})
+    yes = main._run_standing_since(t_before)
+    ad.atomic_write_json(rlpath, {"REASON_CODE": "navigator",
+                                  "FINAL_EXECUTED_ACTION": {"v": 0.2, "omega": 0.0}})
+    no = main._run_standing_since(t_before)
+    old = main._run_standing_since(time.time() + 5.0)
+    check("main reads the run's own status: zero + mission_hold = standing; moving, "
+          "or a status older than the stop, is not", yes and not no and not old)
+finally:
+    config.ROOT = real_root
+src = (ROOT / "main.py").read_text()
+check("main: the wake word stays on while a mission's run is out",
+      "_mission_run_state() is None)" in src)
+
+
+# =============================================================================
+print("--- U4 (spec 3.1 + 4.8): 'this is home' puts her home, and her rooms, on the saved map ---")
+
+HOUSE_OG = mm.to_occupancy_grid(mm.three_rooms().grid)   # the "saved SLAM map"
+START = sw.THREE_ROOM_TOUR[0]                             # (2.5, 3.0): the sim's start
+
+
+def map_world(replies):
+    w = World(replies)
+    w.a.slam.load = lambda: HOUSE_OG                      # the saved map = the house
+    w.run(lambda x: x.mgr.state == "IDLE", max_s=20)     # booted
+    return w
+
+
+def file10_home(w, xy, age_s=0.0):
+    """What File 10's remember_place("home") leaves: the place, just seen."""
+    w.a.places.upsert("home", xy[0], xy[1], 0.5, "test")
+    w.a.places.rows["home"]["last_seen"] = w.a.clock.wall() - age_s
+
+
+def this_is_home(w):
+    w.mgr.set_home(with_place=True)
+    w.run(lambda x: False, max_s=1.0)
+
+
+from exploration_mission import intents                          # noqa: E402
+check("'this is home' / 'yahan home hai' are SET_HOME WITH the saved map; 'set home "
+      "here' is SET_HOME without it",
+      all(intents.is_home_phrase(s) for s in ("this is home", "Friday, this is home",
+                                             "yahan home hai"))
+      and not intents.is_home_phrase("this is the kitchen")
+      and [i.args for i in intents.candidates("this is home") if i.name == "SET_HOME"]
+      == [{"with_place": True}]
+      and [i.args for i in intents.candidates("set home here") if i.name == "SET_HOME"]
+      == [{"with_place": False}])
+
+w = map_world(["hall", "kitchen", "bedroom"])
+file10_home(w, START)
+this_is_home(w)
+a = w.store.home_anchor("home")
+# 0.20 m: the RAY-CAST sweeps' own near-face bias -- the matcher polished from
+# the TRUE pose lands at (2.40, 3.10) on this map, 14 cm out (File 14's tests
+# measure the same, 16 cm). The polish reaches that optimum; the lattice alone
+# was 18 cm out.
+check("'this is home' right after File 10 saved home here: the mission's start anchor "
+      "goes ON the saved map, polished, and she confirms",
+      a is not None and a["frame"] == "map"
+      and math.hypot(a["x"] - START[0], a["y"] - START[1]) <= 0.20
+      and "I've marked this spot as my starting point." in w.voice.said,
+      f"{a and (a['frame'], round(a['x'], 3), round(a['y'], 3))}")
+calls = []
+real_lo = w.a.slam.localise_on
+w.a.slam.localise_on = lambda og, *a_, **k: (calls.append(1) if og is HOUSE_OG
+                                             else None) or real_lo(og, *a_, **k)
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE", max_s=30)
+T = w.mgr.T or (9, 9, 9)
+check("a mission from that spot is ON the saved map from its first move (frame 'map', "
+      "the start where she stands) -- and never searched the SAVED map to get there "
+      "(only the anchor's own sweep, spec 4.9)",
+      w.mgr.frame_label == "map" and math.hypot(T[0] - START[0], T[1] - START[1]) <= 0.25
+      and calls == [], f"{w.mgr.frame_label} {T} searches={len(calls)}")
+end = w.run()
+hall = w.a.places.find_exact("hall")
+truth = sw.ROOM_CENTRES["A"]
+check("...every room it names is on the saved map AND a place at once: 'go to the "
+      "hall' works for File 14 after the mission (your point 3)",
+      end == "IDLE" and all(x["frame"] == "map" for x in w.areas()) and hall is not None
+      and math.hypot(hall["x"] - truth[0], hall["y"] - truth[1]) <= 0.8,
+      f"{[x['frame'] for x in w.areas()]} {hall}")
+n = len(w.voice.said)
+w.run(lambda x: False, max_s=0.1)
+w.mgr.start()
+w.run()
+check("a second mission from home: the saved rooms are recognised -- no question",
+      "What should I call it?" not in " ".join(w.voice.said[n:]) and len(w.areas()) == 3,
+      str(w.voice.said[n:]))
+
+# THE DANGER the first draft had: a home that merely EXISTS, she is elsewhere,
+# three look-alike rooms -> "placed" 7 m away. Never again.
+w = map_world([])
+file10_home(w, (9.8, 3.0), age_s=3600.0)                  # saved an hour ago, room C
+this_is_home(w)
+a = w.store.home_anchor("home")
+check("File 10's home NOT just saved here (an hour old, in another room): never placed "
+      "on the map -- the anchor keeps its own frame", a is not None
+      and a["frame"].startswith("home:"), str(a and a["frame"]))
+w = map_world([])
+file10_home(w, (9.8, 3.0))
+w.mgr.set_home(with_place=False)                          # "set home here"
+w.run(lambda x: False, max_s=1.0)
+check("'set home here' (no File 10 save with it): its own frame, no search",
+      w.store.home_anchor("home")["frame"].startswith("home:"))
+w = map_world(["hall", "kitchen", "bedroom"])
+file10_home(w, (9.8, 3.0))                                 # home exists, she is in room A
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "EXPLORE", max_s=30)
+check("a mission start with a home elsewhere: never placed on the map (own frame)",
+      w.mgr.frame_label is None, str(w.mgr.frame_label))
+
+w = map_world(["hall", "kitchen", "bedroom"])
+w.mgr.start()
+w.run()
+frame1 = w.areas()[0]["frame"]
+file10_home(w, START)
+n = len(w.voice.said)
+w.run(lambda x: False, max_s=0.1)
+this_is_home(w)                                            # back at the start spot
+w.mgr.start()
+w.run()
+check("rooms named BEFORE 'this is home' move onto the saved map with the old anchor "
+      "(she stood at it), become places, and are not asked again",
+      frame1.startswith("mission:") and all(x["frame"] == "map" for x in w.areas())
+      and len(w.areas()) == 3 and w.a.places.find_exact("kitchen") is not None
+      and "What should I call it?" not in " ".join(w.voice.said[n:]),
+      f"{[x['frame'] for x in w.areas()]} {w.voice.said[n:]}")
+src = (ROOT / "main.py").read_text()
+i10, imis = src.find('args={"name": "home"}'), src.find(
+    "await _mission_claims(session, spoken, turn, announce=False)\n        return \"home\"")
+check("main: her permanent home (File 10) FIRST, then the mission; only in IDLE/PAUSED",
+      0 < i10 < imis and '_mission_state_now() in ("", "IDLE", "PAUSED")' in src)
+
+
+print("--- U4 (spec 4.7 point 9): a name suggested from what she saw ---")
+w = World(["yes", "hall", "bedroom"])
+w.a.detector = ad.FakeDetector(running=True)
+w.a.detector.frames = [[("refrigerator", 0.82)], [("refrigerator", 0.77), ("cup", 0.9)]]
+w.mgr.start()
+w.run(lambda x: x.mgr.questions >= 1 and x.mgr.state != "ASK_LABEL", max_s=200)
+said = " ".join(w.voice.said)
+check("a detector that is ALREADY running saw a fridge in the room: 'It looks like a "
+      "kitchen', and 'yes' saves it", "It looks like a kitchen." in said
+      and any(a["name"] == "kitchen" for a in w.areas()), said[-300:])
+w = World(["hall"])
+w.mgr.start()
+w.run(lambda x: x.mgr.questions >= 1 and x.mgr.state != "ASK_LABEL", max_s=200)
+check("no detector running (scene.py pauses during a run): the plain question, never "
+      "a detector loaded for it", "It looks like" not in " ".join(w.voice.said))
+autof = TMP / "rl_autonomy.json"
+ad.atomic_write_json(autof, {"OBJECTS": [{"label": "bed", "score": 0.9}],
+                             "OBJECTS_FRAMES": 7})
+st_ = ad.RunAdapter(state_dir=TMP / "ra", autonomy_file=autof).status()
+check("the run's own detector, when it runs, is read from its published state",
+      st_["objects"] == [("bed", 0.9)] and st_["objects_frames"] == 7)
+
+
+class FakeDet:
+    enabled, frames = True, 3
+
+    def snapshot(self):
+        from friday_vision import Detection
+        return [Detection("bed", 0.91, 0.0, 0.2, None)]
+
+
+loop8, slots8 = new_loop()
+slots8["lidar"].publish(open_scan)
+loop8.tick()
+loop8.detector = FakeDet()
+objs = (loop8.autonomy_state() or {}).get("OBJECTS")
+loop8.detector = None
+check("rl: the run publishes its detector's labels (read-only), nothing when none runs",
+      objs == [{"label": "bed", "score": 0.91}]
+      and "OBJECTS" not in (loop8.autonomy_state() or {}))
+
+
+print("--- U4: curiosity asks, and she listens 0.3 s after she stops ---")
+check("curiosity ships 'ask' (4.15): she asks, and goes only after his yes",
+      cfg.curiosity.mode == "ask")
+check("main waits listen_after_tts_s (0.3 s, 4.7) after her voice ends",
+      '.get("listen_after_tts_s", 0.3)' in src and cfg.voice.listen_after_tts_s == 0.3)
+
 
 # =============================================================================
 print("--- nothing of the real run's touched ---")

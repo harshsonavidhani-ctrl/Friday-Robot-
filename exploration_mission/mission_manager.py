@@ -119,6 +119,11 @@ RUN_END_WAIT_S = 30.0
 HELP_WAIT_KEEP_S = 600.0
 PARK_WAIT_S = 20.0               # arrival: the run giving the LiDAR back
 PARK_SETTLE_S = 4.0              # ...and its first sweeps after a run are partial
+# U2 (spec 4.2): a frontier counts as explored (the assist is done) when no
+# frontier is left within this of the one she was sent to -- clusters shift
+# and split as the map grows round them.
+ASSIST_SAME_FRONTIER_M = 1.0
+GOTO_TRIES = 2                   # a go-to re-plans round where it stalled once
 
 
 # --- blocking work beside the tick ---------------------------------------------------
@@ -353,6 +358,14 @@ class MissionManager:
         self.verified: bool | None = None
         self.drive: run_drive.RunDrive | None = None   # U1: the way home by path
         self._by_path = False
+        self.assist: dict | None = None     # U2: FRONTIER_ASSIST under way
+        self.assists: list[dict] = []       # ...how each one ended
+        self._goto: dict | None = None      # U2: a "go to X" under way
+        self.sightings: dict = {}           # U4: room key -> [(label, conf), ...]
+        self._sight_key = None
+        self._t_sight = -1e9
+        self._suggestion: str | None = None
+        self._person_paused = False         # U3: this mission paused her for a person
         self._t_counted = None
         self._nav_back = "EXPLORE"
         self._pause_after_ask = False
@@ -402,8 +415,10 @@ class MissionManager:
     def go_to(self, name: str, target: dict) -> None:
         self._cmds.put(("go_to", name, target))
 
-    def set_home(self) -> None:
-        self._cmds.put(("set_home",))
+    def set_home(self, with_place: bool = False) -> None:
+        """with_place: "this is home" -- File 10 has just saved her permanent
+        home here, so the anchor may go on the saved map beside it (U4)."""
+        self._cmds.put(("set_home", bool(with_place)))
 
     def dialog_answer(self, text: str) -> None:
         log.info("heard during a dialog, left to the dialog: %r", text)
@@ -459,10 +474,27 @@ class MissionManager:
         if state != self.state:
             log.info("mission state %s -> %s", self.state, state)
             prev, self.state, self._t_state = self.state, state, now
+            if state != "PAUSED" and self._person_paused:
+                # U3: out of PAUSED by ANY route ("continue", "go back" through
+                # SUMMARIZE, a question): whatever comes next has put its own
+                # hold in place (the pause state's plain hold is still fresh
+                # for 2+ s), so the person's pause can go. Only a pause THIS
+                # mission took: one friday-brain wrote a moment ago, before the
+                # mission heard the stop, is never cleared here.
+                self._person_paused = False
+                self.a.run.unpause()
+            self._publish_state()
             if state in ("EXPLORE", "RETURN_TO_START"):
                 self._t_last_fix = now      # held: nothing was published meanwhile
             self._event("state", frm=prev, to=state)
             self._checkpoint(now)
+
+    def _publish_state(self) -> None:
+        """U3: friday-brain reads this to know "Friday stop" means PAUSE."""
+        try:
+            self.a.run.publish_state(self.state, (self.mission or {}).get("id"))
+        except Exception as exc:                        # noqa: BLE001
+            log.warning("mission state not published: %s", exc)
 
     def _hold(self, why: str, now: float | None = None, force: bool = False) -> None:
         now = self.a.clock.monotonic() if now is None else now
@@ -648,7 +680,7 @@ class MissionManager:
             elif name == "go_to":
                 self._go_to(cmd[2], now)
             elif name == "set_home":
-                self._set_home(now)
+                self._set_home(now, *cmd[1:])
 
     # ---- IDLE / MISSION_INIT ---------------------------------------------------
     def _st_idle(self, now: float) -> None:
@@ -827,6 +859,15 @@ class MissionManager:
     def boot(self, now: float | None = None) -> None:
         now = self.a.clock.monotonic() if now is None else now
         self.state, self._t_state = "BOOT_RESTORE", now
+        # U3: a person's pause left on disk by a power cut belongs to a run
+        # that is gone (a new run ignores it anyway). Cleared -- but NOT if a
+        # run is still out (friday-mcp restarted under it): then it stays
+        # paused, and a restart never undoes a person's stop.
+        try:
+            if not self.a.run.running():
+                self.a.run.unpause()
+        except Exception as exc:                        # noqa: BLE001
+            log.warning("stale pause not checked: %s", exc)
         self._boot = {"job": self.runner.start(self._boot_load, "mission-boot")}
         log.info("mission state -> BOOT_RESTORE")
 
@@ -1055,6 +1096,100 @@ class MissionManager:
         return {"ok": True, "anchor": anchor, "home": home if look.get("verified")
                 else None, "look": look}
 
+    HOME_PLACE_RADIUS_M = 1.5
+    HOME_FRESH_S = 180.0             # File 10 saved "home" in THIS "this is home"
+    HOME_AGREE_M = 0.5
+
+    def _place_on_saved(self, anchor) -> tuple | None:
+        """SPEC 3.1 (U4): where she stands ON THE SAVED SLAM MAP -- the one
+        memory frame -- and ONLY at the moment of "this is home", when File 10
+        has just saved her permanent home from this very spot (its place row
+        seen within HOME_FRESH_S). File 14's search restricted to 1.5 m round
+        that home, the scan matcher's polish, and the answer must agree with
+        File 10's (within HOME_AGREE_M). Sure, or None.
+
+        ⚠ NEVER from a home that merely EXISTS: in three look-alike rooms a
+        start in room A was "placed" in room C, 7 m away, because the search
+        only ever looked round home (caught 2026-10-03 by the sim). Being by
+        home has to be KNOWN (File 10 just put it here), not inferred from a
+        match. Measured on the real map: the restricted search right 3 of 6,
+        never wrong; a whole-map one-sweep search sure and WRONG 3 of 6."""
+        try:
+            place = self.a.places.find_exact("home")
+        except Exception:                               # noqa: BLE001
+            place = None
+        if not place:
+            return None
+        seen = place.get("last_seen")
+        if seen is None or self.a.clock.wall() - float(seen) > self.HOME_FRESH_S:
+            log.info("home on the saved map: File 10's home was not just saved here")
+            return None
+        og = self.a.slam.load()
+        if og is None:
+            return None
+        rng = float(self.cfg.signature.max_range_m)
+        scan = {deg: int(float(v) * 1000) for deg, v in enumerate(anchor.signature)
+                if math.isfinite(float(v)) and 0.05 < float(v) < rng}
+        if len(scan) < 90:
+            return None
+        hx, hy = float(place["x"]), float(place["y"])
+        fix = self.a.slam.localise_on(og, scan, near_xy=(hx, hy),
+                                      radius_m=self.HOME_PLACE_RADIUS_M)
+        if fix is None:
+            return None
+        fix = self._polish_on(og, scan, fix)
+        if math.hypot(fix[0] - hx, fix[1] - hy) > self.HOME_AGREE_M:
+            log.info("home on the saved map: %.2f m from File 10's home -- refused",
+                     math.hypot(fix[0] - hx, fix[1] - hy))
+            return None
+        log.info("home placed on the saved map: (%.2f, %.2f, %.0f deg)",
+                 fix[0], fix[1], math.degrees(fix[2]))
+        return fix
+
+    @staticmethod
+    def _polish_on(og, scan: dict, fix) -> tuple:
+        """The search works on the map's lattice (~18 cm out measured in the
+        sim); the matcher's polish, as map_growth.fit does."""
+        try:
+            import config as fconfig
+            import numpy as np
+            from slam.core import LikelihoodField, match_pose
+            pts = np.array([[mm / 1000.0 * math.cos(math.radians(d)),
+                             mm / 1000.0 * math.sin(math.radians(d))]
+                            for d, mm in scan.items()], dtype=np.float64)
+            pose, score, _sharp = match_pose(LikelihoodField.from_grid(og), pts,
+                                             tuple(fix), prior_m=0.25, prior_deg=6.0)
+            if score >= fconfig.SLAM_MIN_SCORE:
+                return tuple(float(v) for v in pose)
+        except Exception as exc:                        # noqa: BLE001
+            log.warning("could not polish the home fix: %s", exc)
+        return tuple(float(v) for v in fix)
+
+    def _reframe_frame(self, frame: str, M, env_id: str, mission_id: str | None) -> int:
+        """Every area saved in `frame` (and the home anchor, if it is in it)
+        moves into the saved map's frame by M (frame -> map)."""
+        map_id = self.a.slam.map_id()
+        moved = 0
+        for a in self.store.list_areas(env_id):
+            if a["frame"] != frame:
+                continue
+            self.store.reframe(
+                a["id"], frame=area_store.FRAME_MAP, map_id=map_id,
+                polygon=mission_map.transform_points(a["polygon"], M),
+                center=mission_map.transform_points(
+                    [(a["center_x"], a["center_y"])], M)[0])
+            moved += 1
+        anchor = self.store.home_anchor(env_id)
+        if anchor is not None and anchor.get("frame") == frame:
+            pose = mission_map.compose(M, (anchor["x"], anchor["y"], anchor["theta"]))
+            self.store.set_home_anchor(env_id, pose[0], pose[1], pose[2],
+                                       anchor["signature"], map_id,
+                                       anchor["set_by"], area_store.FRAME_MAP)
+        if mission_id is not None:
+            self.store.add_event(mission_id, {"kind": "reframed", "frame": frame,
+                                              "areas": moved})
+        return moved
+
     def _refine_home(self, anchor, home) -> tuple | None:
         """SPEC 4.9: the signature is only the cheap check -- "the precise pose
         always comes from SLAM". The anchor's own stored sweep is a one-sweep
@@ -1207,7 +1342,10 @@ class MissionManager:
         self.explored_m2 = res["explored_m2"]
         here = res["seg"].at(self.pose[0], self.pose[1])
         self.dwell.update(here.key if here is not None else None, now)
+        self._watch_objects(here, now)
         self._grow_saved(res, now)
+        if self.assist is not None:
+            self._assist_tick(now)
         self._stagnation(res, now)
         if self.estop:
             return                       # her own reflex has her: start nothing new
@@ -1235,6 +1373,27 @@ class MissionManager:
         if choice is not None:
             self._begin_ask(choice.segment, choice.complete, now, after="EXPLORE")
 
+    def _watch_objects(self, here, now: float) -> None:
+        """SPEC 4.7 point 9 (U4): what an ALREADY RUNNING detector sees, filed
+        under the room she is in -- one entry per new frame. scene.py's (it
+        pauses while a run holds the cameras), else the run's own published
+        one. Never loads a detector."""
+        if here is None or not self.cfg.label.suggest_from_objects:
+            return
+        if now - self._t_sight < 1.0:
+            return
+        self._t_sight = now
+        key, seen = self.a.detector.sightings()
+        if key is None:
+            st = self._status or {}
+            if st.get("objects_frames"):
+                key, seen = ("run", st["objects_frames"]), st.get("objects") or []
+        if key is None or key == self._sight_key:
+            return
+        self._sight_key = key
+        for label, conf in seen:
+            self.sightings.setdefault(here.key, []).append((str(label), float(conf)))
+
     def _distance_from_saved(self, res) -> float:
         saved = [s.center for s in res["seg"].segments if s.area_id is not None]
         pts = saved or [(0.0, 0.0)]                    # nothing saved: from the start
@@ -1258,20 +1417,99 @@ class MissionManager:
             self._event("area_grew", area=area_id, area_m2=round(seg.area_m2, 1))
 
     def _stagnation(self, res, now: float) -> None:
-        """Logged, never acted on: the run's own frontier planner does the
-        driving (the spec's FRONTIER_ASSIST would be a second planner)."""
+        """SPEC 4.2 (U1-U4, Harsh 2026-10-03 "exactly as file"): the map grew
+        less than stagnation_m2 in stagnation_window_s while a reachable
+        frontier is left -> pause the RL policy (the hold) and let File 14's
+        planner take her to the best frontier: FRONTIER_ASSIST."""
         t0, m0 = self._stag
         if now - t0 < self.cfg.explore.stagnation_window_s:
             return
+        self._stag = (now, res["explored_m2"])
         if (res["explored_m2"] - m0 < self.cfg.explore.stagnation_m2
                 and res["frontiers"].remaining):
             self._event("stagnation", grew_m2=round(res["explored_m2"] - m0, 2),
                         reachable_frontiers=len(res["frontiers"].remaining))
-        self._stag = (now, res["explored_m2"])
+            if self.assist is None and not self.estop:
+                self._begin_assist(res["frontiers"].best, now)
+
+    # ---- FRONTIER_ASSIST and the run-driven journeys (U2) -------------------------
+    def _engine(self) -> run_drive.RunDrive:
+        """File 14's planner, the held run driving (run_drive.py). One per
+        mission; the way home makes its own fresh one."""
+        if self.drive is None:
+            self.drive = run_drive.RunDrive(
+                self.a.run, lambda: self.analysis.map.og, self.cfg, self.a.clock,
+                self.runner, self.a.slam.inflate_m())
+        return self.drive
+
+    def _run_drivable(self) -> bool:
+        """The run is out, in this mission's own frame: it can be held and
+        handed a path."""
+        try:
+            return self.frame_offset is None and bool(self.a.run.running())
+        except Exception:                               # noqa: BLE001
+            return False
+
+    def _begin_assist(self, frontier, now: float) -> None:
+        if frontier is None or frontier.goal is None or not self._run_drivable():
+            return
+        eng = self._engine()
+        eng.engage(now, self.pose)
+        e = self.cfg.explore
+        if not eng.attempt(frontier.goal, arrive=(e.assist_arrive_m, 0.10, 0.0)):
+            eng.disengage()
+            return
+        self.assist = {"centroid": tuple(frontier.centroid), "goal": tuple(frontier.goal),
+                       "t0": now, "t_res": None}
+        log.info("FRONTIER_ASSIST: the RL found nothing new for %.0f s; driving to the "
+                 "frontier at (%.2f, %.2f)", e.stagnation_window_s, *frontier.goal)
+        self._event("frontier_assist", goal=[round(v, 2) for v in frontier.goal],
+                    centroid=[round(v, 2) for v in frontier.centroid])
+
+    def _assist_tick(self, now: float) -> None:
+        a, eng = self.assist, self.drive
+        eng.step(now)
+        res = self.analysis.latest
+        if eng.busy():
+            # "...or the cluster disappears (explored)" (4.2)
+            if res is not None and res["t"] != a["t_res"]:
+                a["t_res"] = res["t"]
+                cx, cy = a["centroid"]
+                if not any(math.hypot(f.centroid[0] - cx, f.centroid[1] - cy)
+                           <= ASSIST_SAME_FRONTIER_M for f in res["frontiers"].remaining):
+                    self._end_assist(now, "explored")
+            return
+        out = eng.outcome() or "FAILED"
+        if out == "ARRIVED":
+            self._end_assist(now, "arrived")
+            return
+        # "...or the engine refuses/fails -> one failure for that frontier" (4.2)
+        out_listed = self.blacklist.fail(a["centroid"])
+        self._end_assist(now, out.lower(), blacklisted=out_listed)
+
+    def _end_assist(self, now: float, why: str, release: bool = True,
+                    blacklisted: bool = False) -> None:
+        """Back to RL_DRIVE (release) -- or, release=False, to whoever holds her
+        next (a question, a go-to, the end of exploring) with no gap."""
+        if self.assist is None:
+            return
+        a, self.assist = self.assist, None
+        if self.drive is not None and self.drive.engaged:
+            self.drive.stop()
+            self.drive.disengage(release=release)
+        row = {"why": why, "s": round(now - a["t0"], 1),
+               "goal": [round(v, 2) for v in a["goal"]], "blacklisted": blacklisted}
+        self.assists.append(row)
+        log.info("FRONTIER_ASSIST over: %s", row)
+        self._event("frontier_assist_end", **row)
+        # The stagnation window starts again: the RL gets its full minute.
+        res = self.analysis.latest
+        self._stag = (now, res["explored_m2"] if res is not None else self.explored_m2)
 
     def _end_exploring(self, now: float, run_returning: bool = False) -> None:
         """One last ask, cooldown ignored, for the room she is standing in
         (spec 4.6), then the summary."""
+        self._end_assist(now, "exploring over", release=False)
         res = self.analysis.latest
         # NOT gated on the e-stop: exploring is over, the hold keeps her still
         # either way, and both 2026-10-02 22:43 and 23:21 the time ran out with
@@ -1303,6 +1541,12 @@ class MissionManager:
     # ---- ASK_LABEL ----------------------------------------------------------------
     def _begin_ask(self, seg, complete: bool, now: float, after: str,
                    preset: label_dialog.Parsed | None = None) -> None:
+        self._end_assist(now, "asking", release=False)
+        lp = self.cfg.label
+        self._suggestion = (label_dialog.suggest(self.sightings.get(seg.key) or [],
+                                                 lp.suggestion_min_conf,
+                                                 lp.suggestion_min_sightings)
+                            if lp.suggest_from_objects else None)
         self.pending_label = self._seg_record(seg, complete)
         self._preset = preset
         self._after_ask = after
@@ -1326,7 +1570,8 @@ class MissionManager:
                 self.questions += 1
                 self.job = self.runner.start(
                     (lambda: self.dialog.named_now(seg, preset)) if preset is not None
-                    else (lambda: self.dialog.run(seg)), "mission-dialog")
+                    else (lambda: self.dialog.run(seg, self._suggestion)),
+                    "mission-dialog")
             elif now - self._t_state > STOP_CONFIRM_S:
                 # Never ask while she may still be rolling. Try again later.
                 self._event("ask_skipped", why="motors not confirmed stopped")
@@ -1394,6 +1639,13 @@ class MissionManager:
         self.paused_from = paused_from
         if self.ladder is not None and self.ladder.phase not in ("external", "done"):
             self.ladder.e_stop_quietly()        # File 14 is driving: stop it too
+        self._end_assist(now, "paused", release=False)
+        if self.drive is not None and self.drive.busy():
+            self.drive.stop()                   # a go-to: picked up again on continue
+        # U3 (spec 4.8): a person's pause NEVER LAPSES (friday-brain wrote it
+        # already for a spoken stop; written again for any other HALT).
+        self.a.run.pause("mission")
+        self._person_paused = True
         self._hold("paused", now, force=True)
         self._to("PAUSED", now)
         if not already_said:
@@ -1422,38 +1674,103 @@ class MissionManager:
             self._after_ask, self._stage, self._preset = "EXPLORE", "stopping", None
             self._to("ASK_LABEL", now)
             return
-        self._release()
         self._t_last_fix = now
+        if (back in ("RETURN_TO_START", "HELP") and self.drive is not None
+                and self.drive.engaged and self.ladder is not None):
+            # The way home by path: she was held all along. Held again at once
+            # (no gap in which the run's own way back could drive) and the
+            # return picks up from a plain attempt ("resume the return", 4.8).
+            self.drive.hold_now(now)
+            self._to("RETURN_TO_START", now)
+            self._ladder_outcome(self.ladder.restart(now), now)
+            return
+        if back == "TARGET_NAV" and self._goto is not None:
+            eng = self._engine()
+            eng.engage(now, self.pose)
+            if eng.attempt(self._goto["goal"], arrive=(
+                    self.cfg["return"].arrive_tolerance_m, 0.10, 0.0)):
+                self._goto["tries"] = 1         # a pause is not a failure
+                self._to("TARGET_NAV", now)
+                return
+            self._goto = None
+            eng.disengage()
+            back = self._nav_back
+        self._release()
         self._to(back, now)
 
     # ---- TARGET_NAV ---------------------------------------------------------------
     def _go_to(self, target: dict, now: float) -> None:
+        """SPEC 3.3 (U2): EXPLORE --("go to X")--> TARGET_NAV --> EXPLORE with
+        the snapshot kept (trail, blacklist, dwell). File 14's planner on this
+        mission's map, the held run driving; File 14's own sentences."""
         if self.state == "IDLE":
             if not self.a.nav.go(target):
                 self.say("cant_now")
             return
-        if self.state not in ("EXPLORE", "PAUSED") or not self.a.nav.available_during_run():
+        if self.state not in ("EXPLORE", "PAUSED"):
             self.say("cant_now")
             return
+        name = (target.get("area") or {}).get("display_name") or target.get("name", "")
+        goal = self._goal_in_start_frame(target)
+        if goal is None:
+            # Saved in another frame (an earlier mission's, or the saved map's
+            # while this mission has its own): from here she does not know where.
+            self.say("unknown_place", name=name)
+            return
+        if not self._run_drivable():
+            self.say("cant_now")
+            return
+        self._end_assist(now, "go_to", release=False)
         self._nav_back = "EXPLORE"
-        self._hold("go-to", now, force=True)
-        if not self.a.nav.go(target):
-            self._release()
+        eng = self._engine()
+        eng.engage(now, self.pose)
+        if not eng.attempt(goal, arrive=(self.cfg["return"].arrive_tolerance_m, 0.10, 0.0)):
+            eng.disengage()
             self.say("cant_now")
             return
-        self._event("go_to", name=target.get("name"))
+        self._goto = {"name": name, "goal": goal, "tries": 1, "t0": now}
+        self.say("goto_off", name=name)
+        self._event("go_to", name=name, goal=[round(v, 2) for v in goal])
         self._to("TARGET_NAV", now)
 
+    def _goal_in_start_frame(self, target: dict):
+        frame = (target.get("area") or {}).get("frame") if target.get("kind") == "area" \
+            else "map"
+        if frame != self._frame():
+            return None
+        xy = [[float(target["x"]), float(target["y"])]]
+        if self.T is not None:
+            xy = mission_map.transform_points(xy, mission_map.inverse(self.T))
+        return (float(xy[0][0]), float(xy[0][1]))
+
     def _st_target_nav(self, now: float) -> None:
-        self._hold("go-to", now)
-        if self.a.nav.busy():
+        g = self._goto
+        if g is None:                       # nothing to drive: back to exploring
+            self._to(self._nav_back, now)
             return
-        self._event("go_to_done", outcome=self.a.nav.outcome())
-        self._release()
+        self._take_fix(now)                 # the trail and the map keep growing
+        self.drive.step(now)
+        if self.drive.busy():
+            return
+        out = self.drive.outcome()
+        if out != "ARRIVED" and g["tries"] < GOTO_TRIES:
+            # File 14's BLOCKED_REPLANNING: once more, round where she stalled.
+            g["tries"] += 1
+            if self.drive.attempt(g["goal"], arrive=(
+                    self.cfg["return"].arrive_tolerance_m, 0.10, 0.0)):
+                return
+        self._goto = None
+        self.drive.disengage()              # RL_DRIVE again
+        self._event("go_to_done", name=g["name"], outcome=out,
+                    s=round(now - g["t0"], 1))
+        if out == "ARRIVED":
+            self.say("goto_arrived", name=g["name"])
+        else:
+            self.say("goto_failed", name=g["name"])
+            self.say("resumed")
         self._t_last_fix = now
         self._to(self._nav_back, now)       # trail, blacklist, dwell: all kept
 
-    # ---- SUMMARIZE -> RETURN_TO_START ------------------------------------------------
     def _summarize(self, now: float) -> None:
         self.state = "SUMMARIZE"
         res = self.analysis.latest
@@ -1823,23 +2140,7 @@ class MissionManager:
             # frame -> start -> saved map
             M = (mission_map.compose(start_on_map, mission_map.inverse(T))
                  if T is not None else start_on_map)
-            map_id = self.a.slam.map_id()
-            moved = 0
-            for a in self.store.list_areas(env_id):
-                if a["frame"] != frame:
-                    continue
-                self.store.reframe(
-                    a["id"], frame=area_store.FRAME_MAP, map_id=map_id,
-                    polygon=mission_map.transform_points(a["polygon"], M),
-                    center=mission_map.transform_points(
-                        [(a["center_x"], a["center_y"])], M)[0])
-                moved += 1
-            anchor = self.store.home_anchor(env_id)
-            if anchor is not None and anchor.get("frame") == frame:
-                pose = mission_map.compose(M, (anchor["x"], anchor["y"], anchor["theta"]))
-                self.store.set_home_anchor(env_id, pose[0], pose[1], pose[2],
-                                           anchor["signature"], map_id,
-                                           anchor["set_by"], area_store.FRAME_MAP)
+            moved = self._reframe_frame(frame, M, env_id, None)
             self.store.add_event(mission_id, {
                 "kind": "anchored_late", "areas": moved,
                 "start_on_map": [round(v, 2) for v in start_on_map]})
@@ -1930,12 +2231,23 @@ class MissionManager:
     def _close(self, now: float) -> None:
         """Back to IDLE. The mission row and its areas are already saved."""
         self._drop_drive()
+        # The mission's run ends with the mission: a run left out (HELP_WAIT ->
+        # "Friday, stop", a held run never parked) would explore on its own
+        # the moment the hold lapsed.
+        try:
+            if self.a.run.running():
+                self.a.run.stop()
+        except Exception as exc:                        # noqa: BLE001
+            log.warning("could not stop the mission's run: %s", exc)
+        self._person_paused = False
+        self.a.run.unpause()
         self.a.run.clear_return()
         self._release()
         self.state = "IDLE"
         self._checkpoint(now)
         log.info("mission closed -> IDLE")
         self.mission = None
+        self._publish_state()
 
     # ---- the transient states are never ticked, but must exist -----------------------
     def _st_summarize(self, now: float) -> None:
@@ -1948,7 +2260,7 @@ class MissionManager:
         pass
 
     # ---- SET_HOME ---------------------------------------------------------------
-    def _set_home(self, now: float) -> None:
+    def _set_home(self, now: float, with_place: bool = False) -> None:
         if self.state not in ("IDLE", "PAUSED"):
             self.say("cant_now")
             return
@@ -1971,11 +2283,37 @@ class MissionManager:
         if not res.get("ok"):
             self.say("cant_start")
             return
-        # Idle: a new home spot. Its frame begins here; the next mission that
-        # starts from this spot adopts it.
-        self.store.set_home_anchor(env, 0.0, 0.0, 0.0, res["anchor"].signature,
-                                   self.a.slam.map_id(), "voice",
-                                   "home:" + area_store.now_iso())
+        # Idle: a new home spot. ON THE SAVED MAP for "this is home" (U4: File
+        # 10 saved her permanent home here a moment ago); else its own frame
+        # begins here and the next mission from this spot adopts it.
+        on_map = None
+        if with_place:
+            try:
+                on_map = self._place_on_saved(res["anchor"])
+            except Exception as exc:                    # noqa: BLE001
+                log.warning("placing home on the saved map failed: %s", exc)
+        old = res.get("home")                   # the anchor she is standing at, if any
+        if (on_map is not None and old is not None
+                and old.get("frame") != area_store.FRAME_MAP):
+            # The rooms saved in the old anchor's frame go onto the map too:
+            # frame -> map = her pose on the map after her pose in that frame.
+            turn = math.radians(res["look"].get("shift_deg", 0.0))
+            t_old = (old["x"], old["y"], old["theta"] + turn)
+            fine = res["look"].get("fine")
+            if fine is not None and abs(math.remainder(fine[2] - t_old[2],
+                                                       2 * math.pi)) <= math.radians(20):
+                t_old = tuple(float(v) for v in fine)
+            M = mission_map.compose(on_map, mission_map.inverse(t_old))
+            n = self._reframe_frame(old["frame"], M, env, None)
+            log.info("the old home frame moved onto the saved map: %d area(s)", n)
+        if on_map is not None:
+            self.store.set_home_anchor(env, on_map[0], on_map[1], on_map[2],
+                                       res["anchor"].signature, self.a.slam.map_id(),
+                                       "voice", area_store.FRAME_MAP)
+        else:
+            self.store.set_home_anchor(env, 0.0, 0.0, 0.0, res["anchor"].signature,
+                                       self.a.slam.map_id(), "voice",
+                                       "home:" + area_store.now_iso())
         self.say("home_set")
 
     # ---- for the dashboard ---------------------------------------------------------
@@ -1998,6 +2336,10 @@ class MissionManager:
                     "cycle": self.ladder.cycle, "in_help": self.ladder.in_help,
                     "attempts": self.ladder.rungs_used()},
                 "drive": None if self.drive is None else self.drive.snapshot(),
+                "assist": None if self.assist is None else {
+                    "goal": [round(v, 2) for v in self.assist["goal"]]},
+                "assists": self.assists[-5:],
+                "go_to": None if self._goto is None else self._goto["name"],
                 "verified": self.verified,
                 "curiosity": {"mode": self.cfg.curiosity.mode,
                               "stage": self._curious_stage,

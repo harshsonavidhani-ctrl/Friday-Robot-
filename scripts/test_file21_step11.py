@@ -206,8 +206,9 @@ check("...but a stop is NEVER refused for age: 'ruko' 60 s old still pauses",
       r["handled"] and r["refused"] is None and w2.mgr.state == "PAUSED",
       f"{r} {w2.mgr.state}")
 r = service.voice("this is home")
-check("'this is home' (his permanent home, File 10) is not the mission's",
-      r["handled"] is False)
+check("'this is home' is the mission's SET_HOME too (spec 4.8; U4, Harsh 2026-10-03 "
+      "'exactly as file') -- main.py saves his permanent home (File 10) first",
+      r["handled"] is True, str(r))
 service._manager = None
 check("switch off (no manager): every transcript is 'not handled'",
       service.voice("explore")["handled"] is False

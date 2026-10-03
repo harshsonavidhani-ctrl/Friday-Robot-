@@ -45,6 +45,8 @@ log = logging.getLogger("friday.exploration_mission.adapters")
 LIVE_NAME = "live.json"
 HOLD_NAME = "hold.json"
 RETURN_NAME = "return.json"
+PAUSE_NAME = "pause.json"           # rl/way_back.py PAUSE_NAME (U3)
+STATE_NAME = "mission_state.json"   # voice_link.STATE_NAME
 # rl/telemetry.py REASON_CODES: the gates that mean "stopped for safety".
 ESTOP_GATES = frozenset({"REFLEX_STOP", "visual_stop", "stale_lidar", "stale_tof"})
 # The run refuses a hold further in the future than this, however it was
@@ -142,7 +144,11 @@ class RunAdapter:
                 "gate": (data.get("SAFETY_STATUS") or {}).get("detail"),
                 "way_back_phase": wb.get("phase"),
                 "way_back_outcome": wb.get("outcome"),
-                "way_back_distance_m": wb.get("distance_m")}
+                "way_back_distance_m": wb.get("distance_m"),
+                # U4: the run's own detector, when it is running (rl/pi_deploy).
+                "objects": [(o.get("label"), o.get("score", 0.0))
+                            for o in (data.get("OBJECTS") or []) if isinstance(o, dict)],
+                "objects_frames": data.get("OBJECTS_FRAMES") or 0}
 
     def running(self) -> bool:
         from mcp_server.tools import autonomy
@@ -203,6 +209,29 @@ class RunAdapter:
             self.hold_file.unlink()
         except FileNotFoundError:
             pass
+
+    # -- U3: a person's pause (written by friday-brain, cleared here) --
+    def pause(self, by: str = "mission") -> None:
+        atomic_write_json(self.state_dir / PAUSE_NAME,
+                          {"at": self.clock.wall(), "by": str(by), "pid": os.getpid()})
+
+    def unpause(self) -> None:
+        try:
+            (self.state_dir / PAUSE_NAME).unlink()
+        except FileNotFoundError:
+            pass
+
+    def paused(self) -> bool:
+        return (self.state_dir / PAUSE_NAME).exists()
+
+    def publish_state(self, state: str, mission_id: str | None) -> None:
+        """For friday-brain: is a mission's run out? (voice_link.mission_state)"""
+        try:
+            atomic_write_json(self.state_dir / STATE_NAME,
+                              {"state": state, "mission": mission_id,
+                               "t": self.clock.wall()})
+        except OSError as exc:
+            log.warning("mission state not published: %s", exc)
 
     def held(self) -> dict | None:
         data = _read_json(self.hold_file)
@@ -547,6 +576,24 @@ class DetectorAdapter:
         return {"running": age <= 3.0 * period, "age_s": round(age, 1),
                 "labels": labels}
 
+    def sightings(self) -> tuple:
+        """U4 (spec 4.7 point 9): (frame key, [(label, conf), ...]) for the
+        detector's latest picture while it is RUNNING, else (None, []).
+        The key changes with each new picture, so one frame counts once."""
+        import config
+        period = float(getattr(config, "SCENE_PERIOD_S", 5.0))
+        try:
+            mtime = self.scene_file.stat().st_mtime
+        except OSError:
+            return None, []
+        if self.clock.wall() - mtime > 3.0 * period:
+            return None, []
+        data = _read_json(self.scene_file) or {}
+        seen = [(str(o.get("label")), float(o.get("score", o.get("conf", 0.0)) or 0.0))
+                for o in (data.get("objects") or [])
+                if isinstance(o, dict) and o.get("label")]
+        return ("scene", data.get("t", mtime)), seen
+
 
 class MemoryAdapter:
     def backend(self) -> dict:
@@ -869,6 +916,7 @@ class FakeRun:
     def start(self, minutes):
         self.orders.append(("start", minutes))
         self.is_running = True
+        self._paused = False             # a new run ignores an older pause (U3)
         return {"started": True, "minutes": minutes}
 
     def stop(self):
@@ -888,9 +936,29 @@ class FakeRun:
         self._hold = None
 
     def held(self):
+        if self._paused:                      # a person's pause: held, no order
+            return {"until": float("inf"), "why": "paused"}
         if self._hold and self._hold["until"] > self.clock.wall():
             return dict(self._hold)
         return None
+
+    _paused = False
+    states_published: list = []
+
+    def pause(self, by="mission"):
+        self.orders.append(("pause", by))
+        self._paused = True
+
+    def unpause(self):
+        if self._paused:
+            self.orders.append(("unpause",))
+        self._paused = False
+
+    def paused(self):
+        return self._paused
+
+    def publish_state(self, state, mission_id):
+        self.states_published = self.states_published + [state]
 
     announces_return = False
 
@@ -1095,6 +1163,14 @@ class FakeDetector:
 
     def status(self):
         return dict(self._s)
+
+    frames: list = []                    # [(label, conf), ...] per picture
+
+    def sightings(self):
+        if not self._s["running"] or not self.frames:
+            return None, []
+        self._n = getattr(self, "_n", 0) + 1
+        return ("fake", self._n), list(self.frames[(self._n - 1) % len(self.frames)])
 
 
 class FakeMemory:

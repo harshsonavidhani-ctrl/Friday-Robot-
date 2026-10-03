@@ -75,6 +75,14 @@ LINES: dict[str, tuple[str, str]] = {
     "stale_order":    ("That order is too old now, so I didn't move. Please "
                        "say it again.", "neutral"),
     "failsafe":       ("I've stopped and I need help.", "worried"),
+    # "go to X" in the middle of a mission (U2): File 14 announces its own
+    # journeys (spec 4.13: "if File 14 already announces something, don't say
+    # it twice"), so these are File 14's sentences, word for word (nav_voice.py
+    # setting_off / arrived / no_route minus "Stopping here." -- she goes on
+    # exploring, which "Continuing exploration." then says).
+    "goto_off":       ("Heading to {name}.", "neutral"),
+    "goto_arrived":   ("I have arrived at {name}.", "happy"),
+    "goto_failed":    ("I cannot find a route to {name}.", "confused"),
     # NOT in the spec's table: SET_HOME must "confirm" (4.8) and the table has
     # no line for it, so it reuses the mission-start wording.
     "home_set":       ("I've marked this spot as my starting point.", "happy"),

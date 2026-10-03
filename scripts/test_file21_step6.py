@@ -342,9 +342,11 @@ EXAMPLES = {
     "LIST": ["what have you saved", "list areas", "which rooms do you know",
              "kya kya save kiya"],
     "STATUS": ["status", "how much have you explored", "kitna explore hua"],
-    # Harsh, 2026-10-01: "this is home" / "yahan home hai" stay his PERMANENT
-    # home (File 10); the mission's start has its own words.
-    "SET_HOME": ["set home here", "mark the start here", "set the start here"],
+    # The file's three (4.8). U4, Harsh 2026-10-03 "exactly as file": "this is
+    # home" / "yahan home hai" set BOTH homes -- friday-brain runs File 10's
+    # permanent home first, then the mission's start (main.py).
+    "SET_HOME": ["set home here", "mark the start here", "set the start here",
+                 "this is home", "yahan home hai"],
 }
 for name, texts in EXAMPLES.items():
     got = [(t, (it.classify(t) or it.Intent("-")).name) for t in texts]
@@ -377,9 +379,12 @@ check("out of the blue, 'this is the bathroom' / \"it's good\" / \"that's it\" "
       all("LABEL_NOW" not in [c.name for c in it.candidates(t)]
           for t in ("this is the bathroom", "it's good", "That's it.",
                     "ye drawing room hai", "yeah it's the kitchen")))
-check("'this is home' / 'yahan home hai' match NOTHING of the mission's (his "
-      "permanent home, File 10), and never an area called home",
-      it.candidates("this is home") == [] and it.candidates("yahan home hai") == [])
+check("'this is home' / 'yahan home hai' are SET_HOME with the saved map (File 10's "
+      "home is saved first, by main), and never an area called home",
+      [(i.name, i.args) for i in it.candidates("this is home")]
+      == [("SET_HOME", {"with_place": True})]
+      and [(i.name, i.args) for i in it.candidates("yahan home hai")]
+      == [("SET_HOME", {"with_place": True})])
 
 
 # =============================================================================
@@ -486,16 +491,21 @@ acts, ro = router()
 check("'save this as kitchen' while returning -> can't",
       ro.handle("save this as kitchen", ctx("RETURN_TO_START"))
       and acts.calls == [("say", "cant_now")])
-for state, want in (("IDLE", ("set_home",)), ("PAUSED", ("set_home",)),
+for state, want in (("IDLE", ("set_home", {"with_place": False})),
+                    ("PAUSED", ("set_home", {"with_place": False})),
                     ("EXPLORE", ("say", "cant_now"))):
     acts, ro = router()
     check(f"'mark the start here' in {state} -> {want[-1]}",
           ro.handle("mark the start here", ctx(state)) and acts.calls == [want],
           str(acts.calls))
-for state in ("IDLE", "EXPLORE", "PAUSED"):
+for state, want in (("IDLE", ("set_home", {"with_place": True})),
+                    ("PAUSED", ("set_home", {"with_place": True})),
+                    ("EXPLORE", ("say", "cant_now"))):
     acts, ro = router()
-    check(f"'this is home' in {state} is NOT ours (his permanent home)",
-          ro.handle("this is home", ctx(state)) is False and not acts.calls)
+    check(f"'this is home' in {state} -> {want[0] if want[0] != 'say' else 'cant_now'} "
+          "(spec 4.8: SET_HOME only in IDLE / PAUSED)",
+          ro.handle("this is home", ctx(state)) and acts.calls == [want],
+          str(acts.calls))
 
 acts, ro = router()
 check("'go to the kitchen' with NO mission is NOT ours: File 14's nav_go drives it",

@@ -140,8 +140,9 @@ check("the config's numbers are the spec's", (lambda c: c.threshold == 0.8
       and c.min_quiet_conversation_min == 5 and list(c.quiet_hours) == ["22:00", "08:00"]
       and c.no_cooldown_h == 2 and c.silence_cooldown_min == 30
       and c.check_period_s == 60)(mcfg.load().curiosity))
-check("⛔ curiosity SHIPS OFF (config.py), like AGENCY_MOTION",
-      mcfg.load().curiosity.mode == "off")
+check("curiosity ships 'ask' -- the file's default, Harsh's go 2026-10-03 (U4): she "
+      "ASKS and moves only after his yes (never 'auto' without him)",
+      mcfg.load().curiosity.mode == "ask")
 
 print("--- quiet hours ---")
 Q = ["22:00", "08:00"]

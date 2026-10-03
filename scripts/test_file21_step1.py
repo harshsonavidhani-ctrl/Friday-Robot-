@@ -177,8 +177,8 @@ check("three curiosity weights",
       raises(lambda: mcfg.load({"curiosity": {"weights": [1, 1]}}), mcfg.ConfigError))
 check("a hold refresh slower than its expiry is refused",
       raises(lambda: mcfg.load({"run": {"hold_refresh_s": 5.0}}), mcfg.ConfigError))
-check("curiosity ships off (autonomous trips are Harsh's call)",
-      cfg.curiosity.mode == "off")
+check("curiosity ships 'ask' (the file's default, Harsh's go 2026-10-03): asks first",
+      cfg.curiosity.mode == "ask")
 
 
 # =============================================================================

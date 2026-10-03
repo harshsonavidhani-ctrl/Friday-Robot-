@@ -58,6 +58,9 @@ class SimRun(ad.FakeRun):
         self.published = 0
         self.return_asked = False
         self.freeze_until = -1e9                # stands still (but runs) until then
+        # The RL policy finds nothing new until then (its tour stalls) -- but
+        # a mission drive order still moves her: spec 4.2's stagnation.
+        self.rl_stall_until = -1e9
         # Its own way back gives up ("timeout") this far from the start -- the
         # wedged-in-clutter ending the real robot has had.
         self.fail_return_at_m = fail_return_at_m
@@ -98,6 +101,8 @@ class SimRun(ad.FakeRun):
         self.outcome, self.why = "", ""
         # rl/way_back.py ignores a return request written before the run began.
         self.return_asked = False
+        # ...and a person's pause written before it began (Hold.poll_pause).
+        self._paused = False
         return {"started": True, "minutes": minutes}
 
     def clear_return(self):
@@ -192,6 +197,8 @@ class SimRun(ad.FakeRun):
                     self._begin_back("mission")
                 elif now - self._t_started >= self._duration:
                     self._begin_back("time")
+                elif now < self.rl_stall_until:
+                    pass                                # exploring, finding nothing
                 elif self._leg >= len(self.path):
                     self._begin_back("explored")
                 elif self._toward(self.path[self._leg], dt):

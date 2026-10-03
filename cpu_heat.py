@@ -18,7 +18,13 @@ WHEN SHE SAYS IT (`Policy`, pure, so the tests need no clock and no Pi):
   * it counts as cooled only below CPU_HOT_CLEAR_C (hysteresis): a reading
     wobbling round 60 is one hot spell, not twenty;
   * a line that could not be said (he was talking) is offered again after
-    CPU_HOT_RETRY_S, not dropped.
+    CPU_HOT_RETRY_S, not dropped;
+  * VERY HOT (Harsh, 2026-10-03: "if she says it at 60 degrees and I forgot,
+    and the temp reaches 70, then again the alarm"): at CPU_HOT_AGAIN_C (70)
+    for CPU_HOT_SUSTAIN_S she says CPU_HOT_LINE_AGAIN AT ONCE, whatever the
+    10-minute repeat clock says; cooled from it only below
+    CPU_HOT_AGAIN_CLEAR_C (67), so a new climb past 70 is said again. A jump
+    straight from cool to 72 is one line (the 70 one), not two.
 
 WHEN SHE HOLDS IT: quiet mode, and while she is asleep ("Friday, go to sleep")
 -- EXCEPT during an exploration run. A run hushes every wake source with the
@@ -51,45 +57,80 @@ def read_c(path: str | Path | None = None) -> float | None:
 
 
 class Policy:
-    """Feed it readings; `update` says when to speak. No I/O, no clock."""
+    """Feed it readings; `update` says when to speak and at which level
+    (0 = nothing, 1 = hot, 2 = very hot). No I/O, no clock."""
 
     def __init__(self, hot_c: float, clear_c: float, sustain_s: float,
-                 repeat_s: float, retry_s: float):
+                 repeat_s: float, retry_s: float, again_c: float | None = None,
+                 again_clear_c: float | None = None):
         if clear_c >= hot_c:
             raise ValueError("clear_c must be below hot_c (hysteresis)")
+        if again_c is not None and not (hot_c < (again_clear_c or again_c) <= again_c):
+            raise ValueError("need hot_c < again_clear_c <= again_c")
         self.hot_c, self.clear_c = float(hot_c), float(clear_c)
+        self.again_c = None if again_c is None else float(again_c)
+        self.again_clear_c = (self.again_c if again_clear_c is None
+                              else float(again_clear_c)) if again_c is not None else None
         self.sustain_s, self.repeat_s = float(sustain_s), float(repeat_s)
         self.retry_s = float(retry_s)
         self.hot_since: float | None = None     # this hot spell began
+        self.again_since: float | None = None   # ...and has been at "again" since
         self.next_say: float | None = None      # when the line is due again
+        self.level_said = 0                     # the highest level said this spell
+        self.hold_until = -float("inf")         # a missed line waits for this
+        self.pending = 0                        # a line handed out, not yet said
         self.said = 0
         self.peak: float | None = None
 
-    def update(self, temp_c: float | None, now: float) -> bool:
-        """True = say it now (the caller then calls said_it or missed)."""
+    def update(self, temp_c: float | None, now: float) -> int:
+        """The level to say now, or 0 (the caller then calls handed, and
+        later said_it or missed)."""
         if temp_c is None:
-            return False                         # unreadable: nothing to say
+            return 0                             # unreadable: nothing to say
         if self.hot_since is None:
             if temp_c < self.hot_c:
-                return False
+                return 0
             self.hot_since, self.peak = now, temp_c
             self.next_say = now + self.sustain_s
+            self.again_since, self.level_said = None, 0
         elif temp_c < self.clear_c:
             log.info("CPU cooled to %.1f C (peak %.1f C this spell)", temp_c,
                      self.peak or temp_c)
-            self.hot_since = self.next_say = self.peak = None
-            return False
+            self.hot_since = self.next_say = self.peak = self.again_since = None
+            self.level_said = 0
+            return 0
         self.peak = max(self.peak or temp_c, temp_c)
-        if temp_c < self.hot_c:
-            return False                         # between clear and hot: wait
-        return self.next_say is not None and now >= self.next_say
+        if self.again_c is not None:
+            if temp_c >= self.again_c:
+                if self.again_since is None:
+                    self.again_since = now
+            elif temp_c < self.again_clear_c:
+                self.again_since = None
+                if self.level_said >= 2:
+                    self.level_said = 1          # cooled from "very hot": a new climb is new
+        if self.pending or now < self.hold_until:
+            return 0
+        # Harsh, 2026-10-03: "if she says it at 60 and I forgot, at 70 the alarm
+        # again" -- at once, whatever the 10-minute repeat clock says.
+        if (self.again_since is not None and self.level_said < 2
+                and now - self.again_since >= self.sustain_s):
+            return 2
+        if temp_c >= self.hot_c and self.next_say is not None and now >= self.next_say:
+            return 2 if (self.again_since is not None and self.level_said >= 2) else 1
+        return 0
+
+    def handed(self, level: int) -> None:
+        self.pending = int(level)
 
     def said_it(self, now: float) -> None:
         self.said += 1
+        self.level_said = max(self.level_said, self.pending or 1)
+        self.pending = 0
         self.next_say = now + self.repeat_s
 
     def missed(self, now: float) -> None:
-        self.next_say = now + self.retry_s
+        self.pending = 0
+        self.hold_until = now + self.retry_s
 
 
 def _exploring(root: Path | None = None) -> bool:
@@ -124,7 +165,9 @@ class HeatWatch:
         self.poll_s = float(poll_s if poll_s is not None else config.CPU_HOT_POLL_S)
         self.policy = Policy(config.CPU_HOT_SAY_C, config.CPU_HOT_CLEAR_C,
                              config.CPU_HOT_SUSTAIN_S, config.CPU_HOT_REPEAT_S,
-                             config.CPU_HOT_RETRY_S)
+                             config.CPU_HOT_RETRY_S,
+                             getattr(config, "CPU_HOT_AGAIN_C", None),
+                             getattr(config, "CPU_HOT_AGAIN_CLEAR_C", None))
         self._closed = threading.Event()
         self._paused = False
         self._asleep_until = 0.0
@@ -135,7 +178,8 @@ class HeatWatch:
         now = self.clock()
         temp = self.read()
         self.last_c = temp
-        if not self.policy.update(temp, now):
+        level = self.policy.update(temp, now)
+        if not level:
             return None
         if self._paused:
             return None                          # she is talking: next poll
@@ -143,10 +187,10 @@ class HeatWatch:
         if asleep or self.quiet():
             self.policy.missed(now)
             return None
-        # Counted as said once main has actually said it (said_it / missed):
-        # until then nothing new is due.
-        self.policy.next_say = None
-        return f"{temp:.0f}"
+        # Out until main says it was said (delivered) or not (missed): nothing
+        # else is handed out meanwhile.
+        self.policy.handed(level)
+        return f"{temp:.0f} {level}"
 
     # -- what main.py tells it --------------------------------------------------
     def delivered(self) -> None:
@@ -192,10 +236,23 @@ class HeatWatch:
 
 
 def parse_trigger(trigger: str) -> float | None:
-    """"cpu_heat: 72" -> 72.0 (None if it is not one of ours)."""
+    """"cpu_heat: 72 2" -> 72.0 (None if it is not one of ours)."""
     if not trigger.startswith(NAME + ": "):
         return None
     try:
-        return float(trigger.split(": ", 1)[1])
-    except ValueError:
+        return float(trigger.split(": ", 1)[1].split()[0])
+    except (ValueError, IndexError):
         return None
+
+
+def trigger_level(trigger: str) -> int:
+    """"cpu_heat: 72 2" -> 2 ("very hot"); 1 when no level is given."""
+    try:
+        return int(trigger.split(": ", 1)[1].split()[1])
+    except (ValueError, IndexError):
+        return 1
+
+
+def line_for(level: int) -> str:
+    return (getattr(config, "CPU_HOT_LINE_AGAIN", config.CPU_HOT_LINE)
+            if level >= 2 else config.CPU_HOT_LINE)

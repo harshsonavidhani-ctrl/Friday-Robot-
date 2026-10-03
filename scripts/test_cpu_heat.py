@@ -86,6 +86,64 @@ try:
 except ValueError:
     check("clear must be below hot", True)
 
+print("--- 70 C: said again at once (Harsh: 'if I forgot, at 70 the alarm again') ---")
+
+
+def policy2():
+    return ch.Policy(60.0, 57.0, sustain_s=15.0, repeat_s=600.0, retry_s=30.0,
+                     again_c=70.0, again_clear_c=67.0)
+
+
+def feed(p, temps_by_s, start=0, end=None):
+    out = []
+    for s in range(start, end):
+        lvl = p.update(temps_by_s(s), float(s))
+        if lvl:
+            p.handed(lvl)
+            p.said_it(float(s))
+            out.append((s, lvl))
+    return out
+
+
+check("the file's settings: 70 C, cooled below 67 C, a stronger line",
+      config.CPU_HOT_AGAIN_C == 70.0 and config.CPU_HOT_AGAIN_CLEAR_C == 67.0
+      and config.CPU_HOT_LINE_AGAIN == "My CPU is very hot now. Please turn on the fan.")
+p = policy2()
+said = feed(p, lambda s: 63.0 if s < 100 else 71.0, 0, 200)
+check("63 C: 'hot' once; he forgets; it climbs to 71 C -> 'very hot' 15 s later, NOT "
+      "after the 10-minute wait", said == [(15, 1), (115, 2)], str(said))
+said = feed(p, lambda s: 71.0, 200, 900)
+check("...still 71 C: then every 10 min, at the very-hot level", said == [(715, 2)],
+      str(said))
+said = feed(p, lambda s: 65.0 if s < 960 else 71.0, 900, 1000)
+check("down to 65 C (below 67: cooled from very hot, still hot) then up to 71 C "
+      "again: said again at once", said == [(975, 2)], str(said))
+p = policy2()
+said = feed(p, lambda s: 68.5 if s % 2 else 70.5, 0, 300)
+check("wobbling round 70 (never below 67) is one very-hot alarm, not a new one each "
+      "time", [lvl for _, lvl in said].count(2) == 1, str(said))
+p = policy2()
+said = feed(p, lambda s: 72.0, 0, 100)
+check("straight from cool to 72 C: ONE line (very hot), not 'hot' then 'very hot'",
+      said == [(15, 2)], str(said))
+p = policy2()
+p.update(64.0, 0.0)
+lvl = p.update(64.0, 15.0)
+p.handed(lvl)
+p.said_it(15.0)
+p.update(72.0, 20.0)
+p.update(72.0, 35.0)
+lvl = p.update(72.0, 36.0)
+p.handed(lvl)
+p.missed(36.0)
+check("very hot but he was talking: offered again after 30 s, not dropped",
+      lvl == 2 and not p.update(72.0, 50.0) and p.update(72.0, 66.0) == 2)
+try:
+    ch.Policy(60.0, 57.0, 1, 1, 1, again_c=59.0)
+    check("the very-hot level must be above the hot one", False)
+except ValueError:
+    check("the very-hot level must be above the hot one", True)
+
 print("--- the wake source (HeatWatch) ---")
 
 
@@ -116,8 +174,9 @@ def run(w, clock, n, step_s=5.0):
 
 w, clock = watch([72.4] * 10)
 fired = run(w, clock, 10)
-check("hot: one trigger with the degrees, after the sustain",
-      len(fired) == 1 and fired[0][1] == "72" and fired[0][0] - 1000.0 >= 15.0, str(fired))
+check("hot (72 C, straight from cool): ONE trigger, the very-hot level, after the "
+      "sustain", len(fired) == 1 and fired[0][1] == "72 2"
+      and fired[0][0] - 1000.0 >= 15.0, str(fired))
 check("...nothing more until main says it was said (no queue of repeats)",
       run(w, clock, 3) == [])
 w.delivered()
@@ -141,8 +200,12 @@ check("quiet mode: held", run(w, clock, 10) == [])
 w, clock = watch([None] * 10)
 check("no sensor: silent, no crash", run(w, clock, 10) == [])
 check("triggers parse back; others are not ours",
-      ch.parse_trigger("cpu_heat: 72") == 72.0 and ch.parse_trigger("reminders: x") is None
-      and ch.parse_trigger("cpu_heat: x") is None)
+      ch.parse_trigger("cpu_heat: 72 2") == 72.0 and ch.trigger_level("cpu_heat: 72 2") == 2
+      and ch.parse_trigger("cpu_heat: 64") == 64.0 and ch.trigger_level("cpu_heat: 64") == 1
+      and ch.parse_trigger("reminders: x") is None and ch.parse_trigger("cpu_heat: x") is None)
+check("level 1 says the hot line, level 2 the very-hot line",
+      ch.line_for(1) == "My CPU is hot. Please turn on the fan."
+      and ch.line_for(2) == "My CPU is very hot now. Please turn on the fan.")
 
 print("--- reading the sensor ---")
 tmp = Path(tempfile.mkdtemp(prefix="friday-heat-")) / "temp"
@@ -161,9 +224,10 @@ check("cpu_heat imports no network, model or sound library",
       not imports & {"socket", "requests", "httpx", "urllib", "anthropic", "brain",
                      "tts", "pygame", "sounddevice", "subprocess"}, str(imports))
 main = (ROOT / "main.py").read_text()
-check("main.py: the watch is a wake source and its turn says the fixed line",
+check("main.py: the watch is a wake source and its turn says the line for its level",
       "cpu_heat.HeatWatch()" in main and 'trigger.startswith("cpu_heat: ")' in main
-      and "voice.say(config.CPU_HOT_LINE)" in main and "watch.missed()" in main)
+      and "cpu_heat.line_for(cpu_heat.trigger_level(trigger))" in main
+      and "voice.say(line)" in main and "watch.missed()" in main)
 real_connect = socket.socket.connect
 
 

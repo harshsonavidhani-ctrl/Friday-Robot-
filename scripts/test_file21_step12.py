@@ -201,8 +201,9 @@ diff = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", "HEAD", "-
 check("CLAUDE.md, rl/, slam/, exploration_mode.py, explore.py, offline.py "
       "untouched", diff == [], str(diff))
 cfg = (ROOT / "config.py").read_text()
-check("curiosity still ships OFF (the mission switch is Harsh's: on since 10-02)",
-      '"curiosity": {"mode": "off"' in cfg)
+check("curiosity ships 'ask', the file's default (Harsh 2026-10-03, 'exactly as "
+      "file'): she asks, and goes only after his yes",
+      '"curiosity": {"mode": "ask"' in cfg)
 
 print(f"\n{sum(_results)}/{len(_results)} passed")
 sys.exit(0 if all(_results) else 1)

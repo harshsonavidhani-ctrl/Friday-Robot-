@@ -72,21 +72,39 @@ only `/tmp/friday-anchor-check.json`.
 "kitchen". She listens for about 10 s without the wake word, and "Friday,
 save it as kitchen" works too.
 
+Before it (once): stand her on her home spot and say "Friday, this is home"
+(U4, 2026-10-03). That saves your permanent home AND the mission's start
+there, on the saved map. Start missions from that spot.
+
 **Pass when:**
 - She says "Saved as kitchen." and the panel lists it.
 - "Friday, what have you saved?" names it.
-- ⚠ "Friday, go to the kitchen" works afterwards ONLY if the panel shows the
-  room in frame `map`, meaning the end-of-mission fit placed it on the saved
-  map. In the hostel room the sim refused that fit: two spots look alike,
-  1.22 against 1.12. That is correct behaviour, not a failure.
+- Started by her home: the panel shows the room in frame `map` straight away,
+  and "Friday, go to the kitchen" works after the mission (File 14 drives).
+- ⚠ Started anywhere else, the room stays in the mission's own frame unless
+  the end-of-mission fit places it. In the hostel room that fit refuses (two
+  spots look alike, 1.22 against 1.12): correct, not a failure.
 
 ## H4 — whole house (2–4 rooms)
+
+During it, also try (U2/U3, 2026-10-03; the wake word now stays ON for the
+whole mission):
+- "Friday, stop" while she drives → "Stopping. Say continue when you're
+  ready." She stays put however long you wait; "Friday, continue" →
+  "Continuing exploration." and she carries on.
+- "Friday, go to the hall" (a room she already named this mission) →
+  "Heading to hall." … "I have arrived at hall.", then she explores again.
+- If she circles without finding new space for a minute while unexplored
+  places are left, she drives to the nearest one herself (frontier-assist,
+  `frontier_assist` in the mission log), then the RL drives again.
 
 **Pass when:**
 - She asks about every room.
 - The summary names them all.
 - She stops within 0.35 m of the tape mark.
-- The run says "I am back where I started." and the mission adds "Exploration saved."
+- She says "I've reached where I started. Exploration saved."
+- The run's log shows no rise in "overruns" from the wake word being on
+  (compare with the 2026-10-02 23:18 run: 94 overruns, 60.5 ms per tick).
 
 ## H5 — something in the way back
 
@@ -96,10 +114,13 @@ Put a box on her way back, then block the way fully, then clear it.
 - She says "I'm stuck about N meters from where I started. Please help me or
   clear the way.", with a sensible N.
 - After you clear it, "Friday, come back" tries again.
-- ⚠ Known gap: the File 14 ladder (wait / back up / re-plan / relaxed goal) is
-  not wired into friday-mcp yet. So a failed way back goes straight to the
-  help line, and a retry has no engine to drive with. H5's "ladder recovers"
-  cannot pass until that is wired.
+- With the box (not fully blocked): the mission log shows the ladder's rungs
+  in order (U1, 2026-10-03: File 14's planner, the held run driving):
+  wait 5 s → re-plan round it → a full turn ("Checking where I am.") → back
+  up → retrace her path ("Retracing my path.") → nearest free spot ("Getting
+  as close as I can."), and she gets home round the box.
+- Fully blocked: HELP every 30 s, 20 rounds, then "I'll wait here. Say
+  Friday, come back, to try again."
 
 ## H6 — power cut, and a reboot after a finished mission
 

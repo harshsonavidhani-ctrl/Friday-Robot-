@@ -371,6 +371,14 @@ RETURN_FRESH_S = 60.0
 DRIVE_KINDS = ("path", "turn", "back")
 DRIVE_MAX_POINTS = 200
 DRIVE_TOL_M = (0.10, 1.0)        # what a path's tolerance may be set to
+# A PERSON'S PAUSE (FILE 21 U3, spec 4.8: "Friday stop" -> PAUSED, "continue"
+# -> on). Written by friday-brain the moment it hears "stop" during a mission,
+# cleared only by the mission (continue / go back / its end). Unlike the hold
+# it NEVER LAPSES: a mission that died while she was paused must leave her
+# standing, never set her off. Ignored if written before this run began (a new
+# run is not frozen by an old pause). Paused past PAUSE_MAX_S, the run ENDS.
+PAUSE_NAME = "pause.json"
+PAUSE_MAX_S = 1800.0
 DRIVE_FINAL_TOL_M = 0.10         # the last point: she closes in while the 0.35 m / 2 s arrival dwell runs
 
 
@@ -424,6 +432,8 @@ class Hold(threading.Thread):
         self._born = time.time()                          # requests older than this: ignored
         self._return = False
         self.drive: dict | None = None                    # FILE 21 U1: the drive order
+        self.pause_path = self.path.with_name(PAUSE_NAME)  # FILE 21 U3
+        self._paused_since: float | None = None
 
     def poll(self) -> None:
         import json
@@ -452,26 +462,56 @@ class Hold(threading.Thread):
         self._return = (at >= self._born
                         and 0.0 <= time.time() - at <= RETURN_FRESH_S)
 
+    def poll_pause(self) -> None:
+        import json
+        try:
+            at = float(json.loads(self.pause_path.read_text())["at"])
+            paused = at >= self._born - 1.0
+        except FileNotFoundError:
+            paused = False
+        except Exception:                                 # noqa: BLE001
+            # Unreadable mid-write: keep what we had -- a pause is never
+            # dropped on a torn read.
+            paused = self._paused_since is not None
+        if paused and self._paused_since is None:
+            self._paused_since = time.monotonic()
+        elif not paused:
+            self._paused_since = None
+
     def run(self) -> None:
         while True:
             self.poll()
             self.poll_return()
+            self.poll_pause()
             time.sleep(self.period_s)
 
+    def paused(self) -> bool:
+        """FILE 21 U3: a person said stop during the mission."""
+        return self._paused_since is not None
+
+    def paused_too_long(self) -> bool:
+        return (self._paused_since is not None
+                and time.monotonic() - self._paused_since > PAUSE_MAX_S)
+
     def active(self) -> bool:
-        return time.monotonic() < self._until
+        return self.paused() or time.monotonic() < self._until
 
     def return_requested(self) -> bool:
         return self._return
 
     def driving(self) -> dict | None:
-        """FILE 21 U1: the mission's drive order while the hold is fresh."""
-        return self.drive if self.active() else None
+        """FILE 21 U1: the mission's drive order while the hold is fresh --
+        never while a person has paused her (U3)."""
+        if self.paused():
+            return None
+        return self.drive if time.monotonic() < self._until else None
 
     def snapshot(self) -> dict[str, Any]:
         snap = {"active": self.active(), "why": self.why if self.active() else ""}
         if self.driving() is not None:
             snap["drive"] = self.drive.get("kind")
+        if self.paused():
+            snap["paused"] = True
         return snap
 
 

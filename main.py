@@ -825,6 +825,7 @@ async def _heat_turn(voice: "Voice", face: "Face", source, trigger: str,
     temp = cpu_heat.parse_trigger(trigger)
     if temp is None:
         return
+    line = cpu_heat.line_for(cpu_heat.trigger_level(trigger))
     turn = stages.Turn(f"cpu heat: {temp:.0f} C")
     if initiative.he_is_talking():
         watch.missed()
@@ -833,8 +834,8 @@ async def _heat_turn(voice: "Voice", face: "Face", source, trigger: str,
     source.pause()                              # never hear herself
     try:
         face.feel("scared")                     # the file 21 "worried"
-        voice.say(config.CPU_HOT_LINE)
-        turn.spoke(config.CPU_HOT_LINE)
+        voice.say(line)
+        turn.spoke(line)
         turn.answered_by("locally, no model", 0.0)
         voice.wait_until_quiet()
         watch.delivered()
@@ -1550,6 +1551,84 @@ def _mission_heard(spoken: str) -> None:
             log.debug("heard mark failed: %s", exc)
 
 
+MISSION_PAUSE_CONFIRM_S = 2.0   # the run publishes its state every ~0.5 s
+
+
+def _mission_state_now() -> str:
+    """The mission's published state ("" if none). Spec 4.8: SET_HOME only in
+    IDLE / PAUSED -- anywhere else the mission's router says it can't."""
+    try:
+        from exploration_mission import voice_link
+        return voice_link.mission_state()
+    except Exception:                           # noqa: BLE001
+        return ""
+
+
+def _is_home_phrase(spoken: str) -> bool:
+    try:
+        from exploration_mission import intents
+        return intents.is_home_phrase(spoken)
+    except Exception:                           # noqa: BLE001
+        return False
+
+
+def _mission_run_state() -> str | None:
+    """The mission's state when it has its RL run out (or held), else None.
+    A file read and the run check, no network: it gates the stop. Never raises."""
+    if not _mission_on():
+        return None
+    try:
+        from exploration_mission import voice_link
+        state = voice_link.mission_state()
+        if state in voice_link.RUN_STATES and _exploring():
+            return state
+    except Exception:                           # noqa: BLE001
+        pass
+    return None
+
+
+def _run_standing_since(t_wall: float) -> bool:
+    """Has the run published, after t_wall, that it holds the motors at zero?"""
+    try:
+        path = config.ROOT / "state" / "rl_autonomy.json"
+        if path.stat().st_mtime < t_wall:
+            return False
+        data = json.loads(path.read_text())
+        final = data.get("FINAL_EXECUTED_ACTION") or {}
+        return (data.get("REASON_CODE") == "mission_hold"
+                and abs(float(final.get("v") or 0.0)) < 1e-6
+                and abs(float(final.get("omega") or 0.0)) < 1e-6)
+    except Exception:                           # noqa: BLE001
+        return False
+
+
+async def _mission_pause(session, turn) -> bool:
+    """"Friday stop" during a mission: the pause file FIRST (the run reads it
+    every 0.2 s -- nothing waits on friday-mcp), then the mission is told
+    (-> PAUSED, "Stopping. Say continue when you're ready."), then the run must
+    CONFIRM it is standing still within MISSION_PAUSE_CONFIRM_S. False = not
+    confirmed: the caller does the full stop, which ends the run. A stop must
+    never depend on the new path working."""
+    from exploration_mission import voice_link
+    t0 = time.time()
+    if not voice_link.pause_run("voice"):
+        return False
+    turn.note("STOP heard during a mission — pausing her (file 21, spec 4.8)")
+    _narration_off("stop", turn)
+    await _mission_claims(session, "stop", turn, announce=False)
+    deadline = time.monotonic() + MISSION_PAUSE_CONFIRM_S
+    while time.monotonic() < deadline:
+        if _run_standing_since(t0):
+            turn.answered_by("mission, no model", 0.0)
+            turn.done("DONE (paused — say continue)")
+            return True
+        await asyncio.sleep(0.1)
+    log.error("the run did not confirm the pause within %.1f s: full stop",
+              MISSION_PAUSE_CONFIRM_S)
+    turn.note("the run did not confirm it stopped — full stop")
+    return False
+
+
 def _mission_held() -> bool:
     """Is the mission holding the run still (a question, a pause)? Then she is
     not driving, and the wake word may be on (file 21 step 11)."""
@@ -1597,6 +1676,10 @@ async def _mission_turn(voice: "Voice", face: "Face", source, stream,
         deadline = time.monotonic() + 20.0
         while initiative.she_is_talking() and time.monotonic() < deadline:
             await asyncio.sleep(0.1)
+        # Spec 4.7: listen listen_after_tts_s (0.3 s) AFTER her playback ends,
+        # so the tail of her own question is not taken for his answer.
+        await asyncio.sleep(float(((getattr(config, "EXPLORATION_MISSION", {}) or {})
+                                   .get("voice") or {}).get("listen_after_tts_s", 0.3)))
         face.set("listening")
         try:
             heard_from = time.time()
@@ -1658,6 +1741,13 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
     turn.heard(spoken, source="typed" if "typed" in (turn.trigger or "")
                else "voice")
 
+    if offline.is_stop(spoken) and _mission_run_state() is not None:
+        # FILE 21 U3 (spec 4.8): during a mission "Friday stop" PAUSES her --
+        # "continue" carries on from there. Only if the run CONFIRMS it is
+        # standing still; otherwise the full stop below, as always.
+        if await _mission_pause(session, turn):
+            return "stopped"
+
     if offline.is_stop(spoken):
         turn.note("STOP heard — going straight to the motors")
         _narration_off("stop", turn)
@@ -1669,6 +1759,20 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
         # After the motors, never before; a failure here changes nothing.
         await _mission_claims(session, "stop", turn, announce=False)
         return "stopped"
+
+    # "THIS IS HOME" / "YAHAN HOME HAI" (file 21 U4, spec 4.8 SET_HOME): BOTH
+    # homes, offline. Her permanent home first (File 10's remember_place, as
+    # "remember this as home" always did -- Harsh 2026-10-01: it stays his
+    # home), then the mission's start anchor, which is placed on the saved map
+    # right beside that home.
+    if (_mission_on() and _is_home_phrase(spoken)
+            and _mission_state_now() in ("", "IDLE", "PAUSED")):
+        turn.note("'this is home': her permanent home, then the mission's start")
+        await _run_offline(offline.Intent(name="remember_place", tool="remember_place",
+                                          args={"name": "home"}),
+                           session, voice, face, turn)
+        await _mission_claims(session, spoken, turn, announce=False)
+        return "home"
 
     # THE EXPLORATION MISSION HEARS IT NEXT (file 21 step 11), and only when
     # config.EXPLORATION_MISSION_SERVICE is on. Its router claims its own
@@ -1857,7 +1961,11 @@ def _explore_hush(source) -> None:
             try:
                 # Held by the mission (a question, a pause) she is standing
                 # still: "off while DRIVING" (Harsh, 2026-09-29) -- so on.
-                out = _exploring() and not _mission_held()
+                # AND ON FOR A WHOLE MISSION (file 21 U3, Harsh 2026-10-03
+                # "exactly as file"): "Friday stop", "save this as X", "go to
+                # the kitchen" are heard while she drives (spec 3.2/4.8).
+                out = (_exploring() and not _mission_held()
+                       and _mission_run_state() is None)
                 if out:
                     # Only re-arm as the current slice runs down, so this does
                     # not write "asleep for 20s" to the log every 4 seconds.

@@ -89,6 +89,33 @@ def mark_heard(at: float | None = None, folder: Path | None = None) -> None:
         log.debug("heard mark not written: %s", exc)
 
 
+PAUSE_NAME = "pause.json"            # rl/way_back.py PAUSE_NAME (U3)
+STATE_NAME = "mission_state.json"   # written by the mission on every state change
+# The mission's states in which its RL run is out (or held) -- "Friday stop"
+# then PAUSES her instead of ending the run (spec 4.8, U3).
+RUN_STATES = frozenset({"EXPLORE", "ASK_LABEL", "TARGET_NAV", "SUMMARIZE",
+                        "RETURN_TO_START", "HELP", "HELP_WAIT", "PAUSED"})
+
+
+def pause_run(by: str = "voice", folder: Path | None = None) -> bool:
+    """FILE 21 U3: a person said stop during a mission -- the run stands still
+    NOW (rl/way_back.py reads this every 0.2 s) and stays still until the
+    mission clears it. Written straight from friday-brain, before any MCP call,
+    so the stop does not wait on anything. True if written. Never raises."""
+    try:
+        _write((folder or state_dir()) / PAUSE_NAME,
+               {"at": time.time(), "by": str(by), "pid": os.getpid()})
+        return True
+    except OSError as exc:
+        log.error("pause not written: %s", exc)
+        return False
+
+
+def mission_state(folder: Path | None = None) -> str:
+    """The mission's state as it last published it ("" if none)."""
+    return str(_read((folder or state_dir()) / STATE_NAME).get("state") or "")
+
+
 def held(folder: Path | None = None, now: float | None = None) -> bool:
     """Is the mission holding the run still (a question, a pause)? The run's
     own hold file, read the way rl/way_back.py reads it: fresh = held."""

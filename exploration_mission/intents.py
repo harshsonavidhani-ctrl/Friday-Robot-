@@ -108,6 +108,15 @@ STATUS_RE = re.compile(r"^(status|how much have you explored|kitna explore hua|"
                        r"kitna explore hua hai)$")
 SET_HOME_RE = re.compile(r"^(set home here|set the home here|mark the start here|"
                          r"set the start here|mark this as the start)$")
+# The file's other two SET_HOME phrases (4.8). friday-brain runs File 10's
+# permanent home FIRST for these (Harsh, 2026-10-01: "this is home" stays his
+# permanent home), then the mission's start anchor -- U4, 2026-10-03.
+HOME_PHRASE_RE = re.compile(r"^(this is home|this is my home|this is our home|"
+                            r"yahan home hai|yaha home hai|ye home hai|yeh home hai)$")
+
+
+def is_home_phrase(text: str) -> bool:
+    return bool(HOME_PHRASE_RE.match(normalize(text or "")))
 HALT_ANY_RE = re.compile(r"(?:^| )(stop|ruko)(?: |$)")
 
 
@@ -164,8 +173,8 @@ def candidates(text: str) -> list[Intent]:
         out.append(Intent("LIST"))
     if STATUS_RE.match(norm):
         out.append(Intent("STATUS", {"text": norm}))
-    if SET_HOME_RE.match(norm):
-        out.append(Intent("SET_HOME"))
+    if SET_HOME_RE.match(norm) or HOME_PHRASE_RE.match(norm):
+        out.append(Intent("SET_HOME", {"with_place": bool(HOME_PHRASE_RE.match(norm))}))
     m = START_RE.match(norm)
     if m:
         out.append(Intent("START", {"minutes": int(m.group("n")) if m.group("n")
@@ -318,7 +327,7 @@ class Router:
             return True
         if n == "SET_HOME":
             if st in ("IDLE", "PAUSED"):
-                a.set_home()
+                a.set_home(with_place=bool(it.args.get("with_place")))
                 return True
             return self._cant()
         if n == "START":

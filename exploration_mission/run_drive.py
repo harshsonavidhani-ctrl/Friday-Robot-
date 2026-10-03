@@ -137,13 +137,25 @@ class RunDrive:
             self._pose = tuple(float(v) for v in pose)
         self._write_hold(now, force=True)
 
-    def disengage(self) -> None:
+    def disengage(self, release: bool = True) -> None:
+        """Let go. release=True: the run explores again at once. release=False:
+        she is left on the PLAIN hold (never on a drive order) for whoever
+        holds her next -- a question, a pause -- so there is no gap in which
+        the RL could set off for a tick."""
+        if not release and self.engaged:
+            self.action = None
+            self._write_hold(self.clock.monotonic(), force=True)
         self.engaged = False
         self.action = None
-        try:
-            self.run.release()
-        except Exception as exc:                        # noqa: BLE001
-            log.warning("could not release the run: %s", exc)
+        if release:
+            try:
+                self.run.release()
+            except Exception as exc:                    # noqa: BLE001
+                log.warning("could not release the run: %s", exc)
+
+    def hold_now(self, now: float) -> None:
+        """Write the hold (or the order) now, whatever the refresh clock says."""
+        self._write_hold(now, force=True)
 
     # ---- the ladder's engine interface ----------------------------------------------
     def available(self) -> bool:
@@ -157,7 +169,10 @@ class RunDrive:
             self._running = (ok, now)
         return ok and self._pose is not None
 
-    def attempt(self, goal_xy, waypoints=None) -> bool:
+    def attempt(self, goal_xy, waypoints=None, arrive=None) -> bool:
+        """One drive to goal_xy. `arrive` = (tolerance, hysteresis, dwell):
+        the way home's (0.35, 0.10, 2 s) unless given -- frontier-assist
+        arrives at assist_arrive_m with no dwell, a go-to at 0.35 with none."""
         if not self.engaged or self._pose is None:
             return False
         now = self.clock.monotonic()
@@ -165,7 +180,7 @@ class RunDrive:
         a = {"kind": "attempt", "id": f"a{next(_ids)}", "goal": goal, "t0": now,
              "path": None, "i": 0, "job": None, "t_plan": now,
              "best": None, "t_best": now, "t_driving_fix": now,
-             "arrival": rth_ladder.ArrivalCheck(*self.arrive),
+             "arrival": rth_ladder.ArrivalCheck(*(arrive or self.arrive)),
              "breadcrumbs": bool(waypoints)}
         self._start(a)
         if waypoints:

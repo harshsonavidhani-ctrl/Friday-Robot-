@@ -4342,6 +4342,14 @@ class ControlLoop:
         try:
             while not self._stop.is_set():
                 now = time.monotonic()
+                # FILE 21 U3: paused by a person for longer than anyone would
+                # mean -- the mission is gone or forgot her. She does not set
+                # off again on her own: the run ENDS, standing still.
+                if self.hold.paused_too_long():
+                    LOGGER.warning("Paused for over %.0f min with nobody saying "
+                                   "continue: ending the run where she stands.",
+                                   _way_back.PAUSE_MAX_S / 60.0)
+                    break
                 # FILE 21: time standing still for the mission (a question, a pause)
                 # does not use up the run's exploring time.
                 if self.hold.active():
@@ -4554,7 +4562,18 @@ class ControlLoop:
             recovery=self.recovery.snapshot() if self.recovery_enabled else None,
             objective=self._objective(), stats=self.stats) | (
                 {"way_back": self.way_back.snapshot()}
-                if self.way_back is not None else {})
+                if self.way_back is not None else {}) | self._objects_state()
+
+    def _objects_state(self) -> dict[str, Any]:
+        """FILE 21 U4 (spec 4.7 point 9): what the run's OWN detector sees, for
+        the mission's room-name suggestion -- read-only, and only while that
+        detector is running and has looked at a picture."""
+        det = self.detector
+        if det is None or not getattr(det, "enabled", False) or not det.frames:
+            return {}
+        return {"OBJECTS": [{"label": d.label, "score": round(float(d.score), 3)}
+                            for d in det.snapshot()],
+                "OBJECTS_FRAMES": int(det.frames)}
 
     def _publish_state(self) -> None:
         self._publish_state_dict(self.autonomy_state())
