@@ -769,6 +769,12 @@ check("'Friday stop' in HELP_WAIT: IDLE (the file's rule), and the mission's run
       w.mgr.state == "IDLE" and ("stop",) in w.sim.orders and not w.sim.paused()
       and w.mission()["status"] == "help_wait", w.mgr.state)
 
+w = World([])
+w.run(lambda x: x.mgr.state == "IDLE", max_s=20)
+check("the state is published from boot on -- RELOCALIZE -> IDLE assigns it "
+      "directly, and friday-brain must still see IDLE (found live 2026-10-04 00:07)",
+      w.sim.states_published[-1:] == ["IDLE"], str(w.sim.states_published))
+
 # A power cut leaves pause.json behind: cleared at boot -- unless a run is out.
 w = World([])
 w.sim.pause("voice")

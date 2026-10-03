@@ -493,6 +493,7 @@ class MissionManager:
         """U3: friday-brain reads this to know "Friday stop" means PAUSE."""
         try:
             self.a.run.publish_state(self.state, (self.mission or {}).get("id"))
+            self._published = self.state
         except Exception as exc:                        # noqa: BLE001
             log.warning("mission state not published: %s", exc)
 
@@ -588,6 +589,11 @@ class MissionManager:
         with self._lock:
             self._commands(now)
             getattr(self, "_st_" + self.state.lower())(now)
+            # U3: friday-brain's "is a mission's run out?" -- published on EVERY
+            # change of state, however it was made (several paths assign
+            # self.state directly: RELOCALIZE -> IDLE at boot never told it).
+            if self.state != getattr(self, "_published", None):
+                self._publish_state()
             if (self._t_not_idle is None or self.state != "IDLE"
                     or self.mission is not None):
                 self._t_not_idle = now          # curiosity's "idle for N min"
