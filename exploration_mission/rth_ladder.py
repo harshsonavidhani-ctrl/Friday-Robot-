@@ -98,6 +98,54 @@ def verify(sweeps: list[dict], start_signature, max_range_m: float = 8.0,
     return {"verified": bool(s.match), **s.as_dict()}
 
 
+def from_start(sweeps: list[dict], start_signature, max_range_m: float = 8.0
+               ) -> dict:
+    """Where she stands in the START's own frame, found from what she sees now
+    against what she saw standing there -- {"pose": (x, y, theta) | None, "why"}.
+
+    The start's view is the one reference that cannot drift: it was taken
+    before any error existed. The run's tracker can (2026-10-04 16:32: it said
+    0.11 m from the start and turned 44 deg; this search on the same view said
+    1.03 m and 98 deg, and the view did not match). The view's 360 bins become
+    walls round the origin and File 14's single-sweep search (global_localise)
+    places the current sweep among them -- every position, every heading, and
+    it refuses a look-alike. Measured on the real start view: within 12 cm,
+    heading exact. ~2.6 s on the Pi: a job, never the tick."""
+    if not sweeps or start_signature is None:
+        return {"pose": None, "why": "no sweep" if not sweeps else "no start view"}
+    import global_localise
+    from slam.grid import OccupancyGrid
+    ref = np.asarray([float("nan") if v is None else float(v)
+                      for v in start_signature], dtype=np.float32)
+    walls, here = _bin_points(ref), _bin_points(home_anchor.signature(sweeps, max_range_m))
+    if len(walls) < 30 or len(here) < 30:
+        return {"pose": None, "why": "too little to compare"}
+    grid = OccupancyGrid()
+    for _ in range(3):
+        grid.integrate(walls, (0.0, 0.0), occupied=walls)
+    fix = global_localise.localise_points(grid, here)
+    if fix.pose is None:
+        return {"pose": None, "why": fix.why}
+    return {"pose": tuple(float(v) for v in fix.pose), "why": fix.why}
+
+
+def _bin_points(bins) -> np.ndarray:
+    a = np.radians(np.arange(len(bins)))
+    ok = np.isfinite(bins) & (bins > 0.05)
+    return np.stack([bins[ok] * np.cos(a[ok]), bins[ok] * np.sin(a[ok])], axis=1)
+
+
+def start_seen_from(pose) -> tuple[float, float]:
+    """The start's (distance m, bearing rad) from her, given her pose in the
+    start's frame. Bearing is robot-relative, + = to her left."""
+    x, y, th = pose
+    return math.hypot(x, y), _wrap(math.atan2(-y, -x) - th)
+
+
+def _wrap(a: float) -> float:
+    return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+
 # --- rung 6: the relaxed goal ------------------------------------------------------
 
 def relaxed_goal(grid: gu.Grid, start_xy, robot_xy, inflate_m: float,

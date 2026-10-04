@@ -118,6 +118,11 @@ RUN_END_WAIT_S = 30.0
 # parked (it costs a core and heats the Pi) and "come back" uses File 14 alone.
 HELP_WAIT_KEEP_S = 600.0
 PARK_WAIT_S = 20.0               # arrival: the run giving the LiDAR back
+# Arrival, the view does not match: step onto the start by its own view this
+# many times before the look-again turn (Harsh 2026-10-04: "she stopped very
+# long away where she started" -- the tracker had said 0.11 m; it was 1.03 m).
+ARRIVAL_APPROACHES = 2
+APPROACH_WAIT_S = 120.0
 PARK_SETTLE_S = 4.0              # ...and its first sweeps after a run are partial
 # U2 (spec 4.2): a frontier counts as explored (the assist is done) when no
 # frontier is left within this of the one she was sent to -- clusters shift
@@ -2014,7 +2019,7 @@ class MissionManager:
                     log.warning("could not park the run: %s", exc)
                 stage = "park"
             self._arrive = {"stage": stage, "job": None, "spun": False, "t": now,
-                            "distance": self._ladder_distance()}
+                            "distance": self._ladder_distance(), "approaches": 0}
         elif out == "help_wait":
             self._help_wait(now, self._ladder_distance(), speak=False)
             self.say("help_wait")
@@ -2055,13 +2060,27 @@ class MissionManager:
             if sweep:
                 sweeps.append(sweep)
             self.a.clock.sleep(0.1)
-        return rth_ladder.verify(sweeps, (self.mission or {}).get("start_signature"),
-                                 sig.max_range_m, sig.match_mad_m, sig.min_overlap)
+        start = (self.mission or {}).get("start_signature")
+        out = rth_ladder.verify(sweeps, start, sig.max_range_m, sig.match_mad_m,
+                                sig.min_overlap)
+        # Where the start really is, by its own view (no map, no tracker): the
+        # evidence for the log, and the arrival's error when she is placed.
+        seen = rth_ladder.from_start(sweeps, start, sig.max_range_m)
+        if seen["pose"] is not None:
+            d, _ = rth_ladder.start_seen_from(seen["pose"])
+            out.update(from_start_m=round(d, 2),
+                       from_start=[round(v, 3) for v in seen["pose"]])
+        return out
 
     def _arrival_steps(self, now: float) -> None:
-        """Position says she is there. Look once; if the view does not match,
-        one spin + relocalise and look again; then arrive EITHER WAY -- the
-        second mismatch is `verified = false`, never a third try."""
+        """Position says she is there. Look; if the view does not match, step
+        onto the start BY ITS OWN VIEW and look again (up to
+        ARRIVAL_APPROACHES), then one spin + relocalise and a last look; then
+        arrive either way, `verified` saying which.
+
+        ⚠ CHANGES SPEC 4.12 ("a mismatch is verified = false, never a
+        failure"), on Harsh's word 2026-10-04: the tracker said 0.11 m and she
+        was 1.03 m out and turned 98 deg; arriving there is not arriving."""
         a = self._arrive
         if a["stage"] == "park":
             running = self.a.run.running()
@@ -2079,12 +2098,21 @@ class MissionManager:
                 return
             seen = a["job"].result if a["job"].error is None else {"verified": False}
             a["job"] = None
+            if seen.get("from_start_m") is not None:
+                a["distance"] = seen["from_start_m"]       # by the start's view
             if seen.get("verified") or a["spun"]:
                 self._event("arrival_check", **seen)
                 self._arrive = None
                 self._arrived(now, a["distance"], bool(seen.get("verified")))
                 return
             self._event("arrival_check", **dict(seen, retry=True))
+            approach = getattr(self.a.nav, "approach_start", None)
+            if (a["approaches"] < ARRIVAL_APPROACHES and self.a.nav.available()
+                    and approach is not None and approach()):
+                a["approaches"] += 1
+                self.say("arrival_adjust")
+                a["stage"], a["t"] = "approach", now
+                return
             a["spun"] = True
             if self.a.nav.available() and self.a.nav.spin_relocalise():
                 self.say("rung3")
@@ -2093,6 +2121,11 @@ class MissionManager:
             # settles at once as not verified.
         elif a["stage"] == "spin":
             if not self.a.nav.busy() or now - a["t"] > rth_ladder.MANEUVER_TIMEOUT_S:
+                a["stage"] = "look"
+        elif a["stage"] == "approach":
+            if not self.a.nav.busy() or now - a["t"] > APPROACH_WAIT_S:
+                self._event("arrival_approach", outcome=self.a.nav.outcome(),
+                            try_=a["approaches"])
                 a["stage"] = "look"
 
     # ---- ARRIVED_START -> SAVE_MISSION -> IDLE ---------------------------------------

@@ -467,9 +467,11 @@ changed = subprocess.run(
     capture_output=True, text=True,
     cwd=str(ROOT)).stdout.split()
 check("rl/ + slam/ + exploration: only way_back.py, pi_deploy.py, friday_voice.py (the hold mute), "
-      "unstick.py + friday_localnav_deploy.py (keep trying) differ",
+      "unstick.py + friday_localnav_deploy.py (keep trying), run_localnav.sh (the "
+      "logger that survives a stop) differ",
       set(changed) <= {"rl/way_back.py", "rl/pi_deploy.py", "rl/friday_voice.py",
-                       "rl/unstick.py", "rl/friday_localnav_deploy.py"}, str(changed))
+                       "rl/unstick.py", "rl/friday_localnav_deploy.py",
+                       "rl/run_localnav.sh"}, str(changed))
 diff = subprocess.run(["git", "diff", "-U0", "HEAD", "--", "rl/pi_deploy.py"],
                       capture_output=True, text=True, cwd=str(ROOT)).stdout
 removed = [ln for ln in diff.splitlines()

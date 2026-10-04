@@ -44,6 +44,7 @@ LINES: dict[str, tuple[str, str]] = {
     "time_cap":       ("That's enough exploring for now.", "neutral"),
     "returning":      ("Going back to where I started.", "neutral"),
     "rung3":          ("Checking where I am.", "thinking"),
+    "arrival_adjust": ("I'm not quite where I started. Moving onto the spot.", "determined"),
     "rung5":          ("Retracing my path.", "determined"),
     "rung6":          ("Getting as close as I can.", "determined"),
     "help":           ("I'm stuck about {d} meters from where I started. "

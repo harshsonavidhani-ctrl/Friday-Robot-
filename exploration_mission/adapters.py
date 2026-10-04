@@ -797,6 +797,10 @@ class NavAdapter:
     def spin_relocalise(self) -> bool:
         return False
 
+    def approach_start(self) -> bool:
+        """Step onto the start by its own view (arrival); False = cannot."""
+        return False
+
     def back_up(self, metres: float) -> bool:
         return False
 
@@ -1017,6 +1021,11 @@ class FakeNav:
         self._until = 0.0
         self._pending: str | None = None
         self.journey = ""                   # a File 14 journey the mission did not start
+        # Arrival's step onto the start by its view: None = this engine has none
+        # (the old flow); else each call's outcome, and `on_approach` (if set) is
+        # what the step does to the world -- e.g. the start's view comes back.
+        self.approach_outcome: str | None = None
+        self.on_approach = None
 
     def journey_running(self):
         return self.journey
@@ -1044,6 +1053,15 @@ class FakeNav:
     def spin_relocalise(self):
         self.calls.append(("spin",))
         self._start(self.maneuver_s, "SPUN")
+        return True
+
+    def approach_start(self):
+        if self.approach_outcome is None:
+            return False
+        self.calls.append(("approach",))
+        if self.on_approach is not None:
+            self.on_approach()
+        self._start(self.maneuver_s, self.approach_outcome)
         return True
 
     def back_up(self, metres):

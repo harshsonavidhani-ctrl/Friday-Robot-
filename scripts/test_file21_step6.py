@@ -668,9 +668,16 @@ if LOG.exists():
 if len(real) < 100:
     print(f"        (only {len(real)} transcripts in the log; skipped)")
 else:
+    # A DELIBERATE label command is not an accident, whatever whisper made of
+    # the name: 2026-10-04 his "save this as home" came out "Save this as full."
+    deliberate = re.compile(r"^\W*(?:friday\W+)?(?:save|call|name|label|mark)\s+"
+                            r"(?:this|it|here)\b", re.I)
+
     def claimed(state):
         out = collections.Counter()
         for t in real:
+            if state != "IDLE" and deliberate.match(t):
+                continue
             acts_, ro_ = router()
             if ro_.handle(t, ctx(state)):
                 out[acts_.calls[0][0] if acts_.calls else "?"] += 1

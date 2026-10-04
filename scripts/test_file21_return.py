@@ -422,6 +422,77 @@ check("the look-again rung may take up to 75 s (a full turn, a look per quarter)
       rl.MANEUVER_TIMEOUT_S >= 75.0)
 
 # =============================================================================
+print("--- arrival: onto the start by its own view (the engine's 'approach') ---")
+from exploration_mission import rth_ladder as _rl                # noqa: E402
+VIEWS: list = []
+_real_from_start = _rl.from_start
+_rl.from_start = lambda sweeps, sig, max_range=8.0: (
+    {"pose": VIEWS.pop(0), "why": "scripted"} if VIEWS and VIEWS[0] is not None
+    else (VIEWS.pop(0) if VIEWS else None, {"pose": None, "why": "nothing like it"})[1])
+MGR.mission = {"id": "m1", "start_signature": [1.0] * 360}
+
+
+def approach(views, robot=None):
+    VIEWS[:] = list(views)
+    ROBOTS.clear()
+    h = ne.EngineHost()
+    if robot is not None:
+        h.robot = robot
+    res = again(h, "approach")
+    r = robot if robot is not None else (ROBOTS[-1] if ROBOTS else None)
+    return h, res, ([] if r is None else r.moves)
+
+
+# Her pose in the START's frame, as the start's view would say after each move.
+h, res, moves = approach([(1.0, 0.1, 0.0),             # start behind: turn (capped)
+                          (1.0, 0.1, -2.1),            # nearly facing: turn the rest
+                          (1.0, 0.0, math.pi),         # facing it: step
+                          (0.65, 0.0, math.pi),        # step
+                          (0.30, 0.0, math.pi),        # a shorter last step
+                          (0.05, 0.0, math.pi)])       # on it: face the way she set off
+check("approach: turn toward the start, short steps with a look after each, then "
+      "turn to face the way she set off -> ARRIVED",
+      res.get("started") and h.outcome == "ARRIVED"
+      and [m[0] for m in moves] == ["right", "right", "forward", "forward", "forward",
+                                    "right"], f"{h.outcome} {h.why} {moves}")
+check("...the turn toward a start behind her is capped at 120 deg, a step at 0.35 m",
+      abs(moves[0][1] - 120.0 / 75.0) < 0.01
+      and abs(moves[2][1] - ne.APPROACH_STEP_M / 0.45) < 0.01, str(moves[:3]))
+check("...and File 14's tracker is dropped (she moved without it)",
+      h.mapper is None)
+
+
+class Refuses:
+    def __init__(self): self.moves = []
+    def arm(self): return 0
+    async def observe(self): pass
+    async def drive_seconds(self, direction, seconds):
+        self.moves.append((direction, seconds))
+        return "REFUSED -- something is 210 mm ahead"
+
+
+h, res, moves = approach([(0.8, 0.0, math.pi)], robot=Refuses())
+check("approach: a guarded step refused (something in the way) -> FAILED, no "
+      "second try at it", h.outcome == "FAILED" and "REFUSED" in h.why
+      and len(moves) == 1, f"{h.outcome} {h.why} {moves}")
+h, res, moves = approach([(0.5, 0.0, math.pi), (0.8, 0.0, math.pi),
+                          (1.1, 0.0, math.pi), (0.2, 0.0, math.pi)])
+check("approach: each step leaves her FURTHER from the start -> stops after the "
+      "second, never wanders", h.outcome == "FAILED" and "further" in h.why
+      and len(moves) == 2, f"{h.outcome} {h.why} {moves}")
+h, res, moves = approach([None])
+check("approach: the start's view finds nothing like it -> FAILED, no move",
+      h.outcome == "FAILED" and not moves, f"{h.outcome} {h.why}")
+MGR.mission = {"id": "m1"}
+h, res, moves = approach([(0.8, 0.0, math.pi)])
+check("approach: no start view saved -> REFUSED, no move",
+      h.outcome == "REFUSED" and not moves, f"{h.outcome} {h.why}")
+check("MissionNav.approach_start() asks the engine for 'approach'",
+      ne.MissionNav(call=lambda action, **a: {"started": action == "approach"})
+      .approach_start() is True)
+_rl.from_start = _real_from_start
+
+# =============================================================================
 print("--- environment_watch leaves a mission's run alone ---")
 import environment_watch                                 # noqa: E402
 service._manager = SimpleNamespace(mission={"id": "m"}, state="RETURN_TO_START")

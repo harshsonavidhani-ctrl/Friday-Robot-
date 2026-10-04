@@ -253,6 +253,13 @@ mkdir -p "$LOGDIR"
 RUNLOG="$LOGDIR/run-$(date +%Y%m%d-%H%M%S).log"
 echo "Log: $RUNLOG"
 
+# The logger IGNORES the stop signal: `systemctl stop` sends SIGINT to the whole
+# unit (KillSignal=SIGINT), tee died first, and python's first shutdown line hit a
+# broken pipe -- BrokenPipeError, so no map saved and no black box, on EVERY run
+# the mission stopped (2026-10-04: none since 10-02 23:22). tee still ends when
+# python closes its output, and a SIGKILL at the unit's timeout still reaches it.
+tee() { trap '' INT TERM; command tee "$@"; }
+
 rc=0
 "$PY" "$HERE/friday_localnav_deploy.py" \
     --motor-max-duty 0.85 \

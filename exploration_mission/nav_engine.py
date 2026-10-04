@@ -56,6 +56,17 @@ SETTLE_S = 4.0                   # the LiDAR's first sweeps after a run are part
 SPIN_DEG = 90.0
 REAR_SECTOR_DEG = 30.0           # +-30 deg behind her (spec 4.11 rung 4)
 
+# Stepping onto the start by its own view (arrival, after the view did not
+# match). Short guarded steps, each followed by a fresh look -- the rates are
+# uncalibrated, so no single move is trusted to land; the next look corrects it.
+APPROACH_TOL_M = 0.20            # the search's own bias is ~0.1 m
+APPROACH_AIM_DEG = 15.0          # turn first when the start is further off than this
+APPROACH_FACE_DEG = 20.0         # on the spot: face the way she set off, if off by more
+APPROACH_STEP_M = 0.35
+APPROACH_MAX_TURN_DEG = 120.0
+APPROACH_STEPS = 10
+APPROACH_WORSE_M = 0.15          # a step that leaves her this much further: twice = stop
+
 
 class _QuietVoice:
     """File 14's own lines, minus the ones the MISSION says in its own words
@@ -128,7 +139,7 @@ class EngineHost:
                 return {"started": False, "why": f"busy ({self.action})"}
             self.busy, self.outcome, self.why, self.action = True, None, "", action
         work = {"attempt": self._attempt, "back_up": self._back_up,
-                "spin": self._spin}.get(action)
+                "spin": self._spin, "approach": self._approach}.get(action)
         if work is None:
             with self._lock:
                 self.busy = False
@@ -296,6 +307,69 @@ class EngineHost:
                 return "DONE", "found on the map I built"
         return "FAILED", f"not found after a full turn ({str(said)[:80]})"
 
+    async def _approach(self):
+        """Onto the start by the START'S OWN VIEW, not by any map: look, turn
+        toward it, step, look again -- until within APPROACH_TOL_M, then face
+        the way she set off. 2026-10-04 16:32 the run's tracker had drifted and
+        "arrived" 1.03 m and 98 deg out; the map File 14 would drive on was
+        built from the same drifting poses. Every move a guarded move."""
+        import config
+        from exploration_mission import rth_ladder, service
+        mgr = service.get()
+        sig = None if mgr is None else (getattr(mgr, "mission", None) or {}).get(
+            "start_signature")
+        if sig is None:
+            return "REFUSED", "no start view to aim at"
+        why = await self._ready()
+        if why and "not sure" not in why:
+            return "REFUSED", why
+        self._arm()
+        with self._lock:                 # she moves without File 14 tracking her
+            self.mapper, self.og_id = None, None
+        deg_s = float(getattr(config, "AGENCY_TURN_DEG_PER_S", 75.0))
+        speed = float(getattr(config, "MISSION_BACKUP_SPEED_M_S", 0.45))
+        cfg = getattr(mgr, "cfg", None)
+        max_range = float(cfg.signature.max_range_m) if cfg is not None else 8.0
+        last_d, worse = None, 0
+        for _ in range(APPROACH_STEPS):
+            sweeps = await asyncio.to_thread(self._sweeps, mgr)
+            seen = await asyncio.to_thread(rth_ladder.from_start, sweeps, sig, max_range)
+            if seen["pose"] is None:
+                return "FAILED", f"cannot place myself by the start's view ({seen['why']})"
+            d, bearing = rth_ladder.start_seen_from(seen["pose"])
+            log.info("approach: the start is %.2f m away, %+.0f deg (seen from (%.2f, "
+                     "%.2f) %+.0f deg)", d, math.degrees(bearing), seen["pose"][0],
+                     seen["pose"][1], math.degrees(seen["pose"][2]))
+            if d <= APPROACH_TOL_M:
+                face = rth_ladder._wrap(-seen["pose"][2])
+                if abs(math.degrees(face)) > APPROACH_FACE_DEG:
+                    await self._move("left" if face > 0 else "right",
+                                     abs(math.degrees(face)) / deg_s)
+                return "ARRIVED", f"{d:.2f} m from the start"
+            if last_d is not None and d > last_d + APPROACH_WORSE_M:
+                worse += 1
+                if worse >= 2:
+                    return "FAILED", f"getting further from the start ({d:.2f} m)"
+            last_d = d
+            if abs(math.degrees(bearing)) > APPROACH_AIM_DEG:
+                turn = min(abs(math.degrees(bearing)), APPROACH_MAX_TURN_DEG)
+                said = await self._move("left" if bearing > 0 else "right", turn / deg_s)
+            else:
+                said = await self._move("forward", min(d, APPROACH_STEP_M) / speed)
+            if "REFUSED" in said.upper():
+                return "FAILED", said[:120]
+        return "FAILED", f"not on the start after {APPROACH_STEPS} steps"
+
+    @staticmethod
+    def _sweeps(mgr, n: int = 3) -> list:
+        out = []
+        for _ in range(n):
+            s = mgr.a.lidar.sweep()
+            if s:
+                out.append(s)
+            time.sleep(0.15)
+        return out
+
     async def _relocate(self, back_m: float = 0.0, turn_deg: float = 0.0) -> bool:
         """After a manoeuvre File 14's follower did not command: find her again
         on the same map near where it should have put her."""
@@ -390,6 +464,9 @@ class MissionNav:
 
     def spin_relocalise(self) -> bool:
         return bool(self._call("spin").get("started"))
+
+    def approach_start(self) -> bool:
+        return bool(self._call("approach").get("started"))
 
     def back_up(self, metres: float) -> bool:
         return bool(self._call("back_up", m=float(metres)).get("started"))

@@ -33,6 +33,7 @@ refused from the hostel spot, 2026-09-25).
 
 from __future__ import annotations
 
+import logging
 import math
 import sys
 import threading
@@ -41,6 +42,13 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+LOGGER = logging.getLogger("way_back")
+# Every this often the tracker says how far the run's dead reckoning and the
+# start's view disagree about where the start is (home_rl against start_rl).
+# 2026-10-04 the start's heading in the run frame slid 3.02 -> 1.29 rad over
+# one 2-minute run and nothing recorded WHEN; this line is that record.
+DRIFT_LOG_S = 5.0
 
 _FRIDAY_ROOT = Path(__file__).resolve().parent.parent
 if str(_FRIDAY_ROOT) not in sys.path:
@@ -220,6 +228,8 @@ class StartTracker(threading.Thread):
         self.last_reason = ""
         self.last_ms = 0.0
         self.error = ""
+        self._drift_t = 0.0
+        self._drift_n = (0, 0)              # (updates, matched) at the last line
 
     # -------------------------------------------------------------- feed ------
     def submit(self, scan_m: np.ndarray, rl_pose, blind=None) -> None:
@@ -303,6 +313,24 @@ class StartTracker(threading.Thread):
         with self._lock:
             self._fix_t = tuple(out["pose"])
             self._fix_rl = rl
+        now = time.monotonic()
+        if now - self._drift_t >= DRIFT_LOG_S:
+            self._log_drift(now)
+
+    def _log_drift(self, now: float) -> None:
+        home, s0 = self.home_rl(), self.start_rl
+        if home is None or s0 is None:
+            return
+        u0, m0 = self._drift_n
+        x, y, th = self._fix_t
+        LOGGER.info("tracker: start in the run frame moved %.2f m / %+.0f deg "
+                    "(dead reckoning vs the start's view); here (%.2f, %.2f) %+.0f deg; "
+                    "%d/%d matched since the last line; %s; fold %.0f ms",
+                    math.hypot(home[0] - s0[0], home[1] - s0[1]),
+                    math.degrees(_wrap(home[2] - s0[2])), x, y, math.degrees(th),
+                    self.matched - m0, self.updates - u0, self.last_reason,
+                    self.last_ms)
+        self._drift_t, self._drift_n = now, (self.updates, self.matched)
 
     # ------------------------------------------------------------- answers ----
     def home_rl(self) -> tuple[float, float, float] | None:

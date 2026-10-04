@@ -391,6 +391,87 @@ checks = [e for e in m["events"] if e["kind"] == "arrival_check"]
 check("...two looks logged, never a third", len(checks) == 2
       and checks[0].get("retry") and not checks[1].get("verified"), str(checks))
 
+# --- arrival by the START'S OWN VIEW (Harsh 2026-10-04: "she stopped very long
+# away where she started" -- the tracker said 0.11 m, the start's view 1.03 m) ---
+occ = mm.closed_room().grid.occupied()
+P0 = (2.0, 2.0, 0.3)          # the start, off-centre (the room is a symmetric box)
+
+
+def sweep_at(dx, dy, dth):
+    """Her sweep from (dx, dy, dth) in the START's frame."""
+    c, s = math.cos(P0[2]), math.sin(P0[2])
+    return synth.grid_ray_cast(occ, (0.0, 0.0), 0.05,
+                               (P0[0] + c * dx - s * dy, P0[1] + s * dx + c * dy,
+                                P0[2] + dth))
+
+
+start_sig = ha.signature([sweep_at(0, 0, 0)])
+for true in [(0.0, 0.0, 0.0), (-0.7, 0.7, math.radians(98)),
+             (0.6, -0.4, math.radians(-40))]:
+    got = rl.from_start([sweep_at(*true)], start_sig)["pose"]
+    check(f"from_start: her pose {tuple(round(v, 2) for v in true)} in the start's "
+          "frame, found by the start's view alone",
+          got is not None and math.hypot(got[0] - true[0], got[1] - true[1]) < 0.2
+          and abs(rl._wrap(got[2] - true[2])) < math.radians(6), str(got))
+c, s = math.cos(0.3), math.sin(0.3)
+mid = synth.grid_ray_cast(occ, (0.0, 0.0), 0.05, (3.0, 2.5, 0.3))
+off = synth.grid_ray_cast(occ, (0.0, 0.0), 0.05,
+                          (3.0 + c * -0.7 - s * 0.7, 2.5 + s * -0.7 + c * 0.7, 0.3 + 1.71))
+check("from_start: a start at the dead centre of a symmetric box -> two places "
+      "look the same, so NO pose (refused, never the mirror)",
+      rl.from_start([off], ha.signature([mid]))["pose"] is None)
+check("from_start: no start view -> no pose, never a guess",
+      rl.from_start([sweep_at(0, 0, 0)], None)["pose"] is None)
+d, b = rl.start_seen_from((0.0, 1.0, 0.0))
+check("start_seen_from: 1 m to the start's left, facing its way -> the start is "
+      "1 m away on her RIGHT (-90 deg)", abs(d - 1.0) < 1e-6
+      and abs(math.degrees(b) + 90.0) < 1e-6, f"{d} {math.degrees(b)}")
+d, b = rl.start_seen_from((-1.0, 0.0, 0.0))
+check("...1 m behind it, facing its way -> straight ahead", abs(b) < 1e-6)
+d, b = rl.start_seen_from((-1.0, 0.0, math.pi / 2))
+check("...behind it but turned left 90 deg -> on her right",
+      abs(math.degrees(b) + 90.0) < 1e-6, str(math.degrees(b)))
+
+w = world(["ARRIVED"])
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "RETURN_TO_START")
+real_sweep = w.a.lidar.sweep
+w.a.lidar.sweep = lambda: synth.grid_ray_cast(
+    mm.three_rooms().grid.occupied(), (0.0, 0.0), 0.05, (9.8, 3.0, 0.0))
+w.a.nav.approach_outcome = "ARRIVED"
+w.a.nav.on_approach = lambda: setattr(w.a.lidar, "sweep", real_sweep)
+end = w.run()
+m = w.mission()
+names = [c[0] for c in w.a.nav.calls]
+check("the view does not match: she steps onto the start BY ITS VIEW (no spin), "
+      "and the next look matches -> returned, verified",
+      end == "IDLE" and m["status"] == "returned"
+      and m["rungs_used"][-1] == {"rung": "arrival", "verified": True}
+      and names.count("approach") == 1 and "spin" not in names,
+      str(m["rungs_used"][-1:]) + str(names))
+check("...and says so, once", w.voice.said.count(
+      "I'm not quite where I started. Moving onto the spot.") == 1, str(w.voice.said[-4:]))
+check("...the step is logged", any(e["kind"] == "arrival_approach"
+                                   for e in m["events"]))
+
+w = world(["ARRIVED"])
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "RETURN_TO_START")
+w.a.lidar.sweep = lambda: synth.grid_ray_cast(
+    mm.three_rooms().grid.occupied(), (0.0, 0.0), 0.05, (9.8, 3.0, 0.0))
+w.a.nav.approach_outcome = "FAILED"
+end = w.run()
+m = w.mission()
+names = [c[0] for c in w.a.nav.calls]
+checks = [e for e in m["events"] if e["kind"] == "arrival_check"]
+check("the view never matches: TWO steps by the view, then the one look-again "
+      "spin, then arrived all the same, verified = false (four looks, no fifth)",
+      end == "IDLE" and m["status"] == "returned"
+      and m["rungs_used"][-1] == {"rung": "arrival", "verified": False}
+      and names.count("approach") == 2 and names.count("spin") == 1
+      and names.index("spin") > max(i for i, n in enumerate(names) if n == "approach")
+      and len(checks) == 4, str(names) + f" looks={len(checks)}")
+
 w = World(["kitchen"], world=ROOM, path=PATH)
 w.a.power = ad.FakePower(low=None)
 w.mgr.start()
