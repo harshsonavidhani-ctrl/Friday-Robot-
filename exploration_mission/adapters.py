@@ -457,7 +457,12 @@ class VoiceAdapter:
         t0 = time.monotonic()
         time.sleep(0.3)                     # the worker picks the line up
         while time.monotonic() - t0 < max_s:
-            pending = q is not None and q.qsize() > 0
+            # Still queued, or taken and being synthesized / played (busy): the
+            # line is not over. 2026-10-04 15:26: Piper was still synthesizing,
+            # the queue was empty and the mark still quiet -> the capture opened
+            # and took her own question as his answer, twice.
+            pending = ((q is not None and q.qsize() > 0)
+                       or bool(getattr(v, "busy", False)))
             try:
                 import tts                                  # noqa: PLC0415
                 speaking = tts.quiet_at() > time.time()

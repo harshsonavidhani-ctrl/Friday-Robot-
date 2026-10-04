@@ -137,6 +137,13 @@ class Voice:
         self._queue: "queue.Queue[str]" = queue.Queue()
         self._worker: threading.Thread | None = None
         self.said: list[str] = []            # everything actually said, in order
+        # True from the moment the worker takes a line until it has finished
+        # PLAYING (tts.speak blocks until then). The queue is already empty while
+        # Piper synthesizes -- seconds on a busy Pi -- and the speaking mark only
+        # turns on when playback starts, so neither can say "she is about to
+        # speak". File 21, 2026-10-04: the mission's answer capture opened in
+        # that gap and recorded her own question twice.
+        self.busy = False
 
     def say(self, key: str, dest: str = "", now: float | None = None) -> str:
         """Say the line for `key`. Returns the text, or "" if throttled."""
@@ -195,7 +202,12 @@ class Voice:
 
     def _run(self) -> None:
         while True:
-            self._say_now(self._queue.get())
+            text = self._queue.get()
+            self.busy = True
+            try:
+                self._say_now(text)
+            finally:
+                self.busy = False
 
 
 class _Silent(Voice):

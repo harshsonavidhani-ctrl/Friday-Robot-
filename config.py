@@ -2643,6 +2643,10 @@ ODOMETRY_ERROR_PERCENT = 20  # measured; re-measure after changing surface,
 # unknown rather than inventing a percentage. If a gauge is added, put its
 # device here and get_status() will start reporting it.
 BATTERY_SENSOR = None
+# One voice at a time across processes (tts._voice_turn, 2026-10-04: Harsh heard
+# two lines at once -- the mission and the RL run talking over each other).
+SPEAK_TURN_FILE = ROOT / "state" / "speaking.lock"
+SPEAK_TURN_WAIT_S = 30.0         # then she speaks anyway: a lost turn, not a lost line
 CPU_TEMP_PATH = "/sys/class/thermal/thermal_zone0/temp"
 CPU_TEMP_WARN_C = 75.0
 

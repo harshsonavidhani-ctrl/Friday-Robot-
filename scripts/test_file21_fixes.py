@@ -419,5 +419,60 @@ check("time cap while reflex-stopped -> she still asks about the room",
       ASK in w9.voice.said and any(a["name"] == "kitchen" for a in w9.areas()),
       str(w9.voice.said[-5:]))
 
+# =============================================================================
+print("--- 10. the answer capture waits until her question has really been played ---")
+import nav_voice as _nv                                   # noqa: E402
+import threading as _th                                   # noqa: E402
+played = []
+slow = _nv.Voice(speak=lambda text: (_time.sleep(1.2), played.append(text)))
+va = ad.VoiceAdapter()
+va._voice = slow
+slow.say_text("I've finished exploring this area. What should I call it?")
+t0 = _time.monotonic()
+va.wait_until_quiet(max_s=5.0)
+waited = _time.monotonic() - t0
+check("while Piper still synthesizes (queue already empty, no speaking mark yet) "
+      "she is NOT quiet: the capture waits for the line to finish",
+      played and waited >= 1.1, f"waited {waited:.2f} s, played {played}")
+check("...and the voice says when it is busy", slow.busy is False)
+
+print("--- 11. one voice at a time across processes ---")
+import tts as _tts                                        # noqa: E402
+import tempfile as _tempfile                              # noqa: E402
+lock = Path(_tempfile.mkdtemp(prefix="friday-turn-")) / "speaking.lock"
+holder = subprocess.Popen([sys.executable, "-c",
+    "import sys, time; sys.path.insert(0, %r); import tts\n"
+    "with tts._voice_turn(path=%r, max_wait_s=1):\n"
+    "    print('held', flush=True); time.sleep(1.5)" % (str(ROOT), str(lock))],
+    stdout=subprocess.PIPE, text=True)
+assert holder.stdout.readline().strip() == "held"
+t0 = _time.monotonic()
+with _tts._voice_turn(path=lock, max_wait_s=10):
+    got = _time.monotonic() - t0
+holder.wait(5)
+check("another process is speaking: this one waits its turn (no two lines at once)",
+      0.8 <= got <= 3.0, f"waited {got:.2f} s")
+holder = subprocess.Popen([sys.executable, "-c",
+    "import sys, time; sys.path.insert(0, %r); import tts\n"
+    "with tts._voice_turn(path=%r, max_wait_s=1):\n"
+    "    print('held', flush=True); time.sleep(5)" % (str(ROOT), str(lock))],
+    stdout=subprocess.PIPE, text=True)
+assert holder.stdout.readline().strip() == "held"
+t0 = _time.monotonic()
+with _tts._voice_turn(path=lock, max_wait_s=0.5):
+    got = _time.monotonic() - t0
+check("...but a turn held too long never silences her: she speaks after the wait",
+      0.4 <= got <= 1.5, f"{got:.2f} s")
+holder.kill()
+holder.wait(5)
+t0 = _time.monotonic()
+with _tts._voice_turn(path=lock, max_wait_s=5):
+    got = _time.monotonic() - t0
+check("...and a process that dies holding it frees it at once (the kernel drops it)",
+      got < 0.3, f"{got:.2f} s")
+check("tts.speak takes the turn before it marks her speaking",
+      "with _speak_lock, _voice_turn(), _audible(), _mouth_moving() as mouth:"
+      in (ROOT / "tts.py").read_text())
+
 print(f"\n{sum(_results)}/{len(_results)} passed")
 sys.exit(0 if all(_results) else 1)

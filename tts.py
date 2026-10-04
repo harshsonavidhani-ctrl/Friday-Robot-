@@ -353,6 +353,50 @@ def _audible():
         _mark("quiet", until=time.time() + config.AUDIO_DRAIN_S)
 
 
+@contextlib.contextmanager
+def _voice_turn(path: Path | None = None, max_wait_s: float | None = None):
+    """ONE VOICE AT A TIME, ACROSS PROCESSES.
+
+    _speak_lock only serialises one process. Friday talks from several -- the
+    mission and File 14 inside friday-mcp, the RL run's own narrator, friday-brain
+    -- and Harsh heard two lines at once (2026-10-04 15:26:31: the run's
+    "Exploration completed. Returning to where I started." over the mission's
+    "I've finished exploring this area. What should I call it?"). An flock on one
+    file makes them take turns. The kernel drops the lock when a process dies, so
+    a crash cannot silence her; and after max_wait_s she speaks anyway -- a lost
+    turn is better than a lost warning.
+    """
+    import fcntl
+    target = Path(path) if path is not None else Path(config.SPEAK_TURN_FILE)
+    wait = config.SPEAK_TURN_WAIT_S if max_wait_s is None else float(max_wait_s)
+    fd = None
+    try:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(target), os.O_CREAT | os.O_RDWR, 0o644)
+            deadline = time.monotonic() + wait
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        log.warning("another voice held the turn for %.0f s; "
+                                    "speaking anyway", wait)
+                        break
+                    time.sleep(0.05)
+        except OSError as exc:
+            log.warning("voice turn unavailable (%s); speaking anyway", exc)
+        yield
+    finally:
+        if fd is not None:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
+
+
 def quiet_at() -> float:
     """When her own voice will have left the room (wall clock), or 0.0.
 
@@ -632,7 +676,7 @@ def speak(text: str) -> str:
         return f"[debug silence — not spoken] {text}"
 
     chunks = sentences(text)
-    with _speak_lock, _audible(), _mouth_moving() as mouth:
+    with _speak_lock, _voice_turn(), _audible(), _mouth_moving() as mouth:
         voice()                         # raises TTSError if unavailable
         rendered: queue.Queue = queue.Queue(maxsize=2)
 
