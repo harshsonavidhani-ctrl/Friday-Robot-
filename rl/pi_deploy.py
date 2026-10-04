@@ -3821,6 +3821,10 @@ class ControlLoop:
                 self.map.pose, c.omega_max, self.motors.min_speed_mps(), c.v_min)
             gate = "mission_drive"
             rec.add("mission_drive", v_pol, omega_pol, why)
+            # ...and the local navigator below dodges TOWARD the path, not toward
+            # the exploring's old frontier (they fought: 2026-10-04 robot test).
+            if self.mission_drive.last_err is not None:
+                target_bearing = self.mission_drive.last_err
             self.stats["mission_drive_ticks"] = self.stats.get("mission_drive_ticks", 0) + 1
 
         lap("planner-bias")

@@ -147,6 +147,26 @@ check("back: straight back at the run's reverse speed",
 check("no start fix yet: stands still",
       md.command(order, None, (0, 0, 0), 1.6, 0.1, -0.15)[:2] == (0.0, 0.0))
 
+# 2026-10-04 robot test: with the next point straight behind her the bearing
+# wrapped between +180 and -180 deg, and the turn in place flipped each tick.
+md = wb.MissionDrive()
+behind = {"id": "p3", "kind": "path", "path": [(-1.0, 0.0)], "tol": 0.3}
+oms = []
+for k in range(8):
+    th = (0.02 if k % 2 else -0.02)             # wobbling either side of 0
+    oms.append(md.command(behind, tr, (2.0, 0.0, th), 1.6, 0.1, -0.15)[1])
+check("point straight behind: one turn direction, held (no flip-flop)",
+      len({math.copysign(1, o) for o in oms}) == 1 and all(abs(o) > 0.5 for o in oms),
+      str([round(o, 2) for o in oms]))
+md.command(behind, tr, (2.0, 0.0, math.pi), 1.6, 0.1, -0.15)
+check("...facing the point: the held direction is let go",
+      md.turn_sign == 0 and abs(md.last_err) < 0.1, f"{md.turn_sign} {md.last_err}")
+md.command(order, tr, (0.0, 0.0, 0.0), 1.6, 0.1, -0.15)
+check("a path order publishes the bearing to its point (for the dodger)",
+      md.last_err is not None and abs(md.last_err) < 0.05, str(md.last_err))
+md.command({"id": "t2", "kind": "turn", "dir": 1.0}, tr, (0, 0, 0), 1.6, 0.1, -0.15)
+check("...a turn order publishes none", md.last_err is None)
+
 # ---- the real ControlLoop ------------------------------------------------------
 from pi_deploy import (ControlLoop, HERE, NullMotorDriver, PolicyRunner,  # noqa: E402
                        RobotConfig, SensorSlot)
@@ -206,6 +226,25 @@ check("a path order: the tick runs in full and she drives at it",
       len(recs) == len(rows) and max(r["v"] for r in rows) > 0.05
       and loop.stats.get("mission_drive_ticks", 0) >= len(rows),
       str([(r["gate"], round(r["v"], 2)) for r in rows[-3:]]))
+
+# The local navigator dodges TOWARD the path point, not toward the exploring's
+# frontier: the two fought every tick on the 2026-10-04 way home.
+loop6, slots6 = new_loop()
+seen = []
+_decide = loop6.navigator.decide
+
+
+def spy(*a, **k):
+    seen.append((k.get("desired_bearing"), loop6.mission_drive.last_err))
+    return _decide(*a, **k)
+
+
+loop6.navigator.decide = spy
+drive_ticks(loop6, slots6, {"id": "d6", "kind": "path", "path": [[1.0, 0.5]],
+                            "tol": 0.3}, open_scan, n=8)
+check("driving a path: the navigator's desired bearing IS the path point's",
+      seen and all(d is not None and d == e for d, e in seen)
+      and abs(seen[0][0] - math.atan2(0.5, 1.0)) < 0.15, str(seen[:3]))
 check("...the command is labelled the mission's in the decision record",
       any("mission" in str(s) for s in getattr(loop.last_record, "stages", [])
           or [str(loop.last_record.__dict__)]))

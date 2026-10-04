@@ -547,13 +547,24 @@ class MissionDrive:
         self.id: str | None = None
         self.i = 0                      # the path point she is heading for
         self.ticks = 0
+        # The bearing error to the point she is heading for (rad), or None: the
+        # run's local navigator steers by it while an order is driven (pi_deploy
+        # tick 1c -> 1d), so it dodges obstacles TOWARD the path instead of
+        # toward the exploring's old frontier. 2026-10-04 robot test: the two
+        # fought tick by tick and the way home stalled three times.
+        self.last_err: float | None = None
+        # Once a turn in place toward the point begins, it keeps its direction
+        # until she faces the point: with the point straight behind her the
+        # bearing wraps between +180 and -180 deg and the turn flipped every tick.
+        self.turn_sign = 0
 
     def command(self, order: dict, tracker: "StartTracker | None", rl_pose,
                 omega_max: float, v_floor: float, v_back: float
                 ) -> tuple[float, float, str]:
         if order.get("id") != self.id:
-            self.id, self.i = order.get("id"), 0
+            self.id, self.i, self.turn_sign = order.get("id"), 0, 0
         self.ticks += 1
+        self.last_err = None
         kind = order["kind"]
         if kind == "turn":
             return (0.0, order["dir"] * omega_max, "mission: turning to look round")
@@ -575,6 +586,13 @@ class MissionDrive:
         if self.i == last and d <= DRIVE_FINAL_TOL_M:
             return (0.0, 0.0, f"mission path: at its end, {d:.2f} m")
         err = _wrap(math.atan2(gy - y, gx - x) - th)
+        if abs(err) > math.radians(HOME_PIVOT_DEG):
+            if self.turn_sign == 0:
+                self.turn_sign = 1 if err > 0 else -1
+            err = math.copysign(abs(err), self.turn_sign)   # same way round
+        else:
+            self.turn_sign = 0
+        self.last_err = err
         cmd = homing_command(err, d if self.i == last else None, omega_max, v_floor)
         v, omega, why = cmd
         why = why.replace("way back", f"mission path {self.i + 1}/{last + 1}")
