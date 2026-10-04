@@ -1,0 +1,19 @@
+16:22:30 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+16:22:30 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+16:22:30 INFO    friday.localnav: LiDAR chassis self-mask: 71-79, 88-99, 221-237, 319-334 (raw bearings, pre-offset); mounting offset -51.8 deg
+16:22:30 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+16:22:30 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+16:22:30 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+16:22:30 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+16:22:30 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+16:22:30 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+16:22:32 INFO    pi_deploy: Motors: FRIDAY-MOTORS 1 on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+16:22:32 INFO    pi_deploy: Firmware watchdog armed at 500 ms (control period 100 ms)
+16:22:32 WARNING pi_deploy: Stiction floor 80 => slowest achievable wheel speed ~0.15 m/s (policy range is -0.15..0.50 m/s).
+16:22:32 WARNING pi_deploy: MOTORS ARE LIVE (max_duty=0.85). Wheels can turn.
+16:22:32 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+16:22:32 INFO    pi_deploy: Exploration map ignores 14 blind beam(s) (chassis): [np.int32(3), np.int32(4), np.int32(5), np.int32(7), np.int32(8), np.int32(9), np.int32(33), np.int32(34), np.int32(35), np.int32(36), np.int32(53), np.int32(54), np.int32(55), np.int32(56)]
+16:22:32 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+16:22:32 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port, --motor, --motor-start-debounce, --motor-steady-pivots. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+16:22:32 INFO    pi_deploy: Reflex thread running at 30 Hz
+16:22:32 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
