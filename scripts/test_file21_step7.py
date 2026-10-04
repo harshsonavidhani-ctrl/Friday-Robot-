@@ -347,6 +347,28 @@ check("the run is stopped from the dashboard: the mission ends as aborted, "
       "with no drive back", w.mgr.state == "IDLE" and w.mission()["status"] == "aborted"
       and not w.orders("return"), str(w.states))
 
+# 2026-10-04 16:23: stopped while the run was still booting (20-30 s on the
+# robot) -- the mission waited out RUN_START_TIMEOUT_S and said FAILSAFE.
+w = World(["hall"])
+w.sim.publishing = False                                # still loading
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "MISSION_INIT" and x.t > 3, max_s=20)
+t_stop = w.t
+w.sim.is_running = False                                # the dashboard's Stop
+w.run(lambda x: x.mgr.state == "IDLE", max_s=30)
+check("stopped while the run is still starting: aborted within seconds, no "
+      "FAILSAFE, no drive back",
+      w.mgr.state == "IDLE" and w.mission()["status"] == "aborted"
+      and "FAILSAFE" not in w.states and not w.orders("return")
+      and w.t - t_stop < 15, f"{w.mgr.state} {w.mission()['status']} "
+      f"{w.t - t_stop:.0f} s {w.states[-4:]}")
+w = World(["hall"])
+w.sim.publishing = False
+w.mgr.start()
+w.run(lambda x: x.mgr.state != "MISSION_INIT" and x.t > 3, max_s=60)
+check("...a run that is out but slow to publish is waited for, not ended",
+      w.mgr.state == "MISSION_INIT", w.mgr.state)
+
 w = World([], sweeps=False)
 w.mgr.start()
 w.run(max_s=5)

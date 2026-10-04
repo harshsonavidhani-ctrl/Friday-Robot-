@@ -25,6 +25,7 @@ add seconds to every single thing Harsh says.
 from __future__ import annotations
 
 import collections
+import json
 import logging
 import os
 import re
@@ -195,6 +196,24 @@ class Microphone:
 
 # --- endpointing ---------------------------------------------------------
 
+# A capture ends when her own voice starts in the room after it began: the
+# speaking mark tts.speak() writes in EVERY process (config.SPEAKING_FILE).
+# The wake beep is pw-play and never writes it. Checked every 5 frames (150 ms).
+OWN_VOICE_CHECK_FRAMES = 5
+OWN_VOICE_GRACE_S = 0.3
+
+
+def _her_voice_began_after(t: float) -> bool:
+    """Did a tts.speak() anywhere start speaking after wall-clock `t`?"""
+    try:
+        mark = json.loads(config.SPEAKING_FILE.read_text())
+        at = float(mark.get("at", 0.0))
+        return (mark.get("state") == "speaking" and at > t
+                and time.time() - at <= config.SPEAKING_MARK_STALE_S)
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
 def endpoint(frames, max_seconds: float | None = None,
              start_timeout: float | None = None,
              preroll_frames: list[bytes] | None = None,
@@ -326,10 +345,22 @@ def endpoint(frames, max_seconds: float | None = None,
     quiet_run = 0
     voiced_run = 0
     began = time.monotonic()
+    began_wall = time.time()
 
     for frame in frames:
         speech = _is_speech(frame, sustaining=started)
         seen += 1
+        if seen % OWN_VOICE_CHECK_FRAMES == 0 and _her_voice_began_after(
+                began_wall + OWN_VOICE_GRACE_S):
+            # HER OWN VOICE, from another process, started after he did: what
+            # comes next is her, not him. 2026-10-04 16:22: his second "explore
+            # for 2 minutes" ran on into the mission's "Starting exploration,
+            # I've marked this spot..." and whisper got both as one command.
+            if started:
+                log.info("her own voice started in the room: the capture ends "
+                         "with what he said before it")
+                break
+            raise Silence("her own voice started before he spoke")
         if seen <= deadtime_frames:
             # Still inside the wake word. Keep it out of the pre-roll too, or
             # it is prepended the moment real speech does start.

@@ -336,6 +336,18 @@ check("...released: she talks again", _va.say("coverage", "I have now mapped 12.
 _va.muted = lambda: 1 / 0
 check("...a broken mute never silences her", _va.say("boot", "Starting.") is True)
 _va.close() if hasattr(_va, "close") else None
+# 2026-10-04 16:31:37-16:32:04: lines QUEUED while she explored were still said
+# ~30 s into the question -- the mute was only checked as a line was queued.
+_vb = _fv.VoiceAnnouncer(enabled=True, backend="log", min_gap_s=0.5)
+_held_b = [False]
+_vb.muted = lambda: _held_b[0]
+_ok = [_vb.say(k, f"line {k}.") for k in ("obstacle_ahead", "new_frontier", "coverage")]
+_held_b[0] = True                               # the mission starts asking
+_time.sleep(2.0)
+check("lines queued BEFORE the hold are dropped as they come up, not said over "
+      "his answer", all(_ok) and _vb.spoken <= 1 and _vb.dropped_muted >= 2,
+      f"spoken {_vb.spoken}, dropped {_vb.dropped_muted}")
+_vb.close() if hasattr(_vb, "close") else None
 pd_src = (ROOT / "rl" / "pi_deploy.py").read_text()
 check("the run wires its voice's mute to the mission hold",
       "self.voice.muted = self.hold.active" in pd_src)
@@ -470,9 +482,85 @@ with _tts._voice_turn(path=lock, max_wait_s=5):
     got = _time.monotonic() - t0
 check("...and a process that dies holding it frees it at once (the kernel drops it)",
       got < 0.3, f"{got:.2f} s")
+_src = (ROOT / "tts.py").read_text()
 check("tts.speak takes the turn before it marks her speaking",
-      "with _speak_lock, _voice_turn(), _audible(), _mouth_moving() as mouth:"
-      in (ROOT / "tts.py").read_text())
+      "with _speak_lock, _voice_turn(), _FromFirstSound() as heard," in _src)
+check("...and marks her speaking at her FIRST SOUND (heard.start() before play), "
+      "not while the voice loads and synthesises",
+      "heard.start()\n                mouth.start()\n                play(item)" in _src)
+_c2.SPEAKING_FILE.write_text(json.dumps({"state": "quiet", "at": _time.time() - 60}))
+with _tts._FromFirstSound() as _h:
+    _unmarked = json.loads(_c2.SPEAKING_FILE.read_text())["state"]
+    _t0 = _time.monotonic()
+    _h.start()
+    _lead = _time.monotonic() - _t0
+    _marked = json.loads(_c2.SPEAKING_FILE.read_text())["state"]
+    _h.start()
+_after = json.loads(_c2.SPEAKING_FILE.read_text())
+check("_FromFirstSound: no mark until the first sound; marked then, early enough "
+      "for the detector's poll; quiet + drain after",
+      _unmarked == "quiet" and _marked == "speaking" and _after["state"] == "quiet"
+      and _after["until"] > _time.time() - 1
+      and _lead >= _c2.WAKE_SPEECH_POLL_S - _c2.AUDIO_START_LAG_S, f"{_lead:.2f} s")
+_c2.SPEAKING_FILE.write_text(json.dumps({"state": "quiet", "at": _time.time() - 60}))
+with _tts._FromFirstSound():
+    pass
+check("...a speak() that never played (synthesis failed) marks nothing",
+      json.loads(_c2.SPEAKING_FILE.read_text())["at"] < _time.time() - 30)
+
+# =============================================================================
+print("--- 12. a capture ends where her own voice starts (2026-10-04 16:22) ---")
+import wave as _wave                                      # noqa: E402
+import importlib.util as _ilu                             # noqa: E402
+# The REAL stt.py: an earlier section left a stand-in under the name "stt".
+_spec = _ilu.spec_from_file_location("stt_real_fix12", ROOT / "stt.py")
+_stt = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_stt)
+_clips = sorted((ROOT / "state" / "wake_fires").glob("fire-*.wav"))
+if not _clips:
+    print("        (no saved voice clips; skipped)")
+else:
+    with _wave.open(str(max(_clips, key=lambda c: c.stat().st_size))) as _w:
+        _pcm = _w.readframes(_w.getnframes())
+    _fb = 16000 * 2 * _stt.FRAME_MS // 1000
+    _voice = [_pcm[i:i + _fb] for i in range(0, len(_pcm) - _fb + 1, _fb)]
+    _silence = [b"\0" * _fb] * 40
+
+    def _feed(frames, mark_at=None, mark=None):
+        for i, f in enumerate(frames):
+            if i == mark_at:
+                _time.sleep(_stt.OWN_VOICE_GRACE_S + 0.1)
+                _c2.SPEAKING_FILE.write_text(json.dumps(
+                    {"state": "speaking", "at": _time.time()}))
+            yield f
+
+    _c2.SPEAKING_FILE.write_text(json.dumps({"state": "quiet", "at": _time.time() - 60}))
+    _whole = _stt.endpoint(_feed(_voice * 3 + _silence), max_seconds=30)
+    _c2.SPEAKING_FILE.write_text(json.dumps({"state": "quiet", "at": _time.time() - 60}))
+    _cut_at = len(_voice) + 10                  # well into his second "sentence"
+    _cut = _stt.endpoint(_feed(_voice * 3 + _silence, mark_at=_cut_at), max_seconds=30)
+    # (The capture counts from where his speech STARTS -- frame ~74 in this
+    # clip -- so a mark at frame 108 leaves ~40 frames of him.)
+    check("her voice starts mid-capture (another process): the capture ends there, "
+          "keeping what he said before it",
+          20 * _fb <= len(_cut) < len(_whole) - 10 * _fb,
+          f"cut {len(_cut) // _fb} frames, whole {len(_whole) // _fb}, mark at {_cut_at}")
+    _c2.SPEAKING_FILE.write_text(json.dumps({"state": "speaking",
+                                             "at": _time.time() - 1.0}))
+    _old = _stt.endpoint(_feed(_voice * 3 + _silence), max_seconds=30)
+    check("...a voice already playing when the capture opened does not cut it "
+          "(only one that STARTS after)", len(_old) == len(_whole),
+          f"{len(_old) // _fb} vs {len(_whole) // _fb}")
+    _c2.SPEAKING_FILE.write_text(json.dumps({"state": "quiet", "at": _time.time() - 60}))
+    try:
+        _stt.endpoint(_feed(_silence * 3 + _voice, mark_at=20), max_seconds=30,
+                      start_timeout=20)
+        _sil = False
+    except _stt.Silence:
+        _sil = True
+    check("...her voice before he has said anything: nothing captured (Silence)", _sil)
+    check("the wake beep is pw-play, never tts.speak (it cannot cut a capture)",
+          "_mark(" not in (ROOT / "wake_word.py").read_text())
 
 print(f"\n{sum(_results)}/{len(_results)} passed")
 sys.exit(0 if all(_results) else 1)

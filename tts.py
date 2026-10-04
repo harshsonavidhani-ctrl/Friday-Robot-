@@ -353,6 +353,43 @@ def _audible():
         _mark("quiet", until=time.time() + config.AUDIO_DRAIN_S)
 
 
+class _FromFirstSound:
+    """The "she is talking" mark from her FIRST SOUND, not from the top of
+    speak() -- the same rule as the mouth (mouth.start() before play()).
+
+    Everything before the first play() is loading the voice and synthesis:
+    6 s measured on this Pi, and no sound in the room. Marked from the top,
+    every line kept the wake word deaf for synthesis AND playback: on
+    2026-10-04 16:29-16:31 the run narrated every 7-10 s and the wake word was
+    deaf ~9 s of every ~9.5 s (scored 4-26 of 375 chunks per 30 s), so
+    "Friday, stop" could not be heard while she explored.
+
+    The first start() waits until the detector, which polls the mark every
+    WAKE_SPEECH_POLL_S, has surely seen it before any sound arrives (the sound
+    itself lags play() by AUDIO_START_LAG_S). Nothing played, nothing marked."""
+
+    def __init__(self) -> None:
+        self.on = False
+
+    def start(self) -> None:
+        if self.on:
+            return
+        self.on = True
+        _mark("speaking")
+        lead = (float(config.WAKE_SPEECH_POLL_S) + 0.05
+                - float(config.AUDIO_START_LAG_S))
+        if lead > 0.0:
+            time.sleep(lead)
+
+    def __enter__(self) -> "_FromFirstSound":
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        if self.on:
+            _mark("quiet", until=time.time() + config.AUDIO_DRAIN_S)
+        return False
+
+
 @contextlib.contextmanager
 def _voice_turn(path: Path | None = None, max_wait_s: float | None = None):
     """ONE VOICE AT A TIME, ACROSS PROCESSES.
@@ -676,7 +713,8 @@ def speak(text: str) -> str:
         return f"[debug silence — not spoken] {text}"
 
     chunks = sentences(text)
-    with _speak_lock, _voice_turn(), _audible(), _mouth_moving() as mouth:
+    with _speak_lock, _voice_turn(), _FromFirstSound() as heard, \
+            _mouth_moving() as mouth:
         voice()                         # raises TTSError if unavailable
         rendered: queue.Queue = queue.Queue(maxsize=2)
 
@@ -725,6 +763,7 @@ def speak(text: str) -> str:
                 # Pi measured 6.088 s before the first sample reached the device.
                 # Idempotent, so only the first sentence pays for it and the
                 # face is not rewritten between sentences.
+                heard.start()
                 mouth.start()
                 play(item)
                 spoken += 1

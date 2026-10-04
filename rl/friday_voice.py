@@ -277,6 +277,17 @@ class VoiceAnnouncer:
                     time.sleep(min(0.05, end - time.monotonic()))
             if self._stop.is_set():
                 break
+            # ...and AGAIN as it is spoken, not only as it was queued: lines
+            # queued while she explored were still being said up to ~36 s into
+            # the mission's question (4 queued x ~9 s each), and one landed in
+            # Harsh's answer ("I will investigate it" -> "the one investigating").
+            # 2026-10-04 16:31:37-16:32:04.
+            try:
+                if self.muted is not None and self.muted():
+                    self.dropped_muted += 1
+                    continue
+            except Exception:                               # noqa: BLE001
+                pass                # a broken predicate must never silence her
 
             LOGGER.info("SAY [%s] %s", item.key, item.text)
             try:

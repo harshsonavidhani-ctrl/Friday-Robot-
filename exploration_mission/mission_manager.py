@@ -96,6 +96,12 @@ log = logging.getLogger("friday.exploration_mission")
 
 MOVING_STATES = frozenset({"EXPLORE", "RETURN_TO_START", "TARGET_NAV"})
 RUN_START_TIMEOUT_S = 120.0      # the run loads a detector before its first tick
+# ...but a run that ENDED before it ever published was stopped (or failed to
+# start): asked every RUN_CHECK_S once the unit has had RUN_BOOT_GRACE_S to come
+# up. 2026-10-04 16:23 Harsh stopped a run 34 s into its 20-30 s boot and the
+# mission waited out the 120 s and said FAILSAFE.
+RUN_BOOT_GRACE_S = 5.0
+RUN_CHECK_S = 2.0
 LOST_AFTER_S = 10.0              # no published fix for this long, run still out
 STOP_CONFIRM_S = 3.0             # how long to wait for "motors are zero"
 RETURN_REASK_S = 10.0
@@ -340,6 +346,7 @@ class MissionManager:
         self._stage = ""
         self._after_ask = "EXPLORE"
         self._t_state = 0.0
+        self._t_run_check = 0.0
         self._t_explore = None
         self._t_question = None
         self._t_last_fix = 0.0
@@ -1295,7 +1302,21 @@ class MissionManager:
             self._t_last_fix = now
             self._stag = (now, 0.0)
             self._to("EXPLORE", now)
-        elif now - self._t_state > RUN_START_TIMEOUT_S:
+            return
+        if (now - self._t_state > RUN_BOOT_GRACE_S
+                and now - self._t_run_check >= RUN_CHECK_S):
+            self._t_run_check = now
+            if not self.a.run.running():
+                # A person's stop (the dashboard, "Friday, stop") before she set
+                # off: no drive back, nothing to wait for -- as _run_gone does.
+                log.info("the run ended before it set off: the mission ends here")
+                self._event("run_ended_before_start")
+                self.stop_reason = self.stop_reason or "voice_stop"
+                self._release()
+                self._finish_mission(now, "aborted")
+                self._close(now)
+                return
+        if now - self._t_state > RUN_START_TIMEOUT_S:
             self._failsafe(now, "the run never published")
 
     # ---- EXPLORE ------------------------------------------------------------------
