@@ -192,6 +192,16 @@ def main(argv: list[str] | None = None) -> int:
         log.warning("exploration mission did not start: %s: %s",
                     type(exc).__name__, exc)
 
+    # HER BODY (Harsh, 2026-10-07): the motor board's IMU, 10x a second while
+    # no run holds the motors -> picked up / put down / shaken ... events for
+    # friday-brain. Guarded: it can cost a reaction, never the server.
+    try:
+        import body_sense
+        body_sense.start()
+    except Exception as exc:                # noqa: BLE001
+        log.warning("body sense did not start: %s: %s",
+                    type(exc).__name__, exc)
+
     # WHERE HIS LAPTOP IS (file 20): its helper says hello over UDP whenever
     # its address changes, and this keeps the saved one right. Guarded too.
     try:

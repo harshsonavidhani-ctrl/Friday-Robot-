@@ -850,6 +850,48 @@ async def _heat_turn(voice: "Voice", face: "Face", source, trigger: str,
         turn.listening()
 
 
+async def _body_turn(voice: "Voice", face: "Face", source, trigger: str) -> None:
+    """She was picked up, put down, turned over, shaken, spun or bumped
+    (body_sense.py): a face and one short line, EMO-style, no model. Never
+    raises. Quiet mode: the face only. Dropped, not queued, if he is talking --
+    a reaction is only worth it in the moment."""
+    import body_sense
+    import initiative
+
+    event = body_sense.parse_trigger(trigger)
+    if event is None:
+        return
+    feel, line = body_sense.reaction(event)
+    turn = stages.Turn(f"body: {event}")
+    try:
+        face.feel(feel)
+        if initiative.he_is_talking():
+            turn.done("FACE ONLY (he is talking)")
+            return
+        try:
+            import mode
+            quiet = bool(mode.quiet())
+        except Exception:                               # noqa: BLE001
+            quiet = False
+        if quiet:
+            turn.done("FACE ONLY (quiet mode)")
+            return
+        source.pause()                              # never hear herself
+        try:
+            voice.say(line)
+            turn.spoke(line)
+            turn.answered_by("locally, no model", 0.0)
+            voice.wait_until_quiet()
+        finally:
+            source.resume()
+        turn.done()
+    except Exception as exc:                        # noqa: BLE001
+        log.warning("body reaction failed: %s: %s", type(exc).__name__, exc)
+        turn.done(f"FAILED ({type(exc).__name__})")
+    finally:
+        turn.listening()
+
+
 async def _agency_turn(voice: "Voice", face: "Face", source,
                        trigger: str) -> None:
     """What her own initiative decided to say or show on her face. Never raises.
@@ -1188,7 +1230,7 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     # crashed this process on that boot. Hearing "hey Friday" needs none of
     # them, so the mic and the detector start first and the rest loads behind.
     stream = source = scene_watch = narration_watch = reminder_watch = None
-    agency_watch = mission_watch = heat_watch = None
+    agency_watch = mission_watch = heat_watch = body_watch = None
     if typed is None:
         # ONE microphone stream, shared by the wake detector and the capture.
         # Opened here so both get the same one -- see stt.AudioStream for why
@@ -1251,6 +1293,14 @@ async def run(once: bool = False, typed: str | None = None) -> int:
             inner = (source.sources if isinstance(source, wake_word.AnyOf)
                      else (source,))
             source = wake_word.AnyOf(*inner, heat_watch)
+        # SHE FEELS BEING PICKED UP (Harsh, 2026-10-07, "like the emo robot"):
+        # friday-mcp reads the motor board's IMU, this reacts between turns.
+        if getattr(config, "BODY_SENSE", False):
+            import body_sense
+            body_watch = body_sense.BodyWatch()
+            inner = (source.sources if isinstance(source, wake_word.AnyOf)
+                     else (source,))
+            source = wake_word.AnyOf(*inner, body_watch)
         global WAKE
         WAKE = source
         log.info("wake source: %s. Ctrl-C to stop.", source.name)
@@ -1317,6 +1367,10 @@ async def run(once: bool = False, typed: str | None = None) -> int:
                 if (heat_watch is not None
                         and trigger.startswith("cpu_heat: ")):
                     await _heat_turn(voice, face, source, trigger, heat_watch)
+                    continue
+                if (body_watch is not None
+                        and trigger.startswith("body: ")):
+                    await _body_turn(voice, face, source, trigger)
                     continue
                 turn = stages.Turn(trigger)
                 # AN UNCERTAIN WAKE IS HEARD IN SILENCE (2026-09-27). Below

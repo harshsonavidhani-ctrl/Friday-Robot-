@@ -141,11 +141,19 @@ def _scan_movement_mm(before: dict[int, int], now: dict[int, int]) -> float | No
 
 
 def guarded_move(direction: str, seconds: float,
-                 speed_pwm: float | None = None) -> MoveResult:
+                 speed_pwm: float | None = None, done=None,
+                 poll_s: float | None = None) -> MoveResult:
     """Run one movement under the interrupt. The only way tools may move.
 
     Blocking; the registry runs it in a worker thread so that stop() can be
     answered — and hardware.ABORT set — while this is still running.
+
+    `done` (2026-10-07, the gyro): a callable checked on every pass, AFTER
+    stop() and every safety check; when it returns a reason the move ends
+    there, as complete. It can only end a move SOONER -- the deadline, the
+    caps, the checks and the final stop are exactly as without it. `poll_s`
+    may shorten the pass (never lengthen it) so a measured turn stops close
+    to its angle.
     """
     direction = direction.strip().lower()
     is_forward = direction in FORWARD_WORDS
@@ -260,6 +268,17 @@ def guarded_move(direction: str, seconds: float,
                         _show_alarm()
                         break
 
+            # MEASURED ENOUGH (a gyro turn reaching its angle): complete.
+            if done is not None:
+                try:
+                    finished = done()
+                except Exception as exc:    # noqa: BLE001 - a broken check ends nothing
+                    log.debug("done() check failed: %s", exc)
+                    finished = None
+                if finished:
+                    reason = str(finished)
+                    break
+
             # The Arduino stops on its own after config.MOTOR_WATCHDOG_S of
             # silence, so the loop has to keep talking to it. A bare newline
             # pets the watchdog without changing the command.
@@ -270,8 +289,10 @@ def guarded_move(direction: str, seconds: float,
                 reason = f"lost the motor link ({exc})"
                 break
 
-            hardware.ABORT.wait(min(config.SAFETY_POLL_S,
-                                    max(0.0, deadline - time.monotonic())))
+            pass_s = config.SAFETY_POLL_S
+            if poll_s is not None:
+                pass_s = min(pass_s, max(0.01, float(poll_s)))
+            hardware.ABORT.wait(min(pass_s, max(0.0, deadline - time.monotonic())))
     finally:
         hardware.MOVING.clear()
         # Unconditional. Every early return, every exception, every Ctrl-C.

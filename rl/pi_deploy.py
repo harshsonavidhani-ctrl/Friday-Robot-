@@ -97,6 +97,12 @@ HERE = Path(__file__).resolve().parent
 # with pi_deploy.py and does not depend on the cwd the process was launched from.
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+
+# THE GYRO (Harsh, 2026-10-07; motor firmware GYRO 2+, read in FridayMotorDriver).
+GYRO_MAX_STEP_DEG = 90.0     # more than this between two replies: a glitch, fall back
+PIVOT_STALL_CMD = 0.5        # rad/s commanded in place...
+PIVOT_STALL_MEAS = 0.09      # ...while the gyro measures under ~5 deg/s...
+PIVOT_STALL_TICKS = 6        # ...for 0.6 s: a stalled turn
 import telemetry as tlm  # noqa: E402
 from explorer import ExplorationPlanner, steering_bias  # noqa: E402
 import cameras as _cameras  # noqa: E402
@@ -2548,6 +2554,16 @@ class FridayMotorDriver(MotorDriver):
         self._err_count = 0
         self._cmds = 0
         self._closed = False
+        # GYRO (Harsh, 2026-10-07; firmware GYRO 2+): one "G" a tick, its reply
+        # read on the NEXT tick's drain -- no round trip inside the budget. The
+        # yaw is integrated ON THE BOARD at 100 Hz, so a reply a tick late
+        # loses no rotation: the loop uses differences between replies.
+        self._rx = b""
+        self.last_imu: dict | None = None
+        self.last_imu_t = 0.0
+        self.imu_replies = 0
+        self.tilt_replies = 0
+        self._imu_parse = None
 
         # The Uno resets when DTR toggles on open; nothing sent during the bootloader
         # window is heard, so wait it out before the handshake.
@@ -2896,16 +2912,60 @@ class FridayMotorDriver(MotorDriver):
                                              # not command anything, and reporting it
                                              # as though it had would hide a dead port.
             self._cmds += 1
-            pending = self._ser.in_waiting
-            if pending:
-                blob = self._ser.read(pending)
-                if b"ERR" in blob:
-                    self._err_count += 1
-                    if self._err_count in (1, 10) or self._err_count % 100 == 0:
-                        LOGGER.warning("Motor firmware returned ERR (%d of %d commands) "
-                                       "-- last sent: %r", self._err_count, self._cmds, line)
+            self._drain(line)
         except Exception as exc:                          # noqa: BLE001
             LOGGER.error("Motor write failed: %s", exc)
+
+    def request_imu(self) -> None:
+        """Ask the board for its gyro + accelerometer (firmware GYRO 2+). The
+        reply is picked up by the next drain. NOT a motor command: last_wire
+        and the command count are untouched, and the firmware does not count
+        G as a keepalive, so this can never keep a move alive."""
+        with self._lock:
+            if self._closed or self._ser is None or not self._ser.is_open:
+                return
+            try:
+                self._ser.write(b"G\n")
+                self._drain("G")
+            except Exception as exc:                      # noqa: BLE001
+                LOGGER.debug("gyro request failed: %s", exc)
+
+    def _drain(self, line: str) -> None:
+        """Read what the board has said, a whole line at a time."""
+        pending = self._ser.in_waiting
+        if not pending:
+            return
+        self._rx += self._ser.read(pending)
+        *lines, self._rx = self._rx.split(b"\n")
+        for raw in lines:
+            s = raw.decode(errors="replace").strip()
+            if s.startswith("G "):
+                imu = self._parse_imu(s)
+                if imu is not None:
+                    self.last_imu, self.last_imu_t = imu, time.monotonic()
+                    self.imu_replies += 1
+            elif s == "TILT":
+                self.tilt_replies += 1
+            elif s == "ERR":
+                self._err_count += 1
+                if self._err_count in (1, 10) or self._err_count % 100 == 0:
+                    LOGGER.warning("Motor firmware returned ERR (%d of %d commands) "
+                                   "-- last sent: %r", self._err_count, self._cmds, line)
+
+    def _parse_imu(self, reply: str) -> dict | None:
+        """motor.parse_imu -- the ONE place config.GYRO_SIGN is applied."""
+        if self._imu_parse is None:
+            if str(HERE.parent) not in sys.path:
+                sys.path.append(str(HERE.parent))
+            import motor as _friday_motor
+            self._imu_parse = _friday_motor.parse_imu
+        return self._imu_parse(reply)
+
+    def imu(self, max_age_s: float = 0.5) -> dict | None:
+        """The latest reading if it is fresh, else None."""
+        if self.last_imu is None or time.monotonic() - self.last_imu_t > max_age_s:
+            return None
+        return self.last_imu
 
     def close(self) -> None:
         """Idempotent: safe to call from several shutdown paths."""
@@ -3124,6 +3184,15 @@ class ControlLoop:
         # FILE 21 U1: the mission's drive order (a path, a turn, a back-up) while
         # it holds the run -- see rl/way_back.py MissionDrive. Never while exploring.
         self.mission_drive = _way_back.MissionDrive()
+        # The gyro (stage 6) and her body (stage 4d): nothing until the board
+        # answers a G -- NullMotorDriver and --simulate never do.
+        self._gyro_prev: tuple[int, float] | None = None
+        self.gyro_gaps = 0          # fallback ticks so far: the tracker's "turn known" test
+        self.gyro_seen = False
+        self._stall_ticks = 0
+        self._body = None
+        self._body_seq = 0
+        self._body_publish = None
         # LOCAL NAVIGATION. The planner says WHERE (a frontier, at 0.5 Hz); this says
         # HOW to get there right now, by simulating candidate arcs against the live
         # scan at full control rate. It sits between the policy and the governor and,
@@ -4215,6 +4284,15 @@ class ControlLoop:
             omega = self._commit_turn(v, omega, gate, rec)
 
         lap("reflex")
+        # ---- 4d. PICKED UP: the wheels stay still until she is put down --------------
+        # (body_sense.Detector on the motor board's IMU, read in stage 6b. The
+        # board refuses M by itself past 35 deg of tilt; a level lift is this.)
+        if self._body and self._body.lifted and (v != 0.0 or omega != 0.0):
+            v, omega = 0.0, 0.0
+            gate = "lifted"
+            rec.add("lifted", v, omega, "picked up: wheels still until put down")
+            self.stats["lifted_ticks"] = self.stats.get("lifted_ticks", 0) + 1
+
         # ---- 5. slew limit + actuate ----------------------------------------------
         v, omega = self.limiter(v, omega, dt_real, emergency=emergency,
                                 allow_rotation=pivot_allowed)
@@ -4242,9 +4320,17 @@ class ControlLoop:
                 self.unstick.record(v, omega, c.dt)
         else:
             ex_v, ex_omega = self.motors.executed()
-            self.map.dead_reckon(ex_v, ex_omega, c.dt)
+            # THE GYRO, when the board has one (Harsh, 2026-10-07): the turn she
+            # MADE, not the turn she was told to make. ~22% of commanded turns
+            # execute as stops on this drivetrain, and dead reckoning counted
+            # every one -- the 2026-10-04 run ended ~98 deg out.
+            dtheta = self._gyro_dtheta()
+            omega_dr = ex_omega if dtheta is None else dtheta / c.dt
+            if dtheta is not None:
+                self._note_pivot_stall(ex_v, ex_omega, omega_dr)
+            self.map.dead_reckon(ex_v, omega_dr, c.dt)
             if self.unstick_enabled:
-                self.unstick.record(ex_v, ex_omega, c.dt)
+                self.unstick.record(ex_v, omega_dr, c.dt)
 
         # ---- 6b. persistent memory ------------------------------------------------
         # Same pose as the observation map, so the two never disagree about where the
@@ -4262,7 +4348,8 @@ class ControlLoop:
                               else (None, float("inf")))
             self.way_back.tracker.submit(
                 fine if (fine and fine_age <= c.lidar_deadline) else scan,
-                self.map.pose, self.map.blind_beams)
+                self.map.pose, self.map.blind_beams,
+                gyro_gaps=self.gyro_gaps if self.gyro_seen else None)
 
         # NOTE: loop_ms deliberately stops here, because the black box row below has
         # to carry it. The telemetry tail after this point is charged to the stage
@@ -4551,6 +4638,99 @@ class ControlLoop:
                                     "mission_drive", "no_reverse_turn"})
     TURN_COMMIT_MAX_V = 0.15        # slower than this: blocked, turning (nearly) in place
     TURN_COMMIT_MIN_OMEGA = 0.15    # a smaller turn is a nudge, passed as it is
+
+    # ---- the gyro (firmware GYRO 2+) -------------------------------------------------
+    def _gyro_dtheta(self) -> float | None:
+        """The heading change since the last tick, from the board's own yaw
+        (rad, + = left), or None to fall back to the commanded turn.
+
+        Differences of the board's integrated yaw, so a reply that arrives a
+        tick late loses nothing: that tick counts 0 and the next one counts
+        both. After ANY fallback the chain restarts (one more fallback tick),
+        so a turn is never counted twice -- once commanded, once measured.
+        Also feeds the body detector (stage 4d reads it next tick)."""
+        m = self.motors
+        if not hasattr(m, "request_imu"):
+            return None
+        imu = m.imu(max_age_s=0.5)
+        m.request_imu()
+        if imu is not None and "tilt_deg" in imu:
+            if self._body is None:
+                self._init_body()
+            if self._body is not None:
+                self._body_update(imu)
+        if imu is None or not imu.get("ok"):
+            if self._gyro_prev is not None or self.gyro_seen:
+                self.gyro_gaps += 1
+            self._gyro_prev = None
+            self.stats["gyro_fallback_ticks"] = self.stats.get("gyro_fallback_ticks", 0) + 1
+            return None
+        self.gyro_seen = True
+        n = m.imu_replies
+        if self._gyro_prev is None:
+            self._gyro_prev = (n, imu["yaw_deg"])
+            self.gyro_gaps += 1               # this tick still falls back
+            return None
+        if n == self._gyro_prev[0]:
+            self.stats["gyro_ticks"] = self.stats.get("gyro_ticks", 0) + 1
+            return 0.0                        # no new reply yet: next tick has it
+        dyaw = imu["yaw_deg"] - self._gyro_prev[1]
+        self._gyro_prev = (n, imu["yaw_deg"])
+        if abs(dyaw) > GYRO_MAX_STEP_DEG:     # a glitch, or she was carried round
+            self.gyro_gaps += 1
+            self._gyro_prev = None
+            return None
+        self.stats["gyro_ticks"] = self.stats.get("gyro_ticks", 0) + 1
+        return math.radians(dyaw)
+
+    def _note_pivot_stall(self, ex_v: float, ex_omega: float, omega_meas: float) -> None:
+        """A turn commanded but not happening, measured: counted and logged once
+        per stall. (Dead reckoning is already right -- it used the measured
+        turn -- this is the evidence, and what the escape logic can read.)"""
+        commanded = abs(ex_omega) >= PIVOT_STALL_CMD and abs(ex_v) < 0.05
+        if commanded and abs(omega_meas) < PIVOT_STALL_MEAS:
+            self._stall_ticks += 1
+            if self._stall_ticks == PIVOT_STALL_TICKS:
+                self.stats["pivot_stalls"] = self.stats.get("pivot_stalls", 0) + 1
+                LOGGER.info("GYRO: a turn was commanded (%.2f rad/s) but she is not "
+                            "turning (%.2f rad/s) -- stalled turn #%d", ex_omega,
+                            omega_meas, self.stats["pivot_stalls"])
+        else:
+            self._stall_ticks = 0
+
+    @property
+    def pivot_stalled(self) -> bool:
+        return self._stall_ticks >= PIVOT_STALL_TICKS
+
+    def _init_body(self) -> None:
+        try:
+            if str(HERE.parent) not in sys.path:
+                sys.path.append(str(HERE.parent))
+            import body_sense as _bs
+            self._body = _bs.Detector()
+            self._body_publish = _bs.publish
+            self._body_seq = int((_bs.read() or {}).get("seq", 0))
+        except Exception as exc:                          # noqa: BLE001
+            LOGGER.warning("body sense unavailable in the run: %s", exc)
+            self._body = False              # not again
+
+    def _body_update(self, imu: dict) -> None:
+        """Picked up / put down / shaken... during a run: the same detector and
+        the same file as friday-mcp's (body_sense.py), so friday-brain reacts
+        while she explores too."""
+        try:
+            last = self.motors.last_cmd if hasattr(self.motors, "last_cmd") else (0.0, 0.0)
+            driving = abs(last[0]) > 0.0 or abs(last[1]) > 0.0
+            for event in self._body.update(imu, time.monotonic(), driving):
+                self._body_seq += 1
+                LOGGER.info("BODY: %s (tilt %.0f deg, shake %.1f deg/s)", event,
+                            imu.get("tilt_deg", 0.0), imu.get("shake_dps", 0.0))
+                self.stats["body_events"] = self.stats.get("body_events", 0) + 1
+                if self._body_publish is not None:
+                    self._body_publish(event, self._body.lifted, self._body_seq,
+                                       tilt_deg=imu.get("tilt_deg"), during="run")
+        except Exception as exc:                          # noqa: BLE001
+            LOGGER.debug("body update failed: %s", exc)
 
     def _commit_turn(self, v: float, omega: float, gate: str, rec) -> float:
         now = time.monotonic()

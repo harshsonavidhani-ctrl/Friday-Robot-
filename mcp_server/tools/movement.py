@@ -14,6 +14,7 @@ carries its error margin, and the brain is expected to say "about" out loud.
 from __future__ import annotations
 
 import logging
+import time
 
 import config
 from mcp_server import embodiment, hardware, safety
@@ -146,6 +147,9 @@ def turn_degrees(degrees: float) -> str:
     Args:
         degrees: negative turns left, positive turns right.
     """
+    measured = _gyro_turn(degrees)
+    if measured is not None:
+        return measured
     rate = config.load_calibration()["turn_deg_per_s"]
     if rate <= 0:
         return ("cannot do angles yet — turn_deg_per_s is still 0, meaning "
@@ -166,6 +170,72 @@ def turn_degrees(degrees: float) -> str:
                 f"of the {abs(degrees):g} asked for.")
     else:
         text = f"{result.as_text()}. Turned {_margin(abs(degrees), 'degrees')}."
+    return f"{text} ({clip_note})" if clip_note else text
+
+
+# --- a MEASURED turn, when the motor board has its gyro (2026-10-07) ---------------
+GYRO_TURN_LEAD_S = 0.08         # stop this early at the current rate: the coast after "S"
+GYRO_TURN_MAX_LEAD_DEG = 8.0
+GYRO_TURN_POLL_S = 0.03
+GYRO_TURN_SETTLE_S = 0.3
+GYRO_TURN_RATE_GUESS = 75.0     # deg/s, only to size the time budget (x2 + 1 s)
+
+
+def _gyro_turn(degrees: float) -> str | None:
+    """turn_degrees, closed on the gyro: turn until the board says the angle
+    is done, then report the angle it MEASURED. None = no gyro (or not ready),
+    and the old timed pivot runs instead. Still one guarded_move: every check,
+    the duration cap and the final stop are as for any turn."""
+    try:
+        drive = hardware.motors()
+    except Exception:                                   # noqa: BLE001
+        return None
+    reader = getattr(drive, "imu", None)
+    start = reader() if reader is not None else None
+    if not start or not start.get("ok"):
+        return None
+    degrees, clip_note = embodiment.clip_increment(
+        degrees, config.MAX_INCREMENT_DEGREES, "degrees")
+    direction = "left" if degrees < 0 else "right"    # the tool's sign: - = left
+    target = abs(float(degrees))
+    if target < 1.0:
+        return "nothing to turn (under 1 degree)"
+    blind = embodiment.check(direction)
+    if blind:
+        return blind
+    yaw0 = start["yaw_deg"]                             # + = left (motor.parse_imu)
+    sense = 1.0 if direction == "left" else -1.0
+    last = {"turned": 0.0}
+
+    def done() -> str | None:
+        now = reader()
+        if not now or not now.get("ok"):
+            return None                                 # keep to the time budget
+        turned = sense * (now["yaw_deg"] - yaw0)
+        last["turned"] = turned
+        lead = min(abs(now.get("rate_dps", 0.0)) * GYRO_TURN_LEAD_S,
+                   GYRO_TURN_MAX_LEAD_DEG)
+        if turned >= target - lead:
+            return f"the gyro measured {turned:.0f} of {target:.0f} degrees"
+        return None
+
+    rate = config.load_calibration()["turn_deg_per_s"]
+    budget = target / (rate if rate > 0 else GYRO_TURN_RATE_GUESS) * 2.0 + 1.0
+    result = safety.guarded_move(direction, budget, done=done,
+                                 poll_s=GYRO_TURN_POLL_S)
+    time.sleep(GYRO_TURN_SETTLE_S)                      # she coasts a little after S
+    end = reader()
+    turned = sense * (end["yaw_deg"] - yaw0) if end and end.get("ok") else last["turned"]
+    shown = int(round(turned))                          # never "-0"
+    if result.stopped_early:
+        text = (f"{result.as_text()}. Turned {shown} of the {target:.0f} "
+                f"degrees asked for (measured by the gyro).")
+    elif turned < target * 0.8:
+        text = (f"{result.as_text()}. Only turned {shown} of {target:.0f} "
+                f"degrees (measured by the gyro) -- the wheels may be slipping "
+                f"or something is in the way.")
+    else:
+        text = f"Turned {direction} {shown} degrees (measured by the gyro)."
     return f"{text} ({clip_note})" if clip_note else text
 
 

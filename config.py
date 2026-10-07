@@ -2668,6 +2668,56 @@ CPU_HOT_AGAIN_C = 70.0
 CPU_HOT_AGAIN_CLEAR_C = 67.0    # cooled from "very hot" only below this
 CPU_HOT_LINE_AGAIN = "My CPU is very hot now. Please turn on the fan."
 
+# --- Her gyro + accelerometer (the motor board, firmware GYRO >= 1) ----------
+# Harsh, 2026-10-07: an MPU-6050 board (the chip is an MPU-6500) wired to the
+# Uno's A0/A1, mounted UNDERNEATH, chip facing the floor. He turned her RIGHT
+# (clockwise from above) and the board's yaw went POSITIVE, so here, where
+# + is LEFT (counter-clockwise, like every heading in this project), it is
+# negated. motor.parse_imu applies it; nothing else should.
+GYRO_SIGN = -1
+
+# --- She feels being picked up (body_sense.py), EMO-style --------------------
+# Harsh, 2026-10-07: "if I pick it up like it reacts accordingly add like the
+# emo robot does". Read 10x a second in friday-mcp (when no run holds the
+# motors); events go to BODY_FILE; friday-brain reacts with a face and a line.
+BODY_SENSE = True
+BODY_FILE = ROOT / "state" / "body.json"
+BODY_POLL_S = 0.1
+# Measured 2026-10-07 on the floor: roll/pitch "shake" 0.2-0.3 deg/s at rest,
+# 2.3-7.5 deg/s in his hands. Only judged while the wheels are not driving
+# (driving shakes her too); a tilt counts either way.
+BODY_LIFT_SHAKE_DPS = 1.5
+BODY_LIFT_SHAKE_S = 0.5
+BODY_LIFT_TILT_DEG = 25.0       # the board sits ~6-8 deg off level at rest
+BODY_LIFT_TILT_S = 0.3
+BODY_LEVEL_DEG = 18.0
+BODY_DOWN_SHAKE_DPS = 0.8
+BODY_DOWN_S = 1.2               # level and still this long = put down
+BODY_UPSIDE_DOWN_DEG = 120.0
+BODY_SHAKEN_DPS = 25.0
+BODY_SPUN_DPS = 120.0
+BODY_EVENT_S = 0.5              # upside down / shaken / spun for this long
+BODY_HELD_LONG_S = 12.0
+BODY_REPEAT_S = 8.0             # the same reaction again at most this often
+BODY_REACT_GAP_S = 2.5          # any two reactions at least this far apart
+BODY_STALE_S = 3.0              # an event older than this is not reacted to
+# (face, lines -- one picked at random). Spoken offline, between turns; in
+# quiet mode only the face.
+BODY_REACTIONS = {
+    "lifted":      ("surprised", ["Whoa! Where are we going?", "Hey! Up we go!",
+                                  "Oh! I'm flying!"]),
+    "held_long":   ("scared", ["Can you put me down, please?",
+                               "I like the floor better. Put me down?"]),
+    "upside_down": ("scared", ["Hey! I'm upside down!",
+                               "Whoa, the world is upside down!"]),
+    "shaken":      ("dizzy", ["Stop shaking me, I'm getting dizzy!",
+                              "Whoa, whoa, I'm dizzy!"]),
+    "spun":        ("dizzy", ["Wheee! I'm spinning!", "Wheee! That makes me dizzy!"]),
+    "put_down":    ("happy", ["Ah, back on the ground. Thank you!",
+                              "Home sweet floor."]),
+    "bump":        ("surprised", ["Oof!", "Ouch!"]),
+}
+
 
 def load_calibration() -> dict:
     """Current motor calibration, falling back to the defaults for any key

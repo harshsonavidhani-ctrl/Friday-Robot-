@@ -68,6 +68,33 @@ KEEPALIVE_S = config.MOTOR_WATCHDOG_S / 3.0
 RESET_SETTLE_S = 2.0
 
 
+def parse_imu(reply: str) -> dict | None:
+    """The firmware's G reply -> a dict in THIS project's frame, or None.
+
+    "G <yaw cdeg> <rate cdeg/s> <ok|cal|nogyro> <gaps> <errors>" (GYRO 1),
+    then " <tilt ddeg> <shake ddeg/s> <hpeak mg> <vpeak mg> <tilted> <bumps>"
+    (GYRO 2+). Yaw and rate are turned to + = LEFT by config.GYRO_SIGN, the one
+    place that knows the chip faces the floor. `ok` is True only when the gyro
+    is answering and its bias is measured.
+    """
+    parts = (reply or "").split()
+    if len(parts) < 6 or parts[0] != "G":
+        return None
+    try:
+        sign = float(getattr(config, "GYRO_SIGN", 1))
+        out = {"status": parts[3], "ok": parts[3] == "ok",
+               "yaw_deg": sign * int(parts[1]) / 100.0,
+               "rate_dps": sign * int(parts[2]) / 100.0,
+               "gaps": int(parts[4]), "errors": int(parts[5])}
+        if len(parts) >= 12:
+            out.update(tilt_deg=int(parts[6]) / 10.0, shake_dps=int(parts[7]) / 10.0,
+                       hpeak_g=int(parts[8]) / 1000.0, vpeak_g=int(parts[9]) / 1000.0,
+                       tilted=parts[10] == "1", bumps=int(parts[11]))
+        return out
+    except ValueError:
+        return None
+
+
 class MotorError(RuntimeError):
     pass
 
@@ -239,6 +266,11 @@ class Motors:
         l = self._clamp(left) * (-1 if config.MOTOR_INVERT_LEFT else 1)
         r = self._clamp(right) * (-1 if config.MOTOR_INVERT_RIGHT else 1)
         reply = self._command(f"M{l} {r}")
+        if reply == "TILT":
+            # The board itself refuses while she is tipped over or lifted
+            # (firmware GYRO 2+): not a fault, and not to be driven through.
+            raise MotorError("refused: I'm tilted or picked up, so my motor "
+                             "board will not drive until I'm level on the floor")
         if reply != "OK":
             raise MotorError(f"drive({l}, {r}) -> {reply!r}")
         self._moving = bool(l or r)
@@ -348,6 +380,16 @@ class Motors:
                                 attempt + 1, last)
                 return
         raise MotorError(f"stop -> {last!r} after 3 attempts")
+
+    def imu(self) -> dict | None:
+        """The gyro + accelerometer on the motor board (parse_imu), or None
+        when the board has no gyro firmware or the link is busy. One G
+        exchange under the motor lock (~5 ms). G never pets the firmware's
+        watchdog, so polling this cannot keep a move alive."""
+        try:
+            return parse_imu(self._command("G"))
+        except MotorError:
+            return None
 
     def keepalive(self) -> None:
         """Pet the Arduino's watchdog without changing the command.

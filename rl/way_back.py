@@ -120,6 +120,22 @@ POINT_STRIDE = 2
 MATCH_STEP_DEG = 2.0
 PRIOR_FLOOR_M = 0.15
 PRIOR_FLOOR_DEG = 10.0
+# THE GYRO (Harsh, 2026-10-07; firmware GYRO 2+). When the board measured every
+# tick of the turn since the last fold, the turn is KNOWN: the search centres
+# on all of it, in a narrow window, instead of between "all" and "none" in a
+# wide one. The wide one is slow (folds up to 765 ms on 2026-10-04) and, once
+# the truth is outside it, wrong for good -- that run's start slid ~100 deg.
+GYRO_WINDOW_MIN_DEG = 4.0
+GYRO_WINDOW_FRAC = 0.06         # + 6% of the turn (scale error, timing)
+GYRO_PRIOR_MIN_DEG = 3.0
+GYRO_PRIOR_FRAC = 0.08
+# ...but the sharpness test (best / median over everything scored) needs the
+# old window's spread of WRONG headings to mean what it meant: scored only over
+# the narrow window, every candidate is nearly right, the median is high, and
+# half the good matches came back "geometry ambiguous" (real-room simulation,
+# 2026-10-07: 102 of 200). So headings out to the old window are still scored,
+# every REF_STEP_DEG, for the median only -- never as the answer.
+REF_STEP_DEG = 8.0
 
 
 def _wrap(a: float) -> float:
@@ -168,8 +184,11 @@ class _Folder:
         self.max_range = float(max_range)
         self.matcher: "_StartMatcher | None" = None
         self.last_rl: tuple[float, float, float] | None = None
+        self.last_gaps: int | None = None
+        self.known_turns = 0
 
-    def fold(self, scan_m, rl: tuple, blind, start_rl) -> dict | None:
+    def fold(self, scan_m, rl: tuple, blind, start_rl,
+             gyro_gaps: int | None = None) -> dict | None:
         # A full-resolution sweep ({deg: mm}, robot frame) when the LiDAR thread
         # publishes one; the 72 bins otherwise.
         scan = (scan_m if isinstance(scan_m, dict)
@@ -189,9 +208,15 @@ class _Folder:
         else:
             d = _compose(_inverse(self.last_rl), rl)
             moved, turned = math.copysign(math.hypot(d[0], d[1]), d[0]), d[2]
-            reason = self.matcher.update(scan, moved_m=moved,
-                                         turned_rad=turned).get("reason", "")
+            # The run's gap counter unchanged since the last fold = the gyro
+            # measured every tick in between (pi_deploy._gyro_dtheta).
+            known = (gyro_gaps is not None and self.last_gaps is not None
+                     and gyro_gaps == self.last_gaps)
+            self.known_turns += int(known)
+            reason = self.matcher.update(scan, moved_m=moved, turned_rad=turned,
+                                         turn_known=known).get("reason", "")
         self.last_rl = rl
+        self.last_gaps = gyro_gaps
         return {"pose": tuple(float(v) for v in self.matcher.pose),
                 "reason": reason, "ms": (time.perf_counter() - t0) * 1000.0}
 
@@ -232,11 +257,13 @@ class StartTracker(threading.Thread):
         self._drift_n = (0, 0)              # (updates, matched) at the last line
 
     # -------------------------------------------------------------- feed ------
-    def submit(self, scan_m: np.ndarray, rl_pose, blind=None) -> None:
-        """From the control loop. Copies and returns at once."""
+    def submit(self, scan_m: np.ndarray, rl_pose, blind=None,
+               gyro_gaps: int | None = None) -> None:
+        """From the control loop. Copies and returns at once. `gyro_gaps` is
+        the run's count of ticks the gyro did NOT measure (None = no gyro)."""
         rl = tuple(float(v) for v in rl_pose)
         job = (dict(scan_m) if isinstance(scan_m, dict)
-               else np.asarray(scan_m, np.float32).copy(), rl, blind)
+               else np.asarray(scan_m, np.float32).copy(), rl, blind, gyro_gaps)
         with self._lock:
             if self.start_rl is None:
                 self.start_rl = rl
@@ -294,9 +321,9 @@ class StartTracker(threading.Thread):
                     self._apply(out, job[1])
             self._stop_evt.wait(self.period)
 
-    def _fold(self, scan_m, rl: tuple, blind) -> None:
+    def _fold(self, scan_m, rl: tuple, blind, gyro_gaps: int | None = None) -> None:
         """In-process fold, for the tests."""
-        out = self._folder.fold(scan_m, rl, blind, self.start_rl)
+        out = self._folder.fold(scan_m, rl, blind, self.start_rl, gyro_gaps)
         if out:
             self._apply(out, rl)
 
@@ -639,11 +666,15 @@ def _serve(max_range: float) -> int:
     last_pub = 0.0                  # FILE 21
     while True:
         try:
-            scan, rl, blind, start_rl = pickle.load(inp)
+            job = pickle.load(inp)
         except (EOFError, OSError):
             return 0
+        # (scan, rl, blind, start_rl), or with the gyro's gap count before
+        # start_rl (2026-10-07) -- a parent of either age is understood.
+        scan, rl, blind, start_rl = job[0], job[1], job[2], job[-1]
+        gyro_gaps = job[3] if len(job) == 5 else None
         try:
-            res = folder.fold(scan, rl, blind, start_rl)
+            res = folder.fold(scan, rl, blind, start_rl, gyro_gaps)
         except Exception as exc:                          # noqa: BLE001
             res = {"error": f"{type(exc).__name__}: {exc}"}
         pickle.dump(res, out, protocol=4)
@@ -655,7 +686,7 @@ def _serve(max_range: float) -> int:
 
 
 def _match(field, local: np.ndarray, centre, window_m: float, window_deg: float,
-           prior_m: float, prior_deg: float):
+           prior_m: float, prior_deg: float, ref_deg: float = 0.0):
     """slam.core.match_pose's coarse search, without its sub-cell polish.
 
     The polish is ~340 Python-level scorings per match, and it was most of a
@@ -682,6 +713,14 @@ def _match(field, local: np.ndarray, centre, window_m: float, window_deg: float,
             best_w, best_raw = float(weighted[i, j]), float(scores[i, j])
             best = (px + (i - half) * field.cell, py + (j - half) * field.cell,
                     _wrap(pth + dth))
+    # Reference headings for the sharpness only (see REF_STEP_DEG).
+    k = REF_STEP_DEG
+    while ref_deg > window_deg and k <= ref_deg + 1e-9:
+        if k > window_deg:
+            for sgn in (-1.0, 1.0):
+                dth = math.radians(sgn * k)
+                spread.append(field.score_shifts(transform(local, px, py, pth + dth), half))
+        k += REF_STEP_DEG
     everything = np.concatenate([b.ravel() for b in spread])
     median = float(np.median(everything))
     sharp = float(everything.max() / median) if median > 1e-9 else float("inf")
@@ -717,7 +756,8 @@ class _StartMatcher:
         self.field.known = None
         self.pose = (0.0, 0.0, 0.0)
 
-    def update(self, scan: dict, moved_m: float, turned_rad: float) -> dict:
+    def update(self, scan: dict, moved_m: float, turned_rad: float,
+               turn_known: bool = False) -> dict:
         import config
         from slam.core import points_from_scan
         x, y, th = self.pose
@@ -731,17 +771,36 @@ class _StartMatcher:
         # ~22% of this drivetrain's turns execute as stops (2026-09 drivetrain
         # measurements) and dead reckoning counts them as turned, so the search
         # is centred between "all of it" and "none of it", wide enough for both.
-        half_m, half_t = moved_m / 2.0, turned_rad / 2.0
-        mid = th + half_t / 2.0
-        centre = (x + half_m * math.cos(mid), y + half_m * math.sin(mid),
-                  _wrap(th + half_t))
-        turn_deg = abs(math.degrees(half_t))
+        # UNLESS THE GYRO MEASURED IT: then it is all of it, give or take a
+        # few degrees (forward distance is still unmeasured, so the
+        # translation keeps its wide search either way).
+        half_m = moved_m / 2.0
+        # What the search would span without the gyro: the sharpness reference.
+        unknown_deg = max(config.SLAM_POSE_WINDOW_DEG,
+                          abs(math.degrees(turned_rad / 2.0)) + 6.0)
+        ref_deg = 0.0
+        if turn_known:
+            full_deg = abs(math.degrees(turned_rad))
+            mid = th + turned_rad / 2.0
+            centre = (x + half_m * math.cos(mid), y + half_m * math.sin(mid),
+                      _wrap(th + turned_rad))
+            window_deg = max(GYRO_WINDOW_MIN_DEG, GYRO_WINDOW_FRAC * full_deg + 3.0)
+            prior_deg = max(GYRO_PRIOR_MIN_DEG, GYRO_PRIOR_FRAC * full_deg)
+            ref_deg = unknown_deg
+        else:
+            half_t = turned_rad / 2.0
+            mid = th + half_t / 2.0
+            centre = (x + half_m * math.cos(mid), y + half_m * math.sin(mid),
+                      _wrap(th + half_t))
+            turn_deg = abs(math.degrees(half_t))
+            window_deg = max(config.SLAM_POSE_WINDOW_DEG, turn_deg + 6.0)
+            prior_deg = max(turn_deg * 1.2, PRIOR_FLOOR_DEG)
         pose, score, sharp = _match(
             self.field, local, centre,
             window_m=max(config.SLAM_POSE_WINDOW_M, abs(half_m) + 0.08),
-            window_deg=max(config.SLAM_POSE_WINDOW_DEG, turn_deg + 6.0),
+            window_deg=window_deg,
             prior_m=max(abs(half_m) * 1.2, PRIOR_FLOOR_M),
-            prior_deg=max(turn_deg * 1.2, PRIOR_FLOOR_DEG))
+            prior_deg=prior_deg, ref_deg=ref_deg)
         if score < config.SLAM_MIN_SCORE:
             self.pose = dead
             return {"reason": "score too low", "score": score}
