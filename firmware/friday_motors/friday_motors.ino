@@ -24,6 +24,7 @@
  *   S              stop            -> "OK"
  *   W <ms>         watchdog window -> "OK"     0 disables (not advised)
  *   G              gyro            -> "G <yaw cdeg> <rate cdeg/s> <ok|cal|nogyro> <gaps> <errors>
+ *                                       ... *XX" (GYRO 6+: XOR checksum of the line before '*')
  *                                       <tilt ddeg> <shake ddeg/s> <hpeak mg> <vpeak mg> <tilted 0|1> <bumps>"
  *                  (the peaks are since the last G; the rest are now)
  *   Z              zero the yaw    -> "OK"
@@ -343,29 +344,24 @@ void gyroUpdate() {
   }
 }
 
+// One line, then "*XX": the XOR of every character before the '*' (as NMEA
+// does). 2026-10-07: ~1 in 20 replies reached the Pi garbled mid-turn (-24.6
+// deg arriving as -2.4, a field dropped) -- the reader now refuses any line
+// whose checksum does not match.
 void gyroReport() {
-  Serial.print("G ");
-  Serial.print(lround(yawDeg * 100.0f));
-  Serial.print(' ');
-  Serial.print(lround(rateDps * 100.0f));
-  Serial.print(' ');
-  Serial.print(!gyroOk ? "nogyro" : (calCount < CAL_SAMPLES ? "cal" : "ok"));
-  Serial.print(' ');
-  Serial.print(gyroGaps);
-  Serial.print(' ');
-  Serial.print(gyroErrors);
-  Serial.print(' ');
-  Serial.print(lround(tiltDeg * 10.0f));
-  Serial.print(' ');
-  Serial.print(lround(shakeDps * 10.0f));
-  Serial.print(' ');
-  Serial.print(lround(hPeakG * 1000.0f));
-  Serial.print(' ');
-  Serial.print(lround(vPeakG * 1000.0f));
-  Serial.print(' ');
-  Serial.print(tilted ? 1 : 0);
-  Serial.print(' ');
-  Serial.println(bumps);
+  char buf[100];
+  int n = snprintf(buf, sizeof buf, "G %ld %ld %s %lu %lu %ld %ld %ld %ld %d %lu",
+                   lround(yawDeg * 100.0f), lround(rateDps * 100.0f),
+                   !gyroOk ? "nogyro" : (calCount < CAL_SAMPLES ? "cal" : "ok"),
+                   gyroGaps, gyroErrors, lround(tiltDeg * 10.0f),
+                   lround(shakeDps * 10.0f), lround(hPeakG * 1000.0f),
+                   lround(vPeakG * 1000.0f), tilted ? 1 : 0, bumps);
+  uint8_t cs = 0;
+  for (int i = 0; i < n && i < (int) sizeof buf && buf[i]; i++) cs ^= (uint8_t) buf[i];
+  Serial.print(buf);
+  Serial.print('*');
+  if (cs < 16) Serial.print('0');
+  Serial.println(cs, HEX);
   hPeakG = 0.0f;
   vPeakG = 0.0f;
 }
@@ -445,7 +441,7 @@ void loop() {
           Serial.println("OK");
         }
       } else if (cmd == 'V' || cmd == 'v') {
-        Serial.print("FRIDAY-MOTORS 1 GYRO 5 who=0x");
+        Serial.print("FRIDAY-MOTORS 1 GYRO 6 who=0x");
         Serial.println(gyroWho, HEX);
       } else if (cmd == 'W' || cmd == 'w') {
         watchdogMs = (unsigned long) line.substring(1).toInt();

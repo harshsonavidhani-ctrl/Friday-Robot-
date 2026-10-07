@@ -32,7 +32,8 @@ class Board:
     """The motor board: yaw (+ = left) integrates at rate_dps while a pivot is
     commanded, plus `coast` degrees after the stop (momentum)."""
 
-    def __init__(self, rate_dps=75.0, stalled=False, coast=2.0, gyro=True, need_pwm=0.0):
+    def __init__(self, rate_dps=75.0, stalled=False, coast=6.0, gyro=True, need_pwm=0.0):
+        # coast: measured on the robot 2026-10-07, ~6 deg after "S" at ~79 deg/s
         self.rate, self.stalled, self.coast, self.gyro = rate_dps, stalled, coast, gyro
         self.need_pwm = need_pwm            # below this duty the pivot only buzzes
         self.max_duty = config.MOTOR_MAX_DUTY

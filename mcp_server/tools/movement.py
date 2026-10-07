@@ -178,8 +178,8 @@ def turn_degrees(degrees: float) -> str:
 
 
 # --- a MEASURED turn, when the motor board has its gyro (2026-10-07) ---------------
-GYRO_TURN_LEAD_S = 0.08         # stop this early at the current rate: the coast after "S"
-GYRO_TURN_MAX_LEAD_DEG = 8.0
+GYRO_TURN_LEAD_S = 0.12         # stop this early at the current rate: the coast after "S" + a reading gap (measured 2026-10-07: ~6 deg of coast at 79 deg/s)
+GYRO_TURN_MAX_LEAD_DEG = 12.0
 GYRO_TURN_POLL_S = 0.03
 GYRO_TURN_SETTLE_S = 0.3
 GYRO_TURN_RATE_GUESS = 75.0     # deg/s, only to size the time budget (x2 + 1 s)

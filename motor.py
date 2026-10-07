@@ -77,8 +77,25 @@ def parse_imu(reply: str) -> dict | None:
     place that knows the chip faces the floor. `ok` is True only when the gyro
     is answering and its bias is measured.
     """
-    parts = (reply or "").split()
-    if len(parts) < 6 or parts[0] != "G":
+    text = (reply or "").strip()
+    if "*" in text:
+        # GYRO 6+: "*XX" is the XOR of every character before it. A line that
+        # does not add up was garbled on the wire (2026-10-07: ~1 in 20 mid-
+        # turn, -24.6 deg arriving as -2.4) and is refused, never guessed at.
+        body, _, cs = text.rpartition("*")
+        try:
+            want = int(cs, 16)
+        except ValueError:
+            return None
+        got = 0
+        for ch in body.encode():
+            got ^= ch
+        if got != want:
+            return None
+        text = body
+    parts = text.split()
+    if (len(parts) not in (6, 12) or parts[0] != "G"
+            or parts[3] not in ("ok", "cal", "nogyro")):
         return None
     try:
         sign = float(getattr(config, "GYRO_SIGN", 1))

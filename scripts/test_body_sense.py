@@ -45,6 +45,22 @@ check("GYRO 1's short reply still parses (no accelerometer fields)",
 check("old firmware (ERR), garbage, None -> None",
       motor.parse_imu("ERR") is None and motor.parse_imu("G x y") is None
       and motor.parse_imu(None) is None)
+def _cs(line):
+    x = 0
+    for ch in line.encode():
+        x ^= ch
+    return f"{line}*{x:02X}"
+
+
+_good = _cs("G 9000 -1500 ok 0 0 64 3 9 -25 0 0")
+check("GYRO 6's checksummed line parses", motor.parse_imu(_good) is not None
+      and motor.parse_imu(_good)["yaw_deg"] == 90.0)
+check("...a digit lost on the wire (the 2026-10-07 '-24.6 read as -2.4'): refused",
+      motor.parse_imu(_good.replace("9000", "900")) is None)
+check("...a dropped field (11 of 12) or a cut status ('o'): refused, with or "
+      "without a checksum",
+      motor.parse_imu("G 9000 -1500 ok 0 64 3 9 -25 0 0") is None
+      and motor.parse_imu("G 9000 -1500 o 0 0 64 3 9 -25 0 0") is None)
 check("ok only when the gyro answers AND its bias is measured",
       motor.parse_imu("G 0 0 ok 0 0")["ok"] and not motor.parse_imu("G 0 0 cal 0 0")["ok"]
       and not motor.parse_imu("G 0 0 nogyro 0 0")["ok"])
