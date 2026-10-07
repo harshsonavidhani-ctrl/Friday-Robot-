@@ -97,6 +97,22 @@ ev, t = feed(d, imu(), 0.5, t)
 check("...1.2 s level and still: PUT DOWN", ev == ["put_down"] and not d.lifted, str(ev))
 
 d = bs.Detector()
+_, t = feed(d, imu(shake=6.0), 1.0, 0.0, driving=True)
+ev, t = feed(d, imu(shake=20.0), 1.2, t)
+check("her own rocking right after a hard pivot (shake 20 deg/s for 1.2 s after "
+      "the wheels stop): NOT a lift -- the 2026-10-07 run said 'Whoa!' a dozen times",
+      ev == [] and not d.lifted, str(ev))
+ev, t = feed(d, imu(shake=3.0), 1.0, t)
+check("...a hand's wobble once she has been still 1.5 s: lifted", ev == ["lifted"], str(ev))
+run_d = bs.Detector(shake_lift=False, tilt_lift=False, bumps=False)
+ev, _ = feed(run_d, imu(shake=28.0, tilt=29.0, bumps=1), 5.0, 0.0)
+ev2, _ = feed(run_d, imu(shake=28.0, tilt=29.0, bumps=2), 1.0, 5.0)
+check("the RUN's detector: shake 28 deg/s, a 29 deg tip over a threshold, bumps: "
+      "nothing (the run rocks and tips itself)", ev == [] and ev2 == [], str(ev + ev2))
+ev, _ = feed(run_d, imu(tilted=True, tilt=50.0), 0.2, 10.0)
+check("...the board's own TILTED flag (past 35 deg): lifted, even in a run",
+      ev == ["lifted"], str(ev))
+d = bs.Detector()
 ev, t = feed(d, imu(shake=6.0), 3.0, 0.0, driving=True)
 check("driving shakes her: no lift from shake alone while the wheels drive",
       ev == [] and not d.lifted, str(ev))

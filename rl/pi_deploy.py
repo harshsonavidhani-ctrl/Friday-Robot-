@@ -99,6 +99,19 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 # THE GYRO (Harsh, 2026-10-07; motor firmware GYRO 2+, read in FridayMotorDriver).
+def _ignore_stop_signals() -> bool:
+    """SIGINT/SIGTERM ignored from now on (main thread only: Python can only
+    set handlers there). True if it took effect."""
+    if threading.current_thread() is not threading.main_thread():
+        return False
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, signal.SIG_IGN)
+        except (ValueError, OSError):
+            return False
+    return True
+
+
 GYRO_MAX_STEP_DEG = 90.0     # more than this between two replies: a glitch, fall back
 PIVOT_STALL_CMD = 0.5        # rad/s commanded in place...
 PIVOT_STALL_MEAS = 0.09      # ...while the gyro measures under ~5 deg/s...
@@ -4707,7 +4720,9 @@ class ControlLoop:
             if str(HERE.parent) not in sys.path:
                 sys.path.append(str(HERE.parent))
             import body_sense as _bs
-            self._body = _bs.Detector()
+            # The run's own pivots rock her: only the board's TILTED flag
+            # counts as a lift here, and bumps are the run's to announce.
+            self._body = _bs.Detector(shake_lift=False, tilt_lift=False, bumps=False)
             self._body_publish = _bs.publish
             self._body_seq = int((_bs.read() or {}).get("seq", 0))
         except Exception as exc:                          # noqa: BLE001
@@ -4803,6 +4818,13 @@ class ControlLoop:
             time.sleep(0.1)
 
     def shutdown(self) -> None:
+        # A SECOND stop signal must not cut this short: stop_exploration sends
+        # the unit's SIGINT (KillSignal) AND a SIGINT to the run's pid, and on
+        # 2026-10-07 21:33 the second one landed in detector.join() -- a
+        # KeyboardInterrupt out of shutdown, so the map and the black box were
+        # lost again. The motors stop on the next line; after that, finishing
+        # is the point. The unit's SIGKILL at TimeoutStopSec is the backstop.
+        _ignore_stop_signals()
         self._stop.set()
         self.motors.emergency_stop()
         if self._reflex_thread is not None:

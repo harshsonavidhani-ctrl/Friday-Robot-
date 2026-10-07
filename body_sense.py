@@ -51,8 +51,15 @@ class Detector:
     counts a new horizontal jolt.
     """
 
-    def __init__(self, cfg=config):
+    def __init__(self, cfg=config, shake_lift: bool = True, tilt_lift: bool = True,
+                 bumps: bool = True):
+        """shake_lift / tilt_lift / bumps off = the RL run's detector: there
+        the robot rocks and tips itself all the time, so only the board's own
+        TILTED flag (past 35 deg) says lifted, and bumps are the run's to
+        announce (2026-10-07: false lifts every 8-15 s mid-run)."""
         self.c = cfg
+        self.shake_lift, self.tilt_lift, self.bumps_on = shake_lift, tilt_lift, bumps
+        self._last_drive = -1e9
         self.lifted = False
         self.lifted_at = 0.0
         self._shake_since = None
@@ -92,16 +99,19 @@ class Detector:
         new_bump = self._bumps is not None and bumps > self._bumps
         self._bumps = bumps
 
+        if driving:
+            self._last_drive = now
         if not self.lifted:
-            tilted = bool(imu.get("tilted")) or self._held(
-                "tilt", tilt > c.BODY_LIFT_TILT_DEG, now, c.BODY_LIFT_TILT_S)
-            shaky = (not driving) and self._held(
+            tilted = bool(imu.get("tilted")) or (self.tilt_lift and self._held(
+                "tilt", tilt > c.BODY_LIFT_TILT_DEG, now, c.BODY_LIFT_TILT_S))
+            settled = now - self._last_drive >= getattr(c, "BODY_STILL_AFTER_DRIVE_S", 0.0)
+            shaky = self.shake_lift and settled and self._held(
                 "shake", shake > c.BODY_LIFT_SHAKE_DPS, now, c.BODY_LIFT_SHAKE_S)
             if tilted or shaky:
                 self.lifted, self.lifted_at, self._held_said = True, now, False
                 self._since.clear()
                 out.append("lifted")
-            elif new_bump and self._once("bump", now):
+            elif new_bump and self.bumps_on and self._once("bump", now):
                 out.append("bump")
             return out
 

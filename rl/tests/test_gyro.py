@@ -324,5 +324,28 @@ if grid is not None:
     check("the tracker process takes the new job (with the gyro's gap count): "
           "folds, no error", tr.updates >= 2 and not tr.error, f"{tr.updates} {tr.error}")
 
+print("--- a second stop signal cannot cut the shutdown short ---")
+import inspect                                              # noqa: E402
+import signal                                               # noqa: E402
+import pi_deploy                                            # noqa: E402
+saved = (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM))
+took = pi_deploy._ignore_stop_signals()
+check("from the main thread: SIGINT and SIGTERM ignored (2026-10-07 21:33 the "
+      "second SIGINT killed the shutdown in detector.join -- no map, no black box)",
+      took and signal.getsignal(signal.SIGINT) is signal.SIG_IGN
+      and signal.getsignal(signal.SIGTERM) is signal.SIG_IGN)
+signal.signal(signal.SIGINT, saved[0])
+signal.signal(signal.SIGTERM, saved[1])
+src = inspect.getsource(ControlLoop.shutdown)
+check("ControlLoop.shutdown does it FIRST, and stops the motors right after",
+      src.index("_ignore_stop_signals()") < src.index("self.motors.emergency_stop()")
+      < src.index("self.detector.join"))
+res = []
+th = threading.Thread(target=lambda: res.append(pi_deploy._ignore_stop_signals()))
+th.start()
+th.join()
+check("...from any other thread it does nothing (Python allows handlers only in "
+      "the main thread) and never raises", res == [False])
+
 print("--- PASSED ---" if not fails else f"--- {fails} FAILED ---")
 sys.exit(1 if fails else 0)

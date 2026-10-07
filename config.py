@@ -2693,6 +2693,11 @@ BODY_LIFT_SHAKE_DPS = 1.5
 BODY_LIFT_SHAKE_S = 0.5
 BODY_LIFT_TILT_DEG = 25.0       # the board sits ~6-8 deg off level at rest
 BODY_LIFT_TILT_S = 0.3
+# Her own rocking after a hard pivot shakes the sensor 13-28 deg/s for a
+# moment (2026-10-07 run: "lifted" every 8-15 s, each right after the turn
+# flipped +1.56 -> -1.56 rad/s, and she said "Whoa!" a dozen times). A hand's
+# wobble counts only this long after the wheels last drove.
+BODY_STILL_AFTER_DRIVE_S = 1.5
 BODY_LEVEL_DEG = 18.0
 BODY_DOWN_SHAKE_DPS = 0.8
 BODY_DOWN_S = 1.2               # level and still this long = put down
