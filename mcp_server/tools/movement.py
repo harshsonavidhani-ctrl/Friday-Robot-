@@ -163,7 +163,11 @@ def turn_degrees(degrees: float) -> str:
     if blind:
         return blind
     seconds = abs(degrees) / rate
-    result = safety.guarded_move(direction, seconds)
+    # No gyro: still never below the calibrated turn_speed -- a pivot at
+    # speed 25% (42 duty) only buzzes after its kick (2026-10-07).
+    floor = float(config.load_calibration().get("turn_speed", 0) or 0)
+    pwm = max(hardware.speed_pwm("turn"), floor) if floor > 0 else None
+    result = safety.guarded_move(direction, seconds, speed_pwm=pwm)
     if result.stopped_early:
         turned = result.actual_s * rate
         text = (f"{result.as_text()}. Turned {_margin(round(turned), 'degrees')} "
@@ -195,6 +199,7 @@ GYRO_TURN_STALL_S = 0.4         # judge only after the kick has settled
 GYRO_TURN_STEP = 10.0           # duty per step
 GYRO_TURN_STEP_S = 0.3
 GYRO_TURN_GIVE_UP_S = 0.8       # at the cap, not turning, this long: stuck
+GYRO_TURN_READY_WAIT_S = 4.0     # the gyro still measuring its bias: wait this long
 
 
 def _gyro_turn(degrees: float) -> str | None:
@@ -208,6 +213,14 @@ def _gyro_turn(degrees: float) -> str | None:
         return None
     reader = getattr(drive, "imu", None)
     start = reader() if reader is not None else None
+    # Still measuring its bias (every friday-mcp start resets the board, and
+    # that takes ~1 s of stillness): wait for it rather than fall back to a
+    # timed pivot that cannot tell whether it turned.
+    waited = time.monotonic()
+    while (start and start.get("status") == "cal"
+           and time.monotonic() - waited < GYRO_TURN_READY_WAIT_S):
+        time.sleep(0.2)
+        start = reader()
     if not start or not start.get("ok"):
         return None
     degrees, clip_note = embodiment.clip_increment(

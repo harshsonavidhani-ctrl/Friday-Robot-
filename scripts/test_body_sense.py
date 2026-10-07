@@ -119,6 +119,11 @@ check("...another within 8 s: not reacted to again", ev == [], str(ev))
 d = bs.Detector()
 ev, t = feed(d, imu(bumps=9), 1.0, 0.0)
 check("the bump count she booted with is not a bump", ev == [], str(ev))
+d = bs.Detector()
+ev, _ = feed(d, imu(shake=2.5, status="cal"), 15.0, 0.0)
+check("still measuring its bias after a reset (status cal, shake reads ~2.5 on a "
+      "still floor): NO lift -- she said 'put me down' on the floor after two "
+      "restarts", ev == [] and not d.lifted, str(ev))
 check("no gyro / old firmware: no events, ever",
       bs.Detector().update(imu(status="nogyro", tilted=True), 0.0) == []
       and bs.Detector().update({"status": "ok", "ok": True, "yaw_deg": 0, "rate_dps": 0,

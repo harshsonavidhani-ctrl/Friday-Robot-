@@ -78,7 +78,12 @@ class Detector:
         return True
 
     def update(self, imu: dict | None, now: float, driving: bool = False) -> list[str]:
-        if not imu or "tilt_deg" not in imu or imu.get("status") == "nogyro":
+        # Only once the board says "ok": while it is still measuring its bias
+        # ("cal", ~1-6 s after every reset -- each friday-mcp start resets it)
+        # the roll/pitch "shake" is not zeroed and reads ~2.5 deg/s on a still
+        # floor, and she announced a lift and "put me down" after the 21:02 and
+        # 21:16 restarts (2026-10-07) sitting on the floor.
+        if not imu or "tilt_deg" not in imu or imu.get("status") != "ok":
             return []
         c = self.c
         tilt, shake = imu["tilt_deg"], imu["shake_dps"]

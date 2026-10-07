@@ -124,6 +124,26 @@ movement.turn_degrees(90)
 check("turning from the start: the power is never raised",
       all(abs(d[0]) == abs(board.drives[0][0]) for d in board.drives), str(board.drives))
 config.load_calibration = _real_cal2
+class CalBoard(Board):
+    """Reports 'cal' (bias being measured) for its first 0.8 s."""
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.born = time.monotonic()
+    def imu(self):
+        r = super().imu()
+        if r is not None and time.monotonic() - self.born < 0.8:
+            r = dict(r, status="cal", ok=False)
+        return r
+
+
+board = CalBoard()
+hardware.motors = lambda: board
+out = movement.turn_degrees(90)
+check("asked while the gyro is still measuring its bias: waits for it, then a "
+      "MEASURED turn (not the timed pivot that cannot tell)",
+      "measured by the gyro" in out and 84 <= -board.yaw <= 97, f"{out!r} {board.yaw:.1f}")
+board = Board()
+hardware.motors = lambda: board
 board.__init__(gyro=False)
 out = movement.turn_degrees(30)
 check("no gyro answering: the old timed pivot (and its honest refusal while the "

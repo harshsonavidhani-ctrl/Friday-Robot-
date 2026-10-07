@@ -131,7 +131,7 @@ bool tilted = false;
 // accelerometer and the raw spread, never by the rate the bias itself makes.
 int16_t calMin = 32767, calMax = -32768;
 const int16_t CAL_SPREAD = 131;              // 2 deg/s of raw Z spread = not still
-const float STILL_JOLT_G = 0.08f;
+const float STILL_JOLT_G = 0.12f;
 float lastJoltG = 0.0f;                      // this sample's jolt, any direction
 unsigned long tiltSinceMs = 0, levelSinceMs = 0;
 
@@ -202,6 +202,17 @@ bool mpuRead(uint8_t reg, uint8_t *buf, uint8_t n) {
   return true;
 }
 
+// The MPU-6500 (who=0x70) has its OWN accelerometer low-pass, OFF by default:
+// on 2026-10-07 the always-spinning LiDAR shook the unfiltered accelerometer
+// +-0.08-0.10 g at rest, which read as a jolt every sample, so the bias never
+// got measured. ACCEL_CONFIG2 = 0x04: ~21 Hz, still fast enough for a bump.
+// An MPU-6050 has no such register (0x1D is reserved there), so a NACK is
+// fine and init goes on either way.
+bool accelFilter() {
+  mpuWrite(0x1D, 0x04);
+  return true;
+}
+
 bool gyroInit() {
   PORTC &= ~(_BV(SDA_BIT) | _BV(SCL_BIT));   // an enabled output only ever drives LOW
   sdaHigh(); sclHigh();
@@ -213,7 +224,8 @@ bool gyroInit() {
       && mpuWrite(0x19, 0x09)                 // 1 kHz / 10 = 100 Hz
       && mpuWrite(0x1A, 0x03)                 // low-pass ~44 Hz
       && mpuWrite(0x1B, 0x08)                 // +-500 deg/s
-      && mpuWrite(0x1C, 0x00);                // +-2 g
+      && mpuWrite(0x1C, 0x00)                 // +-2 g
+      && accelFilter();
 }
 
 void gyroStartCal() {
@@ -235,7 +247,11 @@ void accelUpdate(int16_t rx, int16_t ry, int16_t rz, float gxDps, float gyDps) {
   if (h > hPeakG) hPeakG = h;
   if (h > BUMP_G) bumps++;
   float mag = sqrt(ax * ax + ay * ay + az * az);
-  float v = mag - 1.0f;
+  // Against her OWN steady reading, not an ideal 1 g: this board reads 0.91 g
+  // at rest, and against 1 g that offset (0.08-0.10) passed for a jolt, so the
+  // bias measurement kept restarting for 3-6 s after every reset (2026-10-07).
+  float steady = sqrt(afx * afx + afy * afy + afz * afz);
+  float v = mag - steady;
   if (fabs(v) > fabs(vPeakG)) vPeakG = v;
   lastJoltG = h > fabs(v) ? h : fabs(v);
   afx += 0.2f * (ax - afx); afy += 0.2f * (ay - afy); afz += 0.2f * (az - afz);
@@ -429,7 +445,7 @@ void loop() {
           Serial.println("OK");
         }
       } else if (cmd == 'V' || cmd == 'v') {
-        Serial.print("FRIDAY-MOTORS 1 GYRO 3 who=0x");
+        Serial.print("FRIDAY-MOTORS 1 GYRO 5 who=0x");
         Serial.println(gyroWho, HEX);
       } else if (cmd == 'W' || cmd == 'w') {
         watchdogMs = (unsigned long) line.substring(1).toInt();
