@@ -23,11 +23,18 @@
  *   M <l> <r>      set speeds      -> "OK"     l and r are -255..255
  *   S              stop            -> "OK"
  *   W <ms>         watchdog window -> "OK"     0 disables (not advised)
- *   G              gyro            -> "G <yaw cdeg> <rate cdeg/s> <ok|cal|nogyro> <gaps> <errors>"
+ *   G              gyro            -> "G <yaw cdeg> <rate cdeg/s> <ok|cal|nogyro> <gaps> <errors>
+ *                                       <tilt ddeg> <shake ddeg/s> <hpeak mg> <vpeak mg> <tilted 0|1> <bumps>"
+ *                  (the peaks are since the last G; the rest are now)
  *   Z              zero the yaw    -> "OK"
  *   B              re-measure bias -> "OK" (only while stopped, else "ERR")
  *   V              version         -> "FRIDAY-MOTORS 1 GYRO 1 who=0x.."
  *   anything else                  -> "ERR"
+ *
+ * TILTED (more than TILT_ON_DEG for TILT_ON_MS -- picked up, tipped, climbing
+ * something): the motors stop HERE, whatever the Pi is running, and every M
+ * answers "TILT" and is ignored until she has been under TILT_OFF_DEG for
+ * TILT_OFF_MS. S still answers "OK".
  *
  * G, Z, B and V do NOT pet the watchdog: something polling the gyro must never
  * keep the motors alive for a driver that has stopped talking.
@@ -88,9 +95,17 @@ bool moving = false;
 const uint8_t SDA_BIT = 0, SCL_BIT = 1;      // PORTC: A0 = PC0, A1 = PC1
 const uint8_t MPU = 0x68;                    // GY-521 with AD0 unconnected
 const float LSB_PER_DPS = 65.5f;             // GYRO_CONFIG FS_SEL=1: +-500 deg/s
-const unsigned long GYRO_PERIOD_US = 5000;   // 200 Hz
+const float LSB_PER_G = 16384.0f;            // ACCEL_CONFIG AFS_SEL=0: +-2 g
+const unsigned long GYRO_PERIOD_US = 10000;  // 100 Hz: all six axes (14 bytes) per read
 const unsigned long GYRO_MAX_DT_US = 50000;  // a longer loop stall is a "gap"
-const uint16_t CAL_SAMPLES = 200;            // 1 s of stillness for the bias
+const uint16_t CAL_SAMPLES = 100;            // 1 s of stillness for the bias
+// Tilt from the accelerometer, against the chip's own Z axis: the board is
+// mounted FLAT (2026-10-07, underneath, chip facing the floor), so on a level
+// floor gravity is along Z whichever way up. Not against a reference taken at
+// boot -- she may be booted while being carried.
+const float TILT_ON_DEG = 35.0f, TILT_OFF_DEG = 20.0f;
+const unsigned long TILT_ON_MS = 250, TILT_OFF_MS = 500;
+const float BUMP_G = 0.6f;                   // a horizontal jolt this big counts as a bump
 
 bool gyroOk = false;
 uint8_t gyroWho = 0;
@@ -102,6 +117,23 @@ float rateDps = 0.0f;
 unsigned long lastGyroUs = 0, lastInitMs = 0, stillSinceMs = 0;
 unsigned long gyroGaps = 0, gyroErrors = 0;
 uint8_t gyroFailRun = 0;
+long calSumX = 0, calSumY = 0;
+float biasX = 0.0f, biasY = 0.0f;            // roll/pitch-rate bias, for "shake"
+float afx = 0.0f, afy = 0.0f, afz = 1.0f;    // filtered acceleration, g
+bool accelSeen = false;
+float tiltDeg = 0.0f, shakeDps = 0.0f;
+float hPeakG = 0.0f, vPeakG = 0.0f;          // since the last G
+unsigned long bumps = 0;
+bool tilted = false;
+// STILLNESS, for the bias. 2026-10-07: a bias measured while Harsh held her
+// (B sent mid-handling) was 2-3 deg/s out, and the old follower (|rate| < 1)
+// could never pull an error that size back. Stillness is judged by the
+// accelerometer and the raw spread, never by the rate the bias itself makes.
+int16_t calMin = 32767, calMax = -32768;
+const int16_t CAL_SPREAD = 131;              // 2 deg/s of raw Z spread = not still
+const float STILL_JOLT_G = 0.08f;
+float lastJoltG = 0.0f;                      // this sample's jolt, any direction
+unsigned long tiltSinceMs = 0, levelSinceMs = 0;
 
 static inline void sdaLow()  { DDRC |=  _BV(SDA_BIT); }
 static inline void sdaHigh() { DDRC &= ~_BV(SDA_BIT); }
@@ -178,12 +210,66 @@ bool gyroInit() {
   if (!mpuRead(0x75, &who, 1)) return false;  // WHO_AM_I
   gyroWho = who;
   return mpuWrite(0x6B, 0x01)                 // awake, clock = gyro X PLL
-      && mpuWrite(0x19, 0x04)                 // 1 kHz / 5 = 200 Hz
+      && mpuWrite(0x19, 0x09)                 // 1 kHz / 10 = 100 Hz
       && mpuWrite(0x1A, 0x03)                 // low-pass ~44 Hz
-      && mpuWrite(0x1B, 0x08);                // +-500 deg/s
+      && mpuWrite(0x1B, 0x08)                 // +-500 deg/s
+      && mpuWrite(0x1C, 0x00);                // +-2 g
 }
 
-void gyroStartCal() { calSum = 0; calCount = 0; }
+void gyroStartCal() {
+  calSum = 0; calSumX = 0; calSumY = 0; calCount = 0;
+  calMin = 32767; calMax = -32768;
+}
+
+static inline int16_t be16(const uint8_t *b) {
+  return (int16_t)(((uint16_t) b[0] << 8) | b[1]);
+}
+
+void accelUpdate(int16_t rx, int16_t ry, int16_t rz, float gxDps, float gyDps) {
+  float ax = rx / LSB_PER_G, ay = ry / LSB_PER_G, az = rz / LSB_PER_G;
+  if (!accelSeen) { afx = ax; afy = ay; afz = az; accelSeen = true; }
+  // Jolts against the filtered value BEFORE it moves: horizontal = a bump,
+  // along gravity = a lift or a drop.
+  float hx = ax - afx, hy = ay - afy;
+  float h = sqrt(hx * hx + hy * hy);
+  if (h > hPeakG) hPeakG = h;
+  if (h > BUMP_G) bumps++;
+  float mag = sqrt(ax * ax + ay * ay + az * az);
+  float v = mag - 1.0f;
+  if (fabs(v) > fabs(vPeakG)) vPeakG = v;
+  lastJoltG = h > fabs(v) ? h : fabs(v);
+  afx += 0.2f * (ax - afx); afy += 0.2f * (ay - afy); afz += 0.2f * (az - afz);
+  float fm = sqrt(afx * afx + afy * afy + afz * afz);
+  if (fm > 0.3f) {
+    float c = fabs(afz) / fm;
+    if (c > 1.0f) c = 1.0f;
+    tiltDeg = acos(c) * 57.29578f;
+  }
+  // A robot on a floor never rolls or pitches fast; a hand shaking it does.
+  float rp = sqrt(gxDps * gxDps + gyDps * gyDps);
+  shakeDps += 0.1f * (rp - shakeDps);
+
+  unsigned long now = millis();
+  if (!tilted) {
+    if (tiltDeg > TILT_ON_DEG) {
+      if (tiltSinceMs == 0) tiltSinceMs = now;
+      if (now - tiltSinceMs >= TILT_ON_MS) {
+        tilted = true;
+        levelSinceMs = 0;
+        allStop();                            // here, whatever the Pi is doing
+      }
+    } else {
+      tiltSinceMs = 0;
+    }
+  } else {
+    if (tiltDeg < TILT_OFF_DEG) {
+      if (levelSinceMs == 0) levelSinceMs = now;
+      if (now - levelSinceMs >= TILT_OFF_MS) { tilted = false; tiltSinceMs = 0; }
+    } else {
+      levelSinceMs = 0;
+    }
+  }
+}
 
 void gyroUpdate() {
   unsigned long nowUs = micros();
@@ -198,20 +284,32 @@ void gyroUpdate() {
     }
     return;
   }
-  uint8_t b[2];
-  if (!mpuRead(0x47, b, 2)) {                 // GYRO_ZOUT_H, _L
+  uint8_t b[14];
+  if (!mpuRead(0x3B, b, 14)) {                // ACCEL_X..Z, TEMP, GYRO_X..Z
     gyroErrors++;
     if (++gyroFailRun >= 20) gyroOk = false;  // gone: try again every 2 s
     return;
   }
   gyroFailRun = 0;
-  int16_t raw = (int16_t)(((uint16_t) b[0] << 8) | b[1]);
+  int16_t rawX = be16(b + 8), rawY = be16(b + 10);
+  int16_t raw = be16(b + 12);
+  accelUpdate(be16(b), be16(b + 2), be16(b + 4),
+              ((float) rawX - biasX) / LSB_PER_DPS, ((float) rawY - biasY) / LSB_PER_DPS);
   if (calCount < CAL_SAMPLES) {               // the bias, measured standing still
-    if (!moving) {
-      calSum += raw;
-      if (++calCount == CAL_SAMPLES) biasRaw = (float) calSum / CAL_SAMPLES;
+    bool still = !moving && !tilted && lastJoltG < STILL_JOLT_G;
+    if (still) {
+      if (raw < calMin) calMin = raw;
+      if (raw > calMax) calMax = raw;
+    }
+    if (!still || calMax - calMin > CAL_SPREAD) {
+      gyroStartCal();                         // moved, held, jolted: start again
     } else {
-      gyroStartCal();                         // she moved: start again
+      calSum += raw; calSumX += rawX; calSumY += rawY;
+      if (++calCount == CAL_SAMPLES) {
+        biasRaw = (float) calSum / CAL_SAMPLES;
+        biasX = (float) calSumX / CAL_SAMPLES;
+        biasY = (float) calSumY / CAL_SAMPLES;
+      }
     }
     rateDps = 0.0f;
     return;
@@ -219,9 +317,12 @@ void gyroUpdate() {
   if (dtUs > GYRO_MAX_DT_US) { gyroGaps++; dtUs = GYRO_MAX_DT_US; }
   rateDps = ((float) raw - biasRaw) / LSB_PER_DPS;
   yawDeg += rateDps * (dtUs * 1e-6f);
-  // Warm-up drift: follow the bias slowly while stopped for over a second and
-  // all but still. A hand turning her is far faster than 1 deg/s.
-  if (!moving && millis() - stillSinceMs > 1000 && fabs(rateDps) < 1.0f) {
+  // Drift: follow the bias slowly while she has been stopped over a second,
+  // level, unjolted and not rolling/pitching (a hand holding her shakes).
+  // Errors up to 3 deg/s are pulled back (time constant ~5 s); a hand turning
+  // her is far faster than that.
+  if (!moving && !tilted && millis() - stillSinceMs > 1000 && fabs(rateDps) < 3.0f
+      && shakeDps < 1.5f && lastJoltG < STILL_JOLT_G) {
     biasRaw += 0.002f * ((float) raw - biasRaw);
   }
 }
@@ -236,7 +337,21 @@ void gyroReport() {
   Serial.print(' ');
   Serial.print(gyroGaps);
   Serial.print(' ');
-  Serial.println(gyroErrors);
+  Serial.print(gyroErrors);
+  Serial.print(' ');
+  Serial.print(lround(tiltDeg * 10.0f));
+  Serial.print(' ');
+  Serial.print(lround(shakeDps * 10.0f));
+  Serial.print(' ');
+  Serial.print(lround(hPeakG * 1000.0f));
+  Serial.print(' ');
+  Serial.print(lround(vPeakG * 1000.0f));
+  Serial.print(' ');
+  Serial.print(tilted ? 1 : 0);
+  Serial.print(' ');
+  Serial.println(bumps);
+  hPeakG = 0.0f;
+  vPeakG = 0.0f;
 }
 
 
@@ -314,7 +429,7 @@ void loop() {
           Serial.println("OK");
         }
       } else if (cmd == 'V' || cmd == 'v') {
-        Serial.print("FRIDAY-MOTORS 1 GYRO 1 who=0x");
+        Serial.print("FRIDAY-MOTORS 1 GYRO 3 who=0x");
         Serial.println(gyroWho, HEX);
       } else if (cmd == 'W' || cmd == 'w') {
         watchdogMs = (unsigned long) line.substring(1).toInt();
@@ -327,10 +442,15 @@ void loop() {
         } else {
           int l = line.substring(1, sp).toInt();
           int r = line.substring(sp + 1).toInt();
-          setSide(ENA, IN1, IN2, l);
-          setSide(ENB, IN3, IN4, r);
-          moving = (l != 0 || r != 0);
-          Serial.println("OK");
+          if (tilted) {
+            allStop();                        // held: she is tipped or in a hand
+            Serial.println("TILT");
+          } else {
+            setSide(ENA, IN1, IN2, l);
+            setSide(ENB, IN3, IN4, r);
+            moving = (l != 0 || r != 0);
+            Serial.println("OK");
+          }
           lastCommandMs = millis();
         }
       } else {
