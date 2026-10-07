@@ -2317,6 +2317,15 @@ FACE_MIN_DWELL_S = 0.55
 # is a moment, not a state; without an expiry the face stays stuck on the last
 # thing that happened.
 FACE_EMOTION_HOLD_S = 4.0
+# A face written by ANOTHER process (the mission, the run's expressions, speech
+# from friday-mcp restoring what was up before it spoke, friday-mcp's alarms)
+# eases back to neutral too (Harsh, 2026-10-07: "after changing faces it
+# doesn't return to neutral ... it gets stuck on the face she makes"). They
+# were adopted with no expiry and sat until the idle drift, 45 s later, went
+# to bored. Speaking / listening / thinking get longer: their writer usually
+# changes them itself. Neutral, bored and the sleep faces never expire.
+FACE_FOREIGN_HOLD_S = 5.0
+FACE_FOREIGN_PIPELINE_HOLD_S = 20.0
 
 # How long a safety face (scared/dizzy) is held. Long enough to be seen and
 # understood, short enough not to leave Friday looking frightened of a wall it

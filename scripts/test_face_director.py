@@ -13,6 +13,8 @@ config.FACE_BORED_AFTER_S = 0.3
 config.FACE_SLEEPY_AFTER_S = 0.6
 config.FACE_SLEEPING_AFTER_S = 0.9
 config.FACE_TICK_S = 0.05
+config.FACE_FOREIGN_HOLD_S = 0.35
+config.FACE_FOREIGN_PIPELINE_HOLD_S = 0.7
 import face_control, face_director
 
 fails = 0
@@ -62,6 +64,35 @@ d.rest()
 time.sleep(1.4)
 check("drift resumes once the other writer stops",
       d.state()["face"] == "sleeping", str(d.state()))
+# 2026-10-07, Harsh: "after changing faces it doesn't return to neutral ... it
+# gets stuck on the face she makes". A face from another process (the mission,
+# the run, speech restoring the face before it) now eases back like an emotion.
+d.close()
+# The drift as it really is relative to these holds (45 s vs 5 s), scaled.
+config.FACE_BORED_AFTER_S = 30.0
+config.FACE_SLEEPY_AFTER_S = 60.0
+config.FACE_SLEEPING_AFTER_S = 90.0
+d = face_director.FaceDirector().start()
+time.sleep(0.15)
+face_control.set_emotion("surprised")
+time.sleep(0.15)
+check("someone else's 'surprised' is shown...", d.state()["face"] == "surprised",
+      str(d.state()))
+time.sleep(0.4)
+check("...and eases back to NEUTRAL after its hold, not stuck until bored",
+      d.state()["face"] == "neutral", str(d.state()))
+face_control.set_emotion("speaking")
+time.sleep(0.5)
+check("'speaking' from another process (its writer ends it) is held longer",
+      d.state()["face"] == "speaking", str(d.state()))
+time.sleep(0.45)
+check("...but not forever either", d.state()["face"] == "neutral", str(d.state()))
+face_control.set_emotion("proud")
+for _ in range(10):
+    time.sleep(0.08)
+    face_control.set_emotion("proud")      # a writer that keeps re-asserting
+check("a writer re-asserting the same face keeps it up (no flicker to neutral)",
+      d.state()["face"] == "proud", str(d.state()))
 d.close()
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

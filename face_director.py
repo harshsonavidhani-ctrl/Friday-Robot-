@@ -325,14 +325,20 @@ class FaceDirector:
         if not self._dormant:
             self._last_activity = now
             self._idle_stage = 0
+        hold = _foreign_hold(name)
         if name == self._current:
+            # A writer re-asserting its face (the run's FaceExpression does)
+            # keeps it up: the hold restarts, so it never flickers to neutral.
+            if self._priority <= IDLE:
+                self._until = now + hold if hold else 0.0
             return False
         log.debug("face adopted %s -> %s (written elsewhere)",
                   self._current or "-", name)
         self._current = name
         self._priority = IDLE
         self._since = now
-        self._until = 0.0
+        # NOT FOREVER (2026-10-07): it eases back to neutral like any emotion.
+        self._until = now + hold if hold else 0.0
         return True
 
     # -- decay and idle drift --
@@ -392,6 +398,17 @@ class FaceDirector:
             return {"face": self._current, "priority": self._priority,
                     "idle_stage": self._idle_stage,
                     "held_for": round(time.monotonic() - self._since, 1)}
+
+
+def _foreign_hold(name: str) -> float:
+    """How long a face written by another process stays before neutral (0 = it
+    stays: neutral, bored, the sleep faces -- the idle drift owns those)."""
+    if (name == config.FACE_DEFAULT_EMOTION or name == "bored"
+            or name in DORMANT_FACES):
+        return 0.0
+    if name in ("speaking", "listening", "thinking"):
+        return float(getattr(config, "FACE_FOREIGN_PIPELINE_HOLD_S", 20.0))
+    return float(getattr(config, "FACE_FOREIGN_HOLD_S", 5.0))
 
 
 # One director per process. main.py drives it; the MCP set_face tool routes
