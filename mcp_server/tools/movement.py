@@ -179,6 +179,22 @@ GYRO_TURN_MAX_LEAD_DEG = 8.0
 GYRO_TURN_POLL_S = 0.03
 GYRO_TURN_SETTLE_S = 0.3
 GYRO_TURN_RATE_GUESS = 75.0     # deg/s, only to size the time budget (x2 + 1 s)
+# THE POWER, careful of the gears (Harsh, 2026-10-07: "just be careful of the
+# motors gears noise and gear tear"). Measured that day: at speed 25% a turn
+# ran at 170 x 0.25 = 42 duty -- the kick moved her ~10 deg, then she sat
+# BUZZING (energised, going nowhere: the worst thing for the gears) for 3 s.
+#  * start no lower than the calibrated turn_speed (170): below it a pivot only buzzes
+#  * raise only while the gyro says she is NOT turning: +STEP every STEP_S
+#  * never above MOTOR_MAX_DUTY (motor.Motors clamps it anyway)
+#  * once turning, hold; ease back a step if faster than needed
+#  * at the cap and still not turning for GIVE_UP_S: stop, say stuck -- no grinding
+GYRO_TURN_STALL_DPS = 10.0      # slower than this = not turning
+GYRO_TURN_MOVING_DPS = 25.0     # faster than this = turning: hold the power
+GYRO_TURN_FAST_DPS = 120.0      # faster than this: ease back (noise, overshoot)
+GYRO_TURN_STALL_S = 0.4         # judge only after the kick has settled
+GYRO_TURN_STEP = 10.0           # duty per step
+GYRO_TURN_STEP_S = 0.3
+GYRO_TURN_GIVE_UP_S = 0.8       # at the cap, not turning, this long: stuck
 
 
 def _gyro_turn(degrees: float) -> str | None:
@@ -206,28 +222,79 @@ def _gyro_turn(degrees: float) -> str | None:
     yaw0 = start["yaw_deg"]                             # + = left (motor.parse_imu)
     sense = 1.0 if direction == "left" else -1.0
     last = {"turned": 0.0}
+    trace: list = []                                    # what the gyro said, for the log
+    cal = config.load_calibration()
+    cap = 255.0 * float(getattr(drive, "max_duty", config.MOTOR_MAX_DUTY))
+    pwm0 = min(max(hardware.speed_pwm("turn"), float(cal.get("turn_speed", 0) or 0)), cap)
+    power = {"pwm": pwm0, "t0": time.monotonic(), "step_at": 0.0, "capped_at": None,
+             "rate": 0.0, "stuck": False, "peak": pwm0}
 
     def done() -> str | None:
         now = reader()
+        trace.append(None if not now else (round(now["yaw_deg"] - yaw0, 1),
+                                           round(now.get("rate_dps", 0.0)),
+                                           now.get("status"), now.get("errors"),
+                                           int(power["pwm"])))
         if not now or not now.get("ok"):
             return None                                 # keep to the time budget
+        power["rate"] = abs(now.get("rate_dps", 0.0))
         turned = sense * (now["yaw_deg"] - yaw0)
         last["turned"] = turned
-        lead = min(abs(now.get("rate_dps", 0.0)) * GYRO_TURN_LEAD_S,
-                   GYRO_TURN_MAX_LEAD_DEG)
+        lead = min(power["rate"] * GYRO_TURN_LEAD_S, GYRO_TURN_MAX_LEAD_DEG)
         if turned >= target - lead:
             return f"the gyro measured {turned:.0f} of {target:.0f} degrees"
+        if power["stuck"]:
+            return (f"stuck: not turning even at the power limit, so stopping "
+                    f"rather than grinding the gears ({turned:.0f} of {target:.0f} degrees)")
         return None
 
-    rate = config.load_calibration()["turn_deg_per_s"]
+    def throttle() -> float | None:
+        now = time.monotonic()
+        if now - power["t0"] < GYRO_TURN_STALL_S or power["stuck"]:
+            return None                                 # the kick is still settling
+        rate_now = power["rate"]
+        if rate_now >= GYRO_TURN_FAST_DPS and power["pwm"] - GYRO_TURN_STEP >= pwm0:
+            power["pwm"] -= GYRO_TURN_STEP              # faster than needed: ease back
+            power["step_at"] = now
+            return power["pwm"]
+        if rate_now >= GYRO_TURN_MOVING_DPS:
+            power["capped_at"] = None
+            return None                                 # turning: hold
+        if rate_now < GYRO_TURN_STALL_DPS:
+            if power["pwm"] >= cap - 0.5:
+                if power["capped_at"] is None:
+                    power["capped_at"] = now
+                elif now - power["capped_at"] >= GYRO_TURN_GIVE_UP_S:
+                    power["stuck"] = True
+                return None
+            if now - power["step_at"] >= GYRO_TURN_STEP_S:
+                power["pwm"] = min(power["pwm"] + GYRO_TURN_STEP, cap)
+                power["peak"] = max(power["peak"], power["pwm"])
+                power["step_at"] = now
+                return power["pwm"]
+        return None
+
+    rate = cal["turn_deg_per_s"]
     budget = target / (rate if rate > 0 else GYRO_TURN_RATE_GUESS) * 2.0 + 1.0
-    result = safety.guarded_move(direction, budget, done=done,
-                                 poll_s=GYRO_TURN_POLL_S)
+    result = safety.guarded_move(direction, budget, speed_pwm=pwm0, done=done,
+                                 poll_s=GYRO_TURN_POLL_S, throttle=throttle)
     time.sleep(GYRO_TURN_SETTLE_S)                      # she coasts a little after S
     end = reader()
     turned = sense * (end["yaw_deg"] - yaw0) if end and end.get("ok") else last["turned"]
     shown = int(round(turned))                          # never "-0"
-    if result.stopped_early:
+    log.info("gyro turn %s %.0f: measured %.1f in %.1fs; power %.0f -> peak %.0f "
+             "(cap %.0f)%s; start %s; end %s; %d readings, %d missing, max |rate| %s; "
+             "trace %s", direction, target, turned, result.actual_s, pwm0,
+             power["peak"], cap, ", STUCK" if power["stuck"] else "", start, end,
+             len(trace),
+             sum(1 for x in trace if x is None),
+             max((abs(x[1]) for x in trace if x), default=None), trace[:40])
+    if power["stuck"]:
+        text = (f"I couldn't turn: even at my power limit I only turned {shown} of "
+                f"{target:.0f} degrees (measured by the gyro), so I stopped rather "
+                f"than grind the gears. Something may be blocking my wheels, or my "
+                f"battery is low.")
+    elif result.stopped_early:
         text = (f"{result.as_text()}. Turned {shown} of the {target:.0f} "
                 f"degrees asked for (measured by the gyro).")
     elif turned < target * 0.8:

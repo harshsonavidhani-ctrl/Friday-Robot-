@@ -142,7 +142,7 @@ def _scan_movement_mm(before: dict[int, int], now: dict[int, int]) -> float | No
 
 def guarded_move(direction: str, seconds: float,
                  speed_pwm: float | None = None, done=None,
-                 poll_s: float | None = None) -> MoveResult:
+                 poll_s: float | None = None, throttle=None) -> MoveResult:
     """Run one movement under the interrupt. The only way tools may move.
 
     Blocking; the registry runs it in a worker thread so that stop() can be
@@ -154,6 +154,12 @@ def guarded_move(direction: str, seconds: float,
     caps, the checks and the final stop are exactly as without it. `poll_s`
     may shorten the pass (never lengthen it) so a measured turn stops close
     to its angle.
+
+    `throttle` (the gyro turn's power ramp): a callable checked on every pass
+    that may return a new pwm for the SAME direction (None = unchanged). It
+    is re-sent as one continuous move -- no stop, no second kick -- and
+    motor.Motors still caps it at MOTOR_MAX_DUTY, so it can never exceed the
+    gear limit. A throttle that raises is ignored.
     """
     direction = direction.strip().lower()
     is_forward = direction in FORWARD_WORDS
@@ -278,6 +284,26 @@ def guarded_move(direction: str, seconds: float,
                 if finished:
                     reason = str(finished)
                     break
+
+            if throttle is not None:
+                try:
+                    new_pwm = throttle()
+                except Exception as exc:    # noqa: BLE001
+                    log.debug("throttle() failed: %s", exc)
+                    new_pwm = None
+                if new_pwm is not None and abs(float(new_pwm) - pwm) >= 1.0:
+                    pwm = float(new_pwm)
+                    if direction in ("left", "right"):
+                        left, right = ((pwm, -pwm) if direction == "right"
+                                       else (-pwm, pwm))
+                    else:
+                        left = right = pwm * sign
+                    try:
+                        drive.drive(left, right)
+                    except Exception as exc:    # noqa: BLE001
+                        stopped_early = True
+                        reason = f"lost the motor link ({exc})"
+                        break
 
             # The Arduino stops on its own after config.MOTOR_WATCHDOG_S of
             # silence, so the loop has to keep talking to it. A bare newline

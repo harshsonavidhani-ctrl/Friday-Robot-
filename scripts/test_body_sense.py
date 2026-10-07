@@ -33,14 +33,15 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 print("--- the board's G reply ---")
 g = motor.parse_imu("G 9000 -1500 ok 0 0 64 3 9 -25 0 7")
-check("+90 deg on the board (he turned her RIGHT) is -90 here: + = left",
-      g["yaw_deg"] == -90.0 and g["rate_dps"] == 15.0 and config.GYRO_SIGN == -1, str(g))
+check("+90 deg on the board is +90 here (+ = left; measured with her LiDAR, "
+      "GYRO_SIGN +1)", g["yaw_deg"] == 90.0 and g["rate_dps"] == -15.0
+      and config.GYRO_SIGN == 1, str(g))
 check("...tilt, shake, jolts, tilted and bumps parsed",
       (g["tilt_deg"], g["shake_dps"], g["hpeak_g"], g["vpeak_g"], g["tilted"], g["bumps"])
       == (6.4, 0.3, 0.009, -0.025, False, 7), str(g))
 check("GYRO 1's short reply still parses (no accelerometer fields)",
-      motor.parse_imu("G 0 0 cal 0 0") == {"status": "cal", "ok": False, "yaw_deg": -0.0,
-                                         "rate_dps": -0.0, "gaps": 0, "errors": 0})
+      motor.parse_imu("G 0 0 cal 0 0") == {"status": "cal", "ok": False, "yaw_deg": 0.0,
+                                         "rate_dps": 0.0, "gaps": 0, "errors": 0})
 check("old firmware (ERR), garbage, None -> None",
       motor.parse_imu("ERR") is None and motor.parse_imu("G x y") is None
       and motor.parse_imu(None) is None)

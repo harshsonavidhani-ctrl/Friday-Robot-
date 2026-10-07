@@ -82,15 +82,16 @@ check("G goes on the wire, and last_wire / the command count are untouched",
 drv._ser.inbox = b"OK\nG 9000 -1500 ok 0 0 64 3 9 -25 0 0\nG 9"
 drv.request_imu()
 imu = drv.imu()
-check("the reply is read on the next drain; +90 on the board is -90 here "
-      "(chip faces the floor, he turned her RIGHT)",
-      imu is not None and imu["yaw_deg"] == -90.0 and imu["rate_dps"] == 15.0
+check("the reply is read on the next drain; the sign is config.GYRO_SIGN's "
+      "(+1: + = left, measured with her LiDAR)",
+      imu is not None and imu["yaw_deg"] == 90.0 * friday_config.GYRO_SIGN
+      and imu["rate_dps"] == -15.0 * friday_config.GYRO_SIGN
       and drv.imu_replies == 1, str(imu))
 check("...the half line waits for the rest", drv._rx == b"G 9")
 drv._ser.inbox = b"100 0 ok 0 0 64 3 9 -25 0 0\nTILT\nERR\n"
 drv.request_imu()
 check("...completed next time; TILT and ERR counted as before",
-      drv.last_imu["yaw_deg"] == -91.0 and drv.tilt_replies == 1
+      drv.last_imu["yaw_deg"] == 91.0 * friday_config.GYRO_SIGN and drv.tilt_replies == 1
       and drv._err_count == 1, str(drv.last_imu))
 drv.last_imu_t -= 1.0
 check("a reading older than 0.5 s is not used", drv.imu() is None)

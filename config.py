@@ -2670,11 +2670,14 @@ CPU_HOT_LINE_AGAIN = "My CPU is very hot now. Please turn on the fan."
 
 # --- Her gyro + accelerometer (the motor board, firmware GYRO >= 1) ----------
 # Harsh, 2026-10-07: an MPU-6050 board (the chip is an MPU-6500) wired to the
-# Uno's A0/A1, mounted UNDERNEATH, chip facing the floor. He turned her RIGHT
-# (clockwise from above) and the board's yaw went POSITIVE, so here, where
-# + is LEFT (counter-clockwise, like every heading in this project), it is
-# negated. motor.parse_imu applies it; nothing else should.
-GYRO_SIGN = -1
+# Uno's A0/A1, mounted underneath. The board's yaw is + for a LEFT turn, the
+# same as every heading in this project, so it is used as it comes (+1).
+# MEASURED, not inferred: a commanded RIGHT turn that her own LiDAR measured
+# as -48 deg (right), the gyro as -13 deg on the previous identical turn with
+# -1 applied... i.e. the raw board went + for left. (The first guess, -1, came
+# from a hand turn described as "right" by someone FACING her -- her left.)
+# motor.parse_imu applies it; nothing else should.
+GYRO_SIGN = 1
 
 # --- She feels being picked up (body_sense.py), EMO-style --------------------
 # Harsh, 2026-10-07: "if I pick it up like it reacts accordingly add like the
