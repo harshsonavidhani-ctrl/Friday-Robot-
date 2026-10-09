@@ -104,12 +104,17 @@ class Similarity:
 
 
 def similarity(cur: np.ndarray, ref: np.ndarray, min_overlap: float = 0.6,
-               match_mad_m: float = 0.20) -> Similarity:
+               match_mad_m: float = 0.20, heading_deg: float | None = None,
+               window_deg: float = 30.0) -> Similarity:
     """Best rotation of `ref` against `cur`, all 360 at once (spec 4.9).
 
     Among the shifts with overlap >= min_overlap, the one with the lowest MAD
     wins; match = that MAD <= match_mad_m. No shift with enough overlap ->
     no match, MAD inf.
+
+    `heading_deg`: how far she has turned since `ref` by the GYRO. Only shifts
+    within `window_deg` of it count, so a room that matches itself turned
+    round (2026-10-07: best shift 137 deg) cannot pass for the start.
     """
     cur = np.asarray(cur, dtype=np.float32)
     ref = np.asarray(ref, dtype=np.float32)
@@ -121,6 +126,11 @@ def similarity(cur: np.ndarray, ref: np.ndarray, min_overlap: float = 0.6,
         mad = np.where(count > 0, diff / np.maximum(count, 1), np.inf)
     overlap = count / float(N_BINS)
     mad = np.where(overlap >= min_overlap, mad, np.inf)
+    if heading_deg is not None:
+        # shift = -k (mod 360): keep the k whose shift is near the gyro's turn.
+        shifts = (-np.arange(N_BINS) + 180) % 360 - 180
+        off = (shifts - float(heading_deg) + 180.0) % 360.0 - 180.0
+        mad = np.where(np.abs(off) <= float(window_deg), mad, np.inf)
     k = int(np.argmin(mad))
     best = float(mad[k])
     # roll(ref, k) matching cur means cur[b] = ref[b - k]: she turned by -k.

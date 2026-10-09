@@ -88,7 +88,8 @@ import time
 from collections import deque
 
 from exploration_mission import (area_store, boot, breadcrumbs, curiosity,
-                                 frontiers, home_anchor, intents, label_dialog,
+                                 frontiers, gyro_heading, home_anchor, intents,
+                                 label_dialog,
                                  mission_map, rth_ladder, run_drive, segmentation,
                                  speech)
 
@@ -383,6 +384,13 @@ class MissionManager:
         self._pause_after_ask = False
         self._last_scan: dict | None = None
         self.last_matched_pose = (0.0, 0.0, 0.0)   # the tracker was SURE here
+        # Her heading in the start's frame by the GYRO, for the arrival looks
+        # (gyro_heading.py). The run's fixes say whether it had a gyro, and
+        # the engine's move count when the last fix came says whether File 14
+        # has moved her since (then the run's pose is stale).
+        self.heading = gyro_heading.GyroHeading()
+        self._run_gyro: int | None = None
+        self._fix_moves: int | None = None
         self._started_by = "voice"          # | "curiosity"
         self._run_ended = False             # the run finished on its own
         self._end_asked = False             # the last question was asked at the end
@@ -1271,6 +1279,8 @@ class MissionManager:
             start = self.T if self.T is not None else (0.0, 0.0, 0.0)
             sig = res["anchor"].signature
             # ALL SAVED BEFORE THE FIRST MOTION (spec 4.9).
+            self.heading.reset()
+            self._run_gyro = self._fix_moves = None
             self.mission = self.store.start_mission(self.env_id, self.map_id, start,
                                                     start_signature=sig)
             if home is None:
@@ -1335,6 +1345,8 @@ class MissionManager:
             fix = dict(fix, pose=list(pose))
         if self._matched:
             self.last_matched_pose = pose
+        self._run_gyro = fix.get("gyro_gaps")
+        self._fix_moves = self._engine_moves()
         self.distance_m += math.hypot(pose[0] - self.pose[0], pose[1] - self.pose[1])
         self.pose = pose
         self._last_scan = fix.get("scan")
@@ -2073,6 +2085,31 @@ class MissionManager:
         self._ladder_outcome(self.ladder.restart(now), now)
 
     # ---- the look at arrival (spec 4.12) -----------------------------------------
+    def _engine_moves(self) -> int:
+        moves = getattr(self.a.nav, "moves", None)
+        try:
+            return int(moves()) if callable(moves) else 0
+        except Exception:                               # noqa: BLE001
+            return 0
+
+    def _gyro_heading(self) -> float | None:
+        """Her heading in the start's frame by the gyro, or None. Latched ONCE
+        per mission, at the first look: the run's last pose (its heading
+        gyro-tracked) when the run had a gyro and File 14's engine has not
+        moved her since; from then on the board's yaw carries it through every
+        turn (gyro_heading.py). Runs in the look's job thread."""
+        if not self.heading.latched and self.heading.why == "not latched":
+            rel = None
+            if (self._run_gyro is not None and self.mission
+                    and self._fix_moves == self._engine_moves()):
+                rel = math.remainder(self.pose[2] - float(
+                    self.mission.get("start_theta") or 0.0), 2 * math.pi)
+            elif self._run_gyro is not None:
+                self.heading.why = "File 14 moved her after the run's last pose"
+                return None
+            self.heading.latch(rel)
+        return self.heading.now()
+
     def _look(self) -> dict:
         sig = self.cfg.signature
         sweeps = []
@@ -2082,15 +2119,27 @@ class MissionManager:
                 sweeps.append(sweep)
             self.a.clock.sleep(0.1)
         start = (self.mission or {}).get("start_signature")
+        heading = self._gyro_heading()
         out = rth_ladder.verify(sweeps, start, sig.max_range_m, sig.match_mad_m,
-                                sig.min_overlap)
+                                sig.min_overlap, heading_rad=heading)
         # Where the start really is, by its own view (no map, no tracker): the
         # evidence for the log, and the arrival's error when she is placed.
-        seen = rth_ladder.from_start(sweeps, start, sig.max_range_m)
+        seen = rth_ladder.from_start(sweeps, start, sig.max_range_m,
+                                     heading_rad=heading)
         if seen["pose"] is not None:
             d, _ = rth_ladder.start_seen_from(seen["pose"])
             out.update(from_start_m=round(d, 2),
                        from_start=[round(v, 3) for v in seen["pose"]])
+        else:
+            out.update(from_start_why=str(seen.get("why", ""))[:160])
+        out.update(gyro_heading_deg=None if heading is None
+                   else round(math.degrees(heading), 1), gyro_why=self.heading.why)
+        # The view itself (what from_start compares, to the cm): an arrival
+        # can be replayed offline. 2026-10-07's could not.
+        if sweeps:
+            view = home_anchor.signature(sweeps, sig.max_range_m)
+            out["view"] = [None if not math.isfinite(v) else round(float(v), 2)
+                           for v in view]
         return out
 
     def _arrival_steps(self, now: float) -> None:

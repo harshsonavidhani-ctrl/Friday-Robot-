@@ -250,7 +250,8 @@ def localise_points(grid, local: np.ndarray,
                     coarse_step_deg: float = COARSE_STEP_DEG,
                     beams: int = COARSE_BEAMS,
                     restrict_to: np.ndarray | None = None,
-                    min_coverage: float = MIN_COVERAGE) -> Fix:
+                    min_coverage: float = MIN_COVERAGE,
+                    heading_window: tuple[float, float] | None = None) -> Fix:
     """Where a set of points, given relative to one origin, sits in `grid`.
 
     One sweep is the usual case (`localise`). The other is a whole MAP: the
@@ -265,6 +266,13 @@ def localise_points(grid, local: np.ndarray,
     `grid` has an opinion about. A trip that explored past the saved map's
     edge legitimately has points nothing can judge, so map fitting passes a
     lower value than a single sweep does.
+
+    `heading_window` = (centre, half-width), radians: search only those
+    headings. The GYRO knows which way she faces to within a few degrees
+    (2026-10-07: the run's heading slid 4-7 deg in 3 min), and a room that
+    looks alike turned round -- the arrival on 2026-10-07 21:34 saw "two
+    places" and refused -- is only ambiguous when every heading is allowed.
+    A rival must then be a rival at HER heading.
     """
     if len(local) < config.SLAM_MATCH_MIN_BEAMS:
         return Fix(why=f"only {len(local)} points to place")
@@ -282,7 +290,13 @@ def localise_points(grid, local: np.ndarray,
 
     # ---- coarse: every position, every 10 degrees, one FFT per heading ---
     stack = []                       # (score, ix, iy, theta), best per heading
-    for step in np.arange(0.0, 360.0, coarse_step_deg):
+    if heading_window is None:
+        steps = np.arange(0.0, 360.0, coarse_step_deg)
+    else:
+        centre, half = math.degrees(heading_window[0]), abs(math.degrees(heading_window[1]))
+        n = max(int(math.ceil(half / coarse_step_deg)), 1)
+        steps = centre + np.linspace(-half, half, 2 * n + 1)
+    for step in steps:
         theta = math.radians(step)
         scores = _score_all_translations(field, _rotate(coarse, theta),
                                          min_coverage)
@@ -307,6 +321,9 @@ def localise_points(grid, local: np.ndarray,
         for delta in np.arange(-FINE_SPAN_DEG, FINE_SPAN_DEG + 1e-9,
                                FINE_STEP_DEG):
             theta = btheta + math.radians(delta)
+            if heading_window is not None and abs(math.remainder(
+                    theta - heading_window[0], 2 * math.pi)) > abs(heading_window[1]) + 1e-9:
+                continue
             scores = _score_all_translations(field, _rotate(local, theta),
                                              min_coverage)
             if allowed is not None:

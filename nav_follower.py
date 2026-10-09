@@ -1129,6 +1129,28 @@ class GuardedRobot:
                            seconds=float(seconds), said=said)
         return said
 
+    async def turn_measured(self, degrees_left: float) -> str | None:
+        """A pivot closed on the motor board's GYRO (movement._gyro_turn):
+        it stops when the board says the angle is done. Still ONE
+        `safety.guarded_move` with every check, the duration cap and the final
+        stop -- the same guard as `drive_seconds`, only ended by the gyro
+        instead of a clock. None = no gyro: the caller times the pivot as
+        before. + = left (her heading's sense)."""
+        import anyio.to_thread
+
+        import trip_recorder
+        from mcp_server.tools import movement
+        try:
+            # movement's sign is the turn_degrees tool's: negative = left.
+            said = await anyio.to_thread.run_sync(movement._gyro_turn,
+                                                  -float(degrees_left))
+        except Exception as exc:                 # noqa: BLE001
+            said = unanswered("left" if degrees_left > 0 else "right", exc)
+        if said is not None:
+            trip_recorder.note("turn", src="follower", degrees=float(degrees_left),
+                               said=said)
+        return said
+
     async def sweep(self) -> dict[int, int]:
         import trip_recorder
         scan = await self._inner.sweep()

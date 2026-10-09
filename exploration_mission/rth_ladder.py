@@ -85,21 +85,31 @@ class ArrivalCheck:
         return self.since is not None and now - self.since >= self.dwell_s
 
 
+# How far the gyro's heading may be from the truth. It slid 4-7 deg over a
+# 3-minute run (2026-10-07) and a turn lands within ~3 deg; 30 leaves room for
+# a longer run and still rules out every turned-round look-alike.
+GYRO_WINDOW_DEG = 30.0
+
+
 def verify(sweeps: list[dict], start_signature, max_range_m: float = 8.0,
-           match_mad_m: float = 0.20, min_overlap: float = 0.60) -> dict:
-    """The quick signature at arrival against the start's (spec 4.12)."""
+           match_mad_m: float = 0.20, min_overlap: float = 0.60,
+           heading_rad: float | None = None) -> dict:
+    """The quick signature at arrival against the start's (spec 4.12).
+    `heading_rad`: her heading in the start's frame by the gyro, or None."""
     if not sweeps or start_signature is None:
         return {"verified": False, "why": "no sweep to compare"
                 if not sweeps else "no start signature"}
     cur = home_anchor.signature(sweeps, max_range_m)
     ref = np.asarray([float("nan") if v is None else float(v)
                       for v in start_signature], dtype=np.float32)
-    s = home_anchor.similarity(cur, ref, min_overlap, match_mad_m)
+    s = home_anchor.similarity(
+        cur, ref, min_overlap, match_mad_m,
+        None if heading_rad is None else math.degrees(heading_rad), GYRO_WINDOW_DEG)
     return {"verified": bool(s.match), **s.as_dict()}
 
 
-def from_start(sweeps: list[dict], start_signature, max_range_m: float = 8.0
-               ) -> dict:
+def from_start(sweeps: list[dict], start_signature, max_range_m: float = 8.0,
+               heading_rad: float | None = None) -> dict:
     """Where she stands in the START's own frame, found from what she sees now
     against what she saw standing there -- {"pose": (x, y, theta) | None, "why"}.
 
@@ -110,7 +120,11 @@ def from_start(sweeps: list[dict], start_signature, max_range_m: float = 8.0
     walls round the origin and File 14's single-sweep search (global_localise)
     places the current sweep among them -- every position, every heading, and
     it refuses a look-alike. Measured on the real start view: within 12 cm,
-    heading exact. ~2.6 s on the Pi: a job, never the tick."""
+    heading exact. ~2.6 s on the Pi: a job, never the tick.
+
+    `heading_rad` (her heading in the start's frame by the GYRO): only
+    headings within GYRO_WINDOW_DEG of it are searched -- a look-alike turned
+    round is no longer a rival, and the search is ~5x quicker."""
     if not sweeps or start_signature is None:
         return {"pose": None, "why": "no sweep" if not sweeps else "no start view"}
     import global_localise
@@ -123,7 +137,9 @@ def from_start(sweeps: list[dict], start_signature, max_range_m: float = 8.0
     grid = OccupancyGrid()
     for _ in range(3):
         grid.integrate(walls, (0.0, 0.0), occupied=walls)
-    fix = global_localise.localise_points(grid, here)
+    fix = global_localise.localise_points(
+        grid, here, heading_window=None if heading_rad is None
+        else (float(heading_rad), math.radians(GYRO_WINDOW_DEG)))
     if fix.pose is None:
         return {"pose": None, "why": fix.why}
     return {"pose": tuple(float(v) for v in fix.pose), "why": fix.why}

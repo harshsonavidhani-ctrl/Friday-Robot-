@@ -425,10 +425,18 @@ check("the look-again rung may take up to 75 s (a full turn, a look per quarter)
 print("--- arrival: onto the start by its own view (the engine's 'approach') ---")
 from exploration_mission import rth_ladder as _rl                # noqa: E402
 VIEWS: list = []
+HEADINGS: list = []                     # the gyro heading each look was given
 _real_from_start = _rl.from_start
-_rl.from_start = lambda sweeps, sig, max_range=8.0: (
-    {"pose": VIEWS.pop(0), "why": "scripted"} if VIEWS and VIEWS[0] is not None
-    else (VIEWS.pop(0) if VIEWS else None, {"pose": None, "why": "nothing like it"})[1])
+
+
+def _scripted_from_start(sweeps, sig, max_range=8.0, heading_rad=None):
+    HEADINGS.append(heading_rad)
+    return ({"pose": VIEWS.pop(0), "why": "scripted"} if VIEWS and VIEWS[0] is not None
+            else (VIEWS.pop(0) if VIEWS else None,
+                  {"pose": None, "why": "nothing like it"})[1])
+
+
+_rl.from_start = _scripted_from_start
 MGR.mission = {"id": "m1", "start_signature": [1.0] * 360}
 
 
@@ -483,6 +491,53 @@ check("approach: each step leaves her FURTHER from the start -> stops after the 
 h, res, moves = approach([None])
 check("approach: the start's view finds nothing like it -> FAILED, no move",
       h.outcome == "FAILED" and not moves, f"{h.outcome} {h.why}")
+
+
+# --- the GYRO (2026-10-09): her heading narrows each look, turns are measured ---
+class GyroRobot(Robot):
+    def __init__(self, answers=True):
+        super().__init__()
+        self.turns, self.answers = [], answers
+
+    async def turn_measured(self, degrees_left):
+        if not self.answers:
+            return None                              # no gyro on the board
+        if not self.looked:
+            return "REFUSED — Friday has not looked at the room yet. Call observe() first"
+        self.looked = False
+        self.turns.append(round(degrees_left, 1))
+        return f"Turned {abs(degrees_left):.0f} degrees (measured by the gyro)."
+
+
+class Heading:
+    def __init__(self, values): self.values = list(values)
+    def now(self): return self.values.pop(0) if self.values else None
+
+
+MGR.heading = Heading([3.0, 2.9, 2.8])
+HEADINGS.clear()
+gr = GyroRobot()
+h, res, moves = approach([(1.0, 0.1, 0.0), (1.0, 0.0, math.pi), (0.05, 0.0, math.pi)],
+                         robot=gr)
+check("approach with the gyro: every look is given her gyro heading",
+      HEADINGS == [3.0, 2.9, 2.8], str(HEADINGS))
+check("...the turn toward the start and the final face are MEASURED turns (signed, "
+      "+ = left), the step is the only timed move -> ARRIVED",
+      h.outcome == "ARRIVED" and gr.turns == [-120.0, -180.0]
+      and [m[0] for m in moves] == ["forward"], f"{h.outcome} {h.why} {gr.turns} {moves}")
+gr = GyroRobot(answers=False)
+h, res, moves = approach([(1.0, 0.1, 0.0), (1.0, 0.0, math.pi), (0.05, 0.0, math.pi)],
+                         robot=gr)
+check("...a board with no gyro: the same approach with timed pivots, as before",
+      h.outcome == "ARRIVED" and [m[0] for m in moves] == ["right", "forward", "right"]
+      and abs(moves[0][1] - 120.0 / 75.0) < 0.01, f"{h.outcome} {moves}")
+MGR.heading = Heading([])
+HEADINGS.clear()
+h, res, moves = approach([(0.05, 0.0, 0.0)])
+check("...no heading the gyro can vouch for -> the look searches every heading (None)",
+      h.outcome == "ARRIVED" and HEADINGS == [None], str(HEADINGS))
+del MGR.heading
+
 MGR.mission = {"id": "m1"}
 h, res, moves = approach([(0.8, 0.0, math.pi)])
 check("approach: no start view saved -> REFUSED, no move",

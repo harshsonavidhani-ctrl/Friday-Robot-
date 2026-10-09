@@ -438,7 +438,7 @@ DRIVE_FINAL_TOL_M = 0.10         # the last point: she closes in while the 0.35 
 
 
 def _publish(scan, rl, blind, start_rl, res: dict, max_range: float,
-             path: Path | None = None) -> bool:
+             path: Path | None = None, gyro_gaps: int | None = None) -> bool:
     """Write the latest fix for the mission. NEVER RAISES.
 
     Called in the TRACKER PROCESS after the fix has already gone back to the run,
@@ -455,6 +455,9 @@ def _publish(scan, rl, blind, start_rl, res: dict, max_range: float,
                    "rl": [float(v) for v in rl],
                    "start_rl": None if start_rl is None else [float(v) for v in start_rl],
                    "fold_ms": round(float(res.get("ms", 0.0)), 1),
+                   # The ticks the gyro did NOT measure (None = no gyro): the
+                   # mission trusts this pose's heading only with a gyro.
+                   "gyro_gaps": None if gyro_gaps is None else int(gyro_gaps),
                    "scan": {str(int(round(float(k)))): int(v) for k, v in sweep.items()}}
         target = path or MISSION_DIR / "live.json"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -682,7 +685,7 @@ def _serve(max_range: float) -> int:
         # FILE 21: after the reply, so the run never waits on it.
         if res and "pose" in res and time.monotonic() - last_pub >= PUBLISH_PERIOD_S:
             last_pub = time.monotonic()
-            _publish(scan, rl, blind, start_rl, res, max_range)
+            _publish(scan, rl, blind, start_rl, res, max_range, gyro_gaps=gyro_gaps)
 
 
 def _match(field, local: np.ndarray, centre, window_m: float, window_deg: float,

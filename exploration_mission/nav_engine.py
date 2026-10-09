@@ -104,6 +104,9 @@ class EngineHost:
         self.robot = None
         self.og_id = None
         self.reports: list[dict] = []
+        # Every action that can move her, counted: the mission takes its gyro
+        # heading from the run's last pose only while this has not moved since.
+        self.moves = 0
 
     # -- what the mission reads --------------------------------------------------
     def snapshot(self) -> dict:
@@ -138,6 +141,7 @@ class EngineHost:
             if self.busy:
                 return {"started": False, "why": f"busy ({self.action})"}
             self.busy, self.outcome, self.why, self.action = True, None, "", action
+            self.moves += 1
         work = {"attempt": self._attempt, "back_up": self._back_up,
                 "spin": self._spin, "approach": self._approach}.get(action)
         if work is None:
@@ -283,21 +287,42 @@ class EngineHost:
         await self.robot.observe()
         return str(await self.robot.drive_seconds(direction, seconds))
 
+    async def _turn(self, degrees_left: float) -> str:
+        """ONE guarded pivot, + = left. Closed on the GYRO when the board has
+        one (GuardedRobot.turn_measured): a timed pivot on this drivetrain
+        executed ~22% of turns as stops, and the 2026-10-07 approach could not
+        tell. No gyro (or a robot without it): timed, as before."""
+        import config
+        await self.robot.observe()
+        measured = getattr(self.robot, "turn_measured", None)
+        if measured is not None:
+            said = await measured(float(degrees_left))
+            if said is not None:
+                return str(said)
+        deg_s = float(getattr(config, "AGENCY_TURN_DEG_PER_S", 75.0))
+        return str(await self.robot.drive_seconds(
+            "left" if degrees_left > 0 else "right", abs(degrees_left) / deg_s))
+
+    @staticmethod
+    def _heading(mgr):
+        """Her heading in the start's frame by the gyro, or None
+        (gyro_heading.GyroHeading, latched by the mission's first look)."""
+        h = getattr(mgr, "heading", None) if mgr is not None else None
+        return None if h is None else h.now()
+
     async def _spin(self):
         """Look again (rung 3): a quarter turn at a time, up to a full turn,
         finding her after each -- on the tracker's map when she has one, else
         from scratch round the last sure pose. Every turn a guarded move."""
-        import config
         from exploration_mission import service
         mgr = service.get()
         why = await self._ready()
         if why and "not sure" not in why:
             return "REFUSED", why
         self._arm()
-        deg_s = float(getattr(config, "AGENCY_TURN_DEG_PER_S", 75.0))
         said = ""
         for _ in range(LOOK_TURNS):
-            said = await self._move("left", SPIN_DEG / deg_s)
+            said = await self._turn(SPIN_DEG)
             if "REFUSED" in said.upper():
                 return "REFUSED", said[:120]
             if self.mapper is not None:
@@ -326,25 +351,26 @@ class EngineHost:
         self._arm()
         with self._lock:                 # she moves without File 14 tracking her
             self.mapper, self.og_id = None, None
-        deg_s = float(getattr(config, "AGENCY_TURN_DEG_PER_S", 75.0))
         speed = float(getattr(config, "MISSION_BACKUP_SPEED_M_S", 0.45))
         cfg = getattr(mgr, "cfg", None)
         max_range = float(cfg.signature.max_range_m) if cfg is not None else 8.0
         last_d, worse = None, 0
         for _ in range(APPROACH_STEPS):
             sweeps = await asyncio.to_thread(self._sweeps, mgr)
-            seen = await asyncio.to_thread(rth_ladder.from_start, sweeps, sig, max_range)
+            heading = await asyncio.to_thread(self._heading, mgr)
+            seen = await asyncio.to_thread(rth_ladder.from_start, sweeps, sig, max_range,
+                                           heading_rad=heading)
             if seen["pose"] is None:
                 return "FAILED", f"cannot place myself by the start's view ({seen['why']})"
             d, bearing = rth_ladder.start_seen_from(seen["pose"])
             log.info("approach: the start is %.2f m away, %+.0f deg (seen from (%.2f, "
-                     "%.2f) %+.0f deg)", d, math.degrees(bearing), seen["pose"][0],
-                     seen["pose"][1], math.degrees(seen["pose"][2]))
+                     "%.2f) %+.0f deg; gyro heading %s)", d, math.degrees(bearing),
+                     seen["pose"][0], seen["pose"][1], math.degrees(seen["pose"][2]),
+                     "none" if heading is None else f"{math.degrees(heading):+.0f} deg")
             if d <= APPROACH_TOL_M:
                 face = rth_ladder._wrap(-seen["pose"][2])
                 if abs(math.degrees(face)) > APPROACH_FACE_DEG:
-                    await self._move("left" if face > 0 else "right",
-                                     abs(math.degrees(face)) / deg_s)
+                    await self._turn(math.degrees(face))
                 return "ARRIVED", f"{d:.2f} m from the start"
             if last_d is not None and d > last_d + APPROACH_WORSE_M:
                 worse += 1
@@ -353,7 +379,7 @@ class EngineHost:
             last_d = d
             if abs(math.degrees(bearing)) > APPROACH_AIM_DEG:
                 turn = min(abs(math.degrees(bearing)), APPROACH_MAX_TURN_DEG)
-                said = await self._move("left" if bearing > 0 else "right", turn / deg_s)
+                said = await self._turn(turn if bearing > 0 else -turn)
             else:
                 said = await self._move("forward", min(d, APPROACH_STEP_M) / speed)
             if "REFUSED" in said.upper():
@@ -431,6 +457,10 @@ class MissionNav:
     # the NavAdapter parts the mission uses outside the ladder
     def available_during_run(self) -> bool:
         return False
+
+    def moves(self) -> int:
+        """How many engine actions have been started (each may move her)."""
+        return int(self.host.moves)
 
     def go(self, target: dict) -> bool:
         return False            # "go to X" with no mission: File 14's nav_go owns it
