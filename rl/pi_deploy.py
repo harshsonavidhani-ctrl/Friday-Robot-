@@ -4433,6 +4433,16 @@ class ControlLoop:
         c = self.cfg
         self.motors.drive(0.0, 0.0)
         self.limiter.reset()
+        # The gyro and her body sense keep running while she is held
+        # (2026-10-10). This early return used to skip stage 6, the ONLY place
+        # the IMU is read, so a lift during the mission's questions, between
+        # way-home attempts or in HELP was never put down: wheels frozen to the
+        # end of the run (run-20261010-010726: lifted 01:14:39, never released).
+        # A turn by hand while held is still counted in her heading.
+        if self.sim is None:
+            dtheta = self._gyro_dtheta()
+            if dtheta is not None:
+                self.map.dead_reckon(0.0, dtheta / c.dt, c.dt)
         self.stats["mission_hold_ticks"] = self.stats.get("mission_hold_ticks", 0) + 1
         self.stats["ticks"] += 1
         loop_ms = (time.perf_counter() - t_start) * 1000.0
@@ -4736,7 +4746,8 @@ class ControlLoop:
         try:
             last = self.motors.last_cmd if hasattr(self.motors, "last_cmd") else (0.0, 0.0)
             driving = abs(last[0]) > 0.0 or abs(last[1]) > 0.0
-            for event in self._body.update(imu, time.monotonic(), driving):
+            now = time.monotonic()
+            for event in self._body.update(imu, now, driving):
                 self._body_seq += 1
                 LOGGER.info("BODY: %s (tilt %.0f deg, shake %.1f deg/s)", event,
                             imu.get("tilt_deg", 0.0), imu.get("shake_dps", 0.0))
@@ -4744,6 +4755,14 @@ class ControlLoop:
                 if self._body_publish is not None:
                     self._body_publish(event, self._body.lifted, self._body_seq,
                                        tilt_deg=imu.get("tilt_deg"), during="run")
+            # Why she is not put down yet, every 5 s while lifted: the two
+            # stuck lifts on 2026-10-10 left nothing in the log to say why.
+            if self._body.lifted and now - getattr(self, "_lifted_log_t", 0.0) >= 5.0:
+                self._lifted_log_t = now
+                LOGGER.info("BODY: still lifted -- tilt %.0f deg, shake %.1f deg/s, "
+                            "board tilted %s (put down needs level + still)",
+                            imu.get("tilt_deg", 0.0), imu.get("shake_dps", 0.0),
+                            bool(imu.get("tilted")))
         except Exception as exc:                          # noqa: BLE001
             LOGGER.debug("body update failed: %s", exc)
 

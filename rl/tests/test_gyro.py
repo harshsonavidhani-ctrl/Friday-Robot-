@@ -216,6 +216,34 @@ check("...and the wheels are held still while she is up",
       row["v"] == 0.0 and row["omega"] == 0.0 and loop2.stats.get("lifted_ticks", 0) >= 1,
       f"{row['gate']} {row['v']} {row['omega']}")
 
+# Put down WHILE THE MISSION HOLDS HER (its questions, between way-home tries,
+# HELP). 2026-10-10: the held tick returned before the IMU was read, so she
+# stayed "lifted" -- wheels frozen -- to the end of the run.
+import json as _json                                       # noqa: E402
+import time as _time                                       # noqa: E402
+loop2.hold.path.write_text(_json.dumps({"until": _time.time() + 10.0, "why": "test"}))
+loop2.hold.poll()
+m2.extra = {}                                             # level and still again
+rows = []
+for k in range(25):                                       # 2.5 s of held ticks
+    m2.reply(0.0)
+    slots2["lidar"].publish(open_scan)
+    rows.append(loop2.tick())
+    _time.sleep(rcfg.dt)
+ev = body_sense.read()
+check("put down while HELD by the mission: the held tick still reads her body",
+      rows[0]["gate"] == "mission_hold" and not loop2._body.lifted
+      and ev is not None and ev["event"] == "put_down", f"{rows[0]['gate']} {ev}")
+yaw0 = float(loop2.map.pose[2])
+for y in (10.0, 25.0, 40.0):                              # turned by hand while held
+    m2.reply(y)
+    slots2["lidar"].publish(open_scan)
+    loop2.tick()
+check("...and a turn by hand while held is counted in her heading (+40 deg)",
+      abs(math.degrees(float(loop2.map.pose[2]) - yaw0) - 40.0) < 1e-3,
+      f"{math.degrees(float(loop2.map.pose[2]) - yaw0):.2f}")
+loop2.hold.path.unlink()
+
 
 print("--- the start tracker: a measured turn, searched narrowly ---")
 try:
@@ -317,9 +345,13 @@ if grid is not None:
     cells = np.argwhere(plan)
     c = cells[len(cells) // 2]
     pose = [(c[0] + .5) * grid.cell + ox, (c[1] + .5) * grid.cell + oy, 0.3]
-    for k in range(6):
+    # Until it has folded twice (up to ~10 s): a fixed 2.4 s failed with the
+    # Pi's load at 9 (2026-10-10), the child process still starting up.
+    for k in range(25):
         tr.submit(sweep(pose, rng), (0.0, 0.0, 0.0), gyro_gaps=0)
         time.sleep(0.4)
+        if k >= 5 and (tr.updates >= 2 or tr.error):
+            break
     tr.stop()
     check("the tracker process takes the new job (with the gyro's gap count): "
           "folds, no error", tr.updates >= 2 and not tr.error, f"{tr.updates} {tr.error}")
