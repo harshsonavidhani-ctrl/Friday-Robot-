@@ -115,6 +115,26 @@ def _ignore_stop_signals() -> bool:
 GYRO_MAX_STEP_DEG = 90.0     # more than this between two replies: a glitch, fall back
 PIVOT_STALL_CMD = 0.5        # rad/s commanded in place...
 PIVOT_STALL_MEAS = 0.09      # ...while the gyro measures under ~5 deg/s...
+# A TURN IN PLACE THAT SWINGS HER FRONT INTO SOMETHING (Harsh, 2026-10-10:
+# "reflex safety add it"). A pivot moves her centre nowhere, but her front
+# corners sweep forward: 13:46 she pivoted right with forward already cut and
+# the bumper ToF went 0.40 -> 0.29 -> 0.16 -> 0.02 m -- a bump -- because turns
+# were allowed down to tof_pivot_min_clearance (0.12). Now: turning in place,
+# the ToF under PIVOT_WATCH_M and down PIVOT_CLOSE_M within PIVOT_WINDOW_S =
+# stop that turn, and refuse that direction for PIVOT_BLOCK_S. Reverse and the
+# OTHER way stay allowed, so it can never box her in by itself.
+PIVOT_WATCH_M = 0.35
+PIVOT_CLOSE_M = 0.04
+PIVOT_WINDOW_S = 0.4
+PIVOT_BLOCK_S = 1.5
+PIVOT_MIN_W = 0.2            # rad/s: a turn
+PIVOT_MAX_V = 0.05           # m/s: ...not driving forward (forward arcs are the forward reflex's)
+
+
+def _turn_sign(v: float, w: float) -> int:
+    """+1 / -1 for a turn that is NOT driving forward (in place, or while
+    backing: both swing the front corners), else 0."""
+    return (1 if w > 0 else -1) if (abs(w) >= PIVOT_MIN_W and v <= PIVOT_MAX_V) else 0
 PIVOT_STALL_TICKS = 6        # ...for 0.6 s: a stalled turn
 import telemetry as tlm  # noqa: E402
 from explorer import ExplorationPlanner, steering_bias  # noqa: E402
@@ -3236,6 +3256,10 @@ class ControlLoop:
         self.limiter = RateLimiter(cfg)
         self.reverse_fallback = True
         self.escape_turns = True
+        # The pivot-into-something reflex: (t, bumper ToF, turn sign) samples from
+        # the 30 Hz reflex thread and the tick, and the direction refused until when.
+        self._pivot_samples: deque = deque(maxlen=64)
+        self._pivot_block = (0, 0.0)
         self.status_every = 0          # ticks between full status blocks; 0 = off
         # Machine-readable state for anything that is not a person watching a terminal:
         # the dashboard, a log, the voice layer. Written atomically at state_every ticks.
@@ -3464,10 +3488,38 @@ class ControlLoop:
             depth, age = self.slots["tof"].read()
             if depth is not None and age <= self.cfg.tof_deadline:
                 _, emergency = self.reflex.evaluate(depth)
-                if emergency and self._fast_reflex_should_stop():
+                v_now, w_now = self.motors.last_cmd
+                self._note_pivot(v_now, w_now)
+                sign = _turn_sign(v_now, w_now)
+                closing = sign != 0 and self._pivot_closing(sign)
+                if (emergency or closing) and self._fast_reflex_should_stop():
                     self.motors.emergency_stop()
                     self.limiter.reset()
             time.sleep(period)
+
+    def _note_pivot(self, v: float, w: float, now: float | None = None) -> None:
+        """One sample for the pivot-closing rule: the bumper ToF and which way
+        she is turning in place (0 = not a turn in place)."""
+        now = time.monotonic() if now is None else now
+        sign = _turn_sign(v, w)
+        self._pivot_samples.append((now, float(self.reflex.last_min), sign))
+
+    def _pivot_closing(self, sign: int, now: float | None = None) -> bool:
+        """Turning `sign` in place has brought the bumper PIVOT_CLOSE_M nearer
+        something within PIVOT_WINDOW_S, and it is now under PIVOT_WATCH_M."""
+        if sign == 0:
+            return False
+        now = time.monotonic() if now is None else now
+        recent = [(t, d) for t, d, sg in list(self._pivot_samples)
+                  if sg == sign and now - t <= PIVOT_WINDOW_S and math.isfinite(d)]
+        if len(recent) < 2:
+            return False
+        latest = recent[-1][1]
+        return latest < PIVOT_WATCH_M and max(d for _, d in recent) - latest >= PIVOT_CLOSE_M
+
+    def _pivot_blocked(self, sign: int, now: float | None = None) -> bool:
+        now = time.monotonic() if now is None else now
+        return sign != 0 and self._pivot_block[0] == sign and now < self._pivot_block[1]
 
     def _fast_reflex_should_stop(self) -> bool:
         """The 30 Hz reflex applies the TICK's emergency rule, not a harsher one.
@@ -3490,6 +3542,12 @@ class ControlLoop:
             return True
         if (abs(w) > 1e-6 and not self._undo_active
                 and self.reflex.last_min <= self.cfg.tof_pivot_min_clearance):
+            return True
+        # A turn in place swinging her front into something (PIVOT_WATCH_M).
+        sign = _turn_sign(v, w)
+        if sign and not self._undo_active and self._pivot_closing(sign):
+            self._pivot_block = (sign, time.monotonic() + PIVOT_BLOCK_S)
+            self.stats["pivot_closing_stops"] = self.stats.get("pivot_closing_stops", 0) + 1
             return True
         return False
 
@@ -4242,6 +4300,26 @@ class ControlLoop:
             v = min(v, c.v_max * tof_scale)
             if gate == "ok":
                 gate = "tof_slow"
+        # ---- 4a'. a turn in place swinging her front INTO something ----------------
+        # (PIVOT_WATCH_M; approved by Harsh 2026-10-10). Only that turn: reverse and
+        # the other way still pass, and unstick's retrace is exempt as above.
+        if depth is not None and not self._undo_active:
+            now_p = time.monotonic()
+            self._note_pivot(v, omega, now_p)
+            p_sign = _turn_sign(v, omega)
+            if p_sign and self._pivot_closing(p_sign, now_p):
+                self._pivot_block = (p_sign, now_p + PIVOT_BLOCK_S)
+            if p_sign and self._pivot_blocked(p_sign, now_p):
+                omega = 0.0
+                # At once, like any stop: the limiter would otherwise ease the turn
+                # out over 2-3 ticks (-0.6 -> -0.4 -> -0.2) -- still swinging in.
+                self.limiter.omega = 0.0
+                gate = "pivot_closing"
+                self.stats["pivot_closing_ticks"] = self.stats.get("pivot_closing_ticks", 0) + 1
+                rec.add("pivot_closing", v, omega,
+                        f"turning {'left' if p_sign > 0 else 'right'} brought the bumper "
+                        f"to {self.reflex.last_min:.2f} m: that way refused "
+                        f"{self._pivot_block[1] - now_p:.1f} s more")
         rec.tof_min = self.reflex.last_min if depth is not None else None
         rec.add("tof", v, omega,
                 f"nearest zone {self.reflex.last_min:.2f} m vs stop "
