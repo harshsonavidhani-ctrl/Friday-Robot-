@@ -65,6 +65,8 @@ write_status() {
 JSON
 }
 trap 'write_status interrupted 130' INT TERM
+# What the way back's tracker saw, for replaying a real room offline (way_back._serve).
+export FRIDAY_TRACK_RECORD="$STATE/runs/tracker-$(date +%Y%m%d-%H%M%S).jsonl"
 
 write_status running
 

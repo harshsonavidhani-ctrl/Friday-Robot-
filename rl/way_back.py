@@ -136,6 +136,37 @@ GYRO_PRIOR_FRAC = 0.08
 # 2026-10-07: 102 of 200). So headings out to the old window are still scored,
 # every REF_STEP_DEG, for the median only -- never as the answer.
 REF_STEP_DEG = 8.0
+# KEY VIEWS (Harsh, 2026-10-10: "do the proper fix"). Matching only against the
+# start's own view loses her once the start is hidden: the 14:39 run among
+# chairs matched 58 of 512 sweeps (11%; 65-89% in emptier rooms) -- lost from
+# ~1.4 m out, its correction capped at 2 m, the mission's map 16 scans thin,
+# and the way home had no route. So a sweep the start cannot match is matched
+# against the nearest KEY VIEWS she has taken on the way: each one a sweep that
+# itself matched confidently (score >= KF_MIN_SCORE), taken >= KF_STEP_M from
+# every other, kept as its OWN small reference -- never folded into one growing
+# map, the design rejected above because a map built from drifting poses
+# agrees with its own drift. The start's view is always tried first and wins
+# whenever it matches, so near the start the error goes back to the start's.
+#
+# ⚠ OFF (2026-10-10), MEASURED: a chain of key views only re-states the dead
+# reckoning. rl/tests/test_key_views.py (two rooms, the start beside a box):
+# matched 58% -> 100%, but the start came out 0.74 m off -- exactly dead
+# reckoning's 0.73 -- where the start's view alone, keeping only its true
+# matches, ended within 0.08-0.12 m. Each key-view match is pulled to the
+# dead-reckoned prior and the chain carries the slip forward as "matched";
+# feeding that to the mission's map would draw a confident, wrong map. Kept for
+# replaying REAL rooms (FRIDAY_TRACK_RECORD recordings), not for driving.
+KEY_VIEWS = False
+KF_STEP_M = 0.5
+# Any match that is accepted at all (config.SLAM_MIN_SCORE 0.15) may leave a
+# key view. 0.30 left the chain behind her: the start's score falls steadily
+# with distance (1.0 at the start, 0.37 at 0.8 m, 0.18 at 1.7 m, simulated),
+# so no view was taken past ~0.8 m and when the start failed at ~2 m the
+# nearest view was 1.8 m back, out of reach.
+KF_MIN_SCORE = 0.15
+KF_MATCH_M = 1.5          # only key views this close to where she should be
+KF_TRY = 2                # ...the nearest this many
+KF_MAX = 80
 
 
 def _wrap(a: float) -> float:
@@ -667,6 +698,16 @@ def _serve(max_range: float) -> int:
     inp = sys.stdin.buffer
     folder = _Folder(max_range)
     last_pub = 0.0                  # FILE 21
+    # A RECORDING of what the tracker saw (2026-10-10): every sweep, the run's
+    # dead-reckoned pose and the gyro's gap count, so a real room can be replayed
+    # offline -- the simulated rooms never failed the way the chair room did.
+    # Only when explore.sh names a file (FRIDAY_TRACK_RECORD); never raises.
+    record = None
+    if os.environ.get("FRIDAY_TRACK_RECORD"):
+        try:
+            record = open(os.environ["FRIDAY_TRACK_RECORD"], "a", buffering=1)
+        except OSError:
+            record = None
     while True:
         try:
             job = pickle.load(inp)
@@ -682,6 +723,19 @@ def _serve(max_range: float) -> int:
             res = {"error": f"{type(exc).__name__}: {exc}"}
         pickle.dump(res, out, protocol=4)
         out.flush()
+        if record is not None:
+            try:
+                import json
+                sweep = scan if isinstance(scan, dict) else scan_to_dict(scan, max_range, blind)
+                record.write(json.dumps({
+                    "t": time.time(), "rl": [float(v) for v in rl],
+                    "start_rl": None if start_rl is None else [float(v) for v in start_rl],
+                    "gyro_gaps": gyro_gaps,
+                    "scan": {str(round(float(k), 1)): int(v) for k, v in sweep.items()},
+                    "pose": None if not res or "pose" not in res else [float(v) for v in res["pose"]],
+                    "reason": (res or {}).get("reason")}) + "\n")
+            except Exception:                             # noqa: BLE001
+                record = None
         # FILE 21: after the reply, so the run never waits on it.
         if res and "pose" in res and time.monotonic() - last_pub >= PUBLISH_PERIOD_S:
             last_pub = time.monotonic()
@@ -745,19 +799,43 @@ class _StartMatcher:
     """
 
     def __init__(self, first: dict) -> None:
+        self.grid, self.field = self._view(first)
+        self.pose = (0.0, 0.0, 0.0)
+        # KEY VIEWS: [(pose in the start frame, its own field)], and how often
+        # they placed her when the start's view could not.
+        self.keyframes: list = []
+        self.kf_matches = 0
+        self.key_views = KEY_VIEWS
+
+    @staticmethod
+    def _view(scan: dict):
+        """One sweep as its own reference: (grid, likelihood field)."""
         from slam.core import LikelihoodField, points_from_scan
         from slam.grid import OccupancyGrid
-        self.grid = OccupancyGrid()
-        local = points_from_scan(first, forward_deg=0.0)
+        grid = OccupancyGrid()
+        local = points_from_scan(scan, forward_deg=0.0)
         for _ in range(SEED_REPEATS):
-            self.grid.integrate(local, (0.0, 0.0), occupied=local)
-        self.field = LikelihoodField.from_grid(self.grid)
+            grid.integrate(local, (0.0, 0.0), occupied=local)
+        field = LikelihoodField.from_grid(grid)
         # ⚠ EVERY BEAM IN THE DENOMINATOR (nav_follower.motion_fraction's
         # lesson). With the known mask, a pose that points the sweep at floor
         # the start could not see is judged on the few beams left and scores
         # ABOVE 1.0 -- measured here: 1.72 while the pose walked 25 deg off.
-        self.field.known = None
-        self.pose = (0.0, 0.0, 0.0)
+        field.known = None
+        return grid, field
+
+    def _near_views(self, centre) -> list:
+        near = sorted((math.hypot(kp[0] - centre[0], kp[1] - centre[1]), i)
+                      for i, (kp, _) in enumerate(self.keyframes))
+        return [self.keyframes[i] for d, i in near if d <= KF_MATCH_M][:KF_TRY]
+
+    def _maybe_key_view(self, scan: dict, pose, score: float) -> None:
+        if not self.key_views or score < KF_MIN_SCORE or len(self.keyframes) >= KF_MAX:
+            return
+        gap = min([math.hypot(pose[0], pose[1])]
+                  + [math.hypot(pose[0] - kp[0], pose[1] - kp[1]) for kp, _ in self.keyframes])
+        if gap >= KF_STEP_M:
+            self.keyframes.append((tuple(float(v) for v in pose), self._view(scan)[1]))
 
     def update(self, scan: dict, moved_m: float, turned_rad: float,
                turn_known: bool = False) -> dict:
@@ -798,20 +876,31 @@ class _StartMatcher:
             turn_deg = abs(math.degrees(half_t))
             window_deg = max(config.SLAM_POSE_WINDOW_DEG, turn_deg + 6.0)
             prior_deg = max(turn_deg * 1.2, PRIOR_FLOOR_DEG)
-        pose, score, sharp = _match(
-            self.field, local, centre,
-            window_m=max(config.SLAM_POSE_WINDOW_M, abs(half_m) + 0.08),
-            window_deg=window_deg,
-            prior_m=max(abs(half_m) * 1.2, PRIOR_FLOOR_M),
-            prior_deg=prior_deg, ref_deg=ref_deg)
+        win = dict(window_m=max(config.SLAM_POSE_WINDOW_M, abs(half_m) + 0.08),
+                   window_deg=window_deg,
+                   prior_m=max(abs(half_m) * 1.2, PRIOR_FLOOR_M),
+                   prior_deg=prior_deg, ref_deg=ref_deg)
+        pose, score, sharp = _match(self.field, local, centre, **win)
+        if score >= config.SLAM_MIN_SCORE and sharp >= config.SLAM_POSE_MIN_SHARPNESS:
+            self.pose = tuple(float(v) for v in pose)
+            self._maybe_key_view(scan, self.pose, score)
+            return {"reason": "matched", "score": score}
+        # The start's view cannot place her: the key views near where she should
+        # be. ONLY then -- simulated, letting them compete with a start match
+        # carried their own error in (0.24 -> 0.52 m on one run), while used only
+        # where the start fails the result is identical wherever it matches.
+        if self.key_views:
+            for kp, kfield in self._near_views(centre):
+                p2, s2, sh2 = _match(kfield, local, _compose(_inverse(kp), centre), **win)
+                if s2 >= config.SLAM_MIN_SCORE and sh2 >= config.SLAM_POSE_MIN_SHARPNESS:
+                    self.pose = tuple(float(v) for v in _compose(kp, p2))
+                    self.kf_matches += 1
+                    self._maybe_key_view(scan, self.pose, s2)
+                    return {"reason": "matched (key view)", "score": s2}
+        self.pose = dead
         if score < config.SLAM_MIN_SCORE:
-            self.pose = dead
             return {"reason": "score too low", "score": score}
-        if sharp < config.SLAM_POSE_MIN_SHARPNESS:
-            self.pose = dead
-            return {"reason": "geometry ambiguous", "score": score}
-        self.pose = tuple(float(v) for v in pose)
-        return {"reason": "matched", "score": score}
+        return {"reason": "geometry ambiguous", "score": score}
 
 
 class HomeTarget:
