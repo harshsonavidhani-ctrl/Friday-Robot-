@@ -125,6 +125,7 @@ fi
 # MODE_TURN_COMMIT=S (2026-10-04): a turn taken while blocked is kept S seconds
 # against a request to turn the other way -- no left/right dithering.
 [ -n "${MODE_TURN_COMMIT:-}" ] && ARGS+=(--turn-commit "$MODE_TURN_COMMIT")
+[ -n "${MODE_REVERSE_FLOOR:-}" ] && ARGS+=(--reverse-floor "$MODE_REVERSE_FLOOR")
 
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes

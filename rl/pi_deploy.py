@@ -416,6 +416,12 @@ class RobotConfig:
     # clear, even when the policy asked for less. 0.0 = off: it may only ever reduce,
     # and she stays exactly as decisive as the network. See stage 1d in tick().
     nav_speed_authority: float = 0.0
+    # THE REVERSE FLOOR MEASURED ON THE FLOOR (scripts/reverse_floor_test.py, Harsh
+    # watching, 2026-10-10 14:21, old drive): 1 s at -0.15 m/s moved her 1.3 cm (the
+    # hum), -0.20 moved 9.8 cm, -0.25 13.5 cm. Every escape reverse went out at
+    # v_min -0.15, because stage 2e's lift is bounded by v_min. When set, every
+    # reverse goes out at least this fast. 0.0 = the old bound. --reverse-floor.
+    reverse_floor_mps: float = 0.0
     max_lin_accel: float = 0.8          # [m/s^2] command slew limit -> no wheel slip
     max_ang_accel: float = 4.0          # [rad/s^2]
     # A PIVOT IN PLACE IS NOT SLEW LIMITED. The slew limit exists to stop the wheels
@@ -4177,8 +4183,13 @@ class ControlLoop:
         # more, which means there is nothing here for this to act on. It is bounded by
         # v_min, and the governor, visual gate, reflex and limiter all still run below.
         floor_mps = self.motors.min_speed_mps()
+        rev_floor = float(getattr(c, "reverse_floor_mps", 0.0))
+        if rev_floor > 0.0:
+            # The MEASURED reverse floor: beyond v_min on purpose (v_min is the
+            # policy's range, and it hums on this floor), never past v_max.
+            floor_mps = max(floor_mps, min(rev_floor, c.v_max))
         if v < 0.0 and floor_mps > 0.0 and abs(v) < floor_mps:
-            lifted = max(-floor_mps, c.v_min)
+            lifted = -floor_mps if rev_floor > 0.0 else max(-floor_mps, c.v_min)
             if lifted < 0.0:
                 rec.add("reverse_floor", lifted, omega,
                         f"reverse {v:+.3f} m/s is under the {floor_mps:.3f} m/s stiction "
@@ -6292,6 +6303,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-recovery", action="store_true",
                    help="Disable oscillation/spin/no-progress detection and recovery. "
                         "The boxed-in escape turn is separate and stays on.")
+    p.add_argument("--reverse-floor", type=float, default=0.0, metavar="M_PER_S",
+                   help="Slowest reverse that really moves her ON THE FLOOR "
+                        "(scripts/reverse_floor_test.py). Every reverse goes out at "
+                        "least this fast. 0 (default) = bounded by v_min, as before.")
     p.add_argument("--navigator-speed-authority", type=float, default=0.0,
                    metavar="FRACTION",
                    help="Fraction of v_max the local navigator may drive at on an arc "
@@ -6696,6 +6711,7 @@ def main(argv: list[str] | None = None) -> int:
         loop.turn_commit_s = max(0.0, float(getattr(args, "turn_commit", 0.0)))
         loop.navigator_enabled = not args.no_navigator
         cfg.nav_speed_authority = float(args.navigator_speed_authority)
+        cfg.reverse_floor_mps = max(0.0, float(args.reverse_floor))
         loop.recovery_enabled = not args.no_recovery
         loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]
         loop._threads = threads          # for the LiDAR rejection counter

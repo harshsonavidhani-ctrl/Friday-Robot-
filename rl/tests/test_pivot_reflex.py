@@ -146,5 +146,28 @@ row = loop.tick()
 check("...and so is turning the OTHER way", row["omega"] > 0.1 and row["gate"] != "pivot_closing",
       f"{row['gate']} w={row['omega']}")
 
+print("--- the reverse floor measured on the floor (2026-10-10 14:21) ---")
+
+
+def reverse_out(floor):
+    lp, sl, cc = new_loop()
+    cc.reverse_floor_mps = floor
+    lp.policy.infer = lambda obs: np.asarray(cc.to_normalised(-0.15, 0.0), dtype=np.float32)
+    lp.navigator_enabled = False
+    out = None
+    for _ in range(12):                          # past the limiter's ramp
+        sl["lidar"].publish(np.full(cc.n_beams, 3.0, np.float32))
+        sl["tof"].publish(np.full((8, 8), 0.30, np.float32))
+        out = lp.tick()
+    return out
+
+
+row = reverse_out(0.20)
+check("a reverse asked at -0.15 m/s (1.3 cm in 1 s on the floor: the hum) goes "
+      "out at the measured -0.20", abs(row["v"] + 0.20) < 1e-6, f"{row['gate']} v={row['v']}")
+row = reverse_out(0.0)
+check("...and with no floor set, exactly as before (-0.15)",
+      abs(row["v"] + 0.15) < 1e-6, f"{row['gate']} v={row['v']}")
+
 print("--- PASSED ---" if not fails else f"--- {fails} FAILED ---")
 sys.exit(1 if fails else 0)
