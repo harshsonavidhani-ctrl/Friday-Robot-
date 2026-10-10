@@ -4307,6 +4307,22 @@ class ControlLoop:
                 pivot_allowed = True
             self.stats["reflex_stops"] += 1
             gate = "REFLEX_STOP"
+            # BACK AWAY when nothing else will (Harsh, 2026-10-10: "when something is
+            # infront of it motors humming it could go back ... stuck no nothing").
+            # 14:28 run: bumper <= tof_pivot_min_clearance on 96% of ticks, forward AND
+            # turning frozen, and NOTHING asked to reverse (0% of ticks) -- the policy
+            # kept asking +0.01. So with the bumper that close, no reverse asked for and
+            # the rear clear by the LiDAR (the rear gate's own rear_stop), she backs
+            # straight out at the reverse floor MEASURED on the floor (only when one is
+            # set: --reverse-floor). Once the bumper is past the freeze she turns again.
+            rev_floor = float(getattr(c, "reverse_floor_mps", 0.0))
+            if (rev_floor > 0.0 and v >= 0.0
+                    and self.reflex.last_min <= c.tof_pivot_min_clearance
+                    and math.isfinite(self.governor.last_rear_min)   # unseen != clear
+                    and self.governor.last_rear_min > c.rear_stop):
+                v, omega = -min(rev_floor, c.v_max), 0.0
+                gate = "REFLEX_BACKOFF"
+                self.stats["reflex_backoffs"] = self.stats.get("reflex_backoffs", 0) + 1
         elif tof_scale < 1.0 and v > 0:
             v = min(v, c.v_max * tof_scale)
             if gate == "ok":

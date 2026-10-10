@@ -116,9 +116,8 @@ loop._undo_active = False
 print("--- whole ticks: the 13:46 bump replayed ---")
 loop, slots, c = new_loop()
 action_want = {"v": 0.0, "w": -0.96}
-loop.policy.infer = lambda obs: np.asarray(c.to_normalised(action_want["v"],
-                                                           action_want["w"]),
-                                           dtype=np.float32)
+# PolicyRunner.infer returns (v m/s, omega rad/s) -- SI, not normalised.
+loop.policy.infer = lambda obs: np.asarray([action_want["v"], action_want["w"]], dtype=np.float32)
 loop.navigator_enabled = False
 open_scan = np.full(c.n_beams, 3.0, np.float32)
 rows = []
@@ -152,7 +151,7 @@ print("--- the reverse floor measured on the floor (2026-10-10 14:21) ---")
 def reverse_out(floor):
     lp, sl, cc = new_loop()
     cc.reverse_floor_mps = floor
-    lp.policy.infer = lambda obs: np.asarray(cc.to_normalised(-0.15, 0.0), dtype=np.float32)
+    lp.policy.infer = lambda obs: np.asarray([-0.15, 0.0], dtype=np.float32)
     lp.navigator_enabled = False
     out = None
     for _ in range(12):                          # past the limiter's ramp
@@ -168,6 +167,44 @@ check("a reverse asked at -0.15 m/s (1.3 cm in 1 s on the floor: the hum) goes "
 row = reverse_out(0.0)
 check("...and with no floor set, exactly as before (-0.15)",
       abs(row["v"] + 0.15) < 1e-6, f"{row['gate']} v={row['v']}")
+
+print("--- touching in front, nothing reversing: she backs away (2026-10-10 14:28) ---")
+
+
+def touching(floor, rear_blocked=False):
+    lp, sl, cc = new_loop()
+    cc.reverse_floor_mps = floor
+    lp.policy.infer = lambda obs: np.asarray([0.01, -1.2], dtype=np.float32)
+    lp.navigator_enabled = False
+    # The robot at 14:28: nothing upstream asked to reverse. In the simulator the
+    # escape / recovery / unstick stages would, so they are off here -- this checks
+    # the reflex's own back-off, the one that does not wait for them.
+    lp.recovery_enabled = False
+    lp.escape_turns = False
+    lp.unstick_enabled = False
+    lp.reverse_fallback = False
+    scan = np.full(cc.n_beams, 3.0, np.float32)
+    if rear_blocked:
+        rear = cc.n_beams // 2
+        scan[rear - 3:rear + 4] = cc.rear_stop - 0.06
+    out = None
+    for _ in range(8):
+        sl["lidar"].publish(scan)
+        sl["tof"].publish(np.full((8, 8), 0.10, np.float32))
+        out = lp.tick()
+    return out
+
+
+row = touching(0.20)
+check("bumper 0.10 m, the policy asking forward, rear clear: she BACKS straight "
+      "out at the floor speed", row["gate"] == "REFLEX_BACKOFF" and abs(row["v"] + 0.20) < 1e-6
+      and row["omega"] == 0.0, f"{row['gate']} v={row['v']} w={row['omega']}")
+row = touching(0.20, rear_blocked=True)
+check("...rear blocked: never backs into it (stops, as before)",
+      row["v"] >= 0.0 and row["gate"] != "REFLEX_BACKOFF", f"{row['gate']} v={row['v']}")
+row = touching(0.0)
+check("...no measured floor set: exactly the old behaviour (stopped)",
+      row["v"] == 0.0 and row["gate"] != "REFLEX_BACKOFF", f"{row['gate']} v={row['v']}")
 
 print("--- PASSED ---" if not fails else f"--- {fails} FAILED ---")
 sys.exit(1 if fails else 0)
