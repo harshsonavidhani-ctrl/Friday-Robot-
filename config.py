@@ -1768,7 +1768,7 @@ LIDAR_FORWARD_DEG = 51.8
 # unmasked it pinned `forward` at ~210 mm and the reflex cut every forward move
 # at 197. Harsh confirmed it is part of the dome, not removable. The bumper ToF
 # still covers straight ahead.
-LIDAR_SELF_MASK = ((71, 78), (89, 98))
+LIDAR_SELF_MASK = ((71, 78), (89, 99))   # 99 added 2026-10-10: the chassis edge leaks 222-238 mm there (4/10 still sweeps)
 
 # The D500 is specified to 12 m, but indoors a long return is usually a
 # doorway or a window rather than a wall, and those are the points that drag a
