@@ -217,5 +217,53 @@ row = touching(0.0)
 check("...no measured floor set: exactly the old behaviour (stopped)",
       row["v"] == 0.0 and row["gate"] != "REFLEX_BACKOFF", f"{row['gate']} v={row['v']}")
 
+print("--- the back-off goes all the way out, and gives up if she is not moving (15:40) ---")
+import time as _t                                          # noqa: E402
+
+
+def backoff_loop():
+    lp, sl, cc = new_loop()
+    cc.reverse_floor_mps = 0.20
+    lp.policy.infer = lambda obs: np.asarray([0.01, -1.2], dtype=np.float32)
+    lp.navigator_enabled = False
+    lp.recovery_enabled = False
+    lp.escape_turns = False
+    lp.unstick_enabled = False
+    lp.reverse_fallback = False
+    return lp, sl, cc
+
+
+def step(lp, sl, cc, tof):
+    sl["lidar"].publish(np.full(cc.n_beams, 3.0, np.float32))
+    sl["tof"].publish(np.full((8, 8), tof, np.float32))
+    return lp.tick()
+
+
+lp, sl, cc = backoff_loop()
+r1 = step(lp, sl, cc, 0.10)
+r2 = step(lp, sl, cc, 0.16)                  # past the 0.12 freeze, still in the stop zone
+r3 = step(lp, sl, cc, 0.20)
+check("15:40's see-saw: once backing off she keeps going past 0.12 m while still "
+      "inside the stop zone", r1["gate"] == r2["gate"] == r3["gate"] == "REFLEX_BACKOFF"
+      and r3["v"] < 0.0, f"{r1['gate']} {r2['gate']} {r3['gate']} v={r3['v']}")
+r4 = step(lp, sl, cc, 0.32)
+check("...and stops backing off once out of the stop zone",
+      r4["gate"] != "REFLEX_BACKOFF", f"{r4['gate']} v={r4['v']}")
+
+lp, sl, cc = backoff_loop()
+rows = []
+t_end = _t.monotonic() + 1.4
+while _t.monotonic() < t_end:                # reversing, and the bumper does not open
+    rows.append(step(lp, sl, cc, 0.10))
+    _t.sleep(0.1)
+check("15:40's 10 s of reversing in place: after ~1 s with the bumper not opening "
+      "she stops pushing (no endless hum)",
+      rows[0]["gate"] == "REFLEX_BACKOFF" and rows[-1]["gate"] != "REFLEX_BACKOFF"
+      and lp.stats.get("backoff_no_motion", 0) >= 1,
+      f"{rows[0]['gate']} -> {rows[-1]['gate']} {lp.stats.get('backoff_no_motion')}")
+r = step(lp, sl, cc, 0.10)
+check("...and does not start again straight away (it rests)", r["gate"] != "REFLEX_BACKOFF",
+      r["gate"])
+
 print("--- PASSED ---" if not fails else f"--- {fails} FAILED ---")
 sys.exit(1 if fails else 0)

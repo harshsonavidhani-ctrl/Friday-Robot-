@@ -137,6 +137,11 @@ PIVOT_WINDOW_S = 0.4
 PIVOT_BLOCK_S = 0.6
 PIVOT_MIN_SAMPLES = 3
 PIVOT_RELEASE_M = 0.25
+# The reflex's back-off (see the ToF emergency in tick()).
+BACKOFF_MAX_S = 2.0
+BACKOFF_CHECK_S = 1.0
+BACKOFF_PROGRESS_M = 0.03
+BACKOFF_REST_S = 3.0
 PIVOT_MIN_W = 0.2            # rad/s: a turn
 PIVOT_MAX_V = 0.05           # m/s: ...not driving forward (forward arcs are the forward reflex's)
 
@@ -3276,6 +3281,10 @@ class ControlLoop:
         # the 30 Hz reflex thread and the tick, and the direction refused until when.
         self._pivot_samples: deque = deque(maxlen=64)
         self._pivot_block = (0, 0.0)
+        # The reflex's back-off (REFLEX_BACKOFF): under way, and resting after a
+        # back-off that did not move her.
+        self._backoff: dict | None = None
+        self._backoff_rest_until = 0.0
         self.status_every = 0          # ticks between full status blocks; 0 = off
         # Machine-readable state for anything that is not a person watching a terminal:
         # the dashboard, a log, the voice layer. Written atomically at state_every ticks.
@@ -4329,18 +4338,45 @@ class ControlLoop:
             # the rear clear by the LiDAR (the rear gate's own rear_stop), she backs
             # straight out at the reverse floor MEASURED on the floor (only when one is
             # set: --reverse-floor). Once the bumper is past the freeze she turns again.
+            #
+            # 15:40 run: it stopped the moment the bumper passed 0.12 m, the policy
+            # drove straight back in, and she see-sawed 0.06 <-> 0.12 m for 418 ticks;
+            # then reversed 10 s at duty 108 without moving at all. So once started
+            # she backs out of the WHOLE stop zone (tof_stop_distance), for at most
+            # BACKOFF_MAX_S, and if BACKOFF_CHECK_S of reversing has not opened the
+            # bumper by BACKOFF_PROGRESS_M she is not moving: stop pushing and leave
+            # it BACKOFF_REST_S (unstick and the rest have their turn).
             rev_floor = float(getattr(c, "reverse_floor_mps", 0.0))
-            if (rev_floor > 0.0 and v >= 0.0
-                    and self.reflex.last_min <= c.tof_pivot_min_clearance
-                    and math.isfinite(self.governor.last_rear_min)   # unseen != clear
-                    and self.governor.last_rear_min > c.rear_stop):
+            now_b = time.monotonic()
+            rear_clear = (math.isfinite(self.governor.last_rear_min)   # unseen != clear
+                          and self.governor.last_rear_min > c.rear_stop)
+            bo = self._backoff
+            if bo is not None:
+                elapsed = now_b - bo["t0"]
+                gained = self.reflex.last_min - bo["tof0"]
+                if not rear_clear or elapsed > BACKOFF_MAX_S:
+                    self._backoff = bo = None
+                elif elapsed >= BACKOFF_CHECK_S and gained < BACKOFF_PROGRESS_M:
+                    self._backoff, bo = None, None
+                    self._backoff_rest_until = now_b + BACKOFF_REST_S
+                    self.stats["backoff_no_motion"] = self.stats.get("backoff_no_motion", 0) + 1
+                    LOGGER.info("BACKOFF: %.1f s of reversing opened the bumper only %.2f m "
+                                "-- she is not moving; resting %.0f s",
+                                elapsed, gained, BACKOFF_REST_S)
+            if (bo is None and rev_floor > 0.0 and v >= 0.0 and rear_clear
+                    and now_b >= self._backoff_rest_until
+                    and self.reflex.last_min <= c.tof_pivot_min_clearance):
+                self._backoff = bo = {"t0": now_b, "tof0": float(self.reflex.last_min)}
+                self.stats["reflex_backoffs"] = self.stats.get("reflex_backoffs", 0) + 1
+            if bo is not None and rev_floor > 0.0:
                 v, omega = -min(rev_floor, c.v_max), 0.0
                 gate = "REFLEX_BACKOFF"
-                self.stats["reflex_backoffs"] = self.stats.get("reflex_backoffs", 0) + 1
         elif tof_scale < 1.0 and v > 0:
             v = min(v, c.v_max * tof_scale)
             if gate == "ok":
                 gate = "tof_slow"
+        if not emergency:
+            self._backoff = None                  # out of the stop zone: done
         # ---- 4a'. a turn in place swinging her front INTO something ----------------
         # (PIVOT_WATCH_M; approved by Harsh 2026-10-10). Only that turn: reverse and
         # the other way still pass, and unstick's retrace is exempt as above.
