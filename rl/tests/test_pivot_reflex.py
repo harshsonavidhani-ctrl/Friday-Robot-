@@ -62,11 +62,12 @@ def new_loop(tof=True):
 print("--- the rule ---")
 loop, slots, c = new_loop()
 t = 100.0
-for d in (0.40, 0.36, 0.33):                     # turning right (-1), nearer each sample
+for d in (0.26, 0.21, 0.16):                     # turning right (-1), nearer each sample
     loop.reflex.last_min = d
     loop._note_pivot(0.0, -0.96, t)
     t += 0.1
-check("turning right, the bumper 0.40 -> 0.33 m within 0.2 s: CLOSING",
+check("turning right, the bumper 0.26 -> 0.16 m within 0.2 s (the 13:46 bump's "
+      "fall): CLOSING",
       loop._pivot_closing(-1, t))
 check("...the other way (left) is not", not loop._pivot_closing(+1, t))
 loop2, _, _ = new_loop()
@@ -84,9 +85,19 @@ for d in (0.80, 0.70, 0.62):                     # nearer, but nowhere near
     loop3._note_pivot(0.0, -0.96, t)
     t += 0.1
 check(f"nearer but still over {pd.PIVOT_WATCH_M} m: allowed", not loop3._pivot_closing(-1, t))
+loop5, _, _ = new_loop()
+t = 100.0
+fired = False
+for d in (0.28, 0.25, 0.29, 0.26, 0.30, 0.27, 0.24, 0.28, 0.25, 0.29):
+    loop5.reflex.last_min = d                    # 14:39: the nearest zone wobbling
+    loop5._note_pivot(0.0, -1.6, t)              # while she turns among chair legs
+    fired = fired or loop5._pivot_closing(-1, t)
+    t += 0.1
+check("the bumper WOBBLING 0.24-0.30 m while she turns (the 14:39 run: the first "
+      "version blocked 62% of ticks on this): never fires", not fired)
 loop4, _, _ = new_loop()
 t = 100.0
-for d in (0.40, 0.36, 0.33):
+for d in (0.26, 0.21, 0.16):
     loop4.reflex.last_min = d
     loop4._note_pivot(0.25, -0.96, t)            # driving an arc, not turning in place
     t += 0.1
@@ -96,7 +107,7 @@ check("an arc while driving forward is the forward reflex's job, not this rule",
 print("--- the 30 Hz reflex thread ---")
 loop._pivot_samples.clear()
 loop.motors.last_cmd = (0.0, -0.96)
-for d in (0.40, 0.36, 0.33):                     # what the thread samples, real clock
+for d in (0.26, 0.21, 0.16):                     # what the thread samples, real clock
     loop.reflex.last_min = d
     loop._note_pivot(*loop.motors.last_cmd)
 check("the fast thread STOPS a closing turn (it allowed any turn above 0.12 m)",
@@ -121,16 +132,16 @@ loop.policy.infer = lambda obs: np.asarray([action_want["v"], action_want["w"]],
 loop.navigator_enabled = False
 open_scan = np.full(c.n_beams, 3.0, np.float32)
 rows = []
-for d in (0.40, 0.40, 0.36, 0.33, 0.29, 0.26, 0.24, 0.22):
+for d in (0.40, 0.36, 0.33, 0.29, 0.24, 0.20, 0.16, 0.12, 0.10):   # the 13:46 bump
     slots["lidar"].publish(open_scan)
     slots["tof"].publish(np.full((8, 8), d, np.float32))
     row = loop.tick()
     rows.append((d, row["gate"], round(row["omega"], 2)))
 turned_at = [d for d, g, w in rows if w < -0.1]
 stopped = [d for d, g, w in rows if g == "pivot_closing"]
-check("the right turn is stopped while the bumper is still well clear (by 0.30 m)",
-      bool(stopped) and max(stopped) >= 0.29 and min(d for d, _, w in rows
-                                                 if w < -0.1) >= 0.30,
+check("the right turn is stopped at 0.16 m -- before the 0.12 m freeze and the "
+      "0.02 m bump of 13:46 -- and never turns closer than 0.20 m",
+      0.16 in stopped and min(d for d, _, w in rows if w < -0.1) >= 0.20,
       str(rows))
 action_want.update(v=-0.15, w=0.0)
 slots["lidar"].publish(open_scan)

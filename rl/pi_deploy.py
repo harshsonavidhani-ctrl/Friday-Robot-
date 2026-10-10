@@ -123,10 +123,20 @@ PIVOT_STALL_MEAS = 0.09      # ...while the gyro measures under ~5 deg/s...
 # the ToF under PIVOT_WATCH_M and down PIVOT_CLOSE_M within PIVOT_WINDOW_S =
 # stop that turn, and refuse that direction for PIVOT_BLOCK_S. Reverse and the
 # OTHER way stay allowed, so it can never box her in by itself.
-PIVOT_WATCH_M = 0.35
-PIVOT_CLOSE_M = 0.04
+#
+# NARROWED 2026-10-10 14:4x after its first run blocked 62% of ticks: the ToF's
+# nearest zone wobbles a few cm while she turns among chair legs, and 0.35 m /
+# 4 cm / 1.5 s read that as "closing" again and again (replayed: 55% of that
+# run, 10% of the 09-04 best run). Now only inside the reflex's own stop zone,
+# a STEADY fall over >= PIVOT_MIN_SAMPLES readings, released the moment the
+# bumper opens past PIVOT_RELEASE_M. Replayed: the 13:46 bump still caught at
+# 0.16 m (same tick as before); 0% of the 14:39 run, 1% of 09-04.
+PIVOT_WATCH_M = 0.20
+PIVOT_CLOSE_M = 0.05
 PIVOT_WINDOW_S = 0.4
-PIVOT_BLOCK_S = 1.5
+PIVOT_BLOCK_S = 0.6
+PIVOT_MIN_SAMPLES = 3
+PIVOT_RELEASE_M = 0.25
 PIVOT_MIN_W = 0.2            # rad/s: a turn
 PIVOT_MAX_V = 0.05           # m/s: ...not driving forward (forward arcs are the forward reflex's)
 
@@ -3518,13 +3528,17 @@ class ControlLoop:
         now = time.monotonic() if now is None else now
         recent = [(t, d) for t, d, sg in list(self._pivot_samples)
                   if sg == sign and now - t <= PIVOT_WINDOW_S and math.isfinite(d)]
-        if len(recent) < 2:
+        if len(recent) < PIVOT_MIN_SAMPLES:
             return False
-        latest = recent[-1][1]
-        return latest < PIVOT_WATCH_M and max(d for _, d in recent) - latest >= PIVOT_CLOSE_M
+        ds = [d for _, d in recent]
+        steady = all(b <= a + 0.005 for a, b in zip(ds, ds[1:]))   # a fall, not a wobble
+        latest = ds[-1]
+        return steady and latest < PIVOT_WATCH_M and max(ds) - latest >= PIVOT_CLOSE_M
 
     def _pivot_blocked(self, sign: int, now: float | None = None) -> bool:
         now = time.monotonic() if now is None else now
+        if self._pivot_block[0] and self.reflex.last_min > PIVOT_RELEASE_M:
+            self._pivot_block = (0, 0.0)              # the bumper opened: released
         return sign != 0 and self._pivot_block[0] == sign and now < self._pivot_block[1]
 
     def _fast_reflex_should_stop(self) -> bool:
