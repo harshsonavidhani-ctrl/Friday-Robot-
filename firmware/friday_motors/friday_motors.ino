@@ -30,6 +30,8 @@
  *   Z              zero the yaw    -> "OK"
  *   B              re-measure bias -> "OK" (only while stopped, else "ERR")
  *   V              version         -> "FRIDAY-MOTORS 1 GYRO 1 who=0x.."
+ *   I              I2C scan        -> "I A0=b/p A1=b/p A4=b/p A5=b/p A0A1:<addrs> A1A0:.. A4A5:.. A5A4:.."
+ *                  (only while stopped, else "ERR"; ~60 ms; see scanReport)
  *   anything else                  -> "ERR"
  *
  * TILTED (more than TILT_ON_DEG for TILT_ON_MS -- picked up, tipped, climbing
@@ -110,6 +112,7 @@ const float BUMP_G = 0.6f;                   // a horizontal jolt this big count
 
 bool gyroOk = false;
 uint8_t gyroWho = 0;
+uint8_t whoTries = 0;                        // the last init's WHO_AM_I attempts (4 = all failed)
 float biasRaw = 0.0f;
 long calSum = 0;
 uint16_t calCount = 0;
@@ -136,11 +139,12 @@ const float STILL_JOLT_G = 0.12f;
 float lastJoltG = 0.0f;                      // this sample's jolt, any direction
 unsigned long tiltSinceMs = 0, levelSinceMs = 0;
 
-static inline void sdaLow()  { DDRC |=  _BV(SDA_BIT); }
-static inline void sdaHigh() { DDRC &= ~_BV(SDA_BIT); }
-static inline void sclLow()  { DDRC |=  _BV(SCL_BIT); }
-static inline void sclHigh() { DDRC &= ~_BV(SCL_BIT); }
-static inline bool sdaRead() { return PINC & _BV(SDA_BIT); }
+uint8_t sdaBit = SDA_BIT, sclBit = SCL_BIT;  // only the scan (I) ever moves these
+static inline void sdaLow()  { DDRC |=  _BV(sdaBit); }
+static inline void sdaHigh() { DDRC &= ~_BV(sdaBit); }
+static inline void sclLow()  { DDRC |=  _BV(sclBit); }
+static inline void sclHigh() { DDRC &= ~_BV(sclBit); }
+static inline bool sdaRead() { return PINC & _BV(sdaBit); }
 static inline void i2cDelay() { delayMicroseconds(5); }   // ~100 kHz
 
 void i2cStart() {
@@ -193,14 +197,75 @@ bool mpuWrite(uint8_t reg, uint8_t val) {
   return ok;
 }
 
-bool mpuRead(uint8_t reg, uint8_t *buf, uint8_t n) {
+bool regRead(uint8_t addr, uint8_t reg, uint8_t *buf, uint8_t n) {
   i2cStart();
-  if (!i2cWrite(MPU << 1) || !i2cWrite(reg)) { i2cStop(); return false; }
+  if (!i2cWrite(addr << 1) || !i2cWrite(reg)) { i2cStop(); return false; }
   i2cStart();                                // repeated start
-  if (!i2cWrite((MPU << 1) | 1)) { i2cStop(); return false; }
+  if (!i2cWrite((addr << 1) | 1)) { i2cStop(); return false; }
   for (uint8_t i = 0; i < n; i++) buf[i] = i2cRead(i + 1 < n);
   i2cStop();
   return true;
+}
+
+bool mpuRead(uint8_t reg, uint8_t *buf, uint8_t n) {
+  return regRead(MPU, reg, buf, n);
+}
+
+// I: WHERE IS THE CHIP? 2026-10-19: who=0x0 after two rewires and a swapped-
+// pin build, and nothing could tell no power from the wrong pins from a dead
+// chip. For A0, A1, A4, A5: "b/p" = the level released with no pull-up of
+// ours (1 = the module's own pull-ups are powered), then with our pull-up on
+// (0 = something holds the line low: a short, or an unpowered chip clamping
+// it). Then every address 0x08-0x77 on four {SDA, SCL} pin pairs; an address
+// that answers is followed by its register 0x75 (WHO_AM_I) as "(70)". Twelve
+// or more answering = SDA stuck low ("stuck"). The pins go back as they were.
+void scanReport() {
+  const uint8_t pins[4] = {0, 1, 4, 5};
+  Serial.print("I");
+  for (uint8_t i = 0; i < 4; i++) {
+    uint8_t m = _BV(pins[i]);
+    DDRC &= ~m; PORTC &= ~m; delayMicroseconds(100);
+    bool bare = PINC & m;
+    PORTC |= m; delayMicroseconds(100);
+    bool pulled = PINC & m;
+    PORTC &= ~m;
+    Serial.print(" A"); Serial.print(pins[i]); Serial.print('=');
+    Serial.print(bare ? 1 : 0); Serial.print('/'); Serial.print(pulled ? 1 : 0);
+  }
+  const uint8_t pairs[4][2] = {{0, 1}, {1, 0}, {4, 5}, {5, 4}};
+  for (uint8_t p = 0; p < 4; p++) {
+    sdaBit = pairs[p][0]; sclBit = pairs[p][1];
+    PORTC &= ~(_BV(sdaBit) | _BV(sclBit));
+    sdaHigh(); sclHigh();
+    i2cRecover();
+    uint8_t found[4], count = 0;
+    for (uint8_t a = 0x08; a < 0x78; a++) {
+      i2cStart();
+      bool ack = i2cWrite(a << 1);
+      i2cStop();
+      if (ack) { if (count < 4) found[count] = a; count++; }
+    }
+    Serial.print(" A"); Serial.print(sdaBit); Serial.print('A'); Serial.print(sclBit);
+    Serial.print(':');
+    if (count == 0) {
+      Serial.print('-');
+    } else if (count >= 12) {
+      Serial.print("stuck");
+    } else {
+      for (uint8_t i = 0; i < count && i < 4; i++) {
+        if (i) Serial.print(',');
+        Serial.print(found[i], HEX);
+        uint8_t who = 0;
+        if (regRead(found[i], 0x75, &who, 1)) {
+          Serial.print('('); Serial.print(who, HEX); Serial.print(')');
+        }
+      }
+    }
+    sdaHigh(); sclHigh();
+  }
+  sdaBit = SDA_BIT; sclBit = SCL_BIT;
+  sdaHigh(); sclHigh();
+  Serial.println();
 }
 
 // The MPU-6500 (who=0x70) has its OWN accelerometer low-pass, OFF by default:
@@ -218,8 +283,15 @@ bool gyroInit() {
   PORTC &= ~(_BV(SDA_BIT) | _BV(SCL_BIT));   // an enabled output only ever drives LOW
   sdaHigh(); sclHigh();
   i2cRecover();
+  // WHO_AM_I, up to three tries. 2026-10-19: the chip answered the scan (I)
+  // at 0x68 with 0x70 while this single first read failed on every retry.
   uint8_t who = 0;
-  if (!mpuRead(0x75, &who, 1)) return false;  // WHO_AM_I
+  bool read = false;
+  for (whoTries = 1; whoTries <= 3 && !read; whoTries++) {
+    read = mpuRead(0x75, &who, 1);
+    if (!read) { i2cRecover(); delayMicroseconds(200); }
+  }
+  if (!read) return false;
   gyroWho = who;
   return mpuWrite(0x6B, 0x01)                 // awake, clock = gyro X PLL
       && mpuWrite(0x19, 0x09)                 // 1 kHz / 10 = 100 Hz
@@ -441,8 +513,18 @@ void loop() {
           Serial.println("OK");
         }
       } else if (cmd == 'V' || cmd == 'v') {
-        Serial.print("FRIDAY-MOTORS 1 GYRO 6 who=0x");
-        Serial.println(gyroWho, HEX);
+        Serial.print("FRIDAY-MOTORS 1 GYRO 7 who=0x");
+        Serial.print(gyroWho, HEX);
+        Serial.print(" tries=");
+        Serial.print(whoTries - 1);
+        Serial.print(" status=");
+        Serial.println(gyroOk ? "up" : "down");
+      } else if (cmd == 'I' || cmd == 'i') {
+        if (moving) {
+          Serial.println("ERR");                // only while stopped
+        } else {
+          scanReport();                         // no watchdog pet
+        }
       } else if (cmd == 'W' || cmd == 'w') {
         watchdogMs = (unsigned long) line.substring(1).toInt();
         Serial.println("OK");

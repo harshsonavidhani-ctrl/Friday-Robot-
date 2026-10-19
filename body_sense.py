@@ -174,6 +174,7 @@ class Sense(threading.Thread):
         self.seq = (read() or {}).get("seq", 0)
         self._stop = threading.Event()
         self._last_state = 0.0
+        self._last_said = 0.0
 
     def stop(self) -> None:
         self._stop.set()
@@ -201,6 +202,16 @@ class Sense(threading.Thread):
                             tilt_deg=imu.get("tilt_deg"))
                 if time.monotonic() - self._last_state > 2.0:
                     self._last_state = time.monotonic()
+                    # A put-down that is never seen leaves her "lifted", and
+                    # then picking her up again says nothing (2026-10-19).
+                    if self.detector.lifted and now - self._last_said > 5.0:
+                        self._last_said = now
+                        log.info("body: still lifted -- tilt %.1f deg, shake %.2f deg/s"
+                                 "%s (put down = level < %.0f and shake < %.1f for %.1f s)",
+                                 imu.get("tilt_deg", 0.0), imu.get("shake_dps", 0.0),
+                                 ", board TILTED" if imu.get("tilted") else "",
+                                 config.BODY_LEVEL_DEG, config.BODY_DOWN_SHAKE_DPS,
+                                 config.BODY_DOWN_S)
                     cur = read() or {}
                     if cur.get("lifted") != self.detector.lifted:
                         publish(cur.get("event"), self.detector.lifted, self.seq)
@@ -248,7 +259,7 @@ class BodyWatch:
     name = NAME
     stream = None
 
-    def __init__(self, path: Path | None = None, clock=time.time, poll_s: float = 0.2):
+    def __init__(self, path: Path | None = None, clock=time.time, poll_s: float = 0.1):
         self.path = path
         self.clock = clock
         self.poll_s = poll_s

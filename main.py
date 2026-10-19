@@ -1309,6 +1309,12 @@ async def run(once: bool = False, typed: str | None = None) -> int:
     try:
         voice = Voice(face).start()
         preload_models()
+        if getattr(config, "BODY_SENSE", False):
+            # Her body reactions are fixed lines: rendered once now, a lift is
+            # answered at once instead of after 1.4-5 s of synthesis.
+            import tts
+            tts.prerender(line for _, lines in config.BODY_REACTIONS.values()
+                          for line in lines)
         brains = _BrainLoader().start()
 
         # The session is opened on this stack, in this task, so it is closed

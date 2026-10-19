@@ -60,6 +60,12 @@ _speak_lock = threading.Lock()      # one voice, one utterance at a time
 _voice = None
 _voice_lock = threading.Lock()
 _voice_error: str | None = None
+_render_lock = threading.Lock()     # one synthesis at a time on the shared voice
+# Fixed lines rendered once (prerender), sentence -> finished WAV bytes. On
+# this Pi a short sentence took 1.4-2.0 s to render -- longer than saying it --
+# and the first after the load 5.0 s, all of it before the first sound
+# (2026-10-19, Harsh: "she is responding late when I lift her up").
+_canned: dict[str, bytes] = {}
 
 
 class TTSError(RuntimeError):
@@ -547,7 +553,7 @@ def _render(chunk: str) -> Path:
     handle, name = tempfile.mkstemp(suffix=".wav")
     os.close(handle)
     path = Path(name)
-    with wave.open(str(path), "wb") as out:
+    with _render_lock, wave.open(str(path), "wb") as out:
         voice().synthesize_wav(chunk, out, syn_config=_synthesis_config())
     try:
         _shape_wav(path)
@@ -555,6 +561,53 @@ def _render(chunk: str) -> Path:
         # A failure here must cost tone, never speech.
         log.warning("could not shape %r: %s", chunk[:30], exc)
     return path
+
+
+def _from_canned(chunk: str) -> Path | None:
+    """A pre-rendered sentence as its own temp WAV (speak() deletes what it
+    plays), or None when it was never rendered."""
+    audio = _canned.get(chunk)
+    if audio is None:
+        return None
+    handle, name = tempfile.mkstemp(suffix=".wav")
+    with os.fdopen(handle, "wb") as out:
+        out.write(audio)
+    return Path(name)
+
+
+def prerender(lines) -> threading.Thread:
+    """Render fixed lines in the background, so saying one later starts at
+    once instead of after its synthesis. Returns immediately.
+
+    Cached per sentence, split exactly as speak() splits, so a line is found
+    however it is said. Also warms the voice: the first render after the load
+    is the slow one.
+    """
+    lines = list(lines)
+
+    def run() -> None:
+        started = time.monotonic()
+        count = 0
+        try:
+            voice()
+            for line in lines:
+                for chunk in sentences(line):
+                    if chunk in _canned:
+                        continue
+                    path = _render(chunk)
+                    try:
+                        _canned[chunk] = path.read_bytes()
+                    finally:
+                        path.unlink(missing_ok=True)
+                    count += 1
+        except Exception as exc:                    # noqa: BLE001
+            log.warning("could not pre-render the fixed lines: %s", exc)
+        log.info("%d fixed sentences pre-rendered in %.1fs",
+                 count, time.monotonic() - started)
+
+    thread = threading.Thread(target=run, name="tts-prerender", daemon=True)
+    thread.start()
+    return thread
 
 
 def _shape_wav(path: Path) -> None:
@@ -721,7 +774,7 @@ def speak(text: str) -> str:
         def produce() -> None:
             for chunk in chunks:
                 try:
-                    rendered.put(_render(chunk))
+                    rendered.put(_from_canned(chunk) or _render(chunk))
                 except Exception as exc:            # noqa: BLE001
                     log.error("synthesis failed for %r: %s", chunk[:40], exc)
                     rendered.put(None)

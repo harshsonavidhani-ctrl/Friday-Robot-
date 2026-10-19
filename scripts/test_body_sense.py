@@ -84,10 +84,11 @@ print("--- picked up, put down ---")
 d = bs.Detector()
 ev, t = feed(d, imu(), 5.0, 0.0)
 check("on the floor, still (measured: shake 0.2-0.3 deg/s): nothing", ev == [] and not d.lifted)
-ev, t = feed(d, imu(shake=3.0), 0.4, t)
-check("a hand's wobble for under 0.5 s: not yet (a knock is not a lift)", ev == [])
+# A knock holds the firmware's shake EMA over 1.5 deg/s for ~0.2 s.
+ev, t = feed(d, imu(shake=3.0), 0.2, t)
+check("a hand's wobble for 0.2 s: not yet (a knock is not a lift)", ev == [])
 ev, t = feed(d, imu(shake=3.0), 0.3, t)
-check("...held over 0.5 s (his hands measured 2.3-7.5 deg/s): LIFTED, once",
+check(f"...held over {config.BODY_LIFT_SHAKE_S} s (his hands measured 2.3-7.5 deg/s): LIFTED, once",
       ev == ["lifted"] and d.lifted, str(ev))
 ev, t = feed(d, imu(shake=3.0), 3.0, t)
 check("...no repeat while she stays up", ev == [])

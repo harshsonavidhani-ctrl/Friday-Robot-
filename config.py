@@ -2699,9 +2699,10 @@ BODY_POLL_S = 0.1
 # 2.3-7.5 deg/s in his hands. Only judged while the wheels are not driving
 # (driving shakes her too); a tilt counts either way.
 BODY_LIFT_SHAKE_DPS = 1.5
-BODY_LIFT_SHAKE_S = 0.5
+BODY_LIFT_SHAKE_S = 0.3         # was 0.5: Harsh 2026-10-19 "she responds very late"; a knock
+                                # keeps the firmware's shake EMA over 1.5 for ~0.2 s
 BODY_LIFT_TILT_DEG = 25.0       # the board sits ~6-8 deg off level at rest
-BODY_LIFT_TILT_S = 0.3
+BODY_LIFT_TILT_S = 0.2
 # Her own rocking after a hard pivot shakes the sensor 13-28 deg/s for a
 # moment (2026-10-07 run: "lifted" every 8-15 s, each right after the turn
 # flipped +1.56 -> -1.56 rad/s, and she said "Whoa!" a dozen times). A hand's
@@ -2711,11 +2712,11 @@ BODY_LEVEL_DEG = 18.0
 BODY_DOWN_SHAKE_DPS = 0.8
 BODY_DOWN_S = 1.2               # level and still this long = put down
 BODY_UPSIDE_DOWN_DEG = 120.0
-BODY_SHAKEN_DPS = 25.0
-BODY_SPUN_DPS = 120.0
-BODY_EVENT_S = 0.5              # upside down / shaken / spun for this long
+BODY_SHAKEN_DPS = 15.0          # was 25; held 2.3-7.5, his shakes 30-88 (10-19)
+BODY_SPUN_DPS = 90.0
+BODY_EVENT_S = 0.2              # upside down / shaken / spun for this long (was 0.5)
 BODY_HELD_LONG_S = 12.0
-BODY_REPEAT_S = 8.0             # the same reaction again at most this often
+BODY_REPEAT_S = 5.0             # the same reaction again at most this often
 BODY_REACT_GAP_S = 2.5          # any two reactions at least this far apart
 BODY_STALE_S = 3.0              # an event older than this is not reacted to
 # (face, lines -- one picked at random). Spoken offline, between turns; in
