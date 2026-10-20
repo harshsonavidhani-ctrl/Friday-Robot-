@@ -251,10 +251,17 @@ class EngineHost:
         self.controller = nsm.NavController(robot=self.robot,
                                             voice=_QuietVoice(nav_voice.VOICE))
         legs = [tuple(w) for w in (waypoints or [])] + [tuple(goal)]
+        # Retracing (waypoints = her trail): every leg may use the strip she
+        # DROVE, which the clearance margin can close (open_corridor). The
+        # here->first-crumb hop is included: she is standing on its start.
+        here = self.mapper.pose[:2] if self.mapper is not None else None
+        trail = ([tuple(here)] if here is not None else []) + legs if waypoints else None
         for i, xy in enumerate(legs):
             last = i == len(legs) - 1
+            extra = {"corridor": trail} if trail else {}
             report = await self.controller.return_to(
-                xy, self.mapper, label="where I started" if last else "my trail")
+                xy, self.mapper, label="where I started" if last else "my trail",
+                **extra)
             self.reports.append({"leg": i, "arrived": bool(report.arrived),
                                  "why": report.why, "replans": report.replans})
             if getattr(report.state, "name", "") == "FAILSAFE" or not report.arrived:
@@ -497,6 +504,10 @@ class MissionNav:
 
     def approach_start(self) -> bool:
         return bool(self._call("approach").get("started"))
+
+    def can_approach(self) -> bool:
+        """Stepping onto the start by its view (EngineHost._approach) exists."""
+        return True
 
     def back_up(self, metres: float) -> bool:
         return bool(self._call("back_up", m=float(metres)).get("started"))

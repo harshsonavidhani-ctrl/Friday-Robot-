@@ -115,6 +115,42 @@ check("blocked twice, then home: the ladder climbs (wait, clear obstacles) and a
       end == "IDLE" and m["status"] == "returned" and rungs[:3] == [0, 1, 2],
       str(m["rungs_used"]))
 
+# --- THE LAST METRE BY THE START'S VIEW (2026-10-19: forward and back at one spot,
+# 0.47-0.93 m from the start, 8 NO_ROUTE). Within mm.CLOSE_APPROACH_M she looks at
+# the start by its own view first; the ladder is unchanged after it.
+import exploration_mission.mission_manager as mmgr      # noqa: E402
+
+w = world([])                                           # a path attempt would fail
+w.a.nav.approach_outcome = "ARRIVED"                    # this engine CAN step on...
+w.a.nav.on_approach = lambda: setattr(w.sim, "truth", tuple(w.sim.start_pose))  # ...onto it
+w.mgr.start()
+end = w.run()
+m = w.mission()
+ev = [e["kind"] for e in m["events"]]
+check("close to the start: she looks by its view first, no path attempt needed",
+      end == "IDLE" and m["status"] == "returned"
+      and not any(c[0] == "attempt" for c in w.a.nav.calls) and "close_approach" in ev,
+      f"{m['status']} calls={w.a.nav.calls[:4]} ev={ev[-6:]}")
+check("...and the arrival is VERIFIED by the start's view",
+      m["rungs_used"] and m["rungs_used"][-1].get("verified") is True, str(m["rungs_used"][-2:]))
+
+PATH_OUT = [(3.0, 2.5), (2.0, 2.0), (4.0, 2.0), (4.0, 3.0), (2.2, 2.9)]   # ends 0.9 m out
+w = World(["kitchen"], world=ROOM, path=PATH_OUT, cfg={"return": {"mode": "map_first"}})
+w.a.nav = DrivingNav(w.sim, during_run=False, clock=w.clock, script=[], engine=True)
+w.a.nav.approach_outcome = "FAILED"                     # stepping on cannot do it
+w.mgr.a.nav = w.a.nav
+w.mgr.start()
+w.run(lambda x: x.mgr.state == "HELP_WAIT", max_s=3000)
+m = w.mission()
+ev = [e["kind"] for e in m["events"]]
+kinds = [c[0] for c in w.a.nav.calls]
+check("...the view cannot get her there: NOT 'returned' -- the ladder and HELP go on",
+      w.mgr.state == "HELP_WAIT" and m.get("status") != "returned"
+      and "close_approach_failed" in ev and "attempt" in kinds,
+      f"state={w.mgr.state} status={m.get('status')} calls={kinds[:12]}")
+check("...and at most CLOSE_APPROACH_TRIES close approaches in one way home",
+      ev.count("close_approach") <= mmgr.CLOSE_APPROACH_TRIES, str(ev.count("close_approach")))
+
 w = world([])                                           # every attempt fails
 w.mgr.start()
 w.run(lambda x: x.mgr.state == "HELP_WAIT", max_s=3000)
@@ -190,14 +226,16 @@ def make_robot():
 nav_follower.GuardedRobot = make_robot
 SCRIPT: list = []
 DRIVES: list = []
+CORRIDORS: list = []          # what each leg was handed as her trail (2026-10-20)
 
 
 class Controller:
     def __init__(self, robot=None, voice=None):
         self.robot, self.voice, self.obstacles = robot, voice, "old layer"
 
-    async def return_to(self, xy, mapper, label=""):
+    async def return_to(self, xy, mapper, label="", corridor=None):
         DRIVES.append((tuple(xy), label, mapper))
+        CORRIDORS.append(corridor)
         res = SCRIPT.pop(0) if SCRIPT else "arrived"
         if res == "arrived":
             mapper.pose = (xy[0], xy[1], mapper.pose[2])
@@ -276,10 +314,18 @@ host, res = run("attempt", goal=[0.0, 0.0], waypoints=[[0.5, 0.3], [0.2, 0.1]])
 check("retrace: each breadcrumb is a leg, then the start",
       [d[0] for d in DRIVES] == [(0.5, 0.3), (0.2, 0.1), (0.0, 0.0)]
       and host.outcome == "ARRIVED", str([d[0] for d in DRIVES]))
+check("...and every retrace leg may use the strip she DROVE (her trail, from "
+      "where she stands), which the margin can close",
+      len(CORRIDORS) >= 3 and all(c is not None and len(c) == 4 and
+                                  [tuple(p) for p in c[1:]] == [(0.5, 0.3), (0.2, 0.1), (0.0, 0.0)]
+                                  for c in CORRIDORS[-3:]), str(CORRIDORS[-3:]))
+CORRIDORS.clear()
 
 SCRIPT[:] = ["failsafe"]
 cleared.clear()
 host, res = run("attempt", goal=[0.0, 0.0])
+check("a plain attempt (no trail) hands File 14 no corridor",
+      CORRIDORS and all(c is None for c in CORRIDORS), str(CORRIDORS))
 check("File 14 FAILSAFE inside an attempt -> FAILED for the ladder, its record "
       "cleared (a later 'try again' must not redo it)",
       host.outcome == "FAILED" and cleared == [1], f"{host.outcome} {cleared}")

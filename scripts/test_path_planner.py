@@ -385,6 +385,41 @@ def test_no_route_is_not_a_guess() -> None:
     check("start == goal is one cell", len(pp.astar(prep, (10, 10), (10, 10))) == 1)
 
 
+def test_open_corridor() -> None:
+    """2026-10-20: the way home's retrace hands File 14 her trail, and the
+    margin can close a gap she has just driven through. open_corridor opens
+    the strip under the trail -- never where she could not stand."""
+    print("\n— a trail she drove opens a gap the margin closed —")
+    g = _grid((80, 80))
+    g.logodds[40, :] = 3.0                  # a wall across the room...
+    g.logodds[40, 35:45] = -1.0             # ...with a 0.50 m door in it
+    prep = pp.preprocess(g)
+    a, b = (20, 40), (60, 40)
+    check("the margin closes the 0.50 m door (no route without the trail)",
+          pp.astar(prep, a, b) == [], f"inflate {prep.inflate_m:.2f} m")
+    trail = pp.cells_to_world([a, (40, 40), b], prep.grid)
+    before = prep.plannable.copy()
+    opened = pp.open_corridor(prep, trail)
+    check("with her trail through the door there is a route",
+          len(pp.astar(opened, a, b)) >= 2)
+    check("the caller's mask is untouched", np.array_equal(prep.plannable, before))
+    check("...and it says what it opened", any("trail opened" in n for n in opened.notes))
+
+    sealed = _grid((80, 80))
+    sealed.logodds[40, :] = 3.0             # no door: the 'trail' is a bad pose
+    sp = pp.preprocess(sealed)
+    check("a trail THROUGH a solid wall opens nothing there",
+          pp.astar(pp.open_corridor(sp, trail), a, b) == [])
+
+    tight = _grid((80, 80))
+    tight.logodds[40, :] = 3.0
+    tight.logodds[40, 38:42] = -1.0         # 0.20 m: narrower than her body
+    tp = pp.preprocess(tight)
+    check("a gap narrower than her body stays closed, trail or not",
+          pp.astar(pp.open_corridor(tp, trail), a, b) == [])
+    check("one point is no trail: unchanged", pp.open_corridor(prep, trail[:1]) is prep)
+
+
 def test_snapping() -> None:
     """Parked against a wall, the robot is 'inside' an obstacle. Plan anyway."""
     print("\n— snapping a start that inflation calls solid —")
@@ -504,6 +539,7 @@ def main() -> int:
     test_gradient_still_takes_the_only_way()
     test_no_corner_cutting()
     test_no_route_is_not_a_guess()
+    test_open_corridor()
     test_snapping()
     test_smoothing()
     test_hands_off_to_the_follower()

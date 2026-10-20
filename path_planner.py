@@ -267,6 +267,55 @@ def preprocess(grid: OccupancyGrid,
     return result
 
 
+def open_corridor(prep: Preprocessed, points, body_m: float | None = None,
+                  half_width_cells: int = 1) -> Preprocessed:
+    """A trail she DROVE, made plannable (2026-10-20).
+
+    The way home's "retrace my trail" rung handed File 14 her breadcrumbs, and
+    File 14 planned every leg on the inflated map -- where the gap she had just
+    squeezed through is closed by the clearance margin. 2026-10-19 18:01-18:04
+    every rung, the retrace included, failed in under a second with "nothing
+    passable connects here". She has physically been along this line, so the
+    cells under it count as plannable -- unknown ones too -- EXCEPT where
+    something solid on the map is within `body_m` (NAV_ROBOT_RADIUS_M) of the
+    cell: there she could not be standing now, whatever the trail says.
+
+    Returns a copy; the caller's mask is never touched.
+    """
+    pts = np.asarray(points, dtype=float).reshape(-1, 2)
+    if len(pts) < 2:
+        return prep
+    body = float(config.NAV_ROBOT_RADIUS_M if body_m is None else body_m)
+    cell = float(prep.cell_m)
+    nx, ny = prep.plannable.shape
+    occupied = prep.grid.occupied_mask()
+    if occupied.any():
+        near_wall = distance_transform_edt(~occupied) * cell < body
+    else:
+        near_wall = np.zeros_like(occupied)
+    samples = []
+    for a, b in zip(pts[:-1], pts[1:]):
+        n = max(2, int(math.ceil(float(np.hypot(*(b - a))) / (cell * 0.5))) + 1)
+        samples.append(np.linspace(a, b, n))
+    ix, iy = prep.grid.cells_of(np.vstack(samples))
+    line = np.zeros((nx, ny), dtype=bool)
+    ok = (ix >= 0) & (ix < nx) & (iy >= 0) & (iy < ny)
+    line[ix[ok], iy[ok]] = True
+    corridor = line.copy()
+    for dx in range(-half_width_cells, half_width_cells + 1):
+        for dy in range(-half_width_cells, half_width_cells + 1):
+            if dx or dy:
+                corridor |= np.roll(np.roll(line, dx, axis=0), dy, axis=1)
+    opened = corridor & ~near_wall & ~prep.plannable
+    if not opened.any():
+        return prep
+    out = Preprocessed(**{**prep.__dict__})
+    out.plannable = prep.plannable | opened
+    out.notes = list(prep.notes) + [
+        f"her trail opened {int(opened.sum())} cells the margin had closed"]
+    return out
+
+
 def from_saved_map(path: Path | str | None = None,
                    **kwargs) -> Preprocessed:
     """Preprocess the saved survey map (`state/map.npz` by default).

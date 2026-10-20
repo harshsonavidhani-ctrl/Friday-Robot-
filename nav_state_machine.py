@@ -923,6 +923,7 @@ class NavController:
                         mapper=None, max_attempts: int = 3,
                         touring: bool = False, refind_near: bool = False,
                         max_refinds: int | None = None,
+                        corridor=None,
                         **follow_kw) -> ReturnReport:
         """The engine both modes share: relocalise, plan, follow, re-plan.
 
@@ -1012,6 +1013,11 @@ class NavController:
             # the map itself has not changed.
             blocked = self.obstacles.points()
             prep = path_planner.preprocess(mapper.grid, extra_blocked=blocked)
+            # `corridor`: a trail she DROVE (the way home's retrace rung). The
+            # margin may close a gap she has just been through; the trail opens
+            # it again, never where something solid is within her body radius.
+            if corridor is not None:
+                prep = path_planner.open_corridor(prep, corridor)
             report.grid = prep.stats()
             report.obstacles = self.obstacles.as_dict()
 

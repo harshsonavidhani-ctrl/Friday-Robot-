@@ -131,6 +131,17 @@ PARK_WAIT_S = 20.0               # arrival: the run giving the LiDAR back
 ARRIVAL_APPROACHES = 2
 APPROACH_WAIT_S = 120.0
 PARK_SETTLE_S = 4.0              # ...and its first sweeps after a run are partial
+# THE LAST METRE BY THE START'S OWN VIEW (2026-10-19 16:35, Harsh: "at one spot
+# she is going forward and backward, she is very confused"). She began that way
+# home 0.93 m out and never got nearer than 0.47 m: 68% of the tracker's fixes
+# put her inside the 0.30 m inflation round the furniture, and they jumped
+# 0.5-1 m from sweep to sweep -- more than the distance left -- so every re-plan
+# pointed somewhere else (8 NO_ROUTE, 16 m driven in place). This close she
+# parks the run and steps on by the start's view instead (the arrival's own
+# approach: 3 sweeps a look, gyro-narrowed, guarded moves). If even that cannot
+# get her there she is NOT "arrived": the ladder and HELP carry on.
+CLOSE_APPROACH_M = 1.5
+CLOSE_APPROACH_TRIES = 2         # per way home
 # U2 (spec 4.2): a frontier counts as explored (the assist is done) when no
 # frontier is left within this of the one she was sent to -- clusters shift
 # and split as the map grows round them.
@@ -368,6 +379,8 @@ class MissionManager:
         self.ladder: rth_ladder.Ladder | None = None
         self.arrival: rth_ladder.ArrivalCheck | None = None
         self._arrive: dict | None = None
+        self._close_tries = 0               # last-metre approaches this way home
+        self._close_seen = 0                # ladder attempts already judged for it
         self.verified: bool | None = None
         self.drive: run_drive.RunDrive | None = None   # U1: the way home by path
         self._by_path = False
@@ -1077,6 +1090,7 @@ class MissionManager:
         self.arrival = rth_ladder.ArrivalCheck(r.arrive_tolerance_m,
                                                r.arrive_hysteresis_m, r.arrive_dwell_s)
         self._arrive = None
+        self._close_seen = 0               # a new ladder: its attempts count from 0
         self._to("RETURN_TO_START", now)
         self._ladder_outcome(self.ladder.restart(now), now)
 
@@ -1908,8 +1922,12 @@ class MissionManager:
         self.arrival = rth_ladder.ArrivalCheck(r.arrive_tolerance_m,
                                                r.arrive_hysteresis_m, r.arrive_dwell_s)
         self._arrive = None
+        self._close_tries, self._close_seen = 0, 0
         self._t_return = now
         self._to("RETURN_TO_START", now)
+        if self.ladder.last_distance <= CLOSE_APPROACH_M and self._can_approach():
+            self._begin_arrival(now, close=True)
+            return
         self._ladder_outcome(self.ladder.restart(now), now)
 
     def _drop_drive(self) -> None:
@@ -1977,8 +1995,12 @@ class MissionManager:
         self.arrival = rth_ladder.ArrivalCheck(r.arrive_tolerance_m,
                                                r.arrive_hysteresis_m, r.arrive_dwell_s)
         self._arrive = None
+        self._close_tries, self._close_seen = 0, 0
         self._t_return = now
         self._to("RETURN_TO_START", now)
+        if self.ladder.last_distance <= CLOSE_APPROACH_M and self._can_approach():
+            self._begin_arrival(now, close=True)
+            return
         self._ladder_outcome(self.ladder.restart(now), now)
 
     def _ladder_distance(self):
@@ -2039,20 +2061,56 @@ class MissionManager:
             log.warning("could not reclaim the hardware: %s", exc)
         return self.ladder.external_result(arrived, distance, now)
 
+    def _begin_arrival(self, now: float, close: bool = False) -> None:
+        """Look at the start by its own view, stepping onto it if needed.
+        `close`: not because the ladder arrived, but because she is within
+        CLOSE_APPROACH_M -- then an unverified end is not an arrival."""
+        stage = "look"
+        if self.drive is not None and self.drive.engaged:
+            # The look is friday-mcp's own LiDAR against the start's (taken
+            # the same way): park the run first so it gives the LiDAR back.
+            self._drop_drive()
+            try:
+                self.a.run.stop()
+            except Exception as exc:                    # noqa: BLE001
+                log.warning("could not park the run: %s", exc)
+            stage = "park"
+        if close:
+            self._close_tries += 1
+            self._event("close_approach", distance=self._ladder_distance(),
+                        try_=self._close_tries)
+        self._arrive = {"stage": stage, "job": None, "spun": False, "t": now,
+                        "distance": self._ladder_distance(), "approaches": 0,
+                        "close": close}
+
+    def _can_approach(self) -> bool:
+        """An engine that can step onto the start by its view is there. Without
+        one, parking the run for it would only throw the held run away."""
+        try:
+            can = getattr(self.a.nav, "can_approach", None)
+            return bool(can is not None and can() and self.a.nav.available())
+        except Exception:                               # noqa: BLE001
+            return False
+
+    def _close_approach_due(self) -> bool:
+        """A path attempt has just failed this close to the start."""
+        if (self.ladder is None or self._close_tries >= CLOSE_APPROACH_TRIES
+                or not self._can_approach()):
+            return False
+        n = len(self.ladder.attempts)
+        if n <= self._close_seen:
+            return False
+        self._close_seen = n
+        last = self.ladder.attempts[-1]
+        d = self._ladder_distance()
+        return (getattr(last, "result", "") != "arrived" and d is not None
+                and d <= CLOSE_APPROACH_M)
+
     def _ladder_outcome(self, out, now: float) -> None:
         if out == "arrived":
-            stage = "look"
-            if self.drive is not None and self.drive.engaged:
-                # The look is friday-mcp's own LiDAR against the start's (taken
-                # the same way): park the run first so it gives the LiDAR back.
-                self._drop_drive()
-                try:
-                    self.a.run.stop()
-                except Exception as exc:                # noqa: BLE001
-                    log.warning("could not park the run: %s", exc)
-                stage = "park"
-            self._arrive = {"stage": stage, "job": None, "spun": False, "t": now,
-                            "distance": self._ladder_distance(), "approaches": 0}
+            self._begin_arrival(now)
+        elif self._arrive is None and self._close_approach_due():
+            self._begin_arrival(now, close=True)
         elif out == "help_wait":
             self._help_wait(now, self._ladder_distance(), speak=False)
             self.say("help_wait")
@@ -2098,7 +2156,11 @@ class MissionManager:
         gyro-tracked) when the run had a gyro and File 14's engine has not
         moved her since; from then on the board's yaw carries it through every
         turn (gyro_heading.py). Runs in the look's job thread."""
-        if not self.heading.latched and self.heading.why == "not latched":
+        # A board still coming back after the run ("no gyro reading") is tried
+        # again at the next look -- only while nothing has moved her since the
+        # run's last pose, which the condition below checks either way.
+        if not self.heading.latched and self.heading.why in ("not latched",
+                                                             "no gyro reading"):
             rel = None
             if (self._run_gyro is not None and self.mission
                     and self._fix_moves == self._engine_moves()):
@@ -2173,6 +2235,16 @@ class MissionManager:
             if seen.get("verified") or a["spun"]:
                 self._event("arrival_check", **seen)
                 self._arrive = None
+                tol = float(self.cfg["return"].arrive_tolerance_m)
+                by_view = seen.get("from_start_m")
+                # Close mode: only the START'S VIEW may say she is there -- the
+                # tracker's distance is the very number that was jumping.
+                if (a.get("close") and not seen.get("verified")
+                        and (by_view is None or by_view > tol)):
+                    # Stepping on by the view did not get her there: not home.
+                    self._event("close_approach_failed", distance=a["distance"])
+                    self._return_without_run(now)
+                    return
                 self._arrived(now, a["distance"], bool(seen.get("verified")))
                 return
             self._event("arrival_check", **dict(seen, retry=True))

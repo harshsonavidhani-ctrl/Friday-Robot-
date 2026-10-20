@@ -193,8 +193,22 @@ nb = Board()
 nb.status = "nogyro"
 g = gh.GyroHeading(read=nb.read, sleep=fake_sleep, monotonic=lambda: clock[0])
 t = clock[0]
-check("'nogyro' -> no latch, at once (no waiting on a board without one)",
-      not g.latch(0.5) and clock[0] == t)
+check("'nogyro' that never clears -> no latch, after READY_WAIT_S (not forever)",
+      not g.latch(0.5) and gh.READY_WAIT_S - 0.5 <= clock[0] - t <= gh.READY_WAIT_S + 0.5,
+      f"waited {clock[0] - t:.1f} s")
+
+
+class Reset(Late):
+    """2026-10-19 17:58: just reconnected, the board's first WHO_AM_I failed --
+    'nogyro' until its 2 s retry, then 'cal', then 'ok'."""
+    def __init__(self):
+        super().__init__()
+        self.seq = ["nogyro"] * 10 + ["cal"] * 5 + ["ok"]
+
+
+g = gh.GyroHeading(read=Reset().read, sleep=fake_sleep, monotonic=lambda: clock[0])
+check("'nogyro' right after a reset, then 'cal', then 'ok': latch waits it out",
+      g.latch(0.5) and g.latched)
 
 saved = sys.modules.pop("mcp_server.hardware", None)
 check("the default reader outside friday-mcp: no link, nothing opened",

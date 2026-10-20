@@ -1055,6 +1055,9 @@ class FakeNav:
         self._start(self.maneuver_s, "SPUN")
         return True
 
+    def can_approach(self):
+        return self.approach_outcome is not None
+
     def approach_start(self):
         if self.approach_outcome is None:
             return False

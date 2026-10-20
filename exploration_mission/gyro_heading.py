@@ -25,7 +25,13 @@ from typing import Callable
 
 log = logging.getLogger("friday.exploration_mission.gyro_heading")
 
-READY_WAIT_S = 4.0         # after a reconnect the board measures its bias (~1 s still)
+# After a reconnect (opening the port resets the Uno) the board can say "nogyro"
+# for a while -- its first WHO_AM_I after the reset fails and it retries every
+# 2 s -- and then "cal" while it measures its bias (~1 s still). 2026-10-19
+# 17:58: the latch broke off at the first "nogyro", 6 s after the reconnect, and
+# the whole approach ran with no heading: the start's view matched two places
+# and she stepped onto the wrong one (0.99 -> 1.44 -> 1.63 m).
+READY_WAIT_S = 10.0
 
 
 def _wrap(a: float) -> float:
@@ -82,8 +88,6 @@ class GyroHeading:
         drive, imu = self._read()
         t0 = self._mono()
         while (not imu or not imu.get("ok")) and self._mono() - t0 < READY_WAIT_S:
-            if imu and imu.get("status") == "nogyro":
-                break
             self._sleep(0.2)
             drive, imu = self._read()
         return drive, (imu if imu and imu.get("ok") else None)
