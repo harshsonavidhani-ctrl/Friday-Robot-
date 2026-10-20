@@ -194,14 +194,15 @@ def laptop_suggest(kind: str = "game") -> str:
 
 @tool
 def laptop_game_play(action: str = "start", game: str = "") -> str:
-    """Friday plays a SLOW game on Harsh's laptop herself (solitaire, chess,
-    minesweeper...) -- ONLY when he asks: "you play the game", "you play".
-    action "start" plays the game in front; "stop" hands it back. Fast games
-    are refused. Each move is one look and one click inside the game window.
+    """Friday plays a game on Harsh's laptop herself -- ANY of his games, ONLY
+    when he asks: "you play the game", "you play Asphalt". action "start"
+    plays the game he named (opening it first if it is not in front) or the
+    game in front; "stop" hands it back. Slow games are played by clicking,
+    the rest with the keyboard, one look per move.
 
     Args:
         action: "start" or "stop".
-        game: the game he named, if any (it must already be open in front).
+        game: the game he named, if any.
     """
     import laptop_games
     if (action or "start").strip().lower() == "stop":

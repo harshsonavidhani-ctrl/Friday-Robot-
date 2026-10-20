@@ -10,12 +10,17 @@ game". So:
   words -- or says nothing (SKIP). Spoken by reminders.ReminderWatch, between
   turns, through initiative.decide() (never while he talks to her).
 
-  PLAY (his command only): "Friday, you play the game". SLOW games only
-  (SLOW_GAMES: solitaire, chess, minesweeper...). A real-time game is refused:
-  look -> think -> click is seconds a move. Each move: a picture of the game
-  window, one vision call, one click inside it. Ends on "stop" (the stop tool
-  calls stop_playing), "stop playing", a finished game, the game no longer in
-  front, GAME_PLAY_MAX_MOVES, or the money (daily cap, rate limits).
+  PLAY (his command only): "Friday, you play the game" / "you play Asphalt".
+  ANY of his games (Harsh 2026-10-21: "any game if i ask her, not a
+  particular one"). A game he names that is not in front is opened first.
+  SLOW games (SLOW_GAMES: solitaire, chess...) are played by clicking: a
+  picture, one vision call, one click. Every other game is played with the
+  keyboard (helper 8 /step): she holds a few game keys for a moment, the
+  laptop hands back the next picture, she thinks again. The game runs on
+  while she thinks, so she is slow at fast games -- GAME_PAUSE_KEYS can name
+  a game's pause key so it waits for her between moves. Ends on "stop" (the
+  stop tool calls stop_playing), "stop playing", a finished game, the game no
+  longer in front, GAME_PLAY_MAX_MOVES / _STEPS, or the money.
 
 THE LAPTOP DECIDES what she may see and touch: helper 6 hands over a picture
 of, and takes a click in, ONLY the window in front, and ONLY when its title
@@ -59,6 +64,18 @@ PLAY_SYSTEM = ("You are Friday, a small robot playing {game} on a laptop by clic
                "Click only on the board, cards or pieces: never menus, settings, ads, "
                "buttons that leave the game, close or minimise, and never the top "
                "strip of the window (its title bar).")
+KEYS_SYSTEM = ("You are Friday, a small robot playing {game} on a laptop with the "
+               "keyboard. You see a screenshot of the game window. Choose the next "
+               "move: keys held down together for a moment. Reply with ONLY a JSON "
+               'object: {{"keys": ["up", "left"], "ms": 600, "why": "a few words"}} -- '
+               "at most 3 keys from: {keys}; ms from 100 to {max_ms}. The game keeps "
+               "running while you think, so prefer short holds. Racing: up = accelerate, "
+               "left/right = steer, down = brake; steer toward the middle of the road. "
+               'To press a button in a menu you may click instead: {{"x": 0.5, '
+               '"y": 0.8, "why": "..."}} (x, y fractions of the image). Or {{"done": '
+               'true, "why": "a few words"}} if the game is over or you are stuck. '
+               "Never quit the game, open settings or a shop, buy anything, or click "
+               "the top strip of the window (its title bar).")
 
 # OFFLINE CHEERING (Harsh 2026-10-20: "it can be offline?" -> "yes add the
 # offline cheering"). No picture and no model: she knows WHICH game is in front
@@ -229,8 +246,9 @@ def stop_playing() -> bool:
     return False
 
 
-def parse_move(text: str | None) -> dict | None:
-    """The model's JSON move -> {"x", "y"} or {"done": True}; None if unusable."""
+def parse_move(text: str | None, keys_ok: bool = False) -> dict | None:
+    """The model's JSON move -> {"x", "y"}, {"keys", "ms"} (keys_ok: a game
+    played with the keyboard) or {"done": True}; None if unusable."""
     if not text:
         return None
     m = re.search(r"\{.*\}", text, re.DOTALL)
@@ -244,6 +262,17 @@ def parse_move(text: str | None) -> dict | None:
         return None
     if got.get("done") is True:
         return {"done": True, "why": str(got.get("why", ""))[:80]}
+    if keys_ok and isinstance(got.get("keys"), list):
+        import laptop_research as lr
+        keys = [str(k).lower() for k in got["keys"]][:3]
+        if not keys or any(k not in lr.GAME_KEYS for k in keys):
+            return None
+        try:
+            ms = int(float(got.get("ms", 500)))
+        except (TypeError, ValueError):
+            return None
+        ms = min(max(ms, 100), int(getattr(config, "GAME_STEP_MAX_MS", 1500)))
+        return {"keys": keys, "ms": ms, "why": str(got.get("why", ""))[:80]}
     try:
         x, y = float(got["x"]), float(got["y"])
     except (KeyError, TypeError, ValueError):
@@ -265,37 +294,77 @@ def _say(text: str) -> None:
         log.info("game line not spoken (%s): %s", exc, text)
 
 
-def _loop(game: str, stop: threading.Event, say=_say) -> str:
+def pause_key(game: str) -> str | None:
+    """The key that pauses this game (config.GAME_PAUSE_KEYS, by a word of its
+    name), or None: then the game runs on while she thinks."""
+    words = game_words(game)
+    for word, key in (getattr(config, "GAME_PAUSE_KEYS", {}) or {}).items():
+        if word.lower() in words:
+            return key
+    return None
+
+
+def _wait_in_front(game: str, stop: threading.Event, wait_s: float) -> bool:
+    """After opening it: is the game the window in front within wait_s?"""
+    import laptop_research as lr
+    end = time.time() + wait_s
+    while time.time() < end:
+        if game_in_front(lr.idle(), lr.known_apps()) == game:
+            return True
+        if stop.wait(1.0):
+            return False
+    return False
+
+
+def _loop(game: str, stop: threading.Event, say=_say, fast: bool = False,
+          wait_s: float = 0.0) -> str:
     import laptop_research as lr
     import scene_describe
-    max_moves = int(getattr(config, "GAME_PLAY_MAX_MOVES", 60))
-    pause = float(getattr(config, "GAME_PLAY_PAUSE_S", 1.5))
+    if wait_s and not _wait_in_front(game, stop, wait_s):
+        why = "stopped" if stop.is_set() else "it didn't open in front"
+        _play["why"] = why
+        say("Okay, your turn." if why == "stopped" else f"I couldn't play {game}: {why}.")
+        return why
+    if fast:
+        max_moves = int(getattr(config, "GAME_PLAY_MAX_STEPS", 200))
+        pause = 0.0
+        system = KEYS_SYSTEM.format(game=game, keys=", ".join(lr.GAME_KEYS),
+                                    max_ms=int(getattr(config, "GAME_STEP_MAX_MS", 1500)))
+    else:
+        max_moves = int(getattr(config, "GAME_PLAY_MAX_MOVES", 60))
+        pause = float(getattr(config, "GAME_PLAY_PAUSE_S", 1.5))
+        system = PLAY_SYSTEM.format(game=game)
+    pkey = pause_key(game) if fast else None
+    paused = False
     recent: list[str] = []
     bad = 0
+    png = None
     why = "I've made my moves"
     for n in range(max_moves):
         if stop.is_set():
             why = "stopped"
             break
-        png, err = lr.screen(game)
-        if not png:
-            why = ("the game isn't in front any more" if "not the window in front" in err
-                   else f"I can't see the game ({err})")
-            break
+        if png is None:
+            png, err = lr.screen(game)
+            if not png:
+                why = ("the game isn't in front any more" if "not the window in front" in err
+                       else f"I can't see the game ({err})")
+                break
         hint = (" My last moves: " + "; ".join(recent[-4:]) + ".") if recent else ""
-        text, err = scene_describe._call("game_play", png, PLAY_SYSTEM.format(game=game),
+        text, err = scene_describe._call("game_play", png, system,
                                          f"Your move {n + 1} in {game}.{hint}", 200,
                                          media_type="image/png")
         if text is None:
             why = ("my API credits have run out" if err == "no API credit"
                    else f"I couldn't think ({err})")
             break
-        move = parse_move(text)
+        move = parse_move(text, keys_ok=fast)
         if move is None:
             bad += 1
             if bad >= 3:
                 why = "I got confused"
                 break
+            png = None
             continue
         if move.get("done"):
             why = move.get("why") or "the game is over"
@@ -303,13 +372,29 @@ def _loop(game: str, stop: threading.Event, say=_say) -> str:
         if stop.is_set():
             why = "stopped"
             break
-        ok, err = lr.click(game, move["x"], move["y"])
-        if not ok:
-            why = ("the game isn't in front any more" if "not the window in front" in err
-                   else f"I couldn't click ({err})")
-            break
+        if "keys" in move:
+            # One step: (un-pause,) hold the keys, the next picture, (pause).
+            png, err = lr.step(game, move["keys"], move["ms"],
+                               before=pkey if paused else None, after=pkey, shot=True)
+            paused = bool(pkey)
+            label = f"{'+'.join(move['keys'])} {move['ms']} ms"
+            if png is None:
+                why = ("the game isn't in front any more" if "not the window in front" in err
+                       else f"I couldn't press the keys ({err})")
+                break
+        else:
+            if paused:
+                lr.step(game, [], 0, before=pkey, shot=False)
+                paused = False
+            ok, err = lr.click(game, move["x"], move["y"])
+            png = None
+            label = f"click ({move['x']:.2f}, {move['y']:.2f})"
+            if not ok:
+                why = ("the game isn't in front any more" if "not the window in front" in err
+                       else f"I couldn't click ({err})")
+                break
         _play["moves"] = n + 1
-        recent.append(f"({move['x']:.2f}, {move['y']:.2f}) {move['why']}".strip())
+        recent.append(f"{label} {move['why']}".strip())
         if stop.wait(pause):
             why = "stopped"
             break
@@ -323,8 +408,11 @@ def _loop(game: str, stop: threading.Event, say=_say) -> str:
 
 
 def play_start(game_hint: str = "", say=_say) -> str:
-    """Start playing the slow game in front (his command). Returns at once."""
+    """Start playing (his command): the game he named -- opened first if it is
+    not in front -- or else the game in front. Any game: slow ones by
+    clicking, the rest with the keyboard (helper 8). Returns at once."""
     import laptop_research as lr
+    import rate_limit
     if playing():
         return f"I'm already playing {_play['game']}. Say stop to take over."
     if _credits_out():
@@ -335,19 +423,42 @@ def play_start(game_hint: str = "", say=_say) -> str:
                 "friday_laptop_agent.py to it.")
     apps = lr.known_apps()
     game = game_in_front(info, apps)
+    wait_s = 0.0
+    if game_hint:
+        app, close = lr.match_app(game_hint, [a for a in apps if lr.is_game(a)])
+        if app is None and close:
+            return "Which one: " + ", ".join(a["name"] for a in close) + "?"
+        if app is None and game is None:
+            return f"I can't find {game_hint} on your laptop."
+        if app is not None and app["name"] != game:
+            fast_named = not SLOW_GAMES.search(app["name"])
+            if fast_named and lr.helper_version() < 8:
+                return _OLD_HELPER.format(game=app["name"])
+            ok, why = rate_limit.allow("laptop_launch")
+            if not ok:
+                return f"I've opened enough apps for now ({why})."
+            rate_limit.used("laptop_launch")
+            ok, why = lr.launch(app["name"])
+            if not ok:
+                return f"I couldn't open {app['name']} ({why})."
+            game, wait_s = app["name"], float(getattr(config, "GAME_OPEN_WAIT_S", 45.0))
     if game is None:
-        named = ""
-        if game_hint:
-            app, _ = lr.match_app(game_hint, [a for a in apps if lr.is_game(a)])
-            named = app["name"] if app else game_hint
-        return (f"Open {named} first and leave it in front, then tell me to play."
-                if named else "Open the game first and leave it in front, then tell me to play.")
-    if not SLOW_GAMES.search(game):
-        return (f"{game} is too fast for me: I look, think and click, and that takes "
-                f"seconds a move. I'd crash. I can play slow games like solitaire or chess.")
+        return "Open the game first and leave it in front, then tell me to play."
+    fast = not SLOW_GAMES.search(game)
+    if fast and not wait_s and lr.helper_version() < 8:
+        return _OLD_HELPER.format(game=game)
     stop = threading.Event()
-    t = threading.Thread(target=_loop, args=(game, stop, say), name="laptop-game", daemon=True)
+    t = threading.Thread(target=_loop, args=(game, stop, say, fast, wait_s),
+                         name="laptop-game", daemon=True)
     with _play_lock:
-        _play.update(thread=t, stop=stop, game=game, moves=0, why="")
+        _play.update(thread=t, stop=stop, game=game, moves=0, why="", fast=fast)
     t.start()
-    return f"Okay, my turn! I'm playing {game}. Say stop when you want it back."
+    opening = f"Opening {game}. " if wait_s else ""
+    if fast:
+        return (f"{opening}Okay, my turn! I'm playing {game}. I think between moves, "
+                f"so I'm slow at fast games, but here goes! Say stop when you want it back.")
+    return f"{opening}Okay, my turn! I'm playing {game}. Say stop when you want it back."
+
+
+_OLD_HELPER = ("To play {game} I need to press its keys, and your laptop's helper is "
+               "too old for that. Copy the new friday_laptop_agent.py to the laptop.")

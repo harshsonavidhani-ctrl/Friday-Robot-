@@ -518,6 +518,16 @@ LAPTOP_GAME_WATCH_GAP_S = 90.0
 LAPTOP_GAME_WATCH_ACTIVE_S = 20.0
 GAME_PLAY_MAX_MOVES = 60
 GAME_PLAY_PAUSE_S = 1.5
+# Any other game is played with the keyboard (helper 8 /step, 2026-10-21: "any
+# game if i ask her"): at most GAME_PLAY_MAX_STEPS steps, each a hold of up to
+# GAME_STEP_MAX_MS. GAME_PAUSE_KEYS: {word of the game's name: its pause key}
+# -- then the game waits for her between steps; without it the game runs on
+# while she thinks. A game he names that is not open gets GAME_OPEN_WAIT_S to
+# come to the front.
+GAME_PLAY_MAX_STEPS = 200
+GAME_STEP_MAX_MS = 1500
+GAME_PAUSE_KEYS: dict[str, str] = {}
+GAME_OPEN_WAIT_S = 45.0
 # OFFLINE CHEERING: when she cannot look (no credit, helper 5, a failed look)
 # she cheers in the game's spirit instead, at most every LAPTOP_GAME_CHEER_GAP_S.
 # LAPTOP_GAME_WATCH_ONLINE False = always cheer, never pay for a look.

@@ -57,6 +57,21 @@ def fake_screen(game):
 
 lr.screen = fake_screen
 lr.click = lambda game, x, y: (CLICKS.append((game, round(x, 2), round(y, 2))) or (True, ""))
+STEPS, LAUNCHED = [], []
+VERSION = {"v": 7}
+lr.helper_version = lambda: VERSION["v"]
+lr.step = lambda game, keys, ms, before=None, after=None, shot=True: (
+    STEPS.append((game, tuple(keys), ms, before, after)) or ((b"\x89PNG step" if shot else b""), ""))
+
+
+def fake_launch(name):
+    LAUNCHED.append(name)
+    IDLE["v"] = {"idle_s": 1.0, "app": "x.exe", "title": name}
+    return True, ""
+
+
+lr.launch = fake_launch
+config.GAME_OPEN_WAIT_S = 3.0
 laptop_play.laptop_on = lambda now: True
 REPLIES: list = []
 CALLS: list = []
@@ -81,13 +96,18 @@ check("WhatsApp in front -> no game (never)",
 check("GTA's window -> GTA", lg.game_in_front({"title": "Grand Theft Auto V", "idle_s": 1}, apps)
       == "Grand Theft Auto V Enhanced")
 
-print("PLAY: only on his word, only slow games")
+print("PLAY: only on his word, ANY game")
 IDLE["v"] = {"idle_s": 3.0, "app": "gta5.exe", "title": "Grand Theft Auto V"}
 said = lg.play_start(say=say)
-check("GTA in front -> 'too fast for me', nothing started", "too fast" in said and not lg.playing(), said)
+check("GTA in front, helper 7 -> 'copy the new helper', nothing started",
+      "too old" in said and not lg.playing(), said)
 IDLE["v"] = {"idle_s": 3.0, "app": "chrome.exe", "title": "YouTube - Google Chrome"}
-said = lg.play_start("solitaire", say=say)
-check("no game in front -> 'open it first'", said.startswith("Open Solitaire") and not lg.playing(), said)
+said = lg.play_start("whatsapp", say=say)
+check("'you play WhatsApp' -> not a game, nothing opened",
+      "can't find" in said and not LAUNCHED and not lg.playing(), said)
+said = lg.play_start(say=say)
+check("no game named, none in front -> 'open it first'",
+      said.startswith("Open the game first") and not lg.playing(), said)
 brain._CREDIT_OUT_AT[0] = time.monotonic()
 said = lg.play_start(say=say)
 check("out of API credit -> says so, does nothing", "credits have run out" in said, said)
@@ -142,7 +162,77 @@ src = (ROOT / "mcp_server/tools/movement.py").read_text()
 check("the stop tool calls stop_playing AFTER the motors",
       src.index("safety.emergency_stop()") < src.index("laptop_games.stop_playing()"))
 
+print("a fast game, with the keyboard (helper 8)")
+VERSION["v"] = 8
+SAID.clear()
+CALLS.clear()
+REPLIES[:] = [('{"keys": ["up"], "ms": 900, "why": "go"}', ""),
+              ('{"keys": ["up", "left"], "ms": 400, "why": "bend"}', ""),
+              ('{"keys": ["alt", "f4"], "ms": 100}', ""),
+              ('{"x": 0.5, "y": 0.8, "why": "continue button"}', ""),
+              ('{"done": true, "why": "race over"}', "")]
+IDLE["v"] = {"idle_s": 3.0, "app": "gta5.exe", "title": "Grand Theft Auto V"}
+said = lg.play_start(say=say)
+check("GTA in front, helper 8 -> she plays it", said.startswith("Okay, my turn! I'm playing Grand"),
+      said)
+for _ in range(200):
+    if not lg.playing():
+        break
+    time.sleep(0.02)
+check("...each step holds the keys she chose, for as long as she chose",
+      [x[1:3] for x in STEPS] == [(("up",), 900), (("up", "left"), 400)], str(STEPS))
+check("...keys the laptop would refuse are never sent (alt+f4)",
+      all("f4" not in x[1] for x in STEPS))
+check("...a menu button is still a click", CLICKS[-1:] == [("Grand Theft Auto V Enhanced", 0.5, 0.8)],
+      str(CLICKS[-1:]))
+check("...told it is a keyboard game", any("keyboard" in c[2] or "keys" in c[2] for c in CALLS)
+      or "keyboard" in lg.KEYS_SYSTEM, str(CALLS[:1]))
+check("...and she says when it is over", SAID and "race over" in SAID[-1], str(SAID[-1:]))
+
+STEPS.clear()
+config.GAME_PAUSE_KEYS = {"grand": "escape"}
+REPLIES[:] = [('{"keys": ["up"], "ms": 500}', ""), ('{"keys": ["right"], "ms": 300}', ""),
+              ('{"done": true, "why": "ok"}', "")]
+lg.play_start(say=say)
+for _ in range(200):
+    if not lg.playing():
+        break
+    time.sleep(0.02)
+check("a pause key: the first step pauses after, the next un-pauses before and pauses after",
+      [(x[3], x[4]) for x in STEPS] == [(None, "escape"), ("escape", "escape")], str(STEPS))
+config.GAME_PAUSE_KEYS = {}
+
+print("a game he names that is not open is opened first")
+LAUNCHED.clear()
+STEPS.clear()
+IDLE["v"] = {"idle_s": 3.0, "app": "chrome.exe", "title": "YouTube - Google Chrome"}
+REPLIES[:] = [('{"keys": ["up"], "ms": 300}', ""), ('{"done": true, "why": "ok"}', "")]
+said = lg.play_start("gta", say=say)
+check("'you play GTA' with Chrome in front -> opens GTA and says so",
+      LAUNCHED == ["Grand Theft Auto V Enhanced"] and said.startswith("Opening Grand"), said)
+for _ in range(300):
+    if not lg.playing():
+        break
+    time.sleep(0.02)
+check("...then plays it once it is in front", STEPS and STEPS[0][0] == "Grand Theft Auto V Enhanced",
+      str(STEPS))
+VERSION["v"] = 7
+LAUNCHED.clear()
+IDLE["v"] = {"idle_s": 3.0, "app": "chrome.exe", "title": "YouTube - Google Chrome"}
+said = lg.play_start("gta", say=say)
+check("...but not with an old helper (it could not press the keys)",
+      not LAUNCHED and "too old" in said, said)
+VERSION["v"] = 8
+
 print("parse_move")
+check("keys", lg.parse_move('{"keys": ["UP", "left"], "ms": 600, "why": "w"}', keys_ok=True)
+      == {"keys": ["up", "left"], "ms": 600, "why": "w"})
+check("keys only in a keyboard game", lg.parse_move('{"keys": ["up"], "ms": 600}') is None)
+check("a key the laptop does not have -> refused",
+      lg.parse_move('{"keys": ["ctrl", "w"], "ms": 600}', keys_ok=True) is None)
+check("ms held to 100..GAME_STEP_MAX_MS",
+      lg.parse_move('{"keys": ["up"], "ms": 9000}', keys_ok=True)["ms"] == config.GAME_STEP_MAX_MS
+      and lg.parse_move('{"keys": ["up"], "ms": 5}', keys_ok=True)["ms"] == 100)
 check("a move", lg.parse_move('sure: {"x": 0.2, "y": 0.9, "why": "w"}') == {"x": 0.2, "y": 0.9, "why": "w"})
 check("off the image -> refused", lg.parse_move('{"x": 1.4, "y": 0.2}') is None)
 check("done", lg.parse_move('{"done": true, "why": "won"}') == {"done": True, "why": "won"})
