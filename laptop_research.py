@@ -330,14 +330,24 @@ def press_key(action: str) -> tuple[bool, str]:
 # knows what's in my laptop". The laptop lists its own Start menu; the Pi keeps
 # the last list (config.LAPTOP_APPS_FILE) so she still knows it when it is off.
 
-GAME_HINTS = re.compile(
+# A game TITLE anywhere in the name is a game ("Minecraft Launcher" is how you
+# play Minecraft). The words game/games alone only count when the name is not
+# a tool or a store: 2026-10-20 his list had "Game Bar", "Google Play Games"
+# and "Rockstar Games Launcher" called games.
+GAME_TITLES = re.compile(
     r"minecraft|roblox|valorant|fortnite|gta|grand theft|counter[- ]strike|cs ?2|"
     r"pubg|bgmi|free ?fire|apex|overwatch|league of legends|dota|rocket league|"
     r"fifa|ea (sports )?fc|need for speed|forza|asphalt|subway surfers|"
     r"hill climb|candy crush|solitaire|minesweeper|chess|among us|genshin|"
-    r"call of duty|cod\b|battlefield|assassin|far cry|witcher|cyberpunk|"
+    r"call of duty|\bcod\b|battlefield|assassin|far cry|witcher|cyberpunk|"
     r"hollow knight|terraria|stardew|cuphead|fall guys|pinball|sudoku|"
-    r"\bgame|\bgames\b|play\b", re.IGNORECASE)
+    r"evil nun|crimson snow|dcs world|flight simulator|racing", re.IGNORECASE)
+GAME_WORDS = re.compile(r"\bgames?\b", re.IGNORECASE)
+NOT_A_GAME = re.compile(r"launcher|game bar|play games|store|xbox|settings|"
+                        r"\bbar\b|helper|services|overlay", re.IGNORECASE)
+MAINTENANCE = re.compile(r"^(?:repair|update|uninstall|configure|setup|install)\b|"
+                         r"\b(?:manual|documentation|readme|support|website|"
+                         r"benchmark|crash reporter)\b", re.IGNORECASE)
 LAUNCHERS = re.compile(r"^(steam|epic games launcher|xbox|ea app|ubisoft connect|"
                        r"battle\.net|riot client|gog galaxy)$", re.IGNORECASE)
 
@@ -381,8 +391,11 @@ def apps(refresh: bool = True) -> tuple[list[dict], str]:
 
 def is_game(app: dict) -> bool:
     name = str(app.get("name", ""))
-    return (app.get("via") in ("steam", "epic") or bool(GAME_HINTS.search(name))) \
-        and not LAUNCHERS.match(name)
+    if LAUNCHERS.match(name) or MAINTENANCE.search(name):
+        return False
+    if app.get("via") in ("steam", "epic") or GAME_TITLES.search(name):
+        return True
+    return bool(GAME_WORDS.search(name)) and not NOT_A_GAME.search(name)
 
 
 _GENERIC = re.compile(r"\b(?:launcher|app|application|desktop|for windows|beta|preview)\b")
@@ -392,12 +405,20 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
+# What people call a game -> words in its real name.
+NICKNAMES = {"gta": "grand theft auto", "gta 5": "grand theft auto", "gta v": "grand theft auto",
+             "nfs": "need for speed", "cod": "call of duty", "cs": "counter strike",
+             "cs go": "counter strike", "ff": "free fire", "free fire max": "free fire",
+             "lol": "league of legends", "mc": "minecraft"}
+
+
 def match_app(spoken: str, listed: list[dict]) -> tuple[dict | None, list[dict]]:
     """(the app, other close ones). Exact name, then the name starting with what
     he said, then every word he said in the name; ONE hit only -- two equally
     good hits come back as (None, [both]) so she can ask which."""
     want = _norm(re.sub(r"^(?:the|my)\s+", "", spoken.strip(), flags=re.IGNORECASE))
     want = re.sub(r"\s+(?:app|application|game|on my laptop|on the laptop)$", "", want)
+    want = NICKNAMES.get(want, want)
     if not want:
         return None, []
     names = [(_norm(a["name"]), a) for a in listed]

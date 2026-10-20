@@ -170,7 +170,8 @@ def laptop_apps(kind: str = "all") -> str:
     if (kind or "all").lower().startswith("game"):
         if not games:
             return "I don't see any games on your laptop."
-        return f"You have {len(games)} game{'s' if len(games) != 1 else ''}: {_say_list(games[:8])}."
+        shown = games[:8] + ([f"{len(games) - 8} more"] if len(games) > 8 else [])
+        return f"You have {len(games)} game{'s' if len(games) != 1 else ''}: {_say_list(shown)}."
     some = [a["name"] for a in listed if not lr.is_game(a)][:6]
     words = f"Your laptop has {len(listed)} apps, like {_say_list(some)}"
     if games:
