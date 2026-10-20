@@ -453,6 +453,23 @@ def title_matches(title: str, game: str) -> bool:
     return bool(words) and bool(words & have)
 
 
+def _dpi_aware() -> None:
+    """Real pixels everywhere (helper 7). With display scaling (125%/150%) a
+    process that does not say this gets SCALED window sizes but REAL screen
+    pixels: the 2026-10-20 Solitaire picture had a strip of desktop on the left
+    and the right of the board cut off. Per-monitor aware, else system aware."""
+    if os.name != "nt":
+        return
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)          # PER_MONITOR
+    except Exception:                                           # noqa: BLE001
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:                                       # noqa: BLE001
+            pass
+
+
 def foreground_title() -> str:
     if os.name != "nt":
         return ""
@@ -850,6 +867,7 @@ def main() -> int:
 
     cfg = load_config(Path(args.config).expanduser())
     notes_dir(cfg)
+    _dpi_aware()
     hello = Hello(cfg, int(cfg["port"]), HERE / PI_FILE)
     server = ThreadingHTTPServer((cfg["bind"], int(cfg["port"])),
                                  Agent(cfg, hello=hello).handler())
