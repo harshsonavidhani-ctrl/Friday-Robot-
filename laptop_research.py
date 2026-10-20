@@ -411,13 +411,23 @@ NICKNAMES = {"gta": "grand theft auto", "gta 5": "grand theft auto", "gta v": "g
              "cs go": "counter strike", "ff": "free fire", "free fire max": "free fire",
              "lol": "league of legends", "mc": "minecraft"}
 
+# What Whisper writes for an app's name -> the name (2026-10-20 22:28-22:35:
+# "open WhatsApp" came out as "open watch app" and "open words app", and she
+# said "I don't see watch on your laptop" three times).
+MISHEARD = {w: "whatsapp" for w in (
+    "watch app", "watch apps", "words app", "word app", "what s app", "whats app",
+    "what app", "wats app", "watts app", "what sapp", "watsapp", "wattsapp",
+    "whatsup", "whats up", "what s up", "watch up")}
+
 
 def match_app(spoken: str, listed: list[dict]) -> tuple[dict | None, list[dict]]:
     """(the app, other close ones). Exact name, then the name starting with what
     he said, then every word he said in the name; ONE hit only -- two equally
     good hits come back as (None, [both]) so she can ask which."""
     want = _norm(re.sub(r"^(?:the|my)\s+", "", spoken.strip(), flags=re.IGNORECASE))
-    want = re.sub(r"\s+(?:app|application|game|on my laptop|on the laptop)$", "", want)
+    want = re.sub(r"\s+(?:on my laptop|on the laptop)$", "", want)
+    want = MISHEARD.get(want, want)
+    want = re.sub(r"\s+(?:app|application|game)$", "", want)
     want = NICKNAMES.get(want, want)
     if not want:
         return None, []
@@ -437,6 +447,11 @@ def match_app(spoken: str, listed: list[dict]) -> tuple[dict | None, list[dict]]
             if len(plain) == 1:
                 return plain[0], [a for a in hits if a is not plain[0]][:3]
             return None, sorted(hits, key=lambda a: a["name"].lower())[:4]
+    # Nothing by that name: was it a mishearing? The voice rule has already
+    # dropped "app" ("open watch app" arrives as "watch").
+    alias = MISHEARD.get(want + " app")
+    if alias and alias != want:
+        return match_app(alias, listed)
     return None, []
 
 
@@ -498,6 +513,56 @@ def click(game: str, x: float, y: float) -> tuple[bool, str]:
     except Exception as exc:                        # noqa: BLE001
         return False, f"{type(exc).__name__}"
     return bool(got.get("ok")), got.get("error", "")
+
+
+# The helper's own GAME_KEYS (helper 8): the only key names /step takes.
+GAME_KEYS = ("up", "down", "left", "right", "space", "enter", "escape", "shift",
+             "w", "a", "s", "d", "n", "v", "x", "z")
+
+
+def helper_version() -> int:
+    """The laptop helper's version (0 when it cannot be read)."""
+    try:
+        got = _request("/health", None, float(config.LAPTOP_HEALTH_TIMEOUT_S))
+    except Exception:                               # noqa: BLE001
+        return 0
+    try:
+        return int(got.get("version") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def step(game: str, keys: list[str], ms: int, before: str | None = None,
+         after: str | None = None, shot: bool = True) -> tuple[bytes | None, str]:
+    """One move in a real-time game (helper 8): tap `before`, hold `keys`
+    together for `ms`, picture, tap `after`. The laptop refuses unless that
+    game is the window in front, and lets go of the keys the moment it is not.
+    (png -- b"" with shot=False -- , "") or (None, why)."""
+    s = _settings()
+    if s is None:
+        return None, "the laptop is not set up"
+    body = json.dumps({"game": game, "keys": list(keys), "ms": int(ms), "before": before,
+                       "after": after, "shot": bool(shot)}).encode()
+    req = urllib.request.Request(s["url"].rstrip("/") + "/step", data=body, method="POST",
+                                 headers={"X-Friday-Token": s["token"],
+                                          "Content-Type": "application/json"})
+    timeout = float(config.LAPTOP_OPEN_TIMEOUT_S) + int(ms) / 1000.0
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as reply:
+            if reply.headers.get("Content-Type", "") == "image/png":
+                return reply.read(), ""
+            got = json.loads(reply.read().decode("utf-8", "replace") or "{}")
+            return (b"", "") if got.get("ok") else (None, got.get("error", "no"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None, "old helper"
+        try:
+            why = json.loads(exc.read().decode("utf-8", "replace")).get("error", "")
+        except Exception:                           # noqa: BLE001
+            why = ""
+        return None, why or f"the laptop said {exc.code}"
+    except Exception as exc:                        # noqa: BLE001
+        return None, f"{type(exc).__name__}"
 
 
 def idle() -> dict | None:

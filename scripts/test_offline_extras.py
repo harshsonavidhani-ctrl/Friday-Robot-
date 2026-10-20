@@ -101,6 +101,27 @@ for q in ("which rooms do you know", "what places have you saved", "where can yo
           and i.speak_result, str(i and (i.tool, i.args)))
 check("'go to the bedroom' is still a drive, not the list",
       offline.understand("go to the bedroom", strict=True).name == "nav_go")
+print("what whisper makes of 'play a song' and 'open WhatsApp' (2026-10-20 22:3x)")
+for q in ("Blair Assong", "Blear song.", "Bleed during that song.", "Play Asong"):
+    i = offline.understand(q, strict=True)
+    check(f"{q!r} -> plays a song", i is not None and i.tool == "laptop_search"
+          and i.args.get("play") is True, str(i and (i.tool, i.args)))
+for q in ("I like that song", "sing me a song", "what song is this"):
+    i = offline.understand(q, strict=True)
+    check(f"{q!r} -> NOT a song on the laptop", i is None or i.tool != "laptop_search",
+          str(i and (i.tool, i.args)))
+for q in ("play a better song, change it.", "play another song", "change the song"):
+    i = offline.understand(q, strict=True)
+    check(f"{q!r} -> the next track, not a search for those words",
+          i is not None and i.args == {"action": "next"}, str(i and (i.tool, i.args)))
+import laptop_research                                   # noqa: E402
+apps = [{"name": "WhatsApp", "via": "store"}, {"name": "Excel", "via": "desktop"},
+        {"name": "Steam", "via": "desktop"}]
+for q in ("Watch", "words", "watch app", "what's app"):
+    got, _ = laptop_research.match_app(q, apps)
+    check(f"open {q!r} -> WhatsApp", got is not None and got["name"] == "WhatsApp", str(got))
+got, _ = laptop_research.match_app("Steam", apps)
+check("...and a real name still wins (Steam is Steam)", got and got["name"] == "Steam")
 check("help mentions the laptop and sums",
       "laptop" in offline.help_text() and "sums" in offline.help_text())
 

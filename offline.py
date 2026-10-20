@@ -806,6 +806,14 @@ _PLAY_ANY_RE = re.compile(
     r"(?:song|songs|music|gaana|gaane|gana)(?:\s+please)?"
     rf"(?:\s+on\s+{_LAPTOP})?$"
     r"|^(?:gaana|gaane|song|music)\s+(?:bajao|chalao|lagao)$", re.IGNORECASE)
+# What whisper makes of "play a song" when he is a few metres away
+# (2026-10-20 22:31-22:35, all ignored: "Blair Assong", "Blear song.", "Bleed
+# during that song."): a short sentence that starts like "play" and ends in
+# "song". Only after a wake, so a real "I like that song" needs "hey Friday"
+# in front of it too.
+_PLAY_SONG_HEARD_RE = re.compile(
+    r"^(?:pl|bl|pr|fl|cl)[a-z]*\b[a-z' ]{0,24}?songs?[.!?]*$", re.IGNORECASE)
+_PLAY_SONG_HEARD_MAX_WORDS = 5
 # "play <name>" without "on YouTube" -- the song is the point, YouTube is
 # where songs are. Not a game, not "play with me", not "play it again".
 _PLAY_NAMED_RE = re.compile(
@@ -825,6 +833,10 @@ _LAPTOP_KEYS = [
      rf"(?:\s+on\s+{_LAPTOP})?$", "play_pause"),
     (rf"^(?:play\s+)?(?:the\s+)?next\s+(?:video|song|track|one)(?:\s+on\s+{_LAPTOP})?$"
      rf"|^skip(?:\s+{_MEDIA})?$", "next"),
+    # "play a better song, change it" was searched for, word for word (22:30).
+    (r"^(?:play\s+)?(?:a\s+)?(?:another|different|better|new|some\s+other)\s+"
+     r"(?:song|one|video|track)(?:[,\s]+(?:change\s+it|please))?$"
+     r"|^change\s+(?:the\s+|this\s+)?(?:song|video|track|it)$", "next"),
     (r"^(?:play\s+)?(?:the\s+)?(?:previous|last)\s+(?:video|song|track)$", "previous"),
     (rf"^(?:turn\s+(?:the\s+)?)?(?:laptop\s+)?volume\s+up(?:\s+on\s+{_LAPTOP})?$"
      rf"|^(?:increase|raise)\s+(?:the\s+)?(?:laptop\s+)?volume(?:\s+on\s+{_LAPTOP})?$"
@@ -892,7 +904,9 @@ def _laptop_intent(heard: str) -> Intent | None:
             return Intent(name="laptop_search", tool="laptop_search",
                           args={"query": match.group("q").strip(" ,.?"),
                                 "site": site, "play": play})
-    if _PLAY_ANY_RE.match(text):
+    if _PLAY_ANY_RE.match(text) or (
+            _PLAY_SONG_HEARD_RE.match(text)
+            and len(text.split()) <= _PLAY_SONG_HEARD_MAX_WORDS):
         return Intent(name="laptop_search", tool="laptop_search",
                       args={"query": config.LAPTOP_DEFAULT_MUSIC,
                             "site": "youtube", "play": True})
