@@ -146,6 +146,10 @@ print("parse_move")
 check("a move", lg.parse_move('sure: {"x": 0.2, "y": 0.9, "why": "w"}') == {"x": 0.2, "y": 0.9, "why": "w"})
 check("off the image -> refused", lg.parse_move('{"x": 1.4, "y": 0.2}') is None)
 check("done", lg.parse_move('{"done": true, "why": "won"}') == {"done": True, "why": "won"})
+check("the title bar (close/minimise, top 6%) is never clicked",
+      lg.parse_move('{"x": 0.976, "y": 0.02, "why": "close"}') is None
+      and lg.parse_move('{"x": 0.5, "y": 0.05}') is None
+      and lg.parse_move('{"x": 0.5, "y": 0.07}') is not None)
 check("nonsense", lg.parse_move("click the king") is None)
 
 print("WATCH: she reacts while he plays")

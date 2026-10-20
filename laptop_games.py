@@ -57,7 +57,8 @@ PLAY_SYSTEM = ("You are Friday, a small robot playing {game} on a laptop by clic
                '{{"x": 0.42, "y": 0.61, "why": "a few words"}} -- or {{"done": true, '
                '"why": "a few words"}} if the game is over, won, or no move helps. '
                "Click only on the board, cards or pieces: never menus, settings, ads, "
-               "buttons that leave the game, close or minimise.")
+               "buttons that leave the game, close or minimise, and never the top "
+               "strip of the window (its title bar).")
 
 # OFFLINE CHEERING (Harsh 2026-10-20: "it can be offline?" -> "yes add the
 # offline cheering"). No picture and no model: she knows WHICH game is in front
@@ -93,6 +94,7 @@ HELLO_LINES = ["Ooh, {game}! Let's go!", "{game}! I'll cheer for you.",
                "Yay, {game} time!"]
 
 _state = {"last_watch": 0.0, "last_game": "", "recent": []}
+TITLE_BAND = 0.06            # top of the picture = the window's title bar: never clicked
 _play_lock = threading.Lock()
 _play: dict = {"thread": None, "stop": None, "game": "", "moves": 0, "why": ""}
 
@@ -247,6 +249,10 @@ def parse_move(text: str | None) -> dict | None:
     except (KeyError, TypeError, ValueError):
         return None
     if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+        return None
+    if y < TITLE_BAND:
+        # The picture includes the window's own title bar -- minimise, maximise,
+        # CLOSE (live Solitaire, 2026-10-20). Never clicked, whatever she says.
         return None
     return {"x": x, "y": y, "why": str(got.get("why", ""))[:80]}
 
