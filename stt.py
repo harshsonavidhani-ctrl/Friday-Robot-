@@ -692,8 +692,11 @@ class AudioStream:
 _transcribe_lock = threading.Lock()
 
 
-def transcribe(audio: bytes, language: str | None = None) -> str:
-    """Raw PCM -> text. Returns "" when nothing intelligible was said."""
+def transcribe(audio: bytes, language: str | None = None,
+               prompt: str | None = None) -> str:
+    """Raw PCM -> text. Returns "" when nothing intelligible was said.
+    `prompt`: words this answer is likely to contain (whisper's initial
+    prompt), for a question whose answers are known -- the mission's."""
     if not audio:
         return ""
     import numpy as np
@@ -740,6 +743,7 @@ def transcribe(audio: bytes, language: str | None = None) -> str:
             temperature=list(getattr(config, "STT_TEMPERATURES", (0.0, 0.2))),
             without_timestamps=getattr(
                 config, "STT_WITHOUT_TIMESTAMPS", True),
+            initial_prompt=prompt or None,
         )
         text = " ".join(segment.text.strip() for segment in segments).strip()
     finally:

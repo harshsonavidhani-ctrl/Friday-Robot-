@@ -1753,8 +1753,10 @@ async def _mission_turn(voice: "Voice", face: "Face", source, stream,
                     handover_ms=0, deadtime_ms=0),
                 timeout=config.MAX_UTTERANCE_S + ask["listen_s"] + 5.0)
             face.set("thinking")
-            text = await turn.call("TRANSCRIBING", stt.transcribe, audio,
-                                   timeout=config.STAGE_STT_TIMEOUT_S)
+            text = await turn.call(
+                "TRANSCRIBING", functools.partial(
+                    stt.transcribe, prompt=getattr(config, "MISSION_ANSWER_PROMPT", None)),
+                audio, timeout=config.STAGE_STT_TIMEOUT_S)
             turn.stage("TRANSCRIBED", stages.quote(text))
             # HER OWN VOICE IN THE CAPTURE IS NOT HIS ANSWER. The exploration
             # run keeps narrating while the mission holds her ("I found an

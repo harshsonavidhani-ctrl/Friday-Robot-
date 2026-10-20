@@ -1200,6 +1200,16 @@ MIC_RESTART_BACKOFF_MAX_S = 10.0
 # before concluding anything. If Hindi really is poor, "base" is the next step
 # up and costs about 2x the latency.
 STT_MODEL = "tiny"
+# THE MISSION'S ANSWERS ARE KNOWN WORDS (2026-10-19, Harsh: "she mishears
+# everything I say, the area names"): "bedroom" came back "Better do!", then
+# "Go!", and the area was saved as "area 15". Whisper's initial prompt biases
+# tiny toward these. Mission answers only -- nothing else gets it. Fuzzy
+# snapping was measured and refused: "Better do" scores nearer "bathroom", and
+# "Harsh room" would become "washroom".
+# ROOM NAMES ONLY: with "Go back. Stop." in it, today's noise and video clips
+# came back as "Go back." -- in a mission that ENDS the trip. Measured.
+MISSION_ANSWER_PROMPT = ("Bedroom, kitchen, hall, living room, bathroom, dining room, "
+                         "study, balcony, guest room, pooja room, office, store room.")
 STT_COMPUTE_TYPE = "int8"
 # Explicit: ctranslate2's default did not use all four cores (x16.5 vs x13.3).
 # 3, NOT 4: one core must stay free for the face and the system. With 4,
