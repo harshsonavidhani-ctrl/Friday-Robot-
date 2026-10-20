@@ -39,6 +39,9 @@ config.RATE_LIMIT_FILE = TMP / "rate_limits.json"
 config.RESEARCH_DIR = TMP / "research"
 config.LAPTOP_AGENT_FILE = TMP / "secrets" / "laptop_agent.json"
 config.LAPTOP_SEEN_FILE = TMP / "laptop_seen.json"
+# NOT the real list: the fake apps below once landed in state/ and she
+# told Harsh he had Hollow Knight (2026-10-20).
+config.LAPTOP_APPS_FILE = TMP / "laptop_apps.json"
 config.LISTENING_FILE = TMP / "listening.json"
 config.SPEAKING_FILE = TMP / "speaking.json"
 # NOT the live mic: a loud room made initiative say "face only" and the

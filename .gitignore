@@ -239,3 +239,6 @@ state/exploration_mission/.*.tmp
 
 # A/B simulator runs (scripts/sim_ab): worktrees and results, regenerable
 state/sim_ab/
+# the laptop's own app list, and her play/miss times (per device)
+state/laptop_apps.json
+state/laptop_play.json
