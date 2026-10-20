@@ -496,6 +496,7 @@ class ReminderWatch(WakeSource):
         self._briefing_inflight = 0.0
         self._landmark_inflight = 0.0
         self._research_inflight: dict[str, float] = {}
+        self._laptop_inflight = 0.0
         self._last_why = ""
 
     # -- told by main.py -------------------------------------------------------
@@ -518,6 +519,9 @@ class ReminderWatch(WakeSource):
         elif item.get("kind") == "briefing":
             import briefing
             briefing.mark_done(item.get("say", ""))
+        elif item.get("kind") in ("laptop_play", "laptop_miss"):
+            import laptop_play
+            laptop_play.perform(item)          # its action runs on its own thread
 
     def missed(self, item: dict) -> None:
         sign = -1 if item.get("kind") == "calendar" else 1
@@ -529,6 +533,8 @@ class ReminderWatch(WakeSource):
             self._landmark_inflight = 0.0
         if item.get("kind") == "research":
             self._research_inflight.pop(str(item.get("job", "")), None)
+        if item.get("kind") in ("laptop_play", "laptop_miss"):
+            self._laptop_inflight = 0.0
 
     # -- WakeSource ------------------------------------------------------------
     def pause(self) -> None:
@@ -661,6 +667,24 @@ class ReminderWatch(WakeSource):
             self._research_inflight[job["id"]] = now
             return {"kind": "research", "at": now, "ids": [],
                     "job": job["id"], "say": research_words(job)}
+
+        # HER OWN PLAY ON THE LAPTOP / "I miss my laptop" (laptop_play.py,
+        # 2026-10-20). laptop_play has its own gates (he is here, the laptop
+        # is idle or long off, the hours, the gaps); this adds initiative's.
+        if now - self._laptop_inflight > 120:
+            try:
+                import laptop_play
+                toy = laptop_play.next_item(now, self._last_heard)
+            except Exception as exc:                # noqa: BLE001
+                log.debug("laptop play skipped: %s", exc)
+                toy = None
+            if toy is not None:
+                why = self._why_not(toy["kind"], idle_for=now - self._last_heard)
+                if why:
+                    self._note(f"{toy['kind']} — {why}")
+                    return None
+                self._laptop_inflight = now
+                return {**toy, "at": now, "ids": []}
 
         if getattr(config, "BRIEFING", False) and \
                 now - self._briefing_inflight > 120:

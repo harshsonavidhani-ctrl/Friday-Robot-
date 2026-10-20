@@ -36,6 +36,9 @@ config.SCENE_JSON = TMP / "scene.json"
 config.MODE_FILE = TMP / "mode.json"
 config.LISTENING_FILE = TMP / "listening.json"
 config.SPEAKING_FILE = TMP / "speaking.json"
+# NOT the live mic: a loud room makes initiative say "face only" and the
+# voice half of the naming queue never asks (2026-10-20, music on).
+config.WAKE_HEARTBEAT_FILE = TMP / "wake_alive.json"
 
 import environment_watch                                # noqa: E402
 import environments                                     # noqa: E402

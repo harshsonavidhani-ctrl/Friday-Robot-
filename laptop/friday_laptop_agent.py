@@ -28,6 +28,21 @@ WHAT IT DOES -- AND ONLY THIS
         so it can never close a document); lock the laptop; open the notes
         folder. The Pi sends a NAME from that list and nothing else: no key
         codes, no text to type.
+  GET  /apps                                                  (helper 5+)
+        The apps on THIS laptop's Start menu, by name (Store apps and games
+        included): {"apps": [{"name", "via"}]}. Read here with PowerShell's
+        Get-StartApps, refreshed at most every APPS_REFRESH_S. System tools
+        (APP_DENY: terminals, uninstallers, registry, reset/disk tools...)
+        are left out of the list -- and so can never be launched.
+  POST /launch {"name": "WhatsApp"}                           (helper 5+)
+        Starts ONE app from that list, matched by its exact name (any case),
+        through the Start menu's own entry. The Pi sends a NAME; the program
+        that starts is the laptop's own Start-menu entry for it, never a path
+        or a command from the Pi.
+  GET  /idle                                                  (helper 5+)
+        {"idle_s": seconds since the keyboard/mouse were last touched, "app":
+        the program in front}. Friday plays on the laptop on her own only
+        when nobody has touched it for a while (she never interrupts you).
 
   Every request must carry the shared token in the X-Friday-Token header;
   anything without it gets 401 and nothing else. No other endpoints.
@@ -95,6 +110,16 @@ KEY_ACTIONS = {
     "open_notes": ("notes", None, 1),
 }
 BROWSERS = ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe")
+
+# /apps and /launch (helper 5): never listed, so never launched.
+APP_DENY = re.compile(
+    r"uninstall|command prompt|\bcmd\b|powershell|terminal|windows tools|regedit|"
+    r"registry|recovery|\breset\b|disk|format|administrative|control panel|"
+    r"task manager|system configuration|\bservices\b|event viewer|device manager|"
+    r"computer management|policy|defragment|bitlocker|credential|firewall|"
+    r"\bbios\b|firmware|remote desktop|\brun\b|odbc|iscsi|hyper-v|sandbox",
+    re.IGNORECASE)
+APPS_REFRESH_S = 600.0
 STARTUP_NAME = "friday_laptop_helper.cmd"
 PI_FILE = "friday_pi.json"                  # where the Pi last called from
 NOWHERE = "192.0.2.1"                       # never sent to: only picks a route
@@ -323,23 +348,89 @@ def press(action: str, cfg: dict) -> str:
     return ""
 
 
+# --- apps and idle (helper 5) ---------------------------------------------------
+
+def start_apps() -> list[dict]:
+    """[{"name", "id", "via"}] from the Start menu (Windows only), with APP_DENY
+    left out. `via` is only a hint for the Pi (steam / epic / store / desktop)."""
+    if os.name != "nt":
+        return []
+    got = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+         "Get-StartApps | ConvertTo-Json -Compress"],
+        capture_output=True, text=True, timeout=40,
+        creationflags=0x08000000)                   # CREATE_NO_WINDOW
+    data = json.loads(got.stdout or "[]")
+    if isinstance(data, dict):
+        data = [data]
+    out, seen = [], set()
+    for row in data:
+        name = str(row.get("Name") or "").strip()
+        app_id = str(row.get("AppID") or "").strip()
+        if not name or not app_id or len(name) > 80 or APP_DENY.search(name):
+            continue
+        if name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        low = app_id.lower()
+        via = ("steam" if low.startswith("steam:") else
+               "epic" if "epicgames" in low else
+               "store" if "!" in app_id and "\\" not in app_id else "desktop")
+        out.append({"name": name, "id": app_id, "via": via})
+    return sorted(out, key=lambda a: a["name"].lower())
+
+
+def open_app(app_id: str) -> None:
+    """Start one Start-menu entry by its own id (from start_apps, never the Pi)."""
+    subprocess.Popen(["explorer.exe", "shell:AppsFolder\\" + app_id])
+
+
+def idle_info() -> dict:
+    """Seconds since the keyboard or mouse was last used, and the app in front."""
+    if os.name != "nt":
+        return {"idle_s": None, "app": ""}
+    import ctypes
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+    info = LASTINPUTINFO()
+    info.cbSize = ctypes.sizeof(info)
+    ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info))
+    idle_ms = (ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF
+    return {"idle_s": round(idle_ms / 1000.0, 1), "app": foreground_app()}
+
+
 # --- the listener ---------------------------------------------------------------
 
 class Agent:
     def __init__(self, cfg: dict, opener=webbrowser.open, shower=show_file,
-                 fetch=_fetch, hello: Hello | None = None, presser=press) -> None:
+                 fetch=_fetch, hello: Hello | None = None, presser=press,
+                 lister=start_apps, launcher=open_app, idler=idle_info) -> None:
         self.cfg = cfg
         self.opener = opener
         self.shower = shower
         self.fetch = fetch
         self.hello = hello
         self.presser = presser
+        self.lister, self.launcher, self.idler = lister, launcher, idler
+        self._apps: list[dict] = []
+        self._apps_at = 0.0
+        self._apps_lock = threading.Lock()
+
+    def apps(self, fresh: bool = False) -> list[dict]:
+        """The Start-menu list, cached APPS_REFRESH_S (PowerShell takes a second)."""
+        with self._apps_lock:
+            if fresh or not self._apps or time.time() - self._apps_at > APPS_REFRESH_S:
+                self._apps = self.lister()
+                self._apps_at = time.time()
+            return list(self._apps)
 
     def handler(self):
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/4"
+            server_version = "FridayLaptopHelper/5"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -363,14 +454,23 @@ class Agent:
             def do_GET(self):                           # noqa: N802
                 if not self._authorised():
                     return self._send(401, {"error": "unauthorised"})
+                if self.path == "/apps":
+                    try:
+                        apps = agent.apps()
+                    except Exception as exc:            # noqa: BLE001
+                        return self._send(500, {"error": f"{type(exc).__name__}"})
+                    return self._send(200, {"ok": True, "apps": [
+                        {"name": a["name"], "via": a.get("via", "")} for a in apps]})
+                if self.path == "/idle":
+                    return self._send(200, {"ok": True, **agent.idler()})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True})
+                return self._send(200, {"ok": True, "version": 5})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
                     return self._send(401, {"error": "unauthorised"})
-                if self.path not in ("/open", "/notes", "/key"):
+                if self.path not in ("/open", "/notes", "/key", "/launch"):
                     return self._send(404, {"error": "not found"})
                 size = int(self.headers.get("Content-Length") or 0)
                 if size <= 0 or size > MAX_BODY:
@@ -386,6 +486,8 @@ class Agent:
                         return self._open(body)
                     if self.path == "/key":
                         return self._key(body)
+                    if self.path == "/launch":
+                        return self._launch(body)
                     return self._notes(body)
                 except Exception as exc:                # noqa: BLE001
                     log.warning("%s failed: %s", self.path, exc)
@@ -403,6 +505,20 @@ class Agent:
                                 fetch=agent.fetch)
                 agent.opener(url)
                 return self._send(200, {"ok": True, "url": url})
+
+            def _launch(self, body: dict):
+                wanted = str(body.get("name") or "").strip().lower()
+                if not wanted or len(wanted) > 80:
+                    return self._send(400, {"error": "send {name}"})
+                apps = agent.apps()
+                hit = next((a for a in apps if a["name"].lower() == wanted), None)
+                if hit is None:
+                    apps = agent.apps(fresh=True)        # installed a minute ago?
+                    hit = next((a for a in apps if a["name"].lower() == wanted), None)
+                if hit is None:
+                    return self._send(404, {"ok": False, "error": "no such app"})
+                agent.launcher(hit["id"])
+                return self._send(200, {"ok": True, "name": hit["name"]})
 
             def _key(self, body: dict):
                 action = str(body.get("action") or "")

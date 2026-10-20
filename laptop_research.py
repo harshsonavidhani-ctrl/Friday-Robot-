@@ -325,6 +325,126 @@ def press_key(action: str) -> tuple[bool, str]:
     return bool(got.get("ok")), got.get("error", "")
 
 
+# --- apps on his laptop (helper 5+) -----------------------------------------------
+# Harsh, 2026-10-20: "open every app ... open whatsapp, open this game ... she
+# knows what's in my laptop". The laptop lists its own Start menu; the Pi keeps
+# the last list (config.LAPTOP_APPS_FILE) so she still knows it when it is off.
+
+GAME_HINTS = re.compile(
+    r"minecraft|roblox|valorant|fortnite|gta|grand theft|counter[- ]strike|cs ?2|"
+    r"pubg|bgmi|free ?fire|apex|overwatch|league of legends|dota|rocket league|"
+    r"fifa|ea (sports )?fc|need for speed|forza|asphalt|subway surfers|"
+    r"hill climb|candy crush|solitaire|minesweeper|chess|among us|genshin|"
+    r"call of duty|cod\b|battlefield|assassin|far cry|witcher|cyberpunk|"
+    r"hollow knight|terraria|stardew|cuphead|fall guys|pinball|sudoku|"
+    r"\bgame|\bgames\b|play\b", re.IGNORECASE)
+LAUNCHERS = re.compile(r"^(steam|epic games launcher|xbox|ea app|ubisoft connect|"
+                       r"battle\.net|riot client|gog galaxy)$", re.IGNORECASE)
+
+
+def _save_apps(apps: list[dict]) -> None:
+    path = Path(config.LAPTOP_APPS_FILE)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(json.dumps({"at": time.time(), "apps": apps}))
+        tmp.replace(path)
+    except OSError as exc:
+        log.warning("could not keep the laptop's app list: %s", exc)
+
+
+def known_apps() -> list[dict]:
+    """The last app list the laptop gave (may be old; [] if never)."""
+    try:
+        return list(json.loads(Path(config.LAPTOP_APPS_FILE).read_text()).get("apps") or [])
+    except (OSError, ValueError):
+        return []
+
+
+def apps(refresh: bool = True) -> tuple[list[dict], str]:
+    """(apps, why not fresh). Asks the laptop when `refresh`; falls back to the
+    last list it gave. 'old helper' when the laptop has no /apps yet."""
+    if refresh:
+        try:
+            got = _request("/apps", None, float(config.LAPTOP_OPEN_TIMEOUT_S))
+            listed = [{"name": str(a.get("name", "")), "via": str(a.get("via", ""))}
+                      for a in got.get("apps") or [] if a.get("name")]
+            if listed:
+                _save_apps(listed)
+                return listed, ""
+        except urllib.error.HTTPError as exc:
+            return known_apps(), ("old helper" if exc.code == 404 else f"laptop said {exc.code}")
+        except Exception as exc:                    # noqa: BLE001
+            return known_apps(), f"{type(exc).__name__}"
+    return known_apps(), "not asked"
+
+
+def is_game(app: dict) -> bool:
+    name = str(app.get("name", ""))
+    return (app.get("via") in ("steam", "epic") or bool(GAME_HINTS.search(name))) \
+        and not LAUNCHERS.match(name)
+
+
+_GENERIC = re.compile(r"\b(?:launcher|app|application|desktop|for windows|beta|preview)\b")
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def match_app(spoken: str, listed: list[dict]) -> tuple[dict | None, list[dict]]:
+    """(the app, other close ones). Exact name, then the name starting with what
+    he said, then every word he said in the name; ONE hit only -- two equally
+    good hits come back as (None, [both]) so she can ask which."""
+    want = _norm(re.sub(r"^(?:the|my)\s+", "", spoken.strip(), flags=re.IGNORECASE))
+    want = re.sub(r"\s+(?:app|application|game|on my laptop|on the laptop)$", "", want)
+    if not want:
+        return None, []
+    names = [(_norm(a["name"]), a) for a in listed]
+    for rule in (lambda n: n == want,
+                 lambda n: n.startswith(want + " ") or n.startswith(want),
+                 lambda n: all(w in n.split() for w in want.split()),
+                 lambda n: want.replace(" ", "") in n.replace(" ", "")):
+        hits = [a for n, a in names if rule(n)]
+        if len(hits) == 1:
+            return hits[0], []
+        if len(hits) > 1:
+            # Only a GENERIC extra word decides it ("minecraft" -> "Minecraft
+            # Launcher" over "Minecraft Dungeons" would still be a guess, so it
+            # asks): the one hit that IS what he said plus launcher/app/...
+            plain = [a for a in hits if _GENERIC.sub("", _norm(a["name"])).strip() == want]
+            if len(plain) == 1:
+                return plain[0], [a for a in hits if a is not plain[0]][:3]
+            return None, sorted(hits, key=lambda a: a["name"].lower())[:4]
+    return None, []
+
+
+def launch(name: str) -> tuple[bool, str]:
+    """Start one app by its exact listed name. (started?, why not)."""
+    try:
+        got = _request("/launch", {"name": name}, float(config.LAPTOP_OPEN_TIMEOUT_S))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            try:
+                why = json.loads(exc.read().decode("utf-8", "replace")).get("error", "")
+            except Exception:                       # noqa: BLE001
+                why = ""
+            return False, ("no such app" if why == "no such app" else "old helper")
+        return False, f"the laptop said {exc.code}"
+    except Exception as exc:                        # noqa: BLE001
+        return False, f"{type(exc).__name__}: {str(exc)[:80]}"
+    return bool(got.get("ok")), got.get("error", "")
+
+
+def idle() -> dict | None:
+    """{"idle_s", "app"} from the laptop, or None (down, or an old helper)."""
+    try:
+        got = _request("/idle", None, float(config.LAPTOP_HEALTH_TIMEOUT_S))
+    except Exception:                               # noqa: BLE001
+        return None
+    return got if got.get("idle_s") is not None else None
+
+
 def open_search(query: str, site: str = "web",
                 play: bool = False) -> tuple[bool, str]:
     """Google or YouTube on his screen. (opened?, why not)."""

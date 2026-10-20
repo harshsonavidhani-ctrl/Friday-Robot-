@@ -138,7 +138,7 @@ check("open with a wrong token -> 401, and nothing opened",
 code, _ = raw("/notes", {"title": "t", "markdown": "m"}, token="x" * 40)
 check("notes with a wrong token -> 401, and nothing written",
       code == 401 and not NOTES.exists() or not list(NOTES.glob("*")))
-check("health with the token", raw("/health") == (200, {"ok": True}))
+check("health with the token (helper 5 also says its version)", raw("/health") == (200, {"ok": True, "version": 5}))
 check("any other path -> 404", raw("/etc/passwd")[0] == 404
       and raw("/run", {"cmd": "calc.exe"})[0] == 404
       and raw("/research", {"query": "x"})[0] == 404)
@@ -230,10 +230,19 @@ tree = ast.parse(source)
 popen_args = [ast.unparse(n.args[0]) for n in ast.walk(tree)
               if isinstance(n, ast.Call) and ast.unparse(n.func) ==
               "subprocess.Popen"]
-check("the only programs it starts: Notepad, and itself (--install)",
-      sorted(popen_args) == ["['notepad.exe', str(path)]",
-                             "[_pythonw(), str(Path(__file__).resolve())]"],
+check("the only programs it starts: Notepad, itself (--install), and (helper 5) "
+      "one Start-menu entry by the laptop's OWN id",
+      sorted(popen_args) == sorted(["['notepad.exe', str(path)]",
+                                    "[_pythonw(), str(Path(__file__).resolve())]",
+                                    "['explorer.exe', 'shell:AppsFolder\\\\' + app_id]"]),
       str(popen_args))
+run_args = [ast.unparse(n.args[0]) for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and ast.unparse(n.func) == "subprocess.run"]
+check("...and the only command it runs is the fixed Get-StartApps listing",
+      len(run_args) == 1 and "Get-StartApps | ConvertTo-Json -Compress" in run_args[0],
+      str(run_args))
+check("...the id it launches comes from its own list, never the request",
+      "agent.launcher(hit[\"id\"])" in source)
 check("...never a shell, eval, exec or os.system",
       not any(w in source for w in ("shell=True", "eval(", "exec(",
                                     "os.system", "os.popen")))
@@ -843,9 +852,9 @@ for phrase in ("hey Friday play song", "Play Asong", "play some music", "gaana b
           and got.args == {"query": config.LAPTOP_DEFAULT_MUSIC, "site": "youtube", "play": True},
           str(got and got.args))
 got = offline.understand("play tum hi ho by Arijit Singh", strict=True)
-check("'play <song>' plays it on YouTube",
-      got is not None and got.args.get("query") == "tum hi ho by Arijit Singh"
-      and got.args.get("play") is True, str(got and got.args))
+check("'play <song>' -> laptop_play (an installed game by that name, else YouTube)",
+      got is not None and got.tool == "laptop_play"
+      and got.args == {"query": "tum hi ho by Arijit Singh"}, str(got and got.args))
 for phrase in ("play with me", "play a game", "play it again"):
     got = offline.understand(phrase, strict=True)
     check(f"{phrase!r} is not a song", got is None or got.name != "laptop_search",
@@ -853,6 +862,138 @@ for phrase in ("play with me", "play a game", "play it again"):
 check("plain 'stop' still stops the ROBOT", offline.understand("Friday stop").name == "stop")
 check("'make notes on X' is still notes, not a key",
       offline.understand("make notes on black holes").name == "laptop_notes")
+
+# ---------------------------------------------------------------------------
+print("helper 5: his apps -- listed by the laptop, launched by NAME (2026-10-20)")
+APPS = [{"name": "WhatsApp", "id": "5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App", "via": "store"},
+        {"name": "Minecraft Launcher", "id": "Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft", "via": "store"},
+        {"name": "Microsoft Edge", "id": "MSEdge", "via": "desktop"},
+        {"name": "Microsoft Teams", "id": "MSTeams_8wekyb3d8bbwe!MSTeams", "via": "store"},
+        {"name": "Hollow Knight", "id": "steam://rungameid/367520", "via": "steam"},
+        {"name": "Steam", "id": "C:\\Steam\\steam.exe", "via": "desktop"}]
+launched: list[str] = []
+listed_calls = [0]
+
+
+def fake_lister():
+    listed_calls[0] += 1
+    return list(APPS)
+
+
+server5 = ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    agent_mod.Agent(CFG, opener=opened.append, shower=shown.append, fetch=fake_fetch,
+                    presser=fake_press, lister=fake_lister, launcher=launched.append,
+                    idler=lambda: {"idle_s": 742.5, "app": "explorer.exe"}).handler())
+P5 = server5.server_address[1]
+threading.Thread(target=server5.serve_forever, daemon=True).start()
+
+
+def call5(path, body=None, token=TOKEN):
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{P5}{path}", data=data,
+                                 headers={"Content-Type": "application/json",
+                                          "X-Friday-Token": token},
+                                 method="POST" if data is not None else "GET")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read() or b"{}")
+
+
+code, got = call5("/apps", token="x" * 40)
+check("/apps with a wrong token -> 401", code == 401)
+code, got = call5("/apps")
+check("/apps lists names (and a hint), never the launch ids",
+      code == 200 and [a["name"] for a in got["apps"]] == [a["name"] for a in APPS]
+      and all(set(a) == {"name", "via"} for a in got["apps"]), str(got)[:200])
+call5("/apps")
+check("...cached: PowerShell is not run on every ask", listed_calls[0] == 1)
+code, got = call5("/launch", {"name": "whatsapp"})
+check("/launch by name, any case -> the laptop's OWN id is launched",
+      code == 200 and launched == [APPS[0]["id"]], str((code, got, launched)))
+code, got = call5("/launch", {"name": "cmd.exe /c del *"})
+check("a name not on its list -> 404, nothing launched",
+      code == 404 and got.get("error") == "no such app" and len(launched) == 1)
+code, got = call5("/launch", {"name": "C:\\Windows\\System32\\calc.exe"})
+check("a PATH is just a name that is not on the list", code == 404 and len(launched) == 1)
+code, got = call5("/idle")
+check("/idle: how long since he touched it", code == 200 and got["idle_s"] == 742.5)
+check("the deny list keeps system tools off the list",
+      all(agent_mod.APP_DENY.search(n) for n in ("Command Prompt", "Windows PowerShell",
+                                                  "Uninstall Spotify", "Registry Editor",
+                                                  "Disk Cleanup", "Reset this PC", "Task Manager"))
+      and not any(agent_mod.APP_DENY.search(n) for n in ("WhatsApp", "Minecraft Launcher",
+                                                          "Spotify", "Steam", "Calculator")))
+check("off Windows start_apps() lists nothing (it never runs PowerShell here)",
+      agent_mod.start_apps() == [])
+
+settings(f"http://127.0.0.1:{P5}")
+config.RATE_LIMITS["laptop_launch"] = dict(config.RATE_LIMITS["laptop_launch"], min_interval_s=0.0)
+listed, why = lr.apps()
+check("the Pi gets the list and KEEPS it (she knows it when the laptop is off)",
+      [a["name"] for a in listed] == [a["name"] for a in APPS] and why == ""
+      and [a["name"] for a in lr.known_apps()] == [a["name"] for a in APPS])
+app, others = lr.match_app("whatsapp", listed)
+check("match: 'whatsapp' -> WhatsApp", app and app["name"] == "WhatsApp")
+app, others = lr.match_app("minecraft", listed)
+check("match: 'minecraft' -> Minecraft Launcher", app and app["name"] == "Minecraft Launcher")
+app, others = lr.match_app("microsoft", listed)
+check("match: 'microsoft' -> asks which (Edge or Teams), opens nothing",
+      app is None and {o["name"] for o in others} == {"Microsoft Edge", "Microsoft Teams"},
+      str((app, others)))
+check("games: Minecraft and Hollow Knight are games; Steam (a launcher) and WhatsApp are not",
+      [a["name"] for a in listed if lr.is_game(a)] == ["Minecraft Launcher", "Hollow Knight"])
+said = rt.laptop_open_app("whatsapp")
+check("'open whatsapp' -> 'Opening WhatsApp on your laptop.'",
+      said == "Opening WhatsApp on your laptop." and launched[-1] == APPS[0]["id"], said)
+said = rt.laptop_open_app("microsoft")
+check("...an ambiguous name asks which", said.startswith("Which one:"), said)
+said = rt.laptop_open_app("photoshop")
+check("...an app he does not have: says so", "don't see photoshop" in said, said)
+said = rt.laptop_play("hollow knight")
+check("'play hollow knight' -> the GAME opens", said == "Opening Hollow Knight on your laptop."
+      and launched[-1] == "steam://rungameid/367520", said)
+n_open = len(opened)
+said = rt.laptop_play("tum hi ho")
+check("'play tum hi ho' (no such game) -> YouTube", "YouTube" in said
+      and len(opened) == n_open + 1 and "youtube" in opened[-1], said)
+said = rt.laptop_apps("games")
+check("'what games do I have' -> the games", said == "You have 2 games: Minecraft Launcher and Hollow Knight.", said)
+said = rt.laptop_apps("all")
+check("'what's on my laptop' -> a short tour", said.startswith("Your laptop has 6 apps"), said)
+said = rt.laptop_suggest()
+check("'I'm bored' -> one of his games, and how to start it",
+      said.startswith("How about ") and ("Minecraft Launcher" in said or "Hollow Knight" in said), said)
+lr.idle_before = lr.idle()
+check("the Pi reads the idle time", lr.idle_before == {"ok": True, "idle_s": 742.5, "app": "explorer.exe"},
+      str(lr.idle_before))
+server5.shutdown()
+
+old2 = ThreadingHTTPServer(("127.0.0.1", 0), _OldHelper)
+threading.Thread(target=old2.serve_forever, daemon=True).start()
+settings(f"http://127.0.0.1:{old2.server_address[1]}")
+check("an old helper: launch says 'old helper'", lr.launch("WhatsApp") == (False, "old helper"))
+check("...and the idle time is unknown (so she never plays on her own)", lr.idle() is None)
+old2.shutdown()
+
+print("offline phrases for apps")
+for phrase, name, args in (("open whatsapp", "laptop_app", {"name": "whatsapp"}),
+                           ("launch spotify on my laptop", "laptop_app", {"name": "spotify"}),
+                           ("play minecraft", "laptop_play", {"query": "minecraft"}),
+                           ("what games do I have", "laptop_list", {"kind": "games"}),
+                           ("what's on my laptop", "laptop_list", {"kind": "all"}),
+                           ("I'm bored", "laptop_suggest", {}),
+                           ("suggest a game", "laptop_suggest", {})):
+    got = offline.understand(f"Friday, {phrase}", strict=True)
+    check(f"{phrase!r} -> {name}", got is not None and got.name == name and got.args == args,
+          str(got and (got.name, got.args)))
+for phrase, name in (("open my notes", "laptop_key"), ("start exploring", "explore"),
+                     ("open YouTube and play lofi", "laptop_search"), ("stop", "stop")):
+    got = offline.understand(phrase, strict=True)
+    check(f"{phrase!r} is still {name}", got is not None and got.name == name, str(got and got.name))
+check("'open the door' is not an app", offline.understand("open the door", strict=True) is None)
 
 server.shutdown()
 silent.close()

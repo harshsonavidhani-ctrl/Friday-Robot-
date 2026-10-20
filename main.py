@@ -798,7 +798,8 @@ async def _reminder_turn(voice: "Voice", face: "Face", source,
         return
     source.pause()                              # never hear herself
     try:
-        face.feel("curious" if kind == "reminder" else "happy")
+        face.feel({"reminder": "curious", "laptop_miss": "sad",
+                   "laptop_play": "excited"}.get(kind, "happy"))
         voice.say(item["say"])
         turn.spoke(item["say"])
         turn.answered_by("locally, no model", 0.0)

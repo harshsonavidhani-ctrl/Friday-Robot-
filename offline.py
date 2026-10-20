@@ -272,6 +272,12 @@ _ASK_RULES: list[tuple[str, str, str | None, dict, str]] = [
                    r"(map|room)|map summary|show me the map)\b",
                                                           "describe_map",     {},          ""),
     ("lidar",      r"\b(lidar|laser scan|do a sweep)\b",  "lidar_sweep",      {},          ""),
+    # 2026-10-20: the rooms she can be sent to (File 14's places, which named
+    # areas on the saved map become) -- so he knows what "go to ..." takes.
+    ("places",     r"\b((which|what) (rooms|places|areas) (do you know|have you "
+                   r"(saved|learned|learnt))|list (the |your |my )?(rooms|places|areas)|"
+                   r"where can you go|kaun se (room|kamre))\b",
+                                                          "list_places",      {"spoken": True}, ""),
 
     # -- autonomy --
     ("explore_status", r"\b(exploration status|are you (still )?exploring|"
@@ -836,6 +842,26 @@ _LAPTOP_KEYS = [
 ]
 _LAPTOP_KEYS = [(re.compile(p, re.IGNORECASE), a) for p, a in _LAPTOP_KEYS]
 
+# APPS on his laptop (helper 5, 2026-10-20: "open whatsapp, open this game ...
+# she knows what's in my laptop"). The NAME goes to the laptop, which matches
+# it against its own Start menu; nothing else is sent.
+_OPEN_APP_RE = re.compile(
+    rf"^(?:open|launch|start up|run)\s+(?P<q>.{{2,40}}?)(?:\s+(?:app|application))?"
+    rf"(?:\s+on\s+{_LAPTOP})?$", re.IGNORECASE)
+_NOT_AN_APP = re.compile(r"^(?:the\s+)?(?:door|window|your eyes|eyes|map|dashboard|"
+                         r"face|camera|mouth)$", re.IGNORECASE)
+_LIST_GAMES_RE = re.compile(
+    r"^(?:what|which)\s+games?\s+(?:do\s+i\s+have|are\s+(?:there\s+)?on\s+"
+    rf"{_LAPTOP}|have\s+i\s+got|can\s+i\s+play)|^(?:list|show)\s+(?:me\s+)?my\s+games$",
+    re.IGNORECASE)
+_LIST_APPS_RE = re.compile(
+    rf"^what(?:'?s| is)\s+(?:on|in)\s+{_LAPTOP}$|^(?:what|which)\s+apps\s+(?:do\s+i\s+have|"
+    rf"are\s+on\s+{_LAPTOP})|^what\s+do\s+i\s+have\s+on\s+{_LAPTOP}$", re.IGNORECASE)
+_SUGGEST_RE = re.compile(
+    r"^(?:suggest\s+(?:me\s+)?(?:a|some)\s+game|what\s+should\s+i\s+play|"
+    r"i'?m\s+(?:so\s+)?bored|i\s+am\s+(?:so\s+)?bored|main\s+bore\s+ho\s+raha\s+(?:hoon|hu)|"
+    r"give\s+me\s+a\s+game)$", re.IGNORECASE)
+
 
 def _laptop_intent(heard: str) -> Intent | None:
     """File 20: his laptop -- a search on its screen, or notes put there."""
@@ -861,13 +887,24 @@ def _laptop_intent(heard: str) -> Intent | None:
         return Intent(name="laptop_search", tool="laptop_search",
                       args={"query": config.LAPTOP_DEFAULT_MUSIC,
                             "site": "youtube", "play": True})
+    if _LIST_GAMES_RE.match(text):
+        return Intent(name="laptop_list", tool="laptop_apps", args={"kind": "games"})
+    if _LIST_APPS_RE.match(text):
+        return Intent(name="laptop_list", tool="laptop_apps", args={"kind": "all"})
+    if _SUGGEST_RE.match(text):
+        return Intent(name="laptop_suggest", tool="laptop_suggest", args={})
+    match = _OPEN_APP_RE.match(text)
+    if match:
+        q = match.group("q").strip(" ,.?")
+        if q and len(q.split()) <= 5 and not _NOT_AN_APP.match(q):
+            return Intent(name="laptop_app", tool="laptop_open_app", args={"name": q})
     match = _PLAY_NAMED_RE.match(text)
     if match:
         q = match.group("q").strip(" ,.?")
         if (q and len(q.split()) <= _PLAY_MAX_WORDS
                 and not _PLAY_NOT_A_SONG.match(q)):
-            return Intent(name="laptop_search", tool="laptop_search",
-                          args={"query": q, "site": "youtube", "play": True})
+            # An installed GAME by that name if he has one, else YouTube.
+            return Intent(name="laptop_play", tool="laptop_play", args={"query": q})
     return None
 
 
@@ -1337,7 +1374,8 @@ _SPEAK_RESULT = frozenset({
     "reminder_add", "todo_add", "reminder_done", "reminder_list", "routine",
     "briefing", "calendar_add", "calendar_ask", "calendar_remove",
     "remember_forever", "forget", "forget_answer",
-    "laptop_search", "laptop_notes", "laptop_key",
+    "laptop_search", "laptop_notes", "laptop_key", "places",
+    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -1372,7 +1410,8 @@ _REFLEX_INTENTS = frozenset({
     # File 19
     "env_new", "env_switch", "env_name",
     # File 20
-    "laptop_search", "laptop_notes", "laptop_key",
+    "laptop_search", "laptop_notes", "laptop_key", "places",
+    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest",
     # offline_extras.py (2026-10-20); "talk" is never strict, so not here
     "date", "calc", "joke", "coin", "dice", "pick",
 })

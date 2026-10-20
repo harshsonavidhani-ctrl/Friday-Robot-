@@ -90,6 +90,107 @@ def laptop_control(action: str) -> str:
     return f"I couldn't do that on your laptop ({why})."
 
 
+_OLD_HELPER = ("Your laptop helper is the old version, so I can't open apps yet. "
+               "Copy the new friday_laptop_agent.py to your laptop.")
+
+
+def _say_list(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _launch_named(app: dict) -> str:
+    import rate_limit
+    ok, why = rate_limit.allow("laptop_launch")
+    if not ok:
+        return f"I've opened a lot of apps already — {why}."
+    rate_limit.used("laptop_launch")
+    started, why = lr.launch(app["name"])
+    if started:
+        return f"Opening {app['name']} on your laptop."
+    if why == "old helper":
+        return _OLD_HELPER
+    return f"I couldn't open {app['name']} ({why})."
+
+
+@tool
+def laptop_open_app(name: str) -> str:
+    """Open an app or game that is installed on Harsh's LAPTOP, by name:
+    "open WhatsApp", "open Minecraft", "launch Spotify". Only apps on its
+    Start menu (system tools are left out on the laptop itself).
+
+    Args:
+        name: the app's name as he said it, e.g. "whatsapp", "minecraft".
+    """
+    name = (name or "").strip()
+    if not name:
+        return "Which app should I open?"
+    if not _up():
+        return NOT_AVAILABLE
+    listed, why = lr.apps()
+    if why == "old helper" and not listed:
+        return _OLD_HELPER
+    app, others = lr.match_app(name, listed)
+    if app is None and others:
+        return f"Which one: {_say_list([o['name'] for o in others])}?"
+    if app is None:
+        return f"I don't see {name} on your laptop."
+    return _launch_named(app)
+
+
+@tool
+def laptop_play(query: str) -> str:
+    """"Play X": a GAME installed on Harsh's laptop if he has one called that,
+    otherwise X plays on YouTube on his laptop.
+
+    Args:
+        query: what he wants to play, e.g. "minecraft" or "tum hi ho".
+    """
+    query = (query or "").strip()
+    if not query:
+        return "What should I play?"
+    if not _up():
+        return NOT_AVAILABLE
+    listed, _ = lr.apps()
+    app, _others = lr.match_app(query, [a for a in listed if lr.is_game(a)])
+    if app is not None:
+        return _launch_named(app)
+    return laptop_search(query, "youtube", True)
+
+
+@tool
+def laptop_apps(kind: str = "all") -> str:
+    """What is installed on Harsh's laptop: kind "games" for just the games,
+    "all" for everything (said briefly). Uses the last list the laptop gave
+    if it is off now."""
+    listed, why = lr.apps(refresh=_up())
+    if not listed:
+        return (_OLD_HELPER if why == "old helper" else
+                "I don't know what's on your laptop yet. Turn it on and I'll look.")
+    games = [a["name"] for a in listed if lr.is_game(a)]
+    if (kind or "all").lower().startswith("game"):
+        if not games:
+            return "I don't see any games on your laptop."
+        return f"You have {len(games)} game{'s' if len(games) != 1 else ''}: {_say_list(games[:8])}."
+    some = [a["name"] for a in listed if not lr.is_game(a)][:6]
+    words = f"Your laptop has {len(listed)} apps, like {_say_list(some)}"
+    if games:
+        words += f", and games: {_say_list(games[:5])}"
+    return words + "."
+
+
+@tool
+def laptop_suggest(kind: str = "game") -> str:
+    """Suggest something to play on Harsh's laptop ("I'm bored", "what should
+    I play?"): one of his installed games, or music if he has none."""
+    import random
+    listed, _ = lr.apps(refresh=False)
+    games = [a["name"] for a in listed if lr.is_game(a)]
+    if games:
+        pick = random.choice(games)
+        return f"How about {pick}? Say: play {pick}."
+    return "How about some music? Say: play a song."
+
+
 @tool
 def laptop_notes(topic: str) -> str:
     """Research a topic on the web and put notes about it on Harsh's LAPTOP,

@@ -94,6 +94,13 @@ for q, name in (("stop", "stop"), ("Friday stop", "stop"), ("stop it", "stop"),
                 ("play lofi music on YouTube", "laptop_search")):
     i = offline.understand(q, strict=True)
     check(f"{q!r} is still {name}", i is not None and i.name == name, str(i and i.name))
+for q in ("which rooms do you know", "what places have you saved", "where can you go"):
+    i = offline.understand(q, strict=True)
+    check(f"{q!r} -> the place list, said in one sentence",
+          i is not None and i.tool == "list_places" and i.args == {"spoken": True}
+          and i.speak_result, str(i and (i.tool, i.args)))
+check("'go to the bedroom' is still a drive, not the list",
+      offline.understand("go to the bedroom", strict=True).name == "nav_go")
 check("help mentions the laptop and sums",
       "laptop" in offline.help_text() and "sums" in offline.help_text())
 

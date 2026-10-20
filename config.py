@@ -487,6 +487,25 @@ LAPTOP_SEEN_FILE = ROOT / "state" / "laptop_seen.json"   # its last hello
 LAPTOP_OPEN_TIMEOUT_S = 12.0          # "play X" looks up the top video first
 # "Friday, play a song" with no name: what YouTube plays. Change freely.
 LAPTOP_DEFAULT_MUSIC = "top hindi songs"
+# The laptop's own app list (helper 5 GET /apps), kept so she knows what is on
+# it even when it is off. 2026-10-20: "she knows everything that laptop has".
+LAPTOP_APPS_FILE = ROOT / "state" / "laptop_apps.json"
+# HER OWN PLAY ON THE LAPTOP (laptop_play.py, 2026-10-20 -- Harsh: "she is
+# curious to search anything by herself ... like its her toy"). Offline, no
+# model. Only when nobody has touched the laptop for LAPTOP_PLAY_IDLE_S (she
+# never interrupts him), he is around (spoke within LAPTOP_PLAY_PRESENCE_S or a
+# person was seen), inside LAPTOP_PLAY_HOURS, not in quiet mode, at most once
+# per LAPTOP_PLAY_GAP_S. False = never on her own.
+LAPTOP_PLAY = True
+LAPTOP_PLAY_IDLE_S = 600.0
+LAPTOP_PLAY_GAP_S = 3600.0
+LAPTOP_PLAY_PRESENCE_S = 1200.0
+LAPTOP_PLAY_HOURS = (9, 22)            # local hours, [start, end)
+# "I miss my laptop" when it has been off LAPTOP_MISS_AFTER_S and he is
+# around, at most once per LAPTOP_MISS_GAP_S, inside LAPTOP_PLAY_HOURS.
+LAPTOP_MISS = True
+LAPTOP_MISS_AFTER_S = 7200.0
+LAPTOP_MISS_GAP_S = 14400.0
 LAPTOP_SAVE_TIMEOUT_S = 10.0
 LAPTOP_NOTES_MODEL = MODEL_FAST       # Haiku: web_search_20250305
 LAPTOP_NOTES_TIMEOUT_S = 120.0        # one notes call (a thread, not a tool call)
@@ -718,6 +737,8 @@ RATE_LIMITS = {
     "laptop_notes": {"min_interval_s": 20.0, "per_hour": 10, "per_day": 30},
     # free, but a loop pressing keys on his screen is still a fault
     "laptop_key": {"min_interval_s": 0.5, "per_hour": 240, "per_day": 1500},
+    # opening apps: free, but a loop opening programs on his screen is a fault
+    "laptop_launch": {"min_interval_s": 2.0, "per_hour": 40, "per_day": 200},
     # Not money: wheels. The same three numbers keep the idle drive (step 9,
     # physical_curiosity.py) from becoming a robot that paces the room.
     "physical_curiosity": {"min_interval_s": 1800.0, "per_hour": 2,

@@ -124,6 +124,10 @@ RUN_END_WAIT_S = 30.0
 # come back" can restart the ladder on the same tracked map; after it the run is
 # parked (it costs a core and heats the Pi) and "come back" uses File 14 alone.
 HELP_WAIT_KEEP_S = 600.0
+# THE MAP GROWS BY TRIPS (2026-10-20): only a trip with a real map behind it
+# may seed or grow the saved one -- a bad first map would be bad for good.
+MIN_SWEEPS_TO_GROW = 20
+MIN_M2_TO_GROW = 4.0
 PARK_WAIT_S = 20.0               # arrival: the run giving the LiDAR back
 # Arrival, the view does not match: step onto the start by its own view this
 # many times before the look-again turn (Harsh 2026-10-04: "she stopped very
@@ -2302,20 +2306,62 @@ class MissionManager:
         self._anchor_late()
 
     def _anchor_late(self) -> None:
-        """At the END, fit the WHOLE mission map onto the saved SLAM map. A
-        room's worth of walls is far more distinctive than the one sweep the
-        start would have offered, and only a sure fit counts. Then every area
-        of this mission's frame moves into the saved map's frame and the named
-        ones become File 14 landmarks; otherwise they stay as they are. A job:
-        a few seconds of CPU the tick does not wait for."""
-        if self.mission is None or self.analysis.map.used == 0 \
-                or self._frame() == area_store.FRAME_MAP:
+        """At the END, put this trip on the saved SLAM map. A job: a few
+        seconds of CPU the tick does not wait for.
+
+        * No saved map yet (a NEW PLACE): this trip's map becomes it (seed).
+        * Began at the home spot (frame "map", T known by signature + scan
+          match): its walls are MERGED into the saved map at T -- the map grows
+          by trips (Harsh, 2026-10-20).
+        * Began anywhere else: the whole mission map is FITTED onto the saved
+          map, and only a sure fit moves this frame's areas (the named ones
+          become File 14 landmarks). Walls are never merged on a fit: it can be
+          confidently wrong by metres on look-alike maps."""
+        if self.mission is None or self.analysis.map.used == 0:
             return
         mission_id, env_id, og = self.mission["id"], self.env_id, self.analysis.map.og
         frame, T = self._frame(), self.T
+        slam = self.a.slam
+        # THE MAP GROWS BY TRIPS (Harsh 2026-10-20) -- only from a trip with a
+        # real map behind it, and only at a pose that is KNOWN.
+        trusted = (self.analysis.map.used >= MIN_SWEEPS_TO_GROW
+                   and (self.explored_m2 or 0.0) >= MIN_M2_TO_GROW)
+
+        def grew(res: dict, how: str) -> None:
+            if res.get("grew"):
+                self.store.add_event(mission_id, {"kind": "map_grew", "how": how,
+                                                  "before_m2": res.get("before_m2"),
+                                                  "after_m2": res.get("after_m2")})
+                log.info("the saved map grew (%s): %s -> %s m²", how,
+                         res.get("before_m2"), res.get("after_m2"))
+            elif res.get("why"):
+                log.info("the saved map did not grow (%s): %s", how, res["why"])
+
+        if frame == area_store.FRAME_MAP:
+            # She began at the home spot: T is the start on the saved map
+            # (signature + scan match). Her areas are already in its frame.
+            merge = getattr(slam, "merge_saved", None)
+            if merge is None or T is None:
+                return
+
+            def work_merge() -> dict:
+                res = merge(og, T, trusted=trusted)
+                grew(res, "a trip from the home spot")
+                return res
+
+            self._anchor_job = self.runner.start(work_merge, "mission-anchor")
+            return
 
         def work() -> dict:
-            start_on_map = self.a.slam.fit_onto_saved(og)
+            start_on_map = None
+            seed = getattr(slam, "seed_saved", None)
+            if seed is not None:
+                res = seed(og, trusted=trusted)       # only when there is no map
+                grew(res, "the first trip in this place")
+                start_on_map = res.get("start_on_map")
+            if start_on_map is None:
+                # Read-only, as before: areas may move, walls never do.
+                start_on_map = slam.fit_onto_saved(og)
             if start_on_map is None:
                 return {"fitted": False}
             # frame -> start -> saved map

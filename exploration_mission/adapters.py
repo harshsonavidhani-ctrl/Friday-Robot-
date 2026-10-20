@@ -274,7 +274,9 @@ class RunAdapter:
 
 
 class SlamAdapter:
-    """The saved SLAM map (File 14's frame). Read, never written."""
+    """The saved SLAM map (File 14's frame). Read, never written -- except by
+    seed_saved() (no map yet) and merge_saved() (a KNOWN start pose), the two
+    writes, through map_growth (2026-10-20)."""
 
     def __init__(self, map_file: Path | None = None,
                  session_file: Path | None = None):
@@ -354,6 +356,57 @@ class SlamAdapter:
                      fix.why or "not sure", fix.score, fix.runner_up_score)
             return None
         return tuple(float(v) for v in fix.pose)
+
+    def seed_saved(self, og_mission, trusted: bool = True) -> dict:
+        """THE FIRST TRIP IN A NEW PLACE IS ITS MAP (Harsh, 2026-10-20: a new
+        place, "map grows by trips"). Only when there is NO saved map at all:
+        this trip's map becomes it, its origin the trip's start -> start_on_map
+        (0, 0, 0). Anything else: start_on_map None, nothing written."""
+        if Path(self.map_file).exists() or self.load() is not None:
+            return {"grew": False, "why": "there is a saved map already",
+                    "start_on_map": None}
+        if not trusted:
+            return {"grew": False, "why": "this trip's map is too thin to start "
+                                          "a place's map from", "start_on_map": None}
+        import map_growth
+        try:
+            res = map_growth.grow(og_mission, frame="trip", trusted=True,
+                                  path=self.map_file)
+        except Exception as exc:                      # noqa: BLE001
+            log.warning("seeding the saved map failed: %s: %s", type(exc).__name__, exc)
+            return {"grew": False, "why": str(exc), "start_on_map": None}
+        res["start_on_map"] = (0.0, 0.0, 0.0) if res.get("grew") else None
+        res["seeded"] = bool(res.get("grew"))
+        return res
+
+    def merge_saved(self, og_mission, start_on_map, trusted: bool = True) -> dict:
+        """A trip whose start is KNOWN on the saved map (it began at the home
+        spot: signature + scan-matched, mission_manager._refine_home) adds its
+        walls at that pose. NEVER from a whole-map fit: map_growth.fit is
+        confidently wrong by metres on look-alike maps (test_map_growth, 4
+        failures already on 10-20 before this), and a wrong merge paints walls
+        where there are none, for good. Old map archived first; refuses to
+        shrink it below 90%. Never raises."""
+        import map_growth
+        if not trusted or start_on_map is None:
+            return {"grew": False, "why": "not a trip to grow the map from"}
+        saved = self.load()
+        if saved is None or not Path(self.map_file).exists():
+            return {"grew": False, "why": "no saved map file to grow"}
+        try:
+            before = map_growth.known_m2(saved)
+            new = map_growth.merge(saved, og_mission, tuple(float(v) for v in start_on_map))
+            after = map_growth.known_m2(new)
+            if after < map_growth.MIN_KEEP_FRACTION * before:
+                return {"grew": False, "why": f"refused: {after:.1f} m² against {before:.1f}"}
+            import nav_bundle
+            nav_bundle.save_quietly("before the map grew")
+            new.save(self.map_file)
+            nav_bundle.save_quietly(f"the map grew by a trip: {before:.1f} -> {after:.1f} m²")
+        except Exception as exc:                      # noqa: BLE001
+            log.warning("growing the saved map failed: %s: %s", type(exc).__name__, exc)
+            return {"grew": False, "why": str(exc)}
+        return {"grew": True, "before_m2": round(before, 1), "after_m2": round(after, 1)}
 
     def load_grid(self, path):
         """A saved slam OccupancyGrid (the mission's own map), or None."""

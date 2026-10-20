@@ -158,12 +158,23 @@ async def remember_place(name: str, note: str = "") -> str:
 
 
 @tool
-def list_places() -> str:
-    """Every place I know by name, with where it is on my map."""
+def list_places(spoken: bool = False) -> str:
+    """Every place I know by name, with where it is on my map.
+
+    Args:
+        spoken: true for one sentence to say out loud (names only) -- the
+            offline "which rooms do you know" (2026-10-20).
+    """
     rows = places.all()
     if not rows:
         return ("I do not know any places yet. Stand somewhere and say "
                 "“remember this as the door”.")
+    if spoken:
+        names = [r["name"] for r in rows]
+        said = names[0] if len(names) == 1 else (
+            ", ".join(names[:-1]) + " and " + names[-1])
+        return (f"I know {len(names)} place{'s' if len(names) != 1 else ''}: {said}. "
+                f"Say: go to, and the name.")
     lines = [f"I know {len(rows)} place(s):"]
     for r in rows:
         seen = f", visited {r['visits']}x" if r.get("visits") else ""
