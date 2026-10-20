@@ -371,8 +371,9 @@ def start_apps() -> list[dict]:
         return []
     got = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
          "Get-StartApps | ConvertTo-Json -Compress"],
-        capture_output=True, text=True, timeout=40,
+        capture_output=True, encoding="utf-8", errors="replace", timeout=40,
         creationflags=0x08000000)                   # CREATE_NO_WINDOW
     data = json.loads(got.stdout or "[]")
     if isinstance(data, dict):
@@ -394,9 +395,50 @@ def start_apps() -> list[dict]:
     return sorted(out, key=lambda a: a["name"].lower())
 
 
-def open_app(app_id: str) -> None:
-    """Start one Start-menu entry by its own id (from start_apps, never the Pi)."""
+def _bring_to_front(name: str, wait_s: float = 12.0) -> None:
+    """Find the just-launched app's window by its title and put it in front.
+    Windows refuses SetForegroundWindow to a background process, so it is
+    preceded by one ALT tap (the usual way: the helper then owns the last
+    input). Only a window whose title matches `name` is touched (2026-10-20:
+    Solitaire opened BEHIND his terminal and could not be played)."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    found: list[int] = []
+    proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def each(hwnd, _lparam):
+        if user32.IsWindowVisible(hwnd):
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                if title_matches(buf.value, name):
+                    found.append(hwnd)
+                    return False
+        return True
+
+    end = time.time() + wait_s
+    while time.time() < end and not found:
+        user32.EnumWindows(proc(each), 0)
+        if not found:
+            time.sleep(0.5)
+    if not found:
+        log.info("launched %s, but found no window of it to bring forward", name)
+        return
+    hwnd = found[0]
+    user32.keybd_event(0x12, 0, 0, 0)                          # ALT down
+    user32.keybd_event(0x12, 0, 0x0002, 0)                     # ALT up
+    user32.ShowWindow(hwnd, 9)                                 # SW_RESTORE
+    user32.SetForegroundWindow(hwnd)
+
+
+def open_app(app_id: str, name: str = "") -> None:
+    """Start one Start-menu entry by its own id (from start_apps, never the Pi),
+    then bring its window to the front."""
     subprocess.Popen(["explorer.exe", "shell:AppsFolder\\" + app_id])
+    if name and os.name == "nt":
+        threading.Thread(target=_bring_to_front, args=(name,), daemon=True).start()
 
 
 def game_words(name: str) -> set[str]:
@@ -570,7 +612,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/6"
+            server_version = "FridayLaptopHelper/7"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -607,7 +649,7 @@ class Agent:
                     return self._screen()
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 6})
+                return self._send(200, {"ok": True, "version": 7})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
@@ -702,7 +744,10 @@ class Agent:
                     hit = next((a for a in apps if a["name"].lower() == wanted), None)
                 if hit is None:
                     return self._send(404, {"ok": False, "error": "no such app"})
-                agent.launcher(hit["id"])
+                try:
+                    agent.launcher(hit["id"], hit["name"])
+                except TypeError:                       # a launcher without names (tests)
+                    agent.launcher(hit["id"])
                 return self._send(200, {"ok": True, "name": hit["name"]})
 
             def _key(self, body: dict):
