@@ -668,9 +668,25 @@ class ReminderWatch(WakeSource):
             return {"kind": "research", "at": now, "ids": [],
                     "job": job["id"], "say": research_words(job)}
 
-        # HER OWN PLAY ON THE LAPTOP / "I miss my laptop" (laptop_play.py,
-        # 2026-10-20). laptop_play has its own gates (he is here, the laptop
-        # is idle or long off, the hours, the gaps); this adds initiative's.
+        if getattr(config, "BRIEFING", False) and \
+                now - self._briefing_inflight > 120:
+            import briefing
+            if briefing.wanted(now, self._last_heard):
+                why = self._why_not("daily briefing",
+                                    idle_for=now - self._last_heard)
+                if why:
+                    self._note(f"briefing — {why}")
+                    return None
+                text = briefing.compose(now)
+                self._briefing_inflight = now
+                return {"kind": "briefing", "at": now, "ids": [],
+                        "say": text}
+
+        # HER OWN PLAY ON THE LAPTOP / "I miss my laptop" (laptop_play.py) and
+        # her reactions to his game (laptop_games.py), 2026-10-20. LAST, after
+        # everything he asked for or needs to hear: the briefing once lost to
+        # her playing. laptop_play has its own gates (he is here, the laptop is
+        # idle or long off, the hours, the gaps); this adds initiative's.
         if now - self._laptop_inflight > 120:
             try:
                 import laptop_play
@@ -685,20 +701,19 @@ class ReminderWatch(WakeSource):
                     return None
                 self._laptop_inflight = now
                 return {**toy, "at": now, "ids": []}
+            # WATCHING HIM PLAY (laptop_games.py): initiative first -- it is
+            # free -- and only then the one paid look.
+            if not self._why_not("game_watch", idle_for=now - self._last_heard):
+                try:
+                    import laptop_games
+                    seen = laptop_games.watch_item(now)
+                except Exception as exc:            # noqa: BLE001
+                    log.debug("game watch skipped: %s", exc)
+                    seen = None
+                if seen is not None:
+                    self._laptop_inflight = now
+                    return {**seen, "at": now, "ids": []}
 
-        if getattr(config, "BRIEFING", False) and \
-                now - self._briefing_inflight > 120:
-            import briefing
-            if briefing.wanted(now, self._last_heard):
-                why = self._why_not("daily briefing",
-                                    idle_for=now - self._last_heard)
-                if why:
-                    self._note(f"briefing — {why}")
-                    return None
-                text = briefing.compose(now)
-                self._briefing_inflight = now
-                return {"kind": "briefing", "at": now, "ids": [],
-                        "say": text}
         return None
 
     @staticmethod

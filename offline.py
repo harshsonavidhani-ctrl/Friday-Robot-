@@ -857,6 +857,15 @@ _LIST_GAMES_RE = re.compile(
 _LIST_APPS_RE = re.compile(
     rf"^what(?:'?s| is)\s+(?:on|in)\s+{_LAPTOP}$|^(?:what|which)\s+apps\s+(?:do\s+i\s+have|"
     rf"are\s+on\s+{_LAPTOP})|^what\s+do\s+i\s+have\s+on\s+{_LAPTOP}$", re.IGNORECASE)
+# HER playing a slow game, on his word only (laptop_games.py, 2026-10-20).
+_YOU_PLAY_RE = re.compile(
+    r"^(?:(?:now\s+)?you\s+play(?:\s+(?:the|this|a)\s+game|\s+it|\s+(?P<g>.{2,30}?))?"
+    r"|play\s+(?:it|this|the\s+game|(?P<g2>.{2,30}?))\s+(?:yourself|for\s+me)"
+    r"|(?:it'?s\s+)?your\s+turn|can\s+you\s+play\s+(?:it|this|the\s+game))$",
+    re.IGNORECASE)
+_STOP_PLAYING_RE = re.compile(
+    r"^(?:stop\s+playing(?:\s+the\s+game)?|i'?ll\s+play(?:\s+now)?|my\s+turn|"
+    r"give\s+(?:it|me\s+the\s+game)\s+back|let\s+me\s+play)$", re.IGNORECASE)
 _SUGGEST_RE = re.compile(
     r"^(?:suggest\s+(?:me\s+)?(?:a|some)\s+game|what\s+should\s+i\s+play|"
     r"i'?m\s+(?:so\s+)?bored|i\s+am\s+(?:so\s+)?bored|main\s+bore\s+ho\s+raha\s+(?:hoon|hu)|"
@@ -887,6 +896,13 @@ def _laptop_intent(heard: str) -> Intent | None:
         return Intent(name="laptop_search", tool="laptop_search",
                       args={"query": config.LAPTOP_DEFAULT_MUSIC,
                             "site": "youtube", "play": True})
+    if _STOP_PLAYING_RE.match(text):
+        return Intent(name="laptop_game", tool="laptop_game_play", args={"action": "stop"})
+    match = _YOU_PLAY_RE.match(text)
+    if match:
+        hint = (match.group("g") or match.group("g2") or "").strip(" ,.?")
+        return Intent(name="laptop_game", tool="laptop_game_play",
+                      args={"action": "start", "game": hint})
     if _LIST_GAMES_RE.match(text):
         return Intent(name="laptop_list", tool="laptop_apps", args={"kind": "games"})
     if _LIST_APPS_RE.match(text):
@@ -1375,7 +1391,7 @@ _SPEAK_RESULT = frozenset({
     "briefing", "calendar_add", "calendar_ask", "calendar_remove",
     "remember_forever", "forget", "forget_answer",
     "laptop_search", "laptop_notes", "laptop_key", "places",
-    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest",
+    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest", "laptop_game",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -1411,7 +1427,7 @@ _REFLEX_INTENTS = frozenset({
     "env_new", "env_switch", "env_name",
     # File 20
     "laptop_search", "laptop_notes", "laptop_key", "places",
-    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest",
+    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest", "laptop_game",
     # offline_extras.py (2026-10-20); "talk" is never strict, so not here
     "date", "calc", "joke", "coin", "dice", "pick",
 })

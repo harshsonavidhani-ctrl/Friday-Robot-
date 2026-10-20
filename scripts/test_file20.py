@@ -141,7 +141,7 @@ check("open with a wrong token -> 401, and nothing opened",
 code, _ = raw("/notes", {"title": "t", "markdown": "m"}, token="x" * 40)
 check("notes with a wrong token -> 401, and nothing written",
       code == 401 and not NOTES.exists() or not list(NOTES.glob("*")))
-check("health with the token (helper 5 also says its version)", raw("/health") == (200, {"ok": True, "version": 5}))
+check("health with the token (helper 5+ also says its version)", raw("/health") == (200, {"ok": True, "version": 6}))
 check("any other path -> 404", raw("/etc/passwd")[0] == 404
       and raw("/run", {"cmd": "calc.exe"})[0] == 404
       and raw("/research", {"query": "x"})[0] == 404)
@@ -997,6 +997,52 @@ for phrase, name in (("open my notes", "laptop_key"), ("start exploring", "explo
     got = offline.understand(phrase, strict=True)
     check(f"{phrase!r} is still {name}", got is not None and got.name == name, str(got and got.name))
 check("'open the door' is not an app", offline.understand("open the door", strict=True) is None)
+
+# ---------------------------------------------------------------------------
+print("helper 6: a picture of, and a click in, ONLY the game window in front")
+TITLE = {"v": "Solitaire & Casual Games"}
+shot_calls, clicked = [], []
+
+
+def fake_shot():
+    shot_calls.append(TITLE["v"])
+    return b"\x89PNG\r\n\x1a\nFAKE"
+
+
+server6 = ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    agent_mod.Agent(CFG, opener=opened.append, shower=shown.append, fetch=fake_fetch,
+                    presser=fake_press, lister=fake_lister, launcher=launched.append,
+                    idler=lambda: {"idle_s": 1.0, "app": "x.exe", "title": TITLE["v"]},
+                    titler=lambda: TITLE["v"], shooter=fake_shot,
+                    clicker=lambda x, y: clicked.append((x, y)) or "").handler())
+P6 = server6.server_address[1]
+threading.Thread(target=server6.serve_forever, daemon=True).start()
+settings(f"http://127.0.0.1:{P6}")
+png, why = lr.screen("Solitaire & Casual Games")
+check("the game in front -> its picture (PNG)", png and png.startswith(b"\x89PNG") and why == "", why)
+TITLE["v"] = "WhatsApp"
+png, why = lr.screen("Solitaire & Casual Games")
+check("WhatsApp in front -> no picture at all (409), nothing captured",
+      png is None and "not the window in front" in why and len(shot_calls) == 1, why)
+png, why = lr.screen("WhatsApp")
+check("...and 'WhatsApp' as the 'game' still needs its title words: it IS in front, so the "
+      "LAPTOP's rule decides (Pi side never names non-games: see test_laptop_games)",
+      png is not None)
+TITLE["v"] = "Solitaire & Casual Games"
+check("a click inside the game window", lr.click("Solitaire & Casual Games", 0.3, 0.6) == (True, "")
+      and clicked == [(0.3, 0.6)])
+check("a click off the window (x > 1) -> refused", lr.click("Solitaire & Casual Games", 1.5, 0.6)[0] is False
+      and len(clicked) == 1)
+TITLE["v"] = "Inbox - Outlook"
+check("another window in front -> no click", lr.click("Solitaire & Casual Games", 0.3, 0.6)[0] is False
+      and len(clicked) == 1)
+check("a 'game' name with no real words (e.g. 'the game') -> refused",
+      lr.screen("The Game")[0] is None)
+check("idle now says the window title", lr.idle()["title"] == "Inbox - Outlook")
+server6.shutdown()
+check("off Windows nothing is captured or clicked here",
+      agent_mod.screen_png() is None and agent_mod.click_at(0.5, 0.5) == "clicks work on Windows only")
 
 server.shutdown()
 silent.close()

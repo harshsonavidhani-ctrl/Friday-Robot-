@@ -457,6 +457,49 @@ def launch(name: str) -> tuple[bool, str]:
     return bool(got.get("ok")), got.get("error", "")
 
 
+def screen(game: str) -> tuple[bytes | None, str]:
+    """A PNG of the game window -- the laptop refuses (409) unless that game is
+    the window in front. (png, "") or (None, why)."""
+    s = _settings()
+    if s is None:
+        return None, "the laptop is not set up"
+    url = (s["url"].rstrip("/") + "/screen?" + urllib.parse.urlencode({"game": game}))
+    req = urllib.request.Request(url, headers={"X-Friday-Token": s["token"]})
+    try:
+        with urllib.request.urlopen(req, timeout=float(config.LAPTOP_OPEN_TIMEOUT_S)) as reply:
+            if reply.headers.get("Content-Type", "") != "image/png":
+                return None, "not a picture"
+            return reply.read(), ""
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None, "old helper"
+        try:
+            why = json.loads(exc.read().decode("utf-8", "replace")).get("error", "")
+        except Exception:                           # noqa: BLE001
+            why = ""
+        return None, why or f"the laptop said {exc.code}"
+    except Exception as exc:                        # noqa: BLE001
+        return None, f"{type(exc).__name__}"
+
+
+def click(game: str, x: float, y: float) -> tuple[bool, str]:
+    """One click inside the game's window, at fractions of it. (done?, why)."""
+    try:
+        got = _request("/click", {"game": game, "x": float(x), "y": float(y)},
+                       float(config.LAPTOP_OPEN_TIMEOUT_S))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False, "old helper"
+        try:
+            why = json.loads(exc.read().decode("utf-8", "replace")).get("error", "")
+        except Exception:                           # noqa: BLE001
+            why = ""
+        return False, why or f"the laptop said {exc.code}"
+    except Exception as exc:                        # noqa: BLE001
+        return False, f"{type(exc).__name__}"
+    return bool(got.get("ok")), got.get("error", "")
+
+
 def idle() -> dict | None:
     """{"idle_s", "app"} from the laptop, or None (down, or an old helper)."""
     try:

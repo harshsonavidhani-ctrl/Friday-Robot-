@@ -193,6 +193,26 @@ def laptop_suggest(kind: str = "game") -> str:
 
 
 @tool
+def laptop_game_play(action: str = "start", game: str = "") -> str:
+    """Friday plays a SLOW game on Harsh's laptop herself (solitaire, chess,
+    minesweeper...) -- ONLY when he asks: "you play the game", "you play".
+    action "start" plays the game in front; "stop" hands it back. Fast games
+    are refused. Each move is one look and one click inside the game window.
+
+    Args:
+        action: "start" or "stop".
+        game: the game he named, if any (it must already be open in front).
+    """
+    import laptop_games
+    if (action or "start").strip().lower() == "stop":
+        return ("Okay, your turn." if laptop_games.stop_playing()
+                else "I'm not playing anything.")
+    if not _up():
+        return NOT_AVAILABLE
+    return laptop_games.play_start(game or "")
+
+
+@tool
 def laptop_notes(topic: str) -> str:
     """Research a topic on the web and put notes about it on Harsh's LAPTOP,
     opened on his screen. Use for "make notes on X", "notes about X",

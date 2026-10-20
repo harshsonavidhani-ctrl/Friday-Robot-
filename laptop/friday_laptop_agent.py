@@ -41,8 +41,18 @@ WHAT IT DOES -- AND ONLY THIS
         or a command from the Pi.
   GET  /idle                                                  (helper 5+)
         {"idle_s": seconds since the keyboard/mouse were last touched, "app":
-        the program in front}. Friday plays on the laptop on her own only
-        when nobody has touched it for a while (she never interrupts you).
+        the program in front, "title": its window title (helper 6)}. Friday
+        plays on the laptop on her own only when nobody has touched it for a
+        while (she never interrupts you).
+  GET  /screen?game=<name>                                    (helper 6+)
+        A PNG of the window in front -- ONLY when its title matches that game
+        (a significant word of the name in the title), else 409 and nothing.
+        Never the whole desktop, never another window: with WhatsApp or a
+        browser in front she gets nothing.
+  POST /click {"game": "<name>", "x": 0..1, "y": 0..1}        (helper 6+)
+        One left click INSIDE that game's window (its client area, a margin
+        kept from the edges), and only while its title matches. How she plays
+        a slow game (solitaire, chess) when Harsh says "you play".
 
   Every request must carry the shared token in the X-Friday-Token header;
   anything without it gets 401 and nothing else. No other endpoints.
@@ -120,6 +130,10 @@ APP_DENY = re.compile(
     r"\bbios\b|firmware|remote desktop|\brun\b|odbc|iscsi|hyper-v|sandbox",
     re.IGNORECASE)
 APPS_REFRESH_S = 600.0
+# /screen and /click (helper 6): words that do not identify a game window.
+_GENERIC_WORDS = {"game", "games", "launcher", "for", "windows", "the", "app",
+                  "and", "casual", "edition", "microsoft", "collection", "free"}
+SCREEN_MAX_W = 960                         # the picture is scaled down to this
 STARTUP_NAME = "friday_laptop_helper.cmd"
 PI_FILE = "friday_pi.json"                  # where the Pi last called from
 NOWHERE = "192.0.2.1"                       # never sent to: only picks a route
@@ -385,10 +399,133 @@ def open_app(app_id: str) -> None:
     subprocess.Popen(["explorer.exe", "shell:AppsFolder\\" + app_id])
 
 
+def game_words(name: str) -> set[str]:
+    """The words of a game's name that a window title must show (helper 6)."""
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    return {w for w in words if len(w) >= 3 and w not in _GENERIC_WORDS}
+
+
+def title_matches(title: str, game: str) -> bool:
+    words = game_words(game)
+    have = set(re.findall(r"[a-z0-9]+", (title or "").lower()))
+    return bool(words) and bool(words & have)
+
+
+def foreground_title() -> str:
+    if os.name != "nt":
+        return ""
+    import ctypes
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    n = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(n + 1)
+    user32.GetWindowTextW(hwnd, buf, n + 1)
+    return buf.value
+
+
+def _client_rect() -> tuple[int, int, int, int] | None:
+    """(left, top, width, height) of the foreground window's client area, in
+    screen pixels."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    rect = wintypes.RECT()
+    if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        return None
+    origin = wintypes.POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(origin))
+    w, h = rect.right - rect.left, rect.bottom - rect.top
+    return (origin.x, origin.y, w, h) if w > 50 and h > 50 else None
+
+
+def _png(width: int, height: int, bgra: bytes) -> bytes:
+    """Raw top-down BGRA pixels -> a PNG (standard library only)."""
+    import struct
+    import zlib
+    rgb = bytearray(width * height * 3)
+    rgb[0::3] = bgra[2::4]
+    rgb[1::3] = bgra[1::4]
+    rgb[2::3] = bgra[0::4]
+    stride = width * 3
+    raw = b"".join(b"\x00" + bytes(rgb[y * stride:(y + 1) * stride]) for y in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
+
+def screen_png() -> bytes | None:
+    """The foreground window's client area as a PNG, scaled to SCREEN_MAX_W."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+    rect = _client_rect()
+    if rect is None:
+        return None
+    left, top, w, h = rect
+    scale = min(1.0, SCREEN_MAX_W / float(w))
+    ow, oh = max(1, int(w * scale)), max(1, int(h * scale))
+    user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+    screen_dc = user32.GetDC(0)
+    mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+    bmp = gdi32.CreateCompatibleBitmap(screen_dc, ow, oh)
+    old = gdi32.SelectObject(mem_dc, bmp)
+    try:
+        gdi32.SetStretchBltMode(mem_dc, 4)                     # HALFTONE
+        gdi32.StretchBlt(mem_dc, 0, 0, ow, oh, screen_dc, left, top, w, h, 0x00CC0020)
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+                        ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+                        ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                        ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                        ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                        ("biClrImportant", wintypes.DWORD)]
+
+        info = BITMAPINFOHEADER()
+        info.biSize = ctypes.sizeof(info)
+        info.biWidth, info.biHeight = ow, -oh                  # top-down rows
+        info.biPlanes, info.biBitCount, info.biCompression = 1, 32, 0
+        buf = ctypes.create_string_buffer(ow * oh * 4)
+        gdi32.GetDIBits(mem_dc, bmp, 0, oh, buf, ctypes.byref(info), 0)
+        return _png(ow, oh, buf.raw)
+    finally:
+        gdi32.SelectObject(mem_dc, old)
+        gdi32.DeleteObject(bmp)
+        gdi32.DeleteDC(mem_dc)
+        user32.ReleaseDC(0, screen_dc)
+
+
+def click_at(fx: float, fy: float) -> str:
+    """One left click at (fx, fy) of the foreground client area. '' or why not."""
+    if os.name != "nt":
+        return "clicks work on Windows only"
+    import ctypes
+    rect = _client_rect()
+    if rect is None:
+        return "no window to click in"
+    left, top, w, h = rect
+    fx, fy = min(max(float(fx), 0.02), 0.98), min(max(float(fy), 0.02), 0.98)
+    x, y = int(left + fx * w), int(top + fy * h)
+    user32 = ctypes.windll.user32
+    user32.SetCursorPos(x, y)
+    time.sleep(0.03)
+    user32.mouse_event(0x0002, 0, 0, 0, 0)                     # LEFTDOWN
+    time.sleep(0.04)
+    user32.mouse_event(0x0004, 0, 0, 0, 0)                     # LEFTUP
+    return ""
+
+
 def idle_info() -> dict:
     """Seconds since the keyboard or mouse was last used, and the app in front."""
     if os.name != "nt":
-        return {"idle_s": None, "app": ""}
+        return {"idle_s": None, "app": "", "title": ""}
     import ctypes
 
     class LASTINPUTINFO(ctypes.Structure):
@@ -398,7 +535,8 @@ def idle_info() -> dict:
     info.cbSize = ctypes.sizeof(info)
     ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info))
     idle_ms = (ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF
-    return {"idle_s": round(idle_ms / 1000.0, 1), "app": foreground_app()}
+    return {"idle_s": round(idle_ms / 1000.0, 1), "app": foreground_app(),
+            "title": foreground_title()[:120]}
 
 
 # --- the listener ---------------------------------------------------------------
@@ -406,7 +544,8 @@ def idle_info() -> dict:
 class Agent:
     def __init__(self, cfg: dict, opener=webbrowser.open, shower=show_file,
                  fetch=_fetch, hello: Hello | None = None, presser=press,
-                 lister=start_apps, launcher=open_app, idler=idle_info) -> None:
+                 lister=start_apps, launcher=open_app, idler=idle_info,
+                 titler=foreground_title, shooter=screen_png, clicker=click_at) -> None:
         self.cfg = cfg
         self.opener = opener
         self.shower = shower
@@ -414,6 +553,7 @@ class Agent:
         self.hello = hello
         self.presser = presser
         self.lister, self.launcher, self.idler = lister, launcher, idler
+        self.titler, self.shooter, self.clicker = titler, shooter, clicker
         self._apps: list[dict] = []
         self._apps_at = 0.0
         self._apps_lock = threading.Lock()
@@ -430,7 +570,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/5"
+            server_version = "FridayLaptopHelper/6"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -463,14 +603,16 @@ class Agent:
                         {"name": a["name"], "via": a.get("via", "")} for a in apps]})
                 if self.path == "/idle":
                     return self._send(200, {"ok": True, **agent.idler()})
+                if self.path.startswith("/screen?"):
+                    return self._screen()
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 5})
+                return self._send(200, {"ok": True, "version": 6})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
                     return self._send(401, {"error": "unauthorised"})
-                if self.path not in ("/open", "/notes", "/key", "/launch"):
+                if self.path not in ("/open", "/notes", "/key", "/launch", "/click"):
                     return self._send(404, {"error": "not found"})
                 size = int(self.headers.get("Content-Length") or 0)
                 if size <= 0 or size > MAX_BODY:
@@ -488,6 +630,8 @@ class Agent:
                         return self._key(body)
                     if self.path == "/launch":
                         return self._launch(body)
+                    if self.path == "/click":
+                        return self._click(body)
                     return self._notes(body)
                 except Exception as exc:                # noqa: BLE001
                     log.warning("%s failed: %s", self.path, exc)
@@ -505,6 +649,47 @@ class Agent:
                                 fetch=agent.fetch)
                 agent.opener(url)
                 return self._send(200, {"ok": True, "url": url})
+
+            def _game_in_front(self, game: str):
+                """None if `game` is the window in front, else (code, why)."""
+                if not game or len(game) > 80 or not game_words(game):
+                    return 400, "send the game's name"
+                title = agent.titler()
+                if not title_matches(title, game):
+                    return 409, "that game is not the window in front"
+                return None
+
+            def _screen(self):
+                query = urllib.parse.urlparse(self.path).query
+                game = urllib.parse.parse_qs(query).get("game", [""])[0].strip()
+                refused = self._game_in_front(game)
+                if refused:
+                    return self._send(refused[0], {"ok": False, "error": refused[1]})
+                png = agent.shooter()
+                if not png:
+                    return self._send(409, {"ok": False, "error": "no picture"})
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(png)))
+                self.end_headers()
+                self.wfile.write(png)
+                return None
+
+            def _click(self, body: dict):
+                game = str(body.get("game") or "").strip()
+                refused = self._game_in_front(game)
+                if refused:
+                    return self._send(refused[0], {"ok": False, "error": refused[1]})
+                try:
+                    fx, fy = float(body.get("x")), float(body.get("y"))
+                except (TypeError, ValueError):
+                    return self._send(400, {"error": "send x and y between 0 and 1"})
+                if not (0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0):
+                    return self._send(400, {"error": "send x and y between 0 and 1"})
+                why = agent.clicker(fx, fy)
+                if why:
+                    return self._send(409, {"ok": False, "error": why})
+                return self._send(200, {"ok": True})
 
             def _launch(self, body: dict):
                 wanted = str(body.get("name") or "").strip().lower()

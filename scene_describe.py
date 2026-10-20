@@ -98,8 +98,9 @@ def _api_key() -> str | None:
 
 
 def _call(limit_name: str, jpeg: bytes, system: str, text: str,
-          max_tokens: int) -> tuple[str | None, str]:
-    """One vision request. (text, "") or (None, why). Never raises."""
+          max_tokens: int, media_type: str = "image/jpeg") -> tuple[str | None, str]:
+    """One vision request. (text, "") or (None, why). Never raises.
+    `media_type`: the laptop's game pictures are PNG (laptop_games.py)."""
     global last_cost_usd, last_model
     last_cost_usd, last_model = 0.0, ""
     key = _api_key()
@@ -127,13 +128,19 @@ def _call(limit_name: str, jpeg: bytes, system: str, text: str,
             system=system,
             messages=[{"role": "user", "content": [
                 {"type": "image", "source": {
-                    "type": "base64", "media_type": "image/jpeg",
+                    "type": "base64", "media_type": media_type,
                     "data": base64.b64encode(jpeg).decode()}},
                 {"type": "text", "text": text},
             ]}],
         )
     except Exception as exc:                            # noqa: BLE001
         log.warning("vision call failed (%s: %s)", type(exc).__name__, exc)
+        try:
+            import brain as _brain                      # noqa: PLC0415
+            if _brain.note_api_error(exc):
+                return None, "no API credit"
+        except Exception:                               # noqa: BLE001
+            pass
         return None, f"{type(exc).__name__}: {str(exc)[:120]}"
 
     # Counted as used only once it has actually run -- a call that failed to

@@ -25,6 +25,13 @@ import config                                           # noqa: E402
 
 TMP = Path(tempfile.mkdtemp(prefix="friday-file16-"))
 config.MEMORY_DB = TMP / "memory.db"
+# Never the real laptop: ReminderWatch also offers her own laptop play and
+# game reactions, and with his real laptop on it asked it for its idle
+# time and offered a search instead of the briefing (2026-10-20).
+config.LAPTOP_AGENT_FILE = TMP / "laptop_agent.json"
+config.LAPTOP_SEEN_FILE = TMP / "laptop_seen.json"
+config.LAPTOP_APPS_FILE = TMP / "laptop_apps.json"
+config.WAKE_HEARTBEAT_FILE = TMP / "wake_alive.json"
 config.BRIEFING_FILE = TMP / "briefing.json"
 config.LISTENING_FILE = TMP / "listening.json"
 config.SPEAKING_FILE = TMP / "speaking.json"

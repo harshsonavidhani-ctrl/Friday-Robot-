@@ -79,6 +79,14 @@ def stop() -> str:
     """
     said = safety.emergency_stop()
     try:
+        # "Stop" also ends her playing a game on Harsh's laptop (2026-10-20).
+        # After the motors, never instead of them, and it cannot raise.
+        import laptop_games
+        if laptop_games.stop_playing():
+            said += " I've stopped playing the game."
+    except Exception as exc:                        # noqa: BLE001
+        log.warning("could not stop the laptop game: %s", exc)
+    try:
         from mcp_server.tools import autonomy
         if autonomy._running():
             # The unit's own teardown halts the motors and puts her services

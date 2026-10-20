@@ -506,6 +506,17 @@ LAPTOP_PLAY_HOURS = (9, 22)            # local hours, [start, end)
 LAPTOP_MISS = True
 LAPTOP_MISS_AFTER_S = 7200.0
 LAPTOP_MISS_GAP_S = 14400.0
+# GAMES (laptop_games.py, 2026-10-20 -- Harsh: "both, but the 2nd one command
+# driven: friday you play the game"). WATCH: while he plays (laptop touched in
+# the last LAPTOP_GAME_WATCH_ACTIVE_S, a game in front) she reacts at most
+# every LAPTOP_GAME_WATCH_GAP_S -- one paid vision look each. PLAY: only when
+# he says so, slow games only, at most GAME_PLAY_MAX_MOVES clicks, a pause
+# between them. Both: the daily spend cap and RATE_LIMITS apply.
+LAPTOP_GAME_WATCH = True
+LAPTOP_GAME_WATCH_GAP_S = 90.0
+LAPTOP_GAME_WATCH_ACTIVE_S = 20.0
+GAME_PLAY_MAX_MOVES = 60
+GAME_PLAY_PAUSE_S = 1.5
 LAPTOP_SAVE_TIMEOUT_S = 10.0
 LAPTOP_NOTES_MODEL = MODEL_FAST       # Haiku: web_search_20250305
 LAPTOP_NOTES_TIMEOUT_S = 120.0        # one notes call (a thread, not a tool call)
@@ -739,6 +750,9 @@ RATE_LIMITS = {
     "laptop_key": {"min_interval_s": 0.5, "per_hour": 240, "per_day": 1500},
     # opening apps: free, but a loop opening programs on his screen is a fault
     "laptop_launch": {"min_interval_s": 2.0, "per_hour": 40, "per_day": 200},
+    # laptop games: one paid vision look each (~$0.001 on Haiku)
+    "game_watch": {"min_interval_s": 60.0, "per_hour": 30, "per_day": 150},
+    "game_play": {"min_interval_s": 1.0, "per_hour": 400, "per_day": 1200},
     # Not money: wheels. The same three numbers keep the idle drive (step 9,
     # physical_curiosity.py) from becoming a robot that paces the room.
     "physical_curiosity": {"min_interval_s": 1800.0, "per_hour": 2,
