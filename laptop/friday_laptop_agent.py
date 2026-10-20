@@ -12,11 +12,18 @@ once whether Python may use the network: tick Private AND Public, Allow.
 
 WHAT IT DOES -- AND ONLY THIS
   GET  /health                                    {"ok": true}
-  POST /open   {"site": "web" | "youtube", "query": "...", "play": false}
+  POST /open   {"site": "web" | "youtube" | "store", "query": "...", "play": false}
         Opens a Google or YouTube search for those words in the default
-        browser; "play" on YouTube opens the top video instead. Only those
-        two sites, and only a URL built HERE from the words -- never a URL, a
-        file name or a command sent by the Pi.
+        browser; "play" on YouTube opens the top video instead. "store"
+        (helper 8) opens a Microsoft Store SEARCH for the words -- nothing is
+        installed unless someone presses Get. Only those, and only a URL
+        built HERE from the words -- never a URL, a file name or a command
+        sent by the Pi.
+  POST /step   {"game", "keys": [...], "ms", "before", "after", "shot"} (helper 8+)
+        Holds up to 3 GAME_KEYS (arrows, space, enter, escape, shift, w a s d
+        n v x z) together for at most STEP_MAX_MS, ONLY while that game is the
+        window in front -- let go the moment it is not -- and hands back the
+        next picture. How she plays a fast game, a short step at a time.
   POST /notes  {"title": "...", "markdown": "..."}
         Writes ONE .md file into NOTES_DIR (default ~/Friday_Notes), never
         overwriting, never outside that folder, and opens it in Notepad.
@@ -271,6 +278,8 @@ def _fetch(url: str) -> str:
 
 def build_url(site: str, query: str, play: bool = False, fetch=_fetch) -> str:
     words = urllib.parse.quote_plus(query)
+    if site == "store":                         # helper 8: a Store SEARCH page only
+        return f"ms-windows-store://search/?query={urllib.parse.quote(query)}"
     if site == "web":
         return f"https://www.google.com/search?q={words}"
     results = f"https://www.youtube.com/results?search_query={words}"
@@ -749,8 +758,8 @@ class Agent:
             def _open(self, body: dict):
                 site = str(body.get("site") or "web")
                 query = str(body.get("query") or "").strip()
-                if site not in ("web", "youtube"):
-                    return self._send(400, {"error": "site is web or youtube"})
+                if site not in ("web", "youtube", "store"):
+                    return self._send(400, {"error": "site is web, youtube or store"})
                 if not query or len(query) > MAX_QUERY:
                     return self._send(400, {"error": "query is empty or too long"})
                 url = build_url(site, query, bool(body.get("play")),
