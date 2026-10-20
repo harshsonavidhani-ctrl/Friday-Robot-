@@ -22,6 +22,7 @@ _TMP = Path(tempfile.mkdtemp())
 config.LAPTOP_SEEN_FILE = _TMP / "laptop_seen.json"
 config.LAPTOP_APPS_FILE = _TMP / "laptop_apps.json"
 config.RATE_LIMIT_FILE = _TMP / "rate_limits.json"
+config.LAPTOP_GAME_STATE_FILE = _TMP / "laptop_game.json"
 config.GAME_PLAY_PAUSE_S = 0.01
 config.LAPTOP_GAME_WATCH = True
 
@@ -188,6 +189,10 @@ check("...a menu button is still a click", CLICKS[-1:] == [("Grand Theft Auto V 
 check("...told it is a keyboard game", any("keyboard" in c[2] or "keys" in c[2] for c in CALLS)
       or "keyboard" in lg.KEYS_SYSTEM, str(CALLS[:1]))
 check("...and she says when it is over", SAID and "race over" in SAID[-1], str(SAID[-1:]))
+st = lg.state()
+check("...and the dashboard's file says what happened (not running, moves, why)",
+      st.get("running") is False and st.get("moves") == 4 and st.get("fast") is True
+      and st.get("why") == "race over", str(st))
 
 STEPS.clear()
 config.GAME_PAUSE_KEYS = {"grand": "escape"}

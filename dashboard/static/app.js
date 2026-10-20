@@ -1341,6 +1341,113 @@ function wireDay() {
   $('remtext').onkeydown = (e) => { if (e.key === 'Enter') add(); };
 }
 
+/* ---------- laptop (2026-10-21) ----------
+   Her play goes through the same MCP tools as her voice. Status is polled
+   here, not in the heartbeat: it asks the laptop over Wi-Fi, which can take
+   seconds, and only while this tab is visible. The picture is fetched only
+   while "Show the game" is on. */
+
+let laptopPicOn = false, laptopPicTimer = null, laptopTimer = null;
+
+function fill(sel, names, keepFirst) {
+  const want = names.join('\n');
+  if (sel.dataset.names === want) return;
+  sel.dataset.names = want;
+  const first = keepFirst ? sel.firstElementChild : null;
+  sel.textContent = '';
+  if (first) sel.appendChild(first);
+  for (const n of names) {
+    const o = document.createElement('option');
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  }
+}
+
+function paintLaptop(d) {
+  const badge = $('laptopnow');
+  if (!badge || !d) return;
+  const play = d.play || {};
+  if (!d.configured) { badge.textContent = 'not set up'; return; }
+  badge.textContent = play.running ? 'she is playing' : (d.on ? 'on' : 'off');
+  badge.classList.toggle('on', !!play.running);
+  const f = d.front || {};
+  $('laptopfront').textContent = !d.on
+    ? 'The laptop is off, asleep, or its helper is not running.'
+    : `In front: ${f.title || f.app || 'nothing'}` +
+      (d.game ? ` (your game: ${d.game})` : '') +
+      (f.idle_s != null ? ` · untouched ${Math.round(f.idle_s)} s` : '') +
+      (d.version && d.version < 8 ? ' · helper ' + d.version + ': copy the new one to play fast games' : '');
+  fill($('laptopgame'), d.games || [], true);
+  fill($('laptopapps'), d.apps || [], false);
+  $('laptopplaying').textContent = play.game
+    ? (play.running
+        ? `Playing ${play.game}: ${play.moves || 0} moves` + (play.last ? ` · last: ${play.last}` : '')
+        : `Last game: ${play.game}, ${play.moves || 0} moves${play.why ? ' · ' + play.why : ''}`)
+    : '';
+}
+
+async function refreshLaptop() {
+  if (document.hidden || !$('panel-laptop')) return;
+  try {
+    const r = await fetch('/api/laptop');
+    if (r.ok) paintLaptop(await r.json());
+  } catch {}
+}
+
+async function laptopPost(body, okMsg) {
+  try {
+    const r = await fetch('/api/laptop', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { toast(await r.text(), true); return; }
+    const d = await r.json();
+    toast(d.ok ? (d.result || okMsg) : d.why, !d.ok);
+    setTimeout(refreshLaptop, 1500);
+  } catch (e) { toast(String(e), true); }
+}
+
+async function laptopPicture() {
+  if (!laptopPicOn || document.hidden) return;
+  const img = $('laptoppic'), note = $('laptoppicnote');
+  try {
+    const r = await fetch('/api/laptop/screen.png', { cache: 'no-store' });
+    if (r.ok) {
+      const url = URL.createObjectURL(await r.blob());
+      const old = img.src;
+      img.src = url; img.hidden = false; note.hidden = true;
+      if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+    } else {
+      const d = await r.json().catch(() => ({}));
+      note.textContent = d.why || 'No picture'; note.hidden = false;
+    }
+  } catch (e) { note.textContent = String(e); note.hidden = false; }
+}
+
+function wireLaptop() {
+  if (!$('panel-laptop')) return;
+  $('laptopplay').onclick = () => laptopPost({ action: 'play', game: $('laptopgame').value }, 'She is playing');
+  $('laptopstop').onclick = () => laptopPost({ action: 'stop' }, 'Your turn');
+  const open = () => {
+    const name = $('laptopapp').value.trim();
+    if (!name) { toast('Which app?', true); return; }
+    laptopPost({ action: 'open', name }, 'Opening ' + name);
+    $('laptopapp').value = '';
+  };
+  $('laptopopen').onclick = open;
+  $('laptopapp').onkeydown = (e) => { if (e.key === 'Enter') open(); };
+  $('laptoppicbtn').onclick = () => {
+    laptopPicOn = !laptopPicOn;
+    $('laptoppicbtn').classList.toggle('on', laptopPicOn);
+    $('laptoppicbtn').textContent = laptopPicOn ? 'Hide the game' : 'Show the game';
+    clearInterval(laptopPicTimer);
+    if (laptopPicOn) { laptopPicture(); laptopPicTimer = setInterval(laptopPicture, 2500); }
+    else { $('laptoppic').hidden = true; $('laptoppicnote').hidden = true; }
+  };
+  refreshLaptop();
+  laptopTimer = setInterval(refreshLaptop, 5000);
+}
+
 /* ---------- describe (file 15) ----------
    The button writes the same switch as "keep describing what you see". The
    heartbeat repaints it, so a voice "stop describing" or the timeout shows
@@ -1701,6 +1808,7 @@ function showPane(id) {
   setActive(state.mood);
   paintScreen(state.screen);
   paintNarration(state.narration);
+  wireLaptop();
   wireDay();
   paintDay(state.day);
   paintEnvs(state.environments);

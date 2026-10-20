@@ -341,7 +341,10 @@ GAME_TITLES = re.compile(
     r"hill climb|candy crush|solitaire|minesweeper|chess|among us|genshin|"
     r"call of duty|\bcod\b|battlefield|assassin|far cry|witcher|cyberpunk|"
     r"hollow knight|terraria|stardew|cuphead|fall guys|pinball|sudoku|"
-    r"evil nun|crimson snow|dcs world|flight simulator|racing", re.IGNORECASE)
+    r"evil nun|crimson snow|dcs world|flight simulator|racing|"
+    # 2026-10-21, his laptop: Granny 3, Granny Chapter Two, Ice Scream 1 Scary
+    # Horror, The Twins were not games to her ("you play Granny" -> not found).
+    r"granny|ice scream|the twins|scary|horror|zombie|\bkart\b|drift", re.IGNORECASE)
 GAME_WORDS = re.compile(r"\bgames?\b", re.IGNORECASE)
 NOT_A_GAME = re.compile(r"launcher|game bar|play games|store|xbox|settings|"
                         r"\bbar\b|helper|services|overlay", re.IGNORECASE)

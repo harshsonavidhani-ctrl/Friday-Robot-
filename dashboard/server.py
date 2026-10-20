@@ -27,6 +27,9 @@ Serves:
     GET  /api/screen           what is on the 7" panel, and what is scheduled
     POST /api/screen           {"action": "alarm"|"timer"|"launch"|"dismiss"|
                                           "cancel", ...}
+    GET  /api/laptop           the laptop: on?, what is in front, her game
+    GET  /api/laptop/screen.png  the game window (only a game of his, in front)
+    POST /api/laptop           {"action": "play"|"stop"|"open", ...} via MCP
     GET  /ca.crt               Friday's CA, to install on the phone once
 
 Nothing here talks to the robot directly except through face_control, which
@@ -560,6 +563,89 @@ async def api_narration_post(request: web.Request) -> web.Response:
     import narration
     narration.set_mode(payload["on"], by="dashboard")
     return web.json_response({"ok": True, **narration_state()})
+
+
+# --- Laptop (file 20 + laptop games, 2026-10-21) -------------------------------
+# Harsh: "can you add this feature in dashboard as well". READ: is the laptop
+# on, what is in front, which game, what she is playing (laptop_games writes
+# state/laptop_game.json from friday-mcp, where she plays), and -- only while
+# one of HIS GAMES is the window in front -- a picture of that game window,
+# the same picture she gets. WRITE: exactly three actions, all through the
+# MCP tools her voice uses, so voice and dashboard steer one game:
+#   {"action": "play", "game": ""} | {"action": "stop"} | {"action": "open", "name": "..."}
+# Never a key, click, URL or command from here.
+
+_LAPTOP_VERSION = {"v": 0, "at": 0.0}
+
+
+def laptop_state() -> dict:
+    """Blocking (network, a few seconds at worst): run in a thread."""
+    import laptop_games
+    import laptop_play
+    import laptop_research as lr
+    if not lr.configured():
+        return {"configured": False}
+    on = laptop_play.laptop_on(time.time())
+    info = lr.idle() if on else None
+    if info is not None and time.time() - _LAPTOP_VERSION["at"] > 60.0:
+        _LAPTOP_VERSION.update(v=lr.helper_version(), at=time.time())
+    apps = lr.known_apps()
+    return {"configured": True, "on": bool(on and info is not None),
+            "version": _LAPTOP_VERSION["v"] if info is not None else 0,
+            "front": {k: (info or {}).get(k) for k in ("app", "title", "idle_s")},
+            "game": laptop_games.game_in_front(info, apps) if info else None,
+            "play": laptop_games.state(),
+            "games": sorted(a["name"] for a in apps if lr.is_game(a)),
+            "apps": sorted(a["name"] for a in apps)}
+
+
+async def api_laptop_get(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(await asyncio.to_thread(laptop_state))
+    except Exception as exc:                        # noqa: BLE001
+        return web.json_response({"configured": True, "on": False, "error": str(exc)})
+
+
+def _laptop_game_picture() -> tuple[bytes | None, str]:
+    import laptop_games
+    import laptop_research as lr
+    game = laptop_games.game_in_front(lr.idle(), lr.known_apps())
+    if game is None:
+        return None, "no game of yours is in front"
+    return lr.screen(game)
+
+
+async def api_laptop_screen(request: web.Request) -> web.Response:
+    png, why = await asyncio.to_thread(_laptop_game_picture)
+    if not png:
+        return web.json_response({"ok": False, "why": why}, status=409)
+    return web.Response(body=png, content_type="image/png",
+                        headers={"Cache-Control": "no-store"})
+
+
+async def api_laptop_post(request: web.Request) -> web.Response:
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise web.HTTPBadRequest(text="body must be JSON")
+    action = str(payload.get("action", "")) if isinstance(payload, dict) else ""
+    if action == "play":
+        tool, args = "laptop_game_play", {"action": "start",
+                                          "game": str(payload.get("game", ""))[:60]}
+    elif action == "stop":
+        tool, args = "laptop_game_play", {"action": "stop"}
+    elif action == "open":
+        name = str(payload.get("name", "")).strip()[:60]
+        if not name:
+            raise web.HTTPBadRequest(text="which app?")
+        tool, args = "laptop_open_app", {"name": name}
+    else:
+        raise web.HTTPBadRequest(text="action must be play, stop or open")
+    try:
+        said = await robot.call(tool, args, timeout=30.0)
+    except robot.RobotUnavailable as exc:
+        return web.json_response({"ok": False, "why": f"her body is not answering ({exc})"})
+    return web.json_response({"ok": True, "result": said})
 
 
 # --- Environments (file 19) ------------------------------------------------
@@ -1359,6 +1445,9 @@ def build_app() -> web.Application:
     app.router.add_get("/api/screen", api_screen_get)
     app.router.add_post("/api/screen", api_screen_post)
     app.router.add_post("/api/narration", api_narration_post)
+    app.router.add_get("/api/laptop", api_laptop_get)
+    app.router.add_get("/api/laptop/screen.png", api_laptop_screen)
+    app.router.add_post("/api/laptop", api_laptop_post)
     app.router.add_post("/api/reminders", api_reminders_post)
     app.router.add_post("/api/memory", api_memory_post)
     app.router.add_post("/api/landmarks", api_landmarks_post)

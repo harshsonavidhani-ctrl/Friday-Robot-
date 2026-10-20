@@ -877,3 +877,10 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
 .navplan .start { fill: #7bd88f; }
 .navplan .her { fill: #ffffff; }
 .navplan .edge { fill: #ffd166; }
+
+/* Laptop panel (2026-10-21): the game window she plays from. */
+.laptopsel{flex:1;min-width:0;background:var(--bg2);border:1px solid var(--line);
+  border-radius:8px;color:var(--text);padding:8px 10px;font:inherit;font-size:13px}
+.laptoppic{display:block;width:100%;height:auto;margin-top:8px;border-radius:8px;
+  border:1px solid var(--line);background:#000}
+.laptoppic[hidden]{display:none}

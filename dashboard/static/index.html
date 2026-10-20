@@ -229,6 +229,40 @@
       </div>
     </section>
 
+    <section class="panel" id="panel-laptop">
+      <div class="panelhead">
+        <h2>Laptop</h2>
+        <span class="badge" id="laptopnow">…</span>
+      </div>
+      <div class="screen">
+        <!-- 2026-10-21. The same tools as her voice ("Friday, you play Asphalt",
+             "my turn", "open WhatsApp"), through friday-mcp, so voice and this
+             panel steer ONE game. The picture is the one she plays from: only
+             a game of his, only while it is the window in front. -->
+        <p class="drivenote" id="laptopfront"></p>
+        <div class="screenrow">
+          <label for="laptopgame">Friday plays</label>
+          <div class="calfield">
+            <select id="laptopgame" class="laptopsel"><option value="">the game in front</option></select>
+            <button id="laptopplay">Play</button>
+            <button id="laptopstop">My turn</button>
+          </div>
+        </div>
+        <p class="drivenote" id="laptopplaying"></p>
+        <button class="narratebtn" id="laptoppicbtn">Show the game</button>
+        <img id="laptoppic" class="laptoppic" alt="The game window on the laptop" hidden>
+        <p class="drivenote" id="laptoppicnote" hidden></p>
+        <div class="screenrow">
+          <label for="laptopapp">Open on the laptop</label>
+          <div class="calfield">
+            <input type="text" id="laptopapp" list="laptopapps" placeholder="WhatsApp" maxlength="60">
+            <button id="laptopopen">Open</button>
+          </div>
+          <datalist id="laptopapps"></datalist>
+        </div>
+      </div>
+    </section>
+
     <section class="panel" id="panel-explore">
       <div class="panelhead">
         <h2>Explore</h2>

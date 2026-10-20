@@ -39,6 +39,7 @@ import logging
 import re
 import threading
 import time
+from pathlib import Path
 
 import config
 
@@ -114,6 +115,30 @@ _state = {"last_watch": 0.0, "last_game": "", "recent": []}
 TITLE_BAND = 0.06            # top of the picture = the window's title bar: never clicked
 _play_lock = threading.Lock()
 _play: dict = {"thread": None, "stop": None, "game": "", "moves": 0, "why": ""}
+
+
+def _publish(running: bool, last: str = "") -> None:
+    """What she is playing, for the dashboard (it runs in another process):
+    config.LAPTOP_GAME_STATE_FILE. Never raises."""
+    try:
+        path = Path(config.LAPTOP_GAME_STATE_FILE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(json.dumps({
+            "running": running, "game": _play.get("game", ""),
+            "moves": _play.get("moves", 0), "why": _play.get("why", ""),
+            "fast": bool(_play.get("fast")), "last": last, "at": time.time()}))
+        tmp.replace(path)
+    except Exception as exc:                        # noqa: BLE001
+        log.debug("game state not written: %s", exc)
+
+
+def state() -> dict:
+    """The last _publish(), or {} -- read by the dashboard."""
+    try:
+        return json.loads(Path(config.LAPTOP_GAME_STATE_FILE).read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 def game_words(name: str) -> set[str]:
@@ -323,6 +348,7 @@ def _loop(game: str, stop: threading.Event, say=_say, fast: bool = False,
     if wait_s and not _wait_in_front(game, stop, wait_s):
         why = "stopped" if stop.is_set() else "it didn't open in front"
         _play["why"] = why
+        _publish(False)
         say("Okay, your turn." if why == "stopped" else f"I couldn't play {game}: {why}.")
         return why
     if fast:
@@ -395,10 +421,12 @@ def _loop(game: str, stop: threading.Event, say=_say, fast: bool = False,
                 break
         _play["moves"] = n + 1
         recent.append(f"{label} {move['why']}".strip())
+        _publish(True, recent[-1])
         if stop.wait(pause):
             why = "stopped"
             break
     _play["why"] = why
+    _publish(False, recent[-1] if recent else "")
     log.info("game play of %s ended after %d moves: %s", game, _play["moves"], why)
     if why == "stopped":
         say("Okay, your turn.")
@@ -452,6 +480,7 @@ def play_start(game_hint: str = "", say=_say) -> str:
                          name="laptop-game", daemon=True)
     with _play_lock:
         _play.update(thread=t, stop=stop, game=game, moves=0, why="", fast=fast)
+    _publish(True, "opening it" if wait_s else "")
     t.start()
     opening = f"Opening {game}. " if wait_s else ""
     if fast:
