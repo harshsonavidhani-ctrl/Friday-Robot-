@@ -28,6 +28,7 @@ config.LAPTOP_AGENT_FILE.parent.mkdir(parents=True)
 config.LAPTOP_AGENT_FILE.write_text(json.dumps({"url": "http://127.0.0.1:9", "token": "t" * 40}))
 config.LAPTOP_PLAY, config.LAPTOP_MISS = True, True
 config.LAPTOP_PLAY_HOURS = (0, 24)
+config.LAPTOP_MISS_HOURS = (0, 24)
 
 import laptop_play as lp                                 # noqa: E402
 import laptop_research as lr                             # noqa: E402
@@ -105,14 +106,19 @@ check("...and the only programs she opens are GAMES on his list (not Steam, not 
 
 print("missing the laptop")
 hello(None)
-reset(last_seen_on=NOW - 3 * 3600)
+reset(last_seen_on=NOW - 3700)
 item = lp.next_item(NOW, NOW - 60, rng)
-check("off for 3 h and he is here -> 'I miss my laptop'",
+check("off for just over an hour and he is here -> 'I miss my laptop'",
       item is not None and item["kind"] == "laptop_miss" and "laptop" in item["say"], str(item))
 reset(last_seen_on=NOW - 1800)
 check("off for only 30 min -> nothing", lp.next_item(NOW, NOW - 60, rng) is None)
 reset(last_seen_on=NOW - 3 * 3600, last_miss=NOW - 3600)
 check("said it an hour ago -> not again yet", lp.next_item(NOW, NOW - 60, rng) is None)
+reset()
+config.LAPTOP_MISS_HOURS = (9, 10)
+reset(last_seen_on=night - 3 * 3600)
+check("'miss' keeps its own hours: at 2 a.m. -> nothing", lp.next_item(night, night - 60, rng) is None)
+config.LAPTOP_MISS_HOURS = (0, 24)
 reset()
 check("first time ever (no record) counts as just seen -> nothing",
       lp.next_item(NOW, NOW - 60, rng) is None)

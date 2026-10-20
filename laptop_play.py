@@ -76,8 +76,8 @@ def mark(kind: str, now: float | None = None) -> None:
     _save(st)
 
 
-def _in_hours(now: float) -> bool:
-    start, end = getattr(config, "LAPTOP_PLAY_HOURS", (9, 22))
+def _in_hours(now: float, key: str = "LAPTOP_PLAY_HOURS") -> bool:
+    start, end = getattr(config, key, None) or getattr(config, "LAPTOP_PLAY_HOURS", (9, 22))
     return start <= time.localtime(now).tm_hour < end
 
 
@@ -158,15 +158,15 @@ def next_item(now: float, last_heard: float, rng: random.Random = random) -> dic
         if on or "last_seen_on" not in st:
             st["last_seen_on"] = now          # first run counts as "just seen"
             _save(st)
-        if not _in_hours(now) or not _present(now, last_heard):
+        if not _present(now, last_heard):
             return None
-        if on and play_on and now - float(st.get("last_play", 0.0)) >= float(
+        if on and play_on and _in_hours(now) and now - float(st.get("last_play", 0.0)) >= float(
                 config.LAPTOP_PLAY_GAP_S):
             info = lr.idle()                  # None with an old helper: no play
             if info and float(info.get("idle_s") or 0.0) >= float(config.LAPTOP_PLAY_IDLE_S):
                 return choose(now, rng)
             return None
-        if (not on and miss_on
+        if (not on and miss_on and _in_hours(now, "LAPTOP_MISS_HOURS")
                 and now - float(st.get("last_seen_on", now)) >= float(config.LAPTOP_MISS_AFTER_S)
                 and now - float(st.get("last_miss", 0.0)) >= float(config.LAPTOP_MISS_GAP_S)):
             return {"kind": "laptop_miss", "say": rng.choice(MISS_LINES)}

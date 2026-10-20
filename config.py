@@ -504,8 +504,9 @@ LAPTOP_PLAY_HOURS = (9, 22)            # local hours, [start, end)
 # "I miss my laptop" when it has been off LAPTOP_MISS_AFTER_S and he is
 # around, at most once per LAPTOP_MISS_GAP_S, inside LAPTOP_PLAY_HOURS.
 LAPTOP_MISS = True
-LAPTOP_MISS_AFTER_S = 7200.0
+LAPTOP_MISS_AFTER_S = 3600.0            # Harsh 2026-10-20: after 1 hour off (was 2)
 LAPTOP_MISS_GAP_S = 14400.0
+LAPTOP_MISS_HOURS = (9, 23)            # local hours, [start, end); play keeps LAPTOP_PLAY_HOURS
 # GAMES (laptop_games.py, 2026-10-20 -- Harsh: "both, but the 2nd one command
 # driven: friday you play the game"). WATCH: while he plays (laptop touched in
 # the last LAPTOP_GAME_WATCH_ACTIVE_S, a game in front) she reacts at most
