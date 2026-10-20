@@ -134,6 +134,19 @@ APPS_REFRESH_S = 600.0
 _GENERIC_WORDS = {"game", "games", "launcher", "for", "windows", "the", "app",
                   "and", "casual", "edition", "microsoft", "collection", "free"}
 SCREEN_MAX_W = 960                         # the picture is scaled down to this
+# /step (helper 8): game keys only, held for a moment, ONLY while that game is
+# the window in front. name -> (virtual key, scan code, extended key?)
+GAME_KEYS = {
+    "up": (0x26, 0x48, True), "down": (0x28, 0x50, True),
+    "left": (0x25, 0x4B, True), "right": (0x27, 0x4D, True),
+    "space": (0x20, 0x39, False), "enter": (0x0D, 0x1C, False),
+    "escape": (0x1B, 0x01, False), "shift": (0x10, 0x2A, False),
+    "w": (0x57, 0x11, False), "a": (0x41, 0x1E, False), "s": (0x53, 0x1F, False),
+    "d": (0x44, 0x20, False), "n": (0x4E, 0x31, False), "v": (0x56, 0x2F, False),
+    "x": (0x58, 0x2D, False), "z": (0x5A, 0x2C, False),
+}
+STEP_MAX_MS = 2000                         # longest a key is ever held
+STEP_MAX_KEYS = 3
 STARTUP_NAME = "friday_laptop_helper.cmd"
 PI_FILE = "friday_pi.json"                  # where the Pi last called from
 NOWHERE = "192.0.2.1"                       # never sent to: only picks a route
@@ -581,6 +594,37 @@ def click_at(fx: float, fy: float) -> str:
     return ""
 
 
+def _game_key(name: str, up: bool) -> None:
+    import ctypes
+    vk, scan, ext = GAME_KEYS[name]
+    flags = (0x0001 if ext else 0) | (0x0002 if up else 0)  # EXTENDEDKEY, KEYUP
+    ctypes.windll.user32.keybd_event(vk, scan, flags, 0)
+
+
+def hold_keys(keys: list[str], ms: int, still_in_front) -> str:
+    """Hold GAME_KEYS down together for `ms`; let go of all of them the moment
+    the game stops being the window in front. Always released. '' or why it
+    stopped early (helper 8: how a racing game is driven)."""
+    if os.name != "nt":
+        return "keys work on Windows only"
+    down: list[str] = []
+    why = ""
+    try:
+        for key in keys:
+            _game_key(key, False)
+            down.append(key)
+        end = time.monotonic() + ms / 1000.0
+        while time.monotonic() < end:
+            if not still_in_front():
+                why = "the game is no longer the window in front"
+                break
+            time.sleep(min(0.025, max(0.0, end - time.monotonic())))
+    finally:
+        for key in reversed(down):
+            _game_key(key, True)
+    return why
+
+
 def idle_info() -> dict:
     """Seconds since the keyboard or mouse was last used, and the app in front."""
     if os.name != "nt":
@@ -604,7 +648,10 @@ class Agent:
     def __init__(self, cfg: dict, opener=webbrowser.open, shower=show_file,
                  fetch=_fetch, hello: Hello | None = None, presser=press,
                  lister=start_apps, launcher=open_app, idler=idle_info,
-                 titler=foreground_title, shooter=screen_png, clicker=click_at) -> None:
+                 titler=foreground_title, shooter=screen_png, clicker=click_at,
+                 holder=hold_keys) -> None:
+        self.holder = holder
+        self._step_lock = threading.Lock()
         self.cfg = cfg
         self.opener = opener
         self.shower = shower
@@ -629,7 +676,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/7"
+            server_version = "FridayLaptopHelper/8"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -666,12 +713,12 @@ class Agent:
                     return self._screen()
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 7})
+                return self._send(200, {"ok": True, "version": 8})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
                     return self._send(401, {"error": "unauthorised"})
-                if self.path not in ("/open", "/notes", "/key", "/launch", "/click"):
+                if self.path not in ("/open", "/notes", "/key", "/launch", "/click", "/step"):
                     return self._send(404, {"error": "not found"})
                 size = int(self.headers.get("Content-Length") or 0)
                 if size <= 0 or size > MAX_BODY:
@@ -691,6 +738,8 @@ class Agent:
                         return self._launch(body)
                     if self.path == "/click":
                         return self._click(body)
+                    if self.path == "/step":
+                        return self._step(body)
                     return self._notes(body)
                 except Exception as exc:                # noqa: BLE001
                     log.warning("%s failed: %s", self.path, exc)
@@ -748,6 +797,54 @@ class Agent:
                 why = agent.clicker(fx, fy)
                 if why:
                     return self._send(409, {"ok": False, "error": why})
+                return self._send(200, {"ok": True})
+
+            def _step(self, body: dict):
+                """{game, keys[], ms, before?, after?, shot?}: tap `before`
+                (e.g. escape to un-pause), hold `keys` for `ms`, take the
+                picture, tap `after` (pause again) -- so a fast game is played
+                one short step at a time. Game keys only, game in front only."""
+                game = str(body.get("game") or "").strip()
+                refused = self._game_in_front(game)
+                if refused:
+                    return self._send(refused[0], {"ok": False, "error": refused[1]})
+                keys = body.get("keys") or []
+                taps = [body.get("before"), body.get("after")]
+                try:
+                    ms = int(body.get("ms") or 0)
+                except (TypeError, ValueError):
+                    ms = -1
+                if (not isinstance(keys, list) or len(keys) > STEP_MAX_KEYS
+                        or any(k not in GAME_KEYS for k in keys)
+                        or any(t is not None and t not in GAME_KEYS for t in taps)
+                        or not 0 <= ms <= STEP_MAX_MS):
+                    return self._send(400, {"error": "keys from GAME_KEYS, ms 0..%d"
+                                                     % STEP_MAX_MS})
+                if not agent._step_lock.acquire(blocking=False):
+                    return self._send(409, {"ok": False, "error": "busy"})
+                try:
+                    def front() -> bool:
+                        return title_matches(agent.titler(), game)
+                    why = ""
+                    if taps[0]:
+                        why = agent.holder([taps[0]], 60, front)
+                        time.sleep(0.15)
+                    if not why and keys and ms:
+                        why = agent.holder(keys, ms, front)
+                    png = agent.shooter() if not why and body.get("shot") else None
+                    if not why and taps[1]:
+                        why = agent.holder([taps[1]], 60, front)
+                finally:
+                    agent._step_lock.release()
+                if why:
+                    return self._send(409, {"ok": False, "error": why})
+                if png:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(png)))
+                    self.end_headers()
+                    self.wfile.write(png)
+                    return None
                 return self._send(200, {"ok": True})
 
             def _launch(self, body: dict):
