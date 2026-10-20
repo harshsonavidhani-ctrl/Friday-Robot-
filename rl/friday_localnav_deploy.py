@@ -342,6 +342,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     choices=("auto", "espeak-ng", "espeak", "say", "pyttsx3", "log"))
     ap.add_argument("--voice-min-gap", type=float, default=1.2,
                     help="[s] minimum gap between two spoken phrases")
+    ap.add_argument("--voice-listen-gap", type=float, default=15.0,
+                    help="[s] after each phrase she stays quiet this long so the "
+                         "wake word can hear Harsh (0 = off); see ALWAYS_SAY")
     ap.add_argument("--voice-rate", type=int, default=165, help="words per minute")
     return ap
 

@@ -95,6 +95,17 @@ P_ROUTINE = 0        # "I found an unexplored area..."
 P_NOTABLE = 1        # route changes, area exhausted
 P_URGENT = 2         # stuck, recovery, safety intervention
 
+# SHE IS DEAF WHILE SHE TALKS (2026-10-19, Harsh: "she doesn't listen, Friday
+# stop"). The wake word mutes itself while any of her lines plays, ~5 s per
+# line here. With only min_gap_s between lines, the 17:55-17:57 run said
+# "Emergency stop. Something is directly in front of me." every ~7 s and the
+# wake word was muted 125 of 167 s (75%). So after each line she LISTENS for
+# listen_s, and a line that would land inside that window is dropped, not
+# queued (queued, it would be said late, about a stop that is over). These
+# keys say something only once a run and are never dropped by it.
+ALWAYS_SAY = frozenset({"boot", "done", "halt", "complete",
+                        "way_back", "way_back_done"})
+
 
 @dataclass(order=True)
 class _Utterance:
@@ -115,7 +126,7 @@ class VoiceAnnouncer:
     def __init__(self, *, enabled: bool = True, backend: str = "auto",
                  min_gap_s: float = 1.2, default_cooldown_s: float = 8.0,
                  max_queue: int = 4, voice: str | None = None,
-                 rate_wpm: int = 165) -> None:
+                 rate_wpm: int = 165, listen_s: float = 0.0) -> None:
         self.enabled = bool(enabled)
         # FILE 21 (2026-10-02): a predicate the run sets to its mission hold.
         # While it is true every line is DROPPED: the mission is asking Harsh a
@@ -125,6 +136,9 @@ class VoiceAnnouncer:
         self.muted = None
         self.dropped_muted = 0
         self.min_gap_s = float(min_gap_s)
+        self.listen_s = float(listen_s)
+        self.dropped_listen = 0
+        self._speaking = False
         self.default_cooldown_s = float(default_cooldown_s)
         self.voice = voice
         self.rate_wpm = int(rate_wpm)
@@ -196,6 +210,14 @@ class VoiceAnnouncer:
             return None
 
     # ---------------------------------------------------------------------- API ----
+    def _listening(self, key: str) -> bool:
+        """True while this line would cut into the window after her last line in
+        which she listens (see ALWAYS_SAY). Never for the once-a-run lines."""
+        if self.listen_s <= 0.0 or key in ALWAYS_SAY:
+            return False
+        return (self._speaking
+                or time.monotonic() - self._last_utterance_t < self.listen_s)
+
     def say(self, key: str, text: str, *, priority: int = P_ROUTINE,
             cooldown_s: float | None = None) -> bool:
         """Queue `text` for speech. Returns True if accepted. NEVER blocks.
@@ -212,6 +234,10 @@ class VoiceAnnouncer:
                 return False
         except Exception:                                   # noqa: BLE001
             pass                    # a broken predicate must never silence her
+
+        if self._listening(key):
+            self.dropped_listen += 1
+            return False
 
         now = time.monotonic()
         cd = self.default_cooldown_s if cooldown_s is None else float(cooldown_s)
@@ -288,12 +314,20 @@ class VoiceAnnouncer:
                     continue
             except Exception:                               # noqa: BLE001
                 pass                # a broken predicate must never silence her
+            # Two lines queued in the same tick both passed say(); the second
+            # would start the moment the first ends.
+            if self._listening(item.key):
+                self.dropped_listen += 1
+                continue
 
             LOGGER.info("SAY [%s] %s", item.key, item.text)
+            self._speaking = True
             try:
                 self._speak(item.text)
             except Exception as exc:                   # never kill the thread
                 LOGGER.warning("Speech backend failed (%s); continuing silently.", exc)
+            finally:
+                self._speaking = False
             self._last_utterance_t = time.monotonic()
             self.spoken += 1
 
@@ -326,8 +360,9 @@ class VoiceAnnouncer:
 
     # -------------------------------------------------------------------- report ---
     def report(self) -> None:
-        LOGGER.info("voice: backend=%s spoken=%d dropped(cooldown=%d full=%d)",
-                    self.backend, self.spoken, self.dropped_cooldown, self.dropped_full)
+        LOGGER.info("voice: backend=%s spoken=%d dropped(cooldown=%d full=%d "
+                    "listening=%d)", self.backend, self.spoken,
+                    self.dropped_cooldown, self.dropped_full, self.dropped_listen)
 
 
 def build_announcer(args) -> VoiceAnnouncer:
@@ -338,4 +373,5 @@ def build_announcer(args) -> VoiceAnnouncer:
         backend=getattr(args, "voice_backend", "auto"),
         min_gap_s=getattr(args, "voice_min_gap", 1.2),
         rate_wpm=getattr(args, "voice_rate", 165),
+        listen_s=getattr(args, "voice_listen_gap", 15.0),
     )

@@ -455,7 +455,7 @@ class Silence(Exception):
 
 
 fake_stt.Silence = Silence
-fake_stt.transcribe = lambda audio: "the kitchen" if audio else ""
+fake_stt.transcribe = lambda audio, **kw: "the kitchen" if audio else ""
 real_stt = sys.modules.get("stt")
 sys.modules["stt"] = fake_stt
 import initiative                                       # noqa: E402

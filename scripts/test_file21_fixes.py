@@ -306,7 +306,7 @@ class _Face:
     def set(self, *a): pass
     def rest(self): pass
 fake_stt = types.ModuleType("stt"); fake_stt.Silence = type("Silence", (Exception,), {})
-fake_stt.transcribe = lambda audio: "I found an unexplored area 3 metres to the west"
+fake_stt.transcribe = lambda audio, **kw: "I found an unexplored area 3 metres to the west"
 _real_stt = sys.modules.get("stt"); sys.modules["stt"] = fake_stt
 import initiative as _ini                                 # noqa: E402
 _ini.she_is_talking = lambda: False
@@ -348,6 +348,30 @@ check("lines queued BEFORE the hold are dropped as they come up, not said over "
       "his answer", all(_ok) and _vb.spoken <= 1 and _vb.dropped_muted >= 2,
       f"spoken {_vb.spoken}, dropped {_vb.dropped_muted}")
 _vb.close() if hasattr(_vb, "close") else None
+# 2026-10-19 17:55-17:57: a line every ~7 s muted the wake word 75% of the run,
+# and "Friday, stop" never got through. After a line she listens for listen_s.
+_vc = _fv.VoiceAnnouncer(enabled=True, backend="log", min_gap_s=0.0, listen_s=1.0)
+_v1 = _vc.say("reflex", "Emergency stop.")
+_time.sleep(0.3)
+_v2 = _vc.say("obstacle_ahead", "Obstacle ahead.")
+check("a line inside the listening window after the last one is dropped",
+      _v1 and not _v2 and _vc.dropped_listen == 1,
+      f"{_v1} {_v2} dropped {_vc.dropped_listen}")
+check("...a once-a-run line is still said ('Exploration stopped.')",
+      _vc.say("halt", "Exploration stopped.") is True)
+_time.sleep(1.4)
+check("...and after the window she talks again",
+      _vc.say("obstacle_ahead", "Obstacle ahead.") is True)
+_vc.close()
+_vd = _fv.VoiceAnnouncer(enabled=True, backend="log", min_gap_s=0.0, listen_s=1.0)
+_both = [_vd.say("reflex", "Emergency stop."), _vd.say("stuck", "I am stuck.")]
+_time.sleep(0.6)
+check("two lines queued in the same tick: the second is dropped as it comes up",
+      all(_both) and _vd.spoken == 1 and _vd.dropped_listen == 1,
+      f"spoken {_vd.spoken}, dropped {_vd.dropped_listen}")
+_vd.close()
+check("the run's default listening window is 15 s",
+      _fv.build_announcer(type("A", (), {"no_voice": True})()).listen_s == 15.0)
 pd_src = (ROOT / "rl" / "pi_deploy.py").read_text()
 check("the run wires its voice's mute to the mission hold",
       "self.voice.muted = self.hold.active" in pd_src)
