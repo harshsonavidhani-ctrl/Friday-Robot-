@@ -497,7 +497,7 @@ LAPTOP_APPS_FILE = ROOT / "state" / "laptop_apps.json"
 # person was seen), inside LAPTOP_PLAY_HOURS, not in quiet mode, at most once
 # per LAPTOP_PLAY_GAP_S. False = never on her own.
 LAPTOP_PLAY = True
-LAPTOP_PLAY_IDLE_S = 600.0
+LAPTOP_PLAY_IDLE_S = 240.0             # Harsh 2026-10-20: "4 mins" (was 10)
 LAPTOP_PLAY_GAP_S = 3600.0
 LAPTOP_PLAY_PRESENCE_S = 1200.0
 LAPTOP_PLAY_HOURS = (9, 22)            # local hours, [start, end)
