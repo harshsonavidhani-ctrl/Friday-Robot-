@@ -517,6 +517,11 @@ LAPTOP_GAME_WATCH_GAP_S = 90.0
 LAPTOP_GAME_WATCH_ACTIVE_S = 20.0
 GAME_PLAY_MAX_MOVES = 60
 GAME_PLAY_PAUSE_S = 1.5
+# OFFLINE CHEERING: when she cannot look (no credit, helper 5, a failed look)
+# she cheers in the game's spirit instead, at most every LAPTOP_GAME_CHEER_GAP_S.
+# LAPTOP_GAME_WATCH_ONLINE False = always cheer, never pay for a look.
+LAPTOP_GAME_WATCH_ONLINE = True
+LAPTOP_GAME_CHEER_GAP_S = 150.0
 LAPTOP_SAVE_TIMEOUT_S = 10.0
 LAPTOP_NOTES_MODEL = MODEL_FAST       # Haiku: web_search_20250305
 LAPTOP_NOTES_TIMEOUT_S = 120.0        # one notes call (a thread, not a tool call)

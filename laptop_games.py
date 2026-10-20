@@ -59,7 +59,40 @@ PLAY_SYSTEM = ("You are Friday, a small robot playing {game} on a laptop by clic
                "Click only on the board, cards or pieces: never menus, settings, ads, "
                "buttons that leave the game, close or minimise.")
 
-_state = {"last_watch": 0.0}
+# OFFLINE CHEERING (Harsh 2026-10-20: "it can be offline?" -> "yes add the
+# offline cheering"). No picture and no model: she knows WHICH game is in front
+# and that he is playing it, and cheers in that game's spirit. Used whenever a
+# real look is not possible -- no API credit, an older laptop helper, a failed
+# look -- and on its own with LAPTOP_GAME_WATCH_ONLINE False.
+CHEER_KINDS = [
+    ("gta", re.compile(r"grand theft|\bgta\b", re.I), [
+        "Watch out for the cops!", "Drive like you stole it! Oh wait.",
+        "Five stars incoming, run!", "Nice ride! Don't crash it."]),
+    ("racing", re.compile(r"asphalt|need for speed|forza|racing|\bcar\b|bike|hill climb|drift", re.I), [
+        "Floor it! Nitro now!", "Don't hit the wall!", "Faster! You've got this!",
+        "Ooh, nice drift!", "Overtake them!"]),
+    ("horror", re.compile(r"evil nun|granny|horror|scary|crimson snow|haunt|zombie", re.I), [
+        "I'm scared! Don't let her catch you!", "Did you hear that? Hide!",
+        "Run, run, run!", "Look behind you! Just kidding. Maybe."]),
+    ("shooter", re.compile(r"free ?fire|pubg|bgmi|call of duty|valorant|counter|fortnite|apex|"
+                           r"battlefield|overwatch", re.I), [
+        "Watch your back!", "Booyah! Get that win!", "Find cover!",
+        "Head shot! Nice!", "Squad up, you've got this!"]),
+    ("cards", re.compile(r"solitaire|freecell|spider|klondike|mahjong|chess|sudoku|minesweeper|"
+                         r"puzzle|crossword|2048|checkers", re.I), [
+        "Look for the aces first!", "Think it through, no rush.",
+        "Ooh, that's a clever move.", "You're getting close!"]),
+    ("building", re.compile(r"minecraft|terraria|roblox|stardew|build", re.I), [
+        "Build something huge!", "Watch out for creepers!", "Ooh, what are you making?",
+        "Don't dig straight down!"]),
+    ("flying", re.compile(r"dcs|flight|plane|jet|pilot", re.I), [
+        "Pull up! Pull up!", "Smooth landing, captain!", "Watch your altitude!"]),
+]
+CHEER_ANY = ["You've got this!", "Go Harsh!", "Ooh, this looks fun!", "Nice one!"]
+HELLO_LINES = ["Ooh, {game}! Let's go!", "{game}! I'll cheer for you.",
+               "Yay, {game} time!"]
+
+_state = {"last_watch": 0.0, "last_game": "", "recent": []}
 _play_lock = threading.Lock()
 _play: dict = {"thread": None, "stop": None, "game": "", "moves": 0, "why": ""}
 
@@ -76,13 +109,45 @@ def title_matches(title: str, game: str) -> bool:
 
 
 def game_in_front(info: dict | None, apps: list[dict]) -> str | None:
-    """Which of his games is the window in front, from the laptop's /idle."""
-    if not info or not info.get("title"):
+    """Which of his games is the window in front, from the laptop's /idle:
+    its window title (helper 6), or the program's name (helper 5 has no
+    title: "Asphalt8.exe" still says Asphalt)."""
+    if not info:
         return None
     import laptop_research as lr
-    hits = [a["name"] for a in apps if lr.is_game(a) and title_matches(info["title"], a["name"])]
-    return max(hits, key=lambda n: len(game_words(n) & set(
-        re.findall(r"[a-z0-9]+", info["title"].lower())))) if hits else None
+    seen = " ".join([str(info.get("title") or ""),
+                     re.sub(r"\.exe$", "", str(info.get("app") or ""), flags=re.I)])
+    seen = re.sub(r"([a-z])([0-9])", r"\1 \2", seen.lower())
+    words = set(re.findall(r"[a-z0-9]+", seen))
+    for w in list(words):                       # "GTA5.exe" -> grand theft auto
+        words |= set(lr.NICKNAMES.get(w, "").split())
+    hits = [a["name"] for a in apps if lr.is_game(a) and game_words(a["name"]) & words]
+    return max(hits, key=lambda n: len(game_words(n) & words)) if hits else None
+
+
+def cheer_kind(game: str) -> str:
+    for kind, pattern, _lines in CHEER_KINDS:
+        if pattern.search(game):
+            return kind
+    return "any"
+
+
+def cheer_line(game: str, rng=None) -> str:
+    """An offline cheer for `game`: hello the first time, then its kind's
+    lines, never one of the last few again."""
+    import random
+    rng = rng or random
+    short = re.split(r"\s+[-–:]\s+|\s+for windows", game, maxsplit=1, flags=re.I)[0]
+    if game != _state["last_game"]:
+        _state["last_game"] = game
+        line = rng.choice(HELLO_LINES).format(game=short)
+    else:
+        kind = cheer_kind(game)
+        pool = next((lines for k, _p, lines in CHEER_KINDS if k == kind), CHEER_ANY)
+        fresh = [l for l in pool + CHEER_ANY if l not in _state["recent"]] or pool
+        line = rng.choice(fresh)
+    _state["recent"] = (_state["recent"] + [line])[-5:]
+    return line
 
 
 def _credits_out() -> bool:
@@ -100,9 +165,13 @@ def watch_item(now: float | None = None) -> dict | None:
     gates first; the one paid look only when they all pass. Never raises."""
     now = time.time() if now is None else now
     try:
-        if not getattr(config, "LAPTOP_GAME_WATCH", False) or playing() or _credits_out():
+        if not getattr(config, "LAPTOP_GAME_WATCH", False) or playing():
             return None
-        if now - _state["last_watch"] < float(config.LAPTOP_GAME_WATCH_GAP_S):
+        online = (getattr(config, "LAPTOP_GAME_WATCH_ONLINE", True)
+                  and not _credits_out())
+        gap = float(config.LAPTOP_GAME_WATCH_GAP_S if online
+                    else getattr(config, "LAPTOP_GAME_CHEER_GAP_S", 150.0))
+        if now - _state["last_watch"] < gap:
             return None
         import laptop_play
         import laptop_research as lr
@@ -116,17 +185,22 @@ def watch_item(now: float | None = None) -> dict | None:
         if not game:
             return None
         _state["last_watch"] = now                  # one try per gap, paid or not
+        if not online:
+            return {"kind": "game_watch", "say": cheer_line(game), "game": game,
+                    "offline": True}
         png, why = lr.screen(game)
         if not png:
-            log.info("game watch: no picture of %s (%s)", game, why)
-            return None
+            log.info("game watch: no picture of %s (%s) -- cheering instead", game, why)
+            return {"kind": "game_watch", "say": cheer_line(game), "game": game,
+                    "offline": True}
         import scene_describe
         said, why = scene_describe._call("game_watch", png, WATCH_SYSTEM.format(game=game),
                                          f"Harsh is playing {game}. React, or SKIP.", 60,
                                          media_type="image/png")
         if not said:
-            log.info("game watch: no reaction (%s)", why)
-            return None
+            log.info("game watch: no look (%s) -- cheering instead", why)
+            return {"kind": "game_watch", "say": cheer_line(game), "game": game,
+                    "offline": True}
         line = said.strip().strip('"')
         if not line or line.upper().startswith("SKIP"):
             return None

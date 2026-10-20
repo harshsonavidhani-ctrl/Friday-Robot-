@@ -180,8 +180,47 @@ check("LAPTOP_GAME_WATCH False -> never", lg.watch_item() is None and len(CALLS)
 config.LAPTOP_GAME_WATCH = True
 brain._CREDIT_OUT_AT[0] = time.monotonic()
 lg._state["last_watch"] = 0.0
-check("out of API credit -> no look at all", lg.watch_item() is None and len(CALLS) == n)
+item = lg.watch_item()
+check("out of API credit -> no paid look, an OFFLINE cheer instead",
+      item is not None and item.get("offline") and len(CALLS) == n, str(item))
+check("...not again within the cheer gap (150 s)", lg.watch_item() is None)
 brain._CREDIT_OUT_AT[0] = 0.0
+
+print("offline cheering")
+import random                                             # noqa: E402
+lg._state.update(last_game="", recent=[])
+first = lg.cheer_line("Asphalt 8 - Car Racing Game", random.Random(1))
+check("the first line for a new game is a hello with its short name",
+      "Asphalt 8" in first and "Car Racing" not in first, first)
+lines = [lg.cheer_line("Asphalt 8 - Car Racing Game", random.Random(i)) for i in range(8)]
+check("then racing lines (or general ones), never a line from the last 5 again",
+      all(lines[i] not in lines[max(0, i - 4):i] for i in range(len(lines))), str(lines))
+check("kinds: GTA, racing, horror, shooter, cards, building, flying",
+      [lg.cheer_kind(g) for g in ("Grand Theft Auto V Enhanced", "Asphalt 8 - Car Racing Game",
+                                   "Evil Nun The Broken Mask", "Free Fire MAX Fire Kickoff",
+                                   "Solitaire & Casual Games", "Minecraft for Windows", "DCS World")]
+      == ["gta", "racing", "horror", "shooter", "cards", "building", "flying"])
+lr._save_apps(lr.known_apps() + [{"name": "Asphalt 8 - Car Racing Game", "via": "store"}])
+apps = lr.known_apps()
+check("helper 5 (no window title): 'Asphalt8.exe' is Asphalt",
+      lg.game_in_front({"idle_s": 1, "app": "Asphalt8.exe"}, apps) == "Asphalt 8 - Car Racing Game")
+check("...'GTA5.exe' is GTA (nickname)",
+      lg.game_in_front({"idle_s": 1, "app": "GTA5.exe"}, apps) == "Grand Theft Auto V Enhanced")
+check("...'WhatsApp.exe' is not a game", lg.game_in_front({"idle_s": 1, "app": "WhatsApp.exe"}, apps) is None)
+SCREEN["ok"] = False
+IDLE["v"] = {"idle_s": 2.0, "app": "solitaire.exe", "title": "Solitaire & Casual Games"}
+lg._state["last_watch"] = 0.0
+n = len(CALLS)
+item = lg.watch_item()
+check("no picture (an older helper / another window) -> a cheer, no paid look",
+      item is not None and item.get("offline") and len(CALLS) == n, str(item))
+SCREEN["ok"] = True
+config.LAPTOP_GAME_WATCH_ONLINE = False
+lg._state["last_watch"] = 0.0
+item = lg.watch_item()
+check("LAPTOP_GAME_WATCH_ONLINE False -> always cheers, never pays",
+      item is not None and item.get("offline") and len(CALLS) == n, str(item))
+config.LAPTOP_GAME_WATCH_ONLINE = True
 
 print("her words")
 import offline                                            # noqa: E402
