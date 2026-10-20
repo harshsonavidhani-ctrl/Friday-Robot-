@@ -41,6 +41,9 @@ config.LAPTOP_AGENT_FILE = TMP / "secrets" / "laptop_agent.json"
 config.LAPTOP_SEEN_FILE = TMP / "laptop_seen.json"
 config.LISTENING_FILE = TMP / "listening.json"
 config.SPEAKING_FILE = TMP / "speaking.json"
+# NOT the live mic: a loud room made initiative say "face only" and the
+# "ReminderWatch offers it" check fail whenever music was on (2026-10-20).
+config.WAKE_HEARTBEAT_FILE = TMP / "wake_alive.json"
 config.MODE_FILE = TMP / "mode.json"
 config.BRIEFING = False
 config.LAPTOP_HEALTH_TIMEOUT_S = 1.0
@@ -690,8 +693,10 @@ for heard, tool, args in [
     check(f"'{heard}' -> {tool}",
           i is not None and i.tool == tool and i.args == args,
           str(i and (i.tool, i.args)))
+# "play some music" WAS here: since 2026-10-20 it plays on YouTube (Harsh,
+# "hey friday play song" -- see the helper 4 section below).
 for heard in ("what is the capital of France", "search for my keys",
-              "remember that my exam is on Monday", "stop", "play some music"):
+              "remember that my exam is on Monday", "stop"):
     i = offline.understand(heard, strict=True)
     check(f"'{heard}' is not the laptop",
           i is None or i.tool not in ("laptop_search", "laptop_notes"))
@@ -714,6 +719,140 @@ check("no token in the code",
       not any(TOKEN in p.read_text(errors="ignore")
               for p in (ROOT / "laptop_research.py",
                         ROOT / "mcp_server/tools/research_tools.py")))
+
+# ---------------------------------------------------------------------------
+print("helper 4: POST /key presses ONE named key, and nothing else (2026-10-20)")
+pressed: list[str] = []
+refuse = [False]
+
+
+def fake_press(action: str, cfg: dict) -> str:
+    pressed.append(action)
+    if refuse[0] and action in ("close_tab", "fullscreen"):
+        return "the browser is not the window in front (winword.exe)"
+    return ""
+
+
+server3 = ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    agent_mod.Agent(CFG, opener=opened.append, shower=shown.append,
+                    fetch=fake_fetch, presser=fake_press).handler())
+P3 = server3.server_address[1]
+threading.Thread(target=server3.serve_forever, daemon=True).start()
+
+
+def post3(body: dict, token: str = TOKEN) -> tuple[int, dict]:
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{P3}/key", data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "X-Friday-Token": token},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read() or b"{}")
+
+
+config.RATE_LIMITS["laptop_key"] = dict(config.RATE_LIMITS["laptop_key"], min_interval_s=0.0)
+check("the Pi's list of key names is the helper's list",
+      set(lr.KEY_ACTIONS) == set(agent_mod.KEY_ACTIONS))
+code, _ = post3({"action": "next"}, token="x" * 40)
+check("/key with a wrong token -> 401, nothing pressed", code == 401 and pressed == [])
+code, _ = post3({"action": "rm -rf /"})
+check("an unknown name -> 400, nothing pressed", code == 400 and pressed == [])
+code, _ = post3({"action": "volume_up", "keys": [0x5B, 0x52]})
+check("extra fields are ignored: only the NAME picks the key",
+      code == 200 and pressed == ["volume_up"], str(pressed))
+for name in agent_mod.KEY_ACTIONS:
+    post3({"action": name})
+check("every listed name presses exactly that action",
+      pressed[1:] == list(agent_mod.KEY_ACTIONS), str(pressed))
+refuse[0] = True
+code, got = post3({"action": "close_tab"})
+check("close tab with no browser in front -> 409 and why",
+      code == 409 and "browser" in got.get("error", ""), str(got))
+check("off Windows the real presser presses nothing",
+      agent_mod.press("next", CFG) == "keys work on Windows only")
+check("a browser-only key (fullscreen) also refuses off Windows",
+      agent_mod.press("fullscreen", CFG) == "keys work on Windows only")
+
+settings(f"http://127.0.0.1:{P3}")
+refuse[0] = False
+check("press_key over the wire", lr.press_key("next") == (True, ""))
+check("press_key refuses a name the helper would not know, without asking it",
+      lr.press_key("format_disk") == (False, "unknown action"))
+said = rt.laptop_control("next")
+check("laptop_control('next') -> 'Next one.'", said == "Next one.", said)
+said = rt.laptop_control("Volume Up")
+check("...a spoken-ish name is normalised", said == "Louder.", said)
+said = rt.laptop_control("shutdown")
+check("...and anything off the list is refused, nothing sent",
+      said == "I can't do that on your laptop." and pressed[-1] == "volume_up", said)
+refuse[0] = True
+said = rt.laptop_control("close_tab")
+check("close tab with Word in front -> she says the browser isn't in front",
+      said.startswith("Your browser isn't the window in front"), said)
+refuse[0] = False
+
+# A helper from before /key: /health works, /key is 404 -> say what to do.
+from http.server import BaseHTTPRequestHandler                # noqa: E402
+
+
+class _OldHelper(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _reply(self, code, body):
+        data = json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):                                         # noqa: N802
+        self._reply(200, {"ok": True})
+
+    def do_POST(self):                                        # noqa: N802
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self._reply(404, {"error": "not found"})
+
+
+old = ThreadingHTTPServer(("127.0.0.1", 0), _OldHelper)
+threading.Thread(target=old.serve_forever, daemon=True).start()
+settings(f"http://127.0.0.1:{old.server_address[1]}")
+check("an old helper (no /key) is told apart", lr.press_key("next") == (False, "old helper"))
+said = rt.laptop_control("next")
+check("...and she says to copy the new helper", "new friday_laptop_agent.py" in said, said)
+old.shutdown()
+server3.shutdown()
+
+print("offline phrases for the laptop keys and 'play a song'")
+for phrase, action in (("pause the video", "play_pause"), ("stop the music", "play_pause"),
+                       ("next song", "next"), ("skip", "next"), ("previous song", "previous"),
+                       ("volume up", "volume_up"), ("turn the volume down on my laptop", "volume_down"),
+                       ("mute", "mute"), ("full screen", "fullscreen"),
+                       ("close this tab", "close_tab"), ("lock my laptop", "lock"),
+                       ("open my notes", "open_notes")):
+    got = offline.understand(f"Friday, {phrase}", strict=True)
+    check(f"{phrase!r} -> {action}", got is not None and got.name == "laptop_key"
+          and got.args == {"action": action}, str(got and (got.name, got.args)))
+for phrase in ("hey Friday play song", "Play Asong", "play some music", "gaana bajao"):
+    got = offline.understand(phrase, strict=True)
+    check(f"{phrase!r} -> YouTube plays {config.LAPTOP_DEFAULT_MUSIC!r}",
+          got is not None and got.name == "laptop_search"
+          and got.args == {"query": config.LAPTOP_DEFAULT_MUSIC, "site": "youtube", "play": True},
+          str(got and got.args))
+got = offline.understand("play tum hi ho by Arijit Singh", strict=True)
+check("'play <song>' plays it on YouTube",
+      got is not None and got.args.get("query") == "tum hi ho by Arijit Singh"
+      and got.args.get("play") is True, str(got and got.args))
+for phrase in ("play with me", "play a game", "play it again"):
+    got = offline.understand(phrase, strict=True)
+    check(f"{phrase!r} is not a song", got is None or got.name != "laptop_search",
+          str(got and got.name))
+check("plain 'stop' still stops the ROBOT", offline.understand("Friday stop").name == "stop")
+check("'make notes on X' is still notes, not a key",
+      offline.understand("make notes on black holes").name == "laptop_notes")
 
 server.shutdown()
 silent.close()

@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass, field
 
 import config
+import offline_extras
 
 log = logging.getLogger("friday.offline")
 
@@ -792,9 +793,59 @@ _NOTES_TAIL_RE = re.compile(
     rf"|\s+on\s+{_LAPTOP})$", re.IGNORECASE)
 
 
+# "PLAY A SONG" with no name (2026-10-20: "hey Friday play song", ignored 4
+# times -- only "play X on YouTube" existed, and whisper wrote "Play Asong").
+_PLAY_ANY_RE = re.compile(
+    r"^(?:play|put\s+on|start)\s+(?:a\s+|some\s+|any\s+|me\s+a\s+)?"
+    r"(?:song|songs|music|gaana|gaane|gana)(?:\s+please)?"
+    rf"(?:\s+on\s+{_LAPTOP})?$"
+    r"|^(?:gaana|gaane|song|music)\s+(?:bajao|chalao|lagao)$", re.IGNORECASE)
+# "play <name>" without "on YouTube" -- the song is the point, YouTube is
+# where songs are. Not a game, not "play with me", not "play it again".
+_PLAY_NAMED_RE = re.compile(
+    rf"^(?:play|put\s+on)\s+(?P<q>.+?)(?:\s+on\s+{_LAPTOP})?$", re.IGNORECASE)
+_PLAY_NOT_A_SONG = re.compile(
+    r"^(?:a\s+game|games?|with\s+me|it\s+again|again|dead|catch|chess|cards?"
+    r"|the\s+next\s+\w+|next|pause|it|that)$", re.IGNORECASE)
+_PLAY_MAX_WORDS = 8
+
+# ONE KEY on his laptop (helper 4, POST /key) -- (pattern, action).
+_MEDIA = r"(?:the\s+|this\s+)?(?:video|song|music|track|youtube|movie|it)"
+_LAPTOP_KEYS = [
+    (rf"^(?:pause|resume|unpause|continue)(?:\s+{_MEDIA})?(?:\s+on\s+{_LAPTOP})?$", "play_pause"),
+    # "stop" only when the media is NAMED: "stop it" / "stop that" stop HER
+    # (test_orders.py -- they did, until this table took "it" for a video).
+    (rf"^stop\s+(?:the\s+|this\s+)?(?:video|song|music|track|youtube|movie)"
+     rf"(?:\s+on\s+{_LAPTOP})?$", "play_pause"),
+    (rf"^(?:play\s+)?(?:the\s+)?next\s+(?:video|song|track|one)(?:\s+on\s+{_LAPTOP})?$"
+     rf"|^skip(?:\s+{_MEDIA})?$", "next"),
+    (r"^(?:play\s+)?(?:the\s+)?(?:previous|last)\s+(?:video|song|track)$", "previous"),
+    (rf"^(?:turn\s+(?:the\s+)?)?(?:laptop\s+)?volume\s+up(?:\s+on\s+{_LAPTOP})?$"
+     rf"|^(?:increase|raise)\s+(?:the\s+)?(?:laptop\s+)?volume(?:\s+on\s+{_LAPTOP})?$"
+     rf"|^(?:make\s+it\s+)?louder\s+on\s+{_LAPTOP}$|^turn\s+it\s+up$", "volume_up"),
+    (rf"^(?:turn\s+(?:the\s+)?)?(?:laptop\s+)?volume\s+down(?:\s+on\s+{_LAPTOP})?$"
+     rf"|^(?:decrease|lower|reduce)\s+(?:the\s+)?(?:laptop\s+)?volume(?:\s+on\s+{_LAPTOP})?$"
+     rf"|^(?:make\s+it\s+)?quieter\s+on\s+{_LAPTOP}$|^turn\s+it\s+down$", "volume_down"),
+    (rf"^(?:un)?mute(?:\s+(?:the\s+)?(?:laptop|sound|video|music|volume))?(?:\s+on\s+{_LAPTOP})?$",
+     "mute"),
+    (r"^(?:make\s+it\s+|go\s+|put\s+it\s+(?:in\s+|on\s+)?)?full\s*-?\s*screen$"
+     r"|^(?:exit|leave)\s+full\s*-?\s*screen$", "fullscreen"),
+    (r"^close\s+(?:the|this|that)\s+tab$", "close_tab"),
+    (rf"^lock\s+(?:{_LAPTOP}|(?:my|the)\s+screen)$", "lock"),
+    (r"^open\s+(?:my\s+)?(?:friday\s+)?notes(?:\s+folder)?$", "open_notes"),
+]
+_LAPTOP_KEYS = [(re.compile(p, re.IGNORECASE), a) for p, a in _LAPTOP_KEYS]
+
+
 def _laptop_intent(heard: str) -> Intent | None:
     """File 20: his laptop -- a search on its screen, or notes put there."""
     text = _ADDRESS_RE.sub("", heard).strip(" .!?")
+    # whisper writes "play a song" as "Play Asong" (2026-10-20)
+    text = re.sub(r"\basong\b", "a song", text, flags=re.IGNORECASE)
+    for pattern, action in _LAPTOP_KEYS:
+        if pattern.match(text):
+            return Intent(name="laptop_key", tool="laptop_control",
+                          args={"action": action})
     for pattern in (_NOTES_RE, _NOTES_TAIL_RE):
         match = pattern.match(text)
         if match and len(match.group("q").strip(" ,.?")) >= 3:
@@ -806,6 +857,17 @@ def _laptop_intent(heard: str) -> Intent | None:
             return Intent(name="laptop_search", tool="laptop_search",
                           args={"query": match.group("q").strip(" ,.?"),
                                 "site": site, "play": play})
+    if _PLAY_ANY_RE.match(text):
+        return Intent(name="laptop_search", tool="laptop_search",
+                      args={"query": config.LAPTOP_DEFAULT_MUSIC,
+                            "site": "youtube", "play": True})
+    match = _PLAY_NAMED_RE.match(text)
+    if match:
+        q = match.group("q").strip(" ,.?")
+        if (q and len(q.split()) <= _PLAY_MAX_WORDS
+                and not _PLAY_NOT_A_SONG.match(q)):
+            return Intent(name="laptop_search", tool="laptop_search",
+                          args={"query": q, "site": "youtube", "play": True})
     return None
 
 
@@ -1237,9 +1299,11 @@ def help_text() -> str:
         "get stuck. "
         "I can explore on my own, map the room, and tell you what I see or "
         "how far away things are. I can set alarms and timers, show the "
-        "clock, tell you the time and my battery. Say keep describing and "
-        "I'll tell you what I see as it changes. Say go to sleep and I'll "
-        "stop listening for a while."
+        "clock, tell you the time, the date and my battery. I can do sums, "
+        "tell a joke, flip a coin or roll a dice. On your laptop I can play "
+        "a song or search, pause, skip, change the volume, go full screen, "
+        "close the tab or lock it. Say go to sleep and I'll stop listening "
+        "for a while."
     )
 
 
@@ -1273,7 +1337,7 @@ _SPEAK_RESULT = frozenset({
     "reminder_add", "todo_add", "reminder_done", "reminder_list", "routine",
     "briefing", "calendar_add", "calendar_ask", "calendar_remove",
     "remember_forever", "forget", "forget_answer",
-    "laptop_search", "laptop_notes",
+    "laptop_search", "laptop_notes", "laptop_key",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -1308,7 +1372,9 @@ _REFLEX_INTENTS = frozenset({
     # File 19
     "env_new", "env_switch", "env_name",
     # File 20
-    "laptop_search", "laptop_notes",
+    "laptop_search", "laptop_notes", "laptop_key",
+    # offline_extras.py (2026-10-20); "talk" is never strict, so not here
+    "date", "calc", "joke", "coin", "dice", "pick",
 })
 
 
@@ -1390,6 +1456,12 @@ def _match(text: str, strict: bool) -> Intent | None:
     # Stop wins over everything that could move.
     if _COMPILED[0][1].search(heard):
         return Intent(name="stop", tool="stop", args={}, say="Stopping.")
+
+    # The date, a calculator, jokes, a coin, a dice (offline_extras.py). Before
+    # the speed rule: "what's 15 percent of 200" used to set her SPEED to 15%.
+    extra = offline_extras.understand(_ADDRESS_RE.sub("", heard), strict)
+    if extra is not None:
+        return Intent(name=extra[0], say=extra[1])
 
     # THE SPECIFIC PHRASES BEFORE THE SINGLE WORDS, and this order is load
     # bearing. "How much charge is LEFT" contains a direction, and with the

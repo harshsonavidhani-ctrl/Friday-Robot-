@@ -298,6 +298,33 @@ def start_listener(port: int | None = None) -> int:
     return bound
 
 
+# The helper's POST /key names (helper 4+). The laptop keeps its own copy and
+# refuses anything else; this one only stops a typo reaching the network.
+KEY_ACTIONS = ("play_pause", "next", "previous", "volume_up", "volume_down",
+               "mute", "fullscreen", "close_tab", "lock", "open_notes")
+
+
+def press_key(action: str) -> tuple[bool, str]:
+    """One fixed key on his laptop. (done?, why not). 'old helper' when the
+    laptop still runs a helper from before /key existed (it answers 404)."""
+    if action not in KEY_ACTIONS:
+        return False, "unknown action"
+    try:
+        got = _request("/key", {"action": action},
+                       float(config.LAPTOP_OPEN_TIMEOUT_S))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False, "old helper"
+        try:
+            why = json.loads(exc.read().decode("utf-8", "replace")).get("error", "")
+        except Exception:                           # noqa: BLE001
+            why = ""
+        return False, why or f"the laptop said {exc.code}"
+    except Exception as exc:                        # noqa: BLE001
+        return False, f"{type(exc).__name__}: {str(exc)[:80]}"
+    return bool(got.get("ok")), got.get("error", "")
+
+
 def open_search(query: str, site: str = "web",
                 play: bool = False) -> tuple[bool, str]:
     """Google or YouTube on his screen. (opened?, why not)."""

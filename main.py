@@ -336,6 +336,10 @@ async def one_turn(brain_obj, session, voice: Voice, face: Face,
         turn.done(f"ABANDONED ({exc})")
         return ""
     except Exception as exc:                # noqa: BLE001
+        if brain_module.note_api_error(exc):
+            # Out of credit: the offline commands still work, so try this
+            # sentence as one before giving up on it.
+            return await _no_credit_turn(text, session, voice, face, turn)
         # Every stage failure lands here, flashes dizzy, and the loop carries
         # on listening. A companion that dies on one bad turn is worse than
         # one that occasionally admits it lost the thread.
@@ -1844,7 +1848,10 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
 
     # No key is the same situation as no internet, from the robot's point of
     # view: there is no reasoning available, so fall through to the reflexes
-    # rather than pretending and failing.
+    # rather than pretending and failing. Out of API credit too.
+    import brain as brain_module
+    if brain_obj is not None and offline.online() and brain_module.credits_out():
+        return await _no_credit_turn(spoken, session, voice, face, turn)
     if brain_obj is None or not offline.online():
         intent = offline.understand(spoken)
         if intent is not None:
@@ -1873,6 +1880,25 @@ async def handle(brain_obj, session, voice: Voice, face: Face,
         return intent.say
 
     return await one_turn(brain_obj, session, voice, face, spoken, turn)
+
+
+async def _no_credit_turn(spoken: str, session, voice: "Voice", face: "Face",
+                          turn: "stages.Turn") -> str:
+    """A turn while the API credit is used up: an offline command if this is
+    one, else say plainly why there is no answer (not "something went wrong")."""
+    import offline
+    intent = offline.understand(spoken)
+    if intent is not None:
+        turn.note(f"no API credit — handling {intent.name!r} offline")
+        await _run_offline(intent, session, voice, face, turn)
+        return intent.say
+    turn.note(f"no API credit, and {spoken[:40]!r} is not an offline command")
+    face.feel("sad")
+    voice.say("My API credits have run out, so I can only do my offline "
+              "commands right now. Say: what can you do.")
+    voice.wait_until_quiet()
+    turn.done("ABANDONED (no API credit, no offline match)")
+    return ""
 
 
 class _FreshOrders:

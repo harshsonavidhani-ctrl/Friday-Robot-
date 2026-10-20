@@ -50,6 +50,30 @@ import reply_contract
 
 log = logging.getLogger("friday.brain")
 
+# OUT OF API CREDIT (2026-10-19 and again 10-20, "she ignored me 4 times"):
+# every call 400s with "Your credit balance is too low". Until it is topped up
+# a voice turn is better spent on the offline commands than on a brain call
+# that cannot succeed. Re-tried after CREDIT_RETRY_S in case he topped up.
+_CREDIT_OUT_AT = [0.0]
+CREDIT_RETRY_S = 600.0
+
+
+def note_api_error(exc: BaseException) -> bool:
+    """Remember a credit-balance failure. True if `exc` was one."""
+    if "credit balance" in str(exc).lower():
+        if not credits_out():
+            log.warning("API credit balance is too low -- offline commands only "
+                        "for the next %.0f min", CREDIT_RETRY_S / 60)
+        _CREDIT_OUT_AT[0] = time.monotonic()
+        return True
+    return False
+
+
+def credits_out() -> bool:
+    """A credit-balance failure was seen within CREDIT_RETRY_S."""
+    return (_CREDIT_OUT_AT[0] > 0.0
+            and time.monotonic() - _CREDIT_OUT_AT[0] < CREDIT_RETRY_S)
+
 # Sentence boundary for the streaming hand-off. Includes the Devanagari danda:
 # Harsh mixes Hindi and English and a reply can end either way.
 _SENTENCE_END = re.compile(r"(?<=[.!?।])(\s+|$)")
@@ -643,6 +667,7 @@ class Brain:
             # Never a reason to fail a turn: the normal path is right behind.
             log.info("addressed check unavailable (%s: %s)",
                      type(exc).__name__, exc)
+            note_api_error(exc)
             return None
         cost = _cost_usd(model, message.usage)
         self.last_cost_usd += cost

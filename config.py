@@ -485,6 +485,8 @@ LAPTOP_HELLO_MAX_AGE_S = 300.0        # an older hello is a replay, or a wrong c
 LAPTOP_HELLO_RETRY_S = 20.0           # one look per address that did not answer
 LAPTOP_SEEN_FILE = ROOT / "state" / "laptop_seen.json"   # its last hello
 LAPTOP_OPEN_TIMEOUT_S = 12.0          # "play X" looks up the top video first
+# "Friday, play a song" with no name: what YouTube plays. Change freely.
+LAPTOP_DEFAULT_MUSIC = "top hindi songs"
 LAPTOP_SAVE_TIMEOUT_S = 10.0
 LAPTOP_NOTES_MODEL = MODEL_FAST       # Haiku: web_search_20250305
 LAPTOP_NOTES_TIMEOUT_S = 120.0        # one notes call (a thread, not a tool call)
@@ -714,6 +716,8 @@ RATE_LIMITS = {
     # screen); notes are Haiku + up to 5 web searches, ~$0.02-0.06 each.
     "laptop_open": {"min_interval_s": 3.0, "per_hour": 60, "per_day": 300},
     "laptop_notes": {"min_interval_s": 20.0, "per_hour": 10, "per_day": 30},
+    # free, but a loop pressing keys on his screen is still a fault
+    "laptop_key": {"min_interval_s": 0.5, "per_hour": 240, "per_day": 1500},
     # Not money: wheels. The same three numbers keep the idle drive (step 9,
     # physical_curiosity.py) from becoming a robot that paces the room.
     "physical_curiosity": {"min_interval_s": 1800.0, "per_hour": 2,

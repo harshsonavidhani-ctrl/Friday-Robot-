@@ -20,6 +20,14 @@ WHAT IT DOES -- AND ONLY THIS
   POST /notes  {"title": "...", "markdown": "..."}
         Writes ONE .md file into NOTES_DIR (default ~/Friday_Notes), never
         overwriting, never outside that folder, and opens it in Notepad.
+  POST /key    {"action": "<one of KEY_ACTIONS>"}            (helper 4+)
+        Presses ONE fixed key from a short list: play/pause, next, previous,
+        volume up/down, mute (Windows media keys -- the browser playing
+        YouTube answers them even when it is not in front); full screen and
+        close tab ("f", Ctrl+W -- ONLY when a browser is the window in front,
+        so it can never close a document); lock the laptop; open the notes
+        folder. The Pi sends a NAME from that list and nothing else: no key
+        codes, no text to type.
 
   Every request must carry the shared token in the X-Friday-Token header;
   anything without it gets 401 and nothing else. No other endpoints.
@@ -71,6 +79,22 @@ HERE = Path(__file__).resolve().parent
 MAX_BODY = 256 * 1024
 MAX_QUERY = 300
 MAX_TITLE = 200
+
+# POST /key: the name the Pi may send -> what is pressed here. Windows
+# virtual-key codes; a volume step is 2%, so one "volume up" is 5 presses.
+KEY_ACTIONS = {
+    "play_pause": ("vk", 0xB3, 1),
+    "next": ("vk", 0xB0, 1),
+    "previous": ("vk", 0xB1, 1),
+    "volume_up": ("vk", 0xAF, 5),
+    "volume_down": ("vk", 0xAE, 5),
+    "mute": ("vk", 0xAD, 1),
+    "fullscreen": ("browser", (0x46,), 1),           # f (YouTube's own toggle)
+    "close_tab": ("browser", (0x11, 0x57), 1),       # Ctrl+W
+    "lock": ("lock", None, 1),
+    "open_notes": ("notes", None, 1),
+}
+BROWSERS = ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe")
 STARTUP_NAME = "friday_laptop_helper.cmd"
 PI_FILE = "friday_pi.json"                  # where the Pi last called from
 NOWHERE = "192.0.2.1"                       # never sent to: only picks a route
@@ -240,22 +264,82 @@ def show_file(path: Path) -> None:
         webbrowser.open(path.as_uri())
 
 
+# --- keys (helper 4) --------------------------------------------------------------
+
+def foreground_app() -> str:
+    """The program in front, e.g. 'chrome.exe' ('' when it cannot be read)."""
+    if os.name != "nt":
+        return ""
+    import ctypes
+    from ctypes import wintypes
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(pid))
+    handle = kernel32.OpenProcess(0x1000, False, pid.value)   # QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(len(buf))
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return ""
+        return Path(buf.value).name.lower()
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def press(action: str, cfg: dict) -> str:
+    """Do one KEY_ACTIONS entry on this laptop. Returns '' or why not."""
+    kind, keys, times = KEY_ACTIONS[action]
+    if kind == "notes":
+        folder = notes_dir(cfg)
+        if os.name == "nt":
+            os.startfile(str(folder))                 # noqa: S606 -- our own folder
+        else:
+            webbrowser.open(folder.as_uri())
+        return ""
+    if os.name != "nt":
+        return "keys work on Windows only"
+    import ctypes
+    user32 = ctypes.windll.user32
+    if kind == "lock":
+        user32.LockWorkStation()
+        return ""
+    if kind == "browser":
+        app = foreground_app()
+        if app not in BROWSERS:
+            return f"the browser is not the window in front ({app or 'unknown'})"
+        codes = keys
+        extended = 0
+    else:
+        codes = (keys,)
+        extended = 0x0001                              # KEYEVENTF_EXTENDEDKEY
+    for _ in range(times):
+        for vk in codes:
+            user32.keybd_event(vk, 0, extended, 0)
+        for vk in reversed(codes):
+            user32.keybd_event(vk, 0, extended | 0x0002, 0)   # KEYEVENTF_KEYUP
+        time.sleep(0.02)
+    return ""
+
+
 # --- the listener ---------------------------------------------------------------
 
 class Agent:
     def __init__(self, cfg: dict, opener=webbrowser.open, shower=show_file,
-                 fetch=_fetch, hello: Hello | None = None) -> None:
+                 fetch=_fetch, hello: Hello | None = None, presser=press) -> None:
         self.cfg = cfg
         self.opener = opener
         self.shower = shower
         self.fetch = fetch
         self.hello = hello
+        self.presser = presser
 
     def handler(self):
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/3"
+            server_version = "FridayLaptopHelper/4"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -286,7 +370,7 @@ class Agent:
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
                     return self._send(401, {"error": "unauthorised"})
-                if self.path not in ("/open", "/notes"):
+                if self.path not in ("/open", "/notes", "/key"):
                     return self._send(404, {"error": "not found"})
                 size = int(self.headers.get("Content-Length") or 0)
                 if size <= 0 or size > MAX_BODY:
@@ -300,6 +384,8 @@ class Agent:
                 try:
                     if self.path == "/open":
                         return self._open(body)
+                    if self.path == "/key":
+                        return self._key(body)
                     return self._notes(body)
                 except Exception as exc:                # noqa: BLE001
                     log.warning("%s failed: %s", self.path, exc)
@@ -317,6 +403,15 @@ class Agent:
                                 fetch=agent.fetch)
                 agent.opener(url)
                 return self._send(200, {"ok": True, "url": url})
+
+            def _key(self, body: dict):
+                action = str(body.get("action") or "")
+                if action not in KEY_ACTIONS:
+                    return self._send(400, {"error": "unknown action"})
+                why = agent.presser(action, agent.cfg)
+                if why:
+                    return self._send(409, {"ok": False, "error": why})
+                return self._send(200, {"ok": True, "action": action})
 
             def _notes(self, body: dict):
                 title = str(body.get("title") or "").strip()

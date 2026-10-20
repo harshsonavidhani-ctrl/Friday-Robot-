@@ -52,6 +52,44 @@ def laptop_search(query: str, site: str = "web", play: bool = False) -> str:
     return f"Searching for {query} on your laptop."
 
 
+_KEY_DONE = {
+    "play_pause": "Done.", "next": "Next one.", "previous": "Going back one.",
+    "volume_up": "Louder.", "volume_down": "Quieter.", "mute": "Done.",
+    "fullscreen": "Full screen.", "close_tab": "Closed the tab.",
+    "lock": "Your laptop is locked.", "open_notes": "Opening your notes folder.",
+}
+
+
+@tool
+def laptop_control(action: str) -> str:
+    """Press one control key on Harsh's LAPTOP. action is exactly one of:
+    play_pause (pause or resume the video/music), next, previous, volume_up,
+    volume_down, mute (toggles), fullscreen, close_tab, lock (locks the
+    laptop), open_notes (opens his Friday Notes folder). Use for "pause the
+    video", "next song", "volume up", "close this tab", "lock my laptop".
+    Nothing else can be pressed or typed.
+    """
+    action = (action or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if action not in lr.KEY_ACTIONS:
+        return "I can't do that on your laptop."
+    import rate_limit
+    ok, why = rate_limit.allow("laptop_key")
+    if not ok:
+        return f"That's a lot of key presses on your laptop — {why}."
+    if not _up():
+        return NOT_AVAILABLE
+    rate_limit.used("laptop_key")
+    done, why = lr.press_key(action)
+    if done:
+        return _KEY_DONE[action]
+    if why == "old helper":
+        return ("Your laptop helper is the old version, so I can't do that yet. "
+                "Copy the new friday_laptop_agent.py to your laptop.")
+    if "browser is not the window in front" in why:
+        return "Your browser isn't the window in front, so I left it alone."
+    return f"I couldn't do that on your laptop ({why})."
+
+
 @tool
 def laptop_notes(topic: str) -> str:
     """Research a topic on the web and put notes about it on Harsh's LAPTOP,
