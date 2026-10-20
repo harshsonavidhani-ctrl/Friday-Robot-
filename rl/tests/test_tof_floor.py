@@ -259,5 +259,79 @@ obs, _ = tof_obstacles_mm(f)
 check("a silent FAR row is not a cliff", nearest(obs) >= NEAR_MM,
       f"nearest={nearest(obs):.0f} mm")
 
+# --- a dark thing that goes silent up close (2026-10-19, the sofa) -----------------
+#
+# The sofa's fabric returned only some frames up close: published 0.29 m -> nothing
+# -> 0.02 m (touching) in 1.5 s, because a median of 3 with 2 silent frames is
+# silence. The real reader is fed real "yN:" lines here.
+class _Slot:
+    def __init__(self):
+        self.last = None
+
+    def publish(self, value):
+        self.last = value
+
+
+def _reader():
+    r = pi_deploy.DFRobotToFThread.__new__(pi_deploy.DFRobotToFThread)
+    pi_deploy.DFRobotToFThread.__init__(r, _Slot(), cfg, "/dev/null")
+    return r
+
+
+def _feed(r, f):
+    for row, values in enumerate(f):
+        r._ingest(f"y{row}:{','.join(str(v) for v in values)},".encode())
+    return float(r.slot.last.min()) if r.slot.last is not None else None
+
+
+def _sofa(close_mm):
+    """Close enough to block the floor rows behind it, as a real one is (an ahead-
+    row return nearer than visible clean floor is discarded as multipath)."""
+    f = frame()
+    for row in range(8):
+        floor = FLOOR[row - 4] if row >= 4 else None
+        if floor is None or close_mm < floor:
+            for col in (2, 3, 4, 5):
+                f[row][col] = close_mm
+    return f
+
+
+def _silent():
+    f = frame()
+    for row in range(4):
+        f[row] = [0] * 8              # the room rows return nothing at all
+    return f
+
+
+r = _reader()
+seen = [_feed(r, f) for f in (frame(), _sofa(170), _silent(), _sofa(120), _silent(),
+                              _silent())]
+check("a dark sofa seen twice, then silent: still there (held)",
+      seen[-1] is not None and seen[-1] <= 0.25, f"published {seen}")
+was = pi_deploy.TOF_DARK_HOLD_MM
+r = _reader()
+pi_deploy.TOF_DARK_HOLD_MM = 0        # the hold off = the old reader
+seen_old = [_feed(r, f) for f in (frame(), _sofa(170), _silent(), _sofa(120), _silent(),
+                                  _silent())]
+pi_deploy.TOF_DARK_HOLD_MM = was
+check("...and without the hold it read as nothing (the bump)",
+      seen_old[-1] is None or seen_old[-1] > 1.0, f"published {seen_old}")
+
+r = _reader()
+seen = [_feed(r, f) for f in (frame(), _sofa(280), _silent(), _sofa(280), _silent(),
+                              _silent())]
+check("crosstalk-band returns (250-315 mm) are not held",
+      seen[-1] is None or seen[-1] > 1.0, f"published {seen}")
+
+r = _reader()
+seen = [_feed(r, f) for f in [frame(), _sofa(150)] + [frame()] * 3]
+check("ONE close frame is not held (a single-frame artefact)",
+      seen[-1] is not None and seen[-1] > 1.0, f"published {seen}")
+
+r = _reader()
+seen = [_feed(r, f) for f in [frame(), _sofa(150), _sofa(160)] + [frame()] * 9]
+check("the hold lets go within ~0.5 s once the frames are clear",
+      seen[-1] is not None and seen[-1] > 1.0, f"published {seen[-4:]}")
+
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

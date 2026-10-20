@@ -1113,6 +1113,18 @@ TOF_FLOOR_NEAR_QUORUM = 0.75          # ...and this fraction of their cells must
 # enough to brake the robot 0.2 s into a move. A real object is in every frame; an
 # artefact cannot move a median.
 TOF_CORROBORATE_FRAMES = 3
+# DARK THINGS GO SILENT UP CLOSE (2026-10-19 16:32:43, Harsh: "she bumped in sofa").
+# The sofa's dark fabric returned only some frames at close range: the published
+# bumper read 0.29 m -> 4.00 (nothing) -> 0.02 m (touching) inside 1.5 s, because a
+# median of 3 frames with 2 silent ones IS silence. That run had 36 such
+# near -> nothing -> near drops; the 10-10 room had none. A cell that returned under
+# TOF_DARK_HOLD_MM in TOF_DARK_MIN_HITS of the last TOF_DARK_FRAMES frames keeps
+# that reading through the silence. Under 250 mm on purpose: the crosstalk above is
+# 250-315 mm, and it needs two hits besides. Cost: at most ~0.5 s of caution after
+# she turns away from something truly close.
+TOF_DARK_HOLD_MM = 250
+TOF_DARK_FRAMES = 8                   # ~0.5 s at 15 Hz
+TOF_DARK_MIN_HITS = 2
 
 # ---- THE FLOOR IS FITTED FROM THE FRAME, NOT FROM THE CONSTANTS ABOVE ----------------
 #
@@ -1405,7 +1417,9 @@ class DFRobotToFThread(SensorThread):
         self._buf = bytearray()
         self._partial: dict[int, list[int]] = {}
         self._recent: deque = deque(maxlen=TOF_CORROBORATE_FRAMES)
+        self._dark: deque = deque(maxlen=TOF_DARK_FRAMES)
         self._frames = self._blind = 0
+        self._held = 0                    # frames a dark thing's reading was held
 
     def _setup(self) -> None:
         import serial
@@ -1461,6 +1475,7 @@ class DFRobotToFThread(SensorThread):
         self._frames += 1
         obstacles, intact = tof_obstacles_mm(frame)
         self._recent.append((obstacles, intact))
+        self._dark.append(obstacles)
 
         # Cannot-see is the majority view -> publish nothing and let the slot go
         # stale. A stale critical sensor stops the robot; a clear frame would not.
@@ -1474,7 +1489,22 @@ class DFRobotToFThread(SensorThread):
         # multipath artefact cannot move a median.
         stack = np.stack([o for o, _ in self._recent])
         med = np.median(stack, axis=0).astype(np.float32) / 1000.0
+        med = self._hold_dark(med)
         self.slot.publish(np.minimum(med, self.cfg.tof_max_range))
+
+    def _hold_dark(self, med: np.ndarray) -> np.ndarray:
+        """A dark thing that went silent up close stays (TOF_DARK_HOLD_MM)."""
+        recent = np.stack(self._dark)
+        close = recent < TOF_DARK_HOLD_MM
+        held = close.sum(axis=0) >= TOF_DARK_MIN_HITS
+        if not held.any():
+            return med
+        # The FARTHEST of its close returns: the least alarming reading that was real.
+        hold = np.where(close, recent, 0.0).max(axis=0).astype(np.float32) / 1000.0
+        use = held & (hold < med)
+        if use.any():
+            self._held += 1
+        return np.where(use, hold, med).astype(np.float32)
 
     def _teardown(self) -> None:
         if self._ser is not None:
