@@ -16,6 +16,10 @@ reverse floor test):
   reverse:  needs more: break-away 90, keeps going to 60
   right side 7% weaker (the lopsided turns); 0.12 s motor lag
   firmware watchdog: no M for longer than W ms -> stop
+  THE RIGHT MOTOR IS WIRED REVERSED (the driver's invert_right defaults True):
+  forward goes out as "M208 -208". The first version of this model read the
+  wire literally -- forward became a spin and a spin a straight drive -- and
+  every BODY result before 2026-10-20 20:05 (b1, the first b2) is wrong.
 """
 from __future__ import annotations
 
@@ -28,6 +32,7 @@ FAKE_PORT = "/dev/FAKE-FRIDAY-MOTORS"
 VMAX = 0.55          # m/s per side at duty 255
 B_EFF = 0.42         # effective track for skid steer, m
 TAU = 0.12
+RIGHT_WIRED_REVERSED = True   # a negative duty on the wire turns the right side FORWARD
 
 BOARD = [None]
 PHYS = {"v": 0.0, "omega": 0.0, "yaw_unwrapped": 0.0}
@@ -146,8 +151,10 @@ def _side(d, moving, mode, pivot_start, gain):
     if a < (keep if moving else start):
         return 0.0
     if mode == "pivot":
-        # 153 -> 71 deg/s: omega = 2*s/B_EFF -> s = 1.24*0.42/2 = 0.26 m/s at 153
-        s = 0.26 * (a - 105) / (153 - 105)
+        # 153 -> 71 deg/s: omega = 2*s/B_EFF -> s = 1.24*0.42/2 = 0.26 m/s at 153;
+        # it levels off above: pwm 189 measured ~96 deg/s (104 right, 88 left).
+        s = (0.26 * (a - 105) / (153 - 105) if a <= 153
+             else 0.26 + 0.26 * (1.68 / 1.24 - 1.0) * (a - 153) / (189 - 153))
     else:
         s = VMAX * (a - 50) / (255 - 50)
     return math.copysign(s * gain, d)
@@ -173,6 +180,8 @@ def start_physics(world, hz=50.0):
             else:
                 b.world = world
                 l, r = b.duties
+                if RIGHT_WIRED_REVERSED:
+                    r = -r
                 if now - b.last_m > b.watchdog_s:          # firmware watchdog
                     l = r = 0
             pivot = (l > 0 > r) or (r > 0 > l)

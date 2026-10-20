@@ -437,6 +437,29 @@ class RobotConfig:
     # v_min -0.15, because stage 2e's lift is bounded by v_min. When set, every
     # reverse goes out at least this fast. 0.0 = the old bound. --reverse-floor.
     reverse_floor_mps: float = 0.0
+    # SLOW AND CAREFUL, LIKE 09-04 03:52 (Harsh, 2026-10-20: "the exploration I
+    # want back"). Every real run that night drove forward at EXACTLY 0.125 m/s --
+    # the down camera's freespace_near cap (v_max * visual_min_speed_scale) firing
+    # on every tick -- and that is the exploring in his video. With the cameras
+    # off it never fires, and she drove 0.22-0.50 m/s. Drivetrain sim (scripts/
+    # sim_ab): 27 forward bumps at today's speed, 0 at 0.125. When > 0, forward
+    # never exceeds this; decided LAST (stage 4e). 0.0 = off. --max-forward-speed.
+    max_forward_speed: float = 0.0
+    # REVERSE ONLY INTO SPACE SHE CAN SEE IS EMPTY (same day). The rear gate
+    # takes the 2nd-smallest rear beam (a chair leg is ONE beam), a masked LiDAR
+    # bin reads lidar_max_range -- "clear" -- and the self-mask's raw 221-237 is
+    # DIRECTLY behind her; and reverse issued after stage 2d (the back-off, the
+    # undo) is not gated again. Sim: 21 of today's 52 bumps were reversing.
+    # Stage 4e (--strict-reverse): nothing SEEN in the corridor her body backs
+    # through (strict_rear_extra past rear_stop), at least strict_rear_seen of the
+    # rear +-strict_rear_arc_deg actually seen, and at most reverse_max_s of
+    # reversing before reverse_rest_s of turning only.
+    strict_reverse: bool = False
+    strict_rear_extra: float = 0.10
+    strict_rear_arc_deg: float = 60.0
+    strict_rear_seen: float = 0.6
+    reverse_max_s: float = 1.2
+    reverse_rest_s: float = 1.0
     max_lin_accel: float = 0.8          # [m/s^2] command slew limit -> no wheel slip
     max_ang_accel: float = 4.0          # [rad/s^2]
     # A PIVOT IN PLACE IS NOT SLEW LIMITED. The slew limit exists to stop the wheels
@@ -2134,6 +2157,40 @@ class LidarGovernor:
         return v
 
 
+def strict_rear_refusal(scan_m: np.ndarray | None, blind_beams, cfg: "RobotConfig") -> str:
+    """Why a reverse is NOT safe, or "" if the space behind her is seen empty.
+
+    Looks only at beams she can actually see (not blind_beams, not a return
+    inside her own body) within +-strict_rear_arc_deg of her tail, and asks
+    whether any of them lies in the corridor her body backs through, nearer
+    than rear_stop + strict_rear_extra. The NEAREST seen point counts, not the
+    2nd: a chair leg is one beam.
+    """
+    if scan_m is None or not np.size(scan_m):
+        return "no LiDAR sweep: the rear is unknown"
+    n = int(np.size(scan_m))
+    bearing = np.radians((np.arange(n) * (360.0 / n) + 180.0) % 360.0 - 180.0)
+    rear = (math.pi - np.abs(bearing)) <= math.radians(cfg.strict_rear_arc_deg)
+    cone = int(rear.sum())
+    blind = np.asarray(blind_beams if blind_beams is not None else [], dtype=np.int64)
+    seen = rear.copy()
+    if blind.size:
+        seen[blind[(blind >= 0) & (blind < n)]] = False
+    r = np.asarray(scan_m, dtype=np.float64)
+    seen &= r >= float(getattr(cfg, "lidar_floor", cfg.robot_radius))
+    if cone == 0 or seen.sum() < cfg.strict_rear_seen * cone:
+        return f"only {int(seen.sum())} of {cone} rear beams can see: the rear is unknown"
+    back = -r * np.cos(bearing)                 # metres behind her centre
+    side = np.abs(r * np.sin(bearing))
+    half_w = cfg.robot_radius + cfg.collision_margin + 0.04
+    need = cfg.rear_stop + cfg.strict_rear_extra
+    hit = seen & (back > 0.0) & (side <= half_w) & (back <= need)
+    if hit.any():
+        return (f"something {float(back[hit].min()):.2f} m behind, in her path "
+                f"(needs > {need:.2f} m)")
+    return ""
+
+
 class ToFReflex:
     """Emergency reflex braking from the 8x8 ToF patch. The hard override.
 
@@ -3315,6 +3372,8 @@ class ControlLoop:
         # back-off that did not move her.
         self._backoff: dict | None = None
         self._backoff_rest_until = 0.0
+        self._rev_since: float | None = None      # stage 4e: this reverse began
+        self._rev_rest_until = 0.0                # stage 4e: turning only until
         self.status_every = 0          # ticks between full status blocks; 0 = off
         # Machine-readable state for anything that is not a person watching a terminal:
         # the dashboard, a log, the voice layer. Written atomically at state_every ticks.
@@ -4491,6 +4550,11 @@ class ControlLoop:
             rec.add("lifted", v, omega, "picked up: wheels still until put down")
             self.stats["lifted_ticks"] = self.stats.get("lifted_ticks", 0) + 1
 
+        # ---- 4e. SLOW, AND REVERSE ONLY INTO SEEN-EMPTY SPACE (2026-10-20) ---------
+        # LAST before the limiter, so no stage above can get round it -- the
+        # back-off and the undo issue reverse after the rear gate (2d).
+        v, gate = self._careful(v, omega, gate, scan, rec)
+
         # ---- 5. slew limit + actuate ----------------------------------------------
         v, omega = self.limiter(v, omega, dt_real, emergency=emergency,
                                 allow_rotation=pivot_allowed)
@@ -4970,6 +5034,38 @@ class ControlLoop:
                 f"kept turning {'left' if self._turn_sign > 0 else 'right'} "
                 f"({now - self._turn_since:.1f} s of {self.turn_commit_s:.1f} s)")
         return -omega
+
+    def _careful(self, v: float, omega: float, gate: str, scan, rec) -> tuple[float, str]:
+        """Stage 4e: the forward cap and the strict reverse (see RobotConfig)."""
+        c = self.cfg
+        cap = float(getattr(c, "max_forward_speed", 0.0))
+        if cap > 0.0 and v > cap:
+            rec.add("speed_cap", cap, omega, f"forward {v:.2f} -> {cap:.3f} m/s")
+            v = cap
+            self.stats["speed_capped"] = self.stats.get("speed_capped", 0) + 1
+        if not getattr(c, "strict_reverse", False):
+            return v, gate
+        now = time.monotonic()
+        if v >= 0.0:
+            self._rev_since = None
+            return v, gate
+        if now < self._rev_rest_until:
+            why = (f"reversed {c.reverse_max_s:.1f} s: turning only for "
+                   f"{self._rev_rest_until - now:.1f} s")
+        else:
+            why = strict_rear_refusal(scan, self.map.blind_beams, c)
+        if not why:
+            if self._rev_since is None:
+                self._rev_since = now
+            elif now - self._rev_since > c.reverse_max_s:
+                self._rev_rest_until = now + c.reverse_rest_s
+                why = f"reversed {c.reverse_max_s:.1f} s: that is enough backing up"
+        if why:
+            self._rev_since = None
+            self.stats["reverse_refused"] = self.stats.get("reverse_refused", 0) + 1
+            rec.add("strict_reverse", 0.0, omega, why)
+            return 0.0, "reverse_refused"
+        return v, gate
 
     def _drain_unstick(self) -> None:
         """Say what unstick decided, and keep the planner away from where she got
@@ -6403,6 +6499,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Slowest reverse that really moves her ON THE FLOOR "
                         "(scripts/reverse_floor_test.py). Every reverse goes out at "
                         "least this fast. 0 (default) = bounded by v_min, as before.")
+    p.add_argument("--max-forward-speed", type=float, default=0.0, metavar="M_PER_S",
+                   help="Forward never faster than this (stage 4e). 0.125 is how she "
+                        "explored on 2026-09-04 03:52. 0 (default) = off.")
+    p.add_argument("--strict-reverse", action="store_true",
+                   help="Reverse only into space the LiDAR SEES is empty, and at most "
+                        "reverse_max_s at a time (stage 4e).")
     p.add_argument("--navigator-speed-authority", type=float, default=0.0,
                    metavar="FRACTION",
                    help="Fraction of v_max the local navigator may drive at on an arc "
@@ -6808,6 +6910,8 @@ def main(argv: list[str] | None = None) -> int:
         loop.navigator_enabled = not args.no_navigator
         cfg.nav_speed_authority = float(args.navigator_speed_authority)
         cfg.reverse_floor_mps = max(0.0, float(args.reverse_floor))
+        cfg.max_forward_speed = max(0.0, float(args.max_forward_speed))
+        cfg.strict_reverse = bool(args.strict_reverse)
         loop.recovery_enabled = not args.no_recovery
         loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]
         loop._threads = threads          # for the LiDAR rejection counter

@@ -128,6 +128,10 @@ fi
 # against a request to turn the other way -- no left/right dithering.
 [ -n "${MODE_TURN_COMMIT:-}" ] && ARGS+=(--turn-commit "$MODE_TURN_COMMIT")
 [ -n "${MODE_REVERSE_FLOOR:-}" ] && ARGS+=(--reverse-floor "$MODE_REVERSE_FLOOR")
+# MODE_MAX_FORWARD_SPEED / MODE_STRICT_REVERSE (2026-10-20): the 09-04 03:52
+# speed, and reverse only into space the LiDAR sees empty (pi_deploy stage 4e).
+[ -n "${MODE_MAX_FORWARD_SPEED:-}" ] && ARGS+=(--max-forward-speed "$MODE_MAX_FORWARD_SPEED")
+[ "${MODE_STRICT_REVERSE:-0}" = "1" ] && ARGS+=(--strict-reverse)
 
 # Caller's arguments go LAST so they win: run_localnav.sh forwards them to
 # argparse, which takes the final occurrence. That is what makes

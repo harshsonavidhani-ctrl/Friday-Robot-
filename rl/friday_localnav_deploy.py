@@ -496,6 +496,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg.nav_speed_authority = float(getattr(args, "navigator_speed_authority", 0.0))
     # The ninth: the reverse floor measured on the floor (2026-10-10).
     cfg.reverse_floor_mps = max(0.0, float(getattr(args, "reverse_floor", 0.0)))
+    # The tenth and eleventh (2026-10-20): the 09-04 speed, and the strict reverse.
+    cfg.max_forward_speed = max(0.0, float(getattr(args, "max_forward_speed", 0.0)))
+    cfg.strict_reverse = bool(getattr(args, "strict_reverse", False))
     # The seventh and eighth: the way back (2026-09-26) and undoing the last move
     # (2026-09-28). Without these lines --no-way-back / --no-unstick did nothing on
     # the robot, because run_localnav.sh drives THIS main().
