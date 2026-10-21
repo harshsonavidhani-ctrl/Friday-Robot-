@@ -1158,7 +1158,12 @@ class Autopilot:
                     self.state["cam_moves"] = self.state.get("cam_moves", 0) + 1
                 error = max(-90.0, min(90.0, nav["target"] + float(cfg.get("bias", 0.0)) * BIAS_DEG))
                 last_target = error
-                gas = speed > 0 and not (nav["best_len"] == 0 and abs(error) > 60)
+                gas = speed > 0
+                # a sharp turn: crawl round it -- a car (or bike) that steers
+                # with no gas never turns (2026-10-21: a bike sat sideways to
+                # its route for 40 s, wheel turned, gas off)
+                if abs(error) > 60:
+                    speed = min(speed, 0.4)
                 duty = (0.0 if abs(error) < t["steer_dead"]
                         else min(1.0, abs(error) / t["steer_full"]))
                 steer = keys["left"] if error < 0 else keys["right"]
@@ -1271,7 +1276,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/15"
+            server_version = "FridayLaptopHelper/16"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -1312,7 +1317,7 @@ class Agent:
                     return self._send(200, {"ok": True, **agent.autopilot.report()})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 15})
+                return self._send(200, {"ok": True, "version": 16})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
