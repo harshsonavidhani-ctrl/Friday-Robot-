@@ -25,6 +25,10 @@ WHAT IT DOES -- AND ONLY THIS
         W, A, S, D are held -- ONLY those four keys, nothing else is read.
         Files in ~/Friday_Recordings. GET /record (status), GET /record/list,
         GET /record/file?session=&name= (one of its own files, by name).
+  POST /model  {"model": {...}}                                 (helper 18+)
+        The driving network trained on the Pi from his recordings: plain
+        numbers, checked, saved beside this script. /autopilot mode "model"
+        drives with it. GET /model says whether one is loaded.
   POST /look   {"game", "dx", "dy"}                            (helper 15+)
         Moves the mouse BY that much (no click), only while that game is in
         front: turns a 3D game's camera. At most LOOK_MAX each way.
@@ -772,7 +776,7 @@ def idle_info() -> dict:
 AUTO_LEASE_S = 8.0
 AUTO_MAX_S = 120.0
 AUTO_TICK_S = 0.1
-AUTO_MODES = ("road", "cruise")
+AUTO_MODES = ("road", "cruise", "model")
 AUTO_KEYS = {"gas": "w", "brake": "s", "left": "a", "right": "d"}      # GTA's
 MAP_BOX = (0.0, 0.787, 0.162, 0.99)       # GTA V's minimap, fractions of the window
 MAP_MAX_W = 320
@@ -1053,6 +1057,7 @@ class Autopilot:
     """The fast half of playing a fast game. One at a time; see the block above."""
 
     def __init__(self, titler, grabber=grab, presser=None, mouser=None) -> None:
+        self.model: dict | None = None                  # POST /model (helper 18)
         self.titler, self.grabber = titler, grabber
         self.presser = presser or _game_key
         self.mouser = mouser or mouse_move
@@ -1117,6 +1122,38 @@ class Autopilot:
                 pass
         self._down.clear()
 
+    def _model_tick(self, cfg: dict, keys: dict, speed: float) -> bool:
+        """One tick driven by the trained network; True if told to stop."""
+        model = self.model
+        if model is None:
+            self.state["why"] = "no driving network loaded"
+            return True
+        tw, th = model["thumb"]
+        view = self.grabber((0.0, 0.0, 1.0, 1.0), REC_SIZE[0])
+        small = self.grabber(tuple(cfg.get("box") or MAP_BOX), REC_MAP_W)
+        if not view or not small:
+            self._keys(set())
+            return self._wait(AUTO_TICK_S)
+        x = thumb_grey(*view, tw, th) + route_features(*small)
+        steer, ps = mlp_predict(model["steer"], x)
+        pedal, pp = mlp_predict(model["pedal"], x)
+        if speed <= 0:
+            pedal = min(pedal, 0)
+        want = set()
+        if steer < 0:
+            want.add(keys["left"])
+        elif steer > 0:
+            want.add(keys["right"])
+        if pedal > 0:
+            want.add(keys["gas"])
+        elif pedal < 0:
+            want.add(keys["brake"])
+        self.state["last"] = {"steer": steer, "pedal": pedal,
+                              "p_steer": [round(v, 2) for v in ps],
+                              "p_pedal": [round(v, 2) for v in pp], "keys": "".join(sorted(want))}
+        self._keys(want)
+        return self._wait(AUTO_TICK_S)
+
     def _wait(self, seconds: float) -> bool:
         """Sleep; True if told to stop."""
         return self._stop.wait(max(0.0, seconds))
@@ -1144,6 +1181,10 @@ class Autopilot:
                 if cfg["mode"] == "cruise":
                     self._keys(set(cfg.get("hold") or []))
                     if self._wait(AUTO_TICK_S):
+                        break
+                    continue
+                if cfg["mode"] == "model":
+                    if self._model_tick(cfg, keys, speed):
                         break
                     continue
                 t = cfg.get("tune") or tune_defaults()
@@ -1234,6 +1275,103 @@ class Autopilot:
                 self.state["why"] = why
             self.state["running"] = False
             log.info("autopilot ended: %s", self.state["why"])
+
+
+# --- driving from a trained network (helper 18) ----------------------------------
+# The network is trained on the Pi from Harsh's recordings (scripts/
+# train_driver.py) and sent here as plain numbers (POST /model). It is two
+# small MLPs: the game picture as a 32x18 grey thumbnail + where the GPS route
+# goes on the minimap -> steer (-1/0/1) and pedal (-1/0/1). Plain Python,
+# ~10-20 ms a tick; same safety as every autopilot mode.
+
+MODEL_FILE = "friday_driver_model.json"
+MODEL_MAX_BODY = 4 * 1024 * 1024
+
+
+def thumb_grey(w: int, h: int, bgra: bytes, tw: int, th: int) -> list[float]:
+    """The picture as tw x th box-averaged grey levels in 0..1 (row-major) --
+    the same numbers scripts/train_driver.py trains on."""
+    ys = [int(j * h / th) for j in range(th + 1)]
+    xs = [int(i * w / tw) for i in range(tw + 1)]
+    out = []
+    for j in range(th):
+        for i in range(tw):
+            total, n = 0, 0
+            for y in range(ys[j], ys[j + 1]):
+                row = y * w * 4
+                for x in range(xs[i], xs[i + 1]):
+                    k = row + x * 4
+                    total += bgra[k] + bgra[k + 1] + bgra[k + 2]
+                    n += 1
+            out.append(total / (3.0 * n * 255.0) if n else 0.0)
+    return out
+
+
+def route_features(w: int, h: int, bgra: bytes, t: dict | None = None) -> list[float]:
+    """[route seen?, sin, cos] of the GPS route on a (small) minimap; the map
+    turns with the car, its arrow sits at ARROW_AT."""
+    t = t or tune_defaults()
+    cx, cy = t["arrow_x"] * w, t["arrow_y"] * h
+    ang = _route_ring(w, h, bgra, cx, cy, 0.0, 0.14 * w, h * MAP_BAR_FROM, t)
+    if ang is None:
+        return [0.0, 0.0, 1.0]
+    r = math.radians(ang)
+    return [1.0, math.sin(r), math.cos(r)]
+
+
+def mlp_predict(net: dict, x: list[float]) -> tuple[int, list[float]]:
+    """(class, probabilities) of one sklearn-style MLP exported as lists:
+    coefs[layer][out][in], intercepts[layer][out]."""
+    act = x
+    layers = len(net["coefs"])
+    for li in range(layers):
+        nxt = []
+        for wrow, b in zip(net["coefs"][li], net["intercepts"][li]):
+            nxt.append(b + sum(wi * ai for wi, ai in zip(wrow, act)))
+        if li < layers - 1:
+            nxt = [v if v > 0 else 0.0 for v in nxt] if net.get("activation") == "relu" \
+                else [math.tanh(v) for v in nxt]
+        act = nxt
+    if len(act) == 1:                                   # binary: one logistic output
+        p1 = 1.0 / (1.0 + math.exp(-act[0]))
+        probs = [1.0 - p1, p1]
+    else:
+        top = max(act)
+        exps = [math.exp(v - top) for v in act]
+        total = sum(exps)
+        probs = [e / total for e in exps]
+    best = max(range(len(probs)), key=probs.__getitem__)
+    return int(net["classes"][best]), probs
+
+
+def check_model(model) -> str:
+    """'' if `model` is a driver network this helper can run, else why not."""
+    try:
+        tw, th = (int(v) for v in model["thumb"])
+        inputs = tw * th + 3
+        if not (8 <= tw <= 64 and 8 <= th <= 64):
+            return "thumb size"
+        for name in ("steer", "pedal"):
+            net = model[name]
+            coefs, ints = net["coefs"], net["intercepts"]
+            if not (1 <= len(coefs) <= 4) or len(coefs) != len(ints):
+                return f"{name}: layers"
+            width = inputs
+            for wl, bl in zip(coefs, ints):
+                if not wl or len(wl) != len(bl) or len(wl) > 512:
+                    return f"{name}: a layer's size"
+                if any(len(row) != width for row in wl):
+                    return f"{name}: a layer's inputs"
+                if not all(isinstance(v, (int, float)) for row in wl for v in row):
+                    return f"{name}: numbers only"
+                width = len(wl)
+            if set(net["classes"]) - {-1, 0, 1}:
+                return f"{name}: classes"
+            if net.get("activation") not in ("relu", "tanh"):
+                return f"{name}: activation"
+    except (KeyError, TypeError, ValueError):
+        return "not a driver network"
+    return ""
 
 
 # --- recording a human drive (helper 17) -----------------------------------------
@@ -1399,6 +1537,13 @@ class Agent:
         self.autopilot = Autopilot(titler, grabber=grabber, presser=autokey, mouser=mouser)
         self.recorder = Recorder(titler, grabber=grabber, keys=keyreader, root=rec_root)
         self.rec_root = rec_root
+        self.model_path = Path(rec_root or HERE) / MODEL_FILE
+        try:
+            saved = json.loads(self.model_path.read_text())
+            if not check_model(saved):
+                self.autopilot.model = saved
+        except (OSError, ValueError):
+            pass
         self._step_lock = threading.Lock()
         self._kept: tuple[threading.Event, threading.Thread | None] | None = None
         self.cfg = cfg
@@ -1434,7 +1579,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/17"
+            server_version = "FridayLaptopHelper/18"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -1475,6 +1620,11 @@ class Agent:
                     return self._send(200, {"ok": True, **agent.autopilot.report()})
                 if self.path == "/record":
                     return self._send(200, {"ok": True, **agent.recorder.report()})
+                if self.path == "/model":
+                    m = agent.autopilot.model
+                    return self._send(200, {"ok": True, "loaded": m is not None,
+                                            "made": (m or {}).get("made", ""),
+                                            "train": (m or {}).get("train")})
                 if self.path.startswith("/record/file?"):
                     return self._record_file()
                 if self.path == "/record/list":
@@ -1486,16 +1636,17 @@ class Agent:
                         for n in sessions]})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 17})
+                return self._send(200, {"ok": True, "version": 18})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
                     return self._send(401, {"error": "unauthorised"})
                 if self.path not in ("/open", "/notes", "/key", "/launch", "/click", "/step",
-                                     "/autopilot", "/look", "/record"):
+                                     "/autopilot", "/look", "/record", "/model"):
                     return self._send(404, {"error": "not found"})
                 size = int(self.headers.get("Content-Length") or 0)
-                if size <= 0 or size > MAX_BODY:
+                limit = MODEL_MAX_BODY if self.path == "/model" else MAX_BODY
+                if size <= 0 or size > limit:
                     return self._send(413, {"error": "body too large or empty"})
                 try:
                     body = json.loads(self.rfile.read(size))
@@ -1522,6 +1673,8 @@ class Agent:
                         return self._look(body)
                     if self.path == "/record":
                         return self._record(body)
+                    if self.path == "/model":
+                        return self._model(body)
                     return self._notes(body)
                 except Exception as exc:                # noqa: BLE001
                     log.warning("%s failed: %s", self.path, exc)
@@ -1641,6 +1794,20 @@ class Agent:
                     self.wfile.write(png)
                     return None
                 return self._send(200, {"ok": True})
+
+            def _model(self, body: dict):
+                """{model: {...}}: the driving network, numbers only, checked."""
+                model = body.get("model")
+                why = check_model(model)
+                if why:
+                    return self._send(400, {"error": f"not a usable driving network: {why}"})
+                agent.autopilot.model = model
+                try:
+                    agent.model_path.write_text(json.dumps(model))
+                except OSError as exc:
+                    log.info("model kept in memory only: %s", exc)
+                return self._send(200, {"ok": True, "made": model.get("made", ""),
+                                        "train": model.get("train")})
 
             def _record(self, body: dict):
                 """{action: start|stop, game, max_s?} -- see "recording a human drive"."""
