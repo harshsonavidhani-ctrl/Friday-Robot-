@@ -575,6 +575,34 @@ def step(game: str, keys: list[str], ms: int, before: str | None = None,
         return None, f"{type(exc).__name__}"
 
 
+def autopilot(game: str, mode: str, **settings) -> tuple[dict | None, str]:
+    """Start / steer / stop the laptop's own fast driver (helper 10, POST
+    /autopilot): mode "road" follows the minimap's road, "cruise" holds
+    settings["hold"], "off" stops. settings: box, keys, hold, bias (-1 left ..
+    1 right), speed (0..1), for_s. (its report, "") or (None, why)."""
+    body = {"game": game, "mode": mode, **settings}
+    try:
+        got = _request("/autopilot", body, float(config.LAPTOP_OPEN_TIMEOUT_S))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None, "old helper"
+        try:
+            why = json.loads(exc.read().decode("utf-8", "replace")).get("error", "")
+        except Exception:                           # noqa: BLE001
+            why = ""
+        return None, why or f"the laptop said {exc.code}"
+    except Exception as exc:                        # noqa: BLE001
+        return None, f"{type(exc).__name__}"
+    return got, ""
+
+
+def autopilot_status() -> dict | None:
+    try:
+        return _request("/autopilot", None, float(config.LAPTOP_HEALTH_TIMEOUT_S))
+    except Exception:                               # noqa: BLE001
+        return None
+
+
 def idle() -> dict | None:
     """{"idle_s", "app"} from the laptop, or None (down, or an old helper)."""
     try:

@@ -96,6 +96,7 @@ import hmac
 import json
 import logging
 import logging.handlers
+import math
 import os
 import re
 import socket
@@ -560,8 +561,11 @@ def _png(width: int, height: int, bgra: bytes) -> bytes:
             + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
 
 
-def screen_png() -> bytes | None:
-    """The foreground window's client area as a PNG, scaled to SCREEN_MAX_W."""
+def grab(box: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0),
+         max_w: int = SCREEN_MAX_W) -> tuple[int, int, bytes] | None:
+    """(width, height, top-down BGRA bytes) of `box` (fractions of the window in
+    front's client area), scaled down to max_w. Helper 10: a box, so the
+    autopilot can read the game's minimap at full resolution, fast."""
     if os.name != "nt":
         return None
     import ctypes
@@ -569,8 +573,11 @@ def screen_png() -> bytes | None:
     rect = _client_rect()
     if rect is None:
         return None
-    left, top, w, h = rect
-    scale = min(1.0, SCREEN_MAX_W / float(w))
+    left, top, cw, ch = rect
+    x0, y0, x1, y1 = box
+    left, top = left + int(x0 * cw), top + int(y0 * ch)
+    w, h = max(1, int((x1 - x0) * cw)), max(1, int((y1 - y0) * ch))
+    scale = min(1.0, max_w / float(w))
     ow, oh = max(1, int(w * scale)), max(1, int(h * scale))
     user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
     screen_dc = user32.GetDC(0)
@@ -595,12 +602,19 @@ def screen_png() -> bytes | None:
         info.biPlanes, info.biBitCount, info.biCompression = 1, 32, 0
         buf = ctypes.create_string_buffer(ow * oh * 4)
         gdi32.GetDIBits(mem_dc, bmp, 0, oh, buf, ctypes.byref(info), 0)
-        return _png(ow, oh, buf.raw)
+        return ow, oh, buf.raw
     finally:
         gdi32.SelectObject(mem_dc, old)
         gdi32.DeleteObject(bmp)
         gdi32.DeleteDC(mem_dc)
         user32.ReleaseDC(0, screen_dc)
+
+
+def screen_png(box: tuple[float, float, float, float] | None = None) -> bytes | None:
+    """The foreground window's client area (or `box` of it) as a PNG, scaled
+    to SCREEN_MAX_W."""
+    got = grab(box or (0.0, 0.0, 1.0, 1.0))
+    return _png(*got) if got else None
 
 
 def click_at(fx: float, fy: float) -> str:
@@ -713,6 +727,271 @@ def idle_info() -> dict:
             "title": foreground_title()[:120]}
 
 
+# --- the autopilot (helper 10) ---------------------------------------------------
+# Harsh, 2026-10-21, after GTA V: "do it for fast 3d games, it's slow while
+# processing". Looking at a picture and deciding takes Friday ~3 s (Claude
+# 10+ s) and a car does not wait. So the FAST half lives here, next to the
+# game: ~10 times a second it reads the game's MINIMAP (GTA: light-grey road
+# lines, the car's arrow always at the same spot), finds where the road goes
+# ahead of the arrow, and steers there with short taps; it holds the gas and
+# backs out when the picture stops changing (stuck on a wall). The SLOW half --
+# the Pi -- only says go / bias left or right / slower / stop, or takes a
+# manual step (which switches this off).
+#
+# Safety, same rules as /step: GAME_KEYS only, only while that game is the
+# window in front (checked every tick), every key let go when it stops, and it
+# stops by itself unless the Pi checks in every AUTO_LEASE_S -- so a Pi that
+# dies or loses Wi-Fi never leaves a car driving.
+
+AUTO_LEASE_S = 8.0
+AUTO_MAX_S = 120.0
+AUTO_TICK_S = 0.1
+AUTO_MODES = ("road", "cruise")
+AUTO_KEYS = {"gas": "w", "brake": "s", "left": "a", "right": "d"}      # GTA's
+MAP_BOX = (0.0, 0.787, 0.162, 0.99)       # GTA V's minimap, fractions of the window
+MAP_MAX_W = 320
+ROAD_LO, ROAD_HI, ROAD_SAT = 92, 190, 28  # minimap road: light grey, not white
+ARROW_WHITE = 215
+ARROW_AT = (0.52, 0.70)                   # the player arrow in MAP_BOX
+MAP_BAR_FROM = 0.86                       # health/armour bar below it
+STEER_DEAD_DEG, STEER_FULL_DEG, BIAS_DEG = 8.0, 40.0, 45.0
+STUCK_AFTER_S, STUCK_DIFF, REVERSE_S = 2.0, 3.0, 1.2
+
+
+def parse_box(text: str) -> tuple[float, float, float, float] | None:
+    try:
+        x0, y0, x1, y1 = (float(v) for v in str(text).split(","))
+    except ValueError:
+        return None
+    if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0):
+        return None
+    return x0, y0, x1, y1
+
+
+def _bgr(bgra: bytes, w: int, x: int, y: int) -> tuple[int, int, int]:
+    i = (y * w + x) * 4
+    return bgra[i + 2], bgra[i + 1], bgra[i]
+
+
+def _is_road(r: int, g: int, b: int) -> bool:
+    mx, mn = max(r, g, b), min(r, g, b)
+    return ROAD_LO <= mx <= ROAD_HI and mx - mn <= ROAD_SAT
+
+
+def find_arrow(w: int, h: int, bgra: bytes) -> tuple[float, float, float] | None:
+    """(x, y, heading) of the white player arrow near ARROW_AT; heading in
+    degrees, 0 = up the map, positive = clockwise."""
+    ex, ey, rad = ARROW_AT[0] * w, ARROW_AT[1] * h, 0.12 * w
+    pts = []
+    for y in range(max(0, int(ey - rad)), min(int(h * MAP_BAR_FROM), int(ey + rad))):
+        for x in range(max(0, int(ex - rad)), min(w, int(ex + rad))):
+            if min(_bgr(bgra, w, x, y)) >= ARROW_WHITE:
+                pts.append((x, y))
+    if len(pts) < 3:
+        return None
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    tx, ty = max(pts, key=lambda p: (p[0] - cx) ** 2 + (p[1] - cy) ** 2)  # the tip
+    return cx, cy, math.degrees(math.atan2(tx - cx, -(ty - cy)))
+
+
+def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6) -> dict | None:
+    """Where the road goes ahead of the car, from the minimap: a ray every
+    `step` degrees within +-span of the arrow's heading, each as long as it
+    stays on road. target = the best ray, straight ahead preferred."""
+    arrow = find_arrow(w, h, bgra)
+    if arrow is None:
+        return None
+    cx, cy, heading = arrow
+    rmax, limit_y = int(0.45 * w), h * MAP_BAR_FROM
+    rays: dict[int, int] = {}
+    for rel in range(-span, span + 1, step):
+        a = math.radians(heading + rel)
+        dx, dy = math.sin(a), -math.cos(a)
+        length, misses, started = 0, 0, False
+        for r in range(3, rmax):
+            x, y = int(cx + dx * r), int(cy + dy * r)
+            if not (0 <= x < w and 0 <= y < limit_y):
+                break
+            if _is_road(*_bgr(bgra, w, x, y)):
+                started, misses, length = True, 0, r
+            else:
+                misses += 1
+                if (started and misses > 2) or (not started and r > 0.05 * w):
+                    break
+        rays[rel] = length
+    best = max(rays, key=lambda k: rays[k] - 0.18 * abs(k) * (rmax / 60.0))
+    return {"heading": round(heading), "target": best, "ahead": rays.get(0, 0),
+            "rmax": rmax, "best_len": rays[best]}
+
+
+def _thumb(got: tuple[int, int, bytes] | None) -> list[int] | None:
+    """Grey levels of a small whole-window picture (stuck test)."""
+    if not got:
+        return None
+    w, h, bgra = got
+    return [sum(_bgr(bgra, w, x, y)) // 3 for y in range(0, h, 2) for x in range(0, w, 2)]
+
+
+class Autopilot:
+    """The fast half of playing a fast game. One at a time; see the block above."""
+
+    def __init__(self, titler, grabber=grab, presser=None) -> None:
+        self.titler, self.grabber = titler, grabber
+        self.presser = presser or _game_key
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._down: set[str] = set()
+        self.cfg: dict = {}
+        self.lease_until = self.until = 0.0
+        self.state: dict = {"running": False, "why": "never started"}
+
+    def running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
+    def set(self, cfg: dict) -> dict:
+        """Start, or change and renew, the autopilot. cfg is validated by the caller."""
+        now = time.monotonic()
+        with self._lock:
+            self.cfg.update(cfg)
+            self.lease_until = now + AUTO_LEASE_S
+            self.until = now + min(float(cfg.get("for_s", AUTO_MAX_S)), AUTO_MAX_S)
+            start = not self.running()
+            if start:
+                self._stop.clear()
+                self.state = {"running": True, "mode": self.cfg["mode"], "ticks": 0,
+                              "stucks": 0, "why": ""}
+                self._thread = threading.Thread(target=self._run, name="autopilot",
+                                                daemon=True)
+        if start:
+            self._thread.start()
+        return self.report()
+
+    def renew(self) -> None:
+        with self._lock:
+            self.lease_until = time.monotonic() + AUTO_LEASE_S
+
+    def stop(self, why: str = "stopped") -> None:
+        if self.running():
+            self.state["why"] = why
+            self._stop.set()
+            self._thread.join(timeout=1.5)
+        self._release_all()
+
+    def report(self) -> dict:
+        out = {k: v for k, v in self.state.items()}
+        out["running"] = self.running()
+        return out
+
+    def _keys(self, want: set[str]) -> None:
+        for key in sorted(self._down - want):
+            self.presser(key, True)
+            self._down.discard(key)
+        for key in sorted(want - self._down):
+            self.presser(key, False)
+            self._down.add(key)
+
+    def _release_all(self) -> None:
+        for key in sorted(self._down):
+            try:
+                self.presser(key, True)
+            except Exception:                           # noqa: BLE001
+                pass
+        self._down.clear()
+
+    def _wait(self, seconds: float) -> bool:
+        """Sleep; True if told to stop."""
+        return self._stop.wait(max(0.0, seconds))
+
+    def _run(self) -> None:
+        why = "stopped"
+        thumb_prev, still_since, gas_since, next_thumb = None, None, None, 0.0
+        last_target = 0
+        try:
+            while not self._stop.is_set():
+                now = time.monotonic()
+                cfg = dict(self.cfg)
+                if now > self.lease_until:
+                    why = "the Pi stopped checking in"
+                    break
+                if now > self.until:
+                    why = "time is up"
+                    break
+                if not title_matches(self.titler(), cfg["game"]):
+                    why = "the game is no longer the window in front"
+                    break
+                self.state["ticks"] = self.state.get("ticks", 0) + 1
+                keys, speed = cfg["keys"], float(cfg.get("speed", 1.0))
+                if cfg["mode"] == "cruise":
+                    self._keys(set(cfg.get("hold") or []))
+                    if self._wait(AUTO_TICK_S):
+                        break
+                    continue
+                got = self.grabber(tuple(cfg.get("box") or MAP_BOX), MAP_MAX_W)
+                nav = read_map(*got) if got else None
+                if nav is None:
+                    self._keys(set())
+                    self.state["last"] = {"map": "no arrow (on foot? map hidden?)"}
+                    if self._wait(AUTO_TICK_S * 3):
+                        break
+                    continue
+                error = max(-90.0, min(90.0, nav["target"] + float(cfg.get("bias", 0.0)) * BIAS_DEG))
+                last_target = error
+                gas = speed > 0 and not (nav["best_len"] == 0 and abs(error) > 60)
+                duty = 0.0 if abs(error) < STEER_DEAD_DEG else min(1.0, abs(error) / STEER_FULL_DEG)
+                steer = keys["left"] if error < 0 else keys["right"]
+                self.state["last"] = {"target": nav["target"], "error": round(error),
+                                      "ahead": nav["ahead"], "heading": nav["heading"],
+                                      "steer": steer if duty else "", "duty": round(duty, 2),
+                                      "gas": gas}
+                # stuck: the gas has been on and the whole picture stopped changing
+                gas_since = (gas_since or now) if gas else None
+                if now >= next_thumb:
+                    next_thumb = now + 0.5
+                    thumb = _thumb(self.grabber((0.0, 0.0, 1.0, 1.0), 48))
+                    if thumb and thumb_prev and len(thumb) == len(thumb_prev):
+                        diff = sum(abs(a - b) for a, b in zip(thumb, thumb_prev)) / len(thumb)
+                        self.state["last"]["change"] = round(diff, 1)
+                        still_since = (still_since or now) if diff < STUCK_DIFF else None
+                    thumb_prev = thumb
+                if (gas_since and still_since and now - gas_since > STUCK_AFTER_S
+                        and now - still_since > 1.0):
+                    self.state["stucks"] = self.state.get("stucks", 0) + 1
+                    back_steer = keys["right"] if last_target < 0 else keys["left"]
+                    self._keys({keys["brake"], back_steer})
+                    if self._wait(REVERSE_S):
+                        break
+                    self._keys(set())
+                    gas_since = still_since = None
+                    continue
+                # one tick: steer for duty*tick, gas for speed*tick
+                tick = AUTO_TICK_S
+                first = {k for k, on in ((keys["gas"], gas and speed > 0), (steer, duty > 0)) if on}
+                self._keys(first)
+                t_steer, t_gas = duty * tick, (tick if speed >= 0.95 else speed * tick)
+                cut = min(t for t in (t_steer, t_gas, tick) if t > 0) if first else tick
+                if self._wait(cut):
+                    break
+                rest = set(first)
+                if t_steer <= cut and duty < 1.0:
+                    rest.discard(steer)
+                if t_gas <= cut and speed < 0.95:
+                    rest.discard(keys["gas"])
+                self._keys(rest)
+                if self._wait(tick - cut):
+                    break
+        except Exception as exc:                        # noqa: BLE001
+            why = f"error: {type(exc).__name__}: {str(exc)[:80]}"
+            log.warning("autopilot %s", why)
+        finally:
+            self._release_all()
+            if not self.state.get("why"):
+                self.state["why"] = why
+            self.state["running"] = False
+            log.info("autopilot ended: %s", self.state["why"])
+
+
 # --- the listener ---------------------------------------------------------------
 
 class Agent:
@@ -720,8 +999,10 @@ class Agent:
                  fetch=_fetch, hello: Hello | None = None, presser=press,
                  lister=start_apps, launcher=open_app, idler=idle_info,
                  titler=foreground_title, shooter=screen_png, clicker=click_at,
-                 holder=hold_keys, keeper=hold_then_keep) -> None:
+                 holder=hold_keys, keeper=hold_then_keep, grabber=grab,
+                 autokey=None) -> None:
         self.holder, self.keeper = holder, keeper
+        self.autopilot = Autopilot(titler, grabber=grabber, presser=autokey)
         self._step_lock = threading.Lock()
         self._kept: tuple[threading.Event, threading.Thread | None] | None = None
         self.cfg = cfg
@@ -757,7 +1038,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/9"
+            server_version = "FridayLaptopHelper/10"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -776,6 +1057,8 @@ class Agent:
                                          agent.cfg["token"].encode())
                 if ok and agent.hello is not None:
                     agent.hello.seen(self.client_address[0])
+                if ok:
+                    agent.autopilot.renew()             # the Pi is still there
                 return ok
 
             def do_GET(self):                           # noqa: N802
@@ -792,14 +1075,17 @@ class Agent:
                     return self._send(200, {"ok": True, **agent.idler()})
                 if self.path.startswith("/screen?"):
                     return self._screen()
+                if self.path == "/autopilot":
+                    return self._send(200, {"ok": True, **agent.autopilot.report()})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 9})
+                return self._send(200, {"ok": True, "version": 10})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
                     return self._send(401, {"error": "unauthorised"})
-                if self.path not in ("/open", "/notes", "/key", "/launch", "/click", "/step"):
+                if self.path not in ("/open", "/notes", "/key", "/launch", "/click", "/step",
+                                     "/autopilot"):
                     return self._send(404, {"error": "not found"})
                 size = int(self.headers.get("Content-Length") or 0)
                 if size <= 0 or size > MAX_BODY:
@@ -818,9 +1104,13 @@ class Agent:
                     if self.path == "/launch":
                         return self._launch(body)
                     if self.path == "/click":
+                        agent.autopilot.stop("a manual move")
                         return self._click(body)
                     if self.path == "/step":
+                        agent.autopilot.stop("a manual move")
                         return self._step(body)
+                    if self.path == "/autopilot":
+                        return self._autopilot(body)
                     return self._notes(body)
                 except Exception as exc:                # noqa: BLE001
                     log.warning("%s failed: %s", self.path, exc)
@@ -850,11 +1140,17 @@ class Agent:
 
             def _screen(self):
                 query = urllib.parse.urlparse(self.path).query
-                game = urllib.parse.parse_qs(query).get("game", [""])[0].strip()
+                params = urllib.parse.parse_qs(query)
+                game = params.get("game", [""])[0].strip()
                 refused = self._game_in_front(game)
                 if refused:
                     return self._send(refused[0], {"ok": False, "error": refused[1]})
-                png = agent.shooter()
+                box = None
+                if params.get("box"):
+                    box = parse_box(params["box"][0])
+                    if box is None:
+                        return self._send(400, {"error": "box is x0,y0,x1,y1 in 0..1"})
+                png = agent.shooter(box) if box else agent.shooter()
                 if not png:
                     return self._send(409, {"ok": False, "error": "no picture"})
                 self.send_response(200)
@@ -934,6 +1230,48 @@ class Agent:
                     self.wfile.write(png)
                     return None
                 return self._send(200, {"ok": True})
+
+            def _autopilot(self, body: dict):
+                """{game, mode: road|cruise|off, box?, keys?, hold?, bias?, speed?, for_s?}"""
+                mode = str(body.get("mode") or "")
+                if mode == "off":
+                    agent.autopilot.stop("turned off")
+                    return self._send(200, {"ok": True, **agent.autopilot.report()})
+                game = str(body.get("game") or "").strip()
+                refused = self._game_in_front(game)
+                if refused:
+                    return self._send(refused[0], {"ok": False, "error": refused[1]})
+                keys = dict(AUTO_KEYS)
+                given = body.get("keys") or {}
+                hold = body.get("hold") or []
+                box = body.get("box")
+                if box is not None:
+                    box = parse_box(",".join(str(v) for v in box) if isinstance(box, list)
+                                    else str(box))
+                bad = (mode not in AUTO_MODES or not isinstance(given, dict)
+                       or set(given) - set(AUTO_KEYS)
+                       or any(v not in GAME_KEYS for v in given.values())
+                       or not isinstance(hold, list) or len(hold) > STEP_MAX_KEYS
+                       or any(k not in GAME_KEYS for k in hold)
+                       or (mode == "cruise" and not hold)
+                       or ("box" in body and box is None))
+                if bad:
+                    return self._send(400, {"error": "mode road|cruise|off; keys gas/brake/"
+                                                     "left/right and hold from GAME_KEYS; "
+                                                     "box x0,y0,x1,y1"})
+                keys.update(given)
+
+                def num(name: str, lo: float, hi: float, default: float) -> float:
+                    try:
+                        return min(hi, max(lo, float(body.get(name, default))))
+                    except (TypeError, ValueError):
+                        return default
+                cfg = {"game": game, "mode": mode, "keys": keys, "hold": hold,
+                       "box": box or MAP_BOX, "bias": num("bias", -1.0, 1.0, 0.0),
+                       "speed": num("speed", 0.0, 1.0, 1.0),
+                       "for_s": num("for_s", 1.0, AUTO_MAX_S, 30.0)}
+                agent.stop_keeping()                    # kept /step keys go up first
+                return self._send(200, {"ok": True, **agent.autopilot.set(cfg)})
 
             def _launch(self, body: dict):
                 wanted = str(body.get("name") or "").strip().lower()

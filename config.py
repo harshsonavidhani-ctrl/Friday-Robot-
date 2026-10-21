@@ -526,6 +526,17 @@ GAME_PLAY_PAUSE_S = 1.5
 # come to the front.
 GAME_PLAY_MAX_STEPS = 200
 GAME_STEP_MAX_MS = 1500
+# The laptop's own fast driver (helper 10 /autopilot) for games that have one:
+# she gives directions every look, it drives ~10x a second in between.
+# Keyed by a word of the game's name. "road" follows the minimap (box =
+# fractions of the window; GTA V's is bottom-left), "cruise" holds keys.
+GAME_AUTOPILOT = {
+    "grand": {"mode": "road", "box": [0.0, 0.787, 0.162, 0.99],
+              "keys": {"gas": "w", "brake": "s", "left": "a", "right": "d"}},
+    "hill": {"mode": "cruise", "hold": ["right"]},
+}
+GAME_DRIVE_LOOK_S = 1.0     # pause between her looks while the autopilot drives
+GAME_AUTOPILOT_FOR_S = 30.0  # renewed every look; it stops on its own after this
 GAME_KEEP_MS = 4000          # "keep": keys stay down this long while she decides (helper 9)
 GAME_PAUSE_KEYS: dict[str, str] = {}
 GAME_OPEN_WAIT_S = 90.0     # a Google Play Games game: the player boots first (~40 s)

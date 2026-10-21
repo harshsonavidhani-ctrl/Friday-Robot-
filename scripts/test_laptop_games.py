@@ -218,6 +218,40 @@ check("a pause key: the first step pauses after, the next un-pauses before and p
       [(x[3], x[4]) for x in STEPS] == [(None, "escape"), ("escape", "escape")], str(STEPS))
 config.GAME_PAUSE_KEYS = {}
 
+print("a fast 3D game with a driver on the laptop (helper 10)")
+AUTO: list = []
+lr.autopilot = lambda game, mode, **kw: (AUTO.append((mode, kw.get("bias"), kw.get("speed")))
+                                         or ({"running": mode != "off"}, ""))
+VERSION["v"] = 10
+STEPS.clear()
+CALLS.clear()
+REPLIES[:] = [('{"drive": {"bias": -0.5, "speed": 0.8}, "why": "left at the junction"}', ""),
+              ('{"keys": ["s"], "ms": 800, "why": "back out of the wall"}', ""),
+              ('{"drive": {"bias": 0, "speed": 1}}', ""),
+              ('{"done": true, "why": "parked"}', "")]
+IDLE["v"] = {"idle_s": 3.0, "app": "gta5.exe", "title": "Grand Theft Auto V"}
+lg.play_start(say=say)
+for _ in range(300):
+    if not lg.playing():
+        break
+    time.sleep(0.02)
+check("GTA + helper 10: the laptop's driver starts first, in road mode",
+      AUTO and AUTO[0][0] == "road", str(AUTO))
+check("...her looks become directions to it (bias, speed)",
+      ("road", -0.5, 0.8) in AUTO and ("road", 0.0, 1.0) in AUTO, str(AUTO))
+check("...she is told it drives for her", any("AUTOPILOT" in c[2] or "autopilot" in c[2].lower()
+                                             for c in CALLS) or "AUTOPILOT" in lg.DRIVE_SYSTEM)
+check("...a manual move is still a step", [x[1] for x in STEPS] == [("s",)], str(STEPS))
+check("...and when she is done the driver is switched off", AUTO[-1][0] == "off", str(AUTO))
+check("autopilot_for: GTA drives on the road, Hill Climb cruises, Solitaire has none",
+      lg.autopilot_for("Grand Theft Auto V Enhanced")["mode"] == "road"
+      and lg.autopilot_for("Hill Climb Racing")["mode"] == "cruise"
+      and lg.autopilot_for("Solitaire & Casual Games") is None)
+check("'drive' parses, clamped",
+      lg.parse_move('{"drive": {"bias": -3, "speed": 2}}', keys_ok=True)
+      == {"drive": True, "bias": -1.0, "speed": 1.0, "why": ""})
+VERSION["v"] = 8
+
 print("a game he names that is not open is opened first")
 LAUNCHED.clear()
 STEPS.clear()

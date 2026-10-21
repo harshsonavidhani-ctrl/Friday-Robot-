@@ -85,6 +85,18 @@ KEYS_SYSTEM = ("You are Friday, a small robot playing {game} on a laptop with th
                "Never quit the game, open settings or a shop, buy anything, or click "
                "the top strip of the window (its title bar).")
 
+DRIVE_SYSTEM = ("You are Friday, a small robot playing {game} on a laptop. An AUTOPILOT "
+                "on the laptop drives the car for you between your looks, ten times a "
+                "second: it follows the road on the minimap, holds the gas and backs out "
+                "of crashes. You look at the screenshot and give directions. Reply with "
+                'ONLY a JSON object: {{"drive": {{"bias": 0, "speed": 1}}, "why": "a few '
+                'words"}} -- bias -1 = keep/turn left, 0 = follow the road, 1 = '
+                "keep/turn right; speed 0 = stop, 1 = full. For anything the autopilot "
+                'cannot do, a manual move instead (it pauses for it): {{"keys": ["f"], '
+                '"ms": 200, "why": "..."}} -- keys from: {keys}; f gets in or out of a '
+                'car, s reverses. Or {{"done": true, "why": "..."}}. Never quit the '
+                "game, open online modes or a shop, or buy anything.")
+
 # OFFLINE CHEERING (Harsh 2026-10-20: "it can be offline?" -> "yes add the
 # offline cheering"). No picture and no model: she knows WHICH game is in front
 # and that he is playing it, and cheers in that game's spirit. Used whenever a
@@ -278,6 +290,15 @@ def stop_playing() -> bool:
     return False
 
 
+def autopilot_for(game: str) -> dict | None:
+    """config.GAME_AUTOPILOT's settings for this game (by a word of its name)."""
+    words = game_words(game)
+    for word, settings in (getattr(config, "GAME_AUTOPILOT", {}) or {}).items():
+        if word.lower() in words:
+            return dict(settings)
+    return None
+
+
 def parse_move(text: str | None, keys_ok: bool = False) -> dict | None:
     """The model's JSON move -> {"x", "y"}, {"keys", "ms"} (keys_ok: a game
     played with the keyboard) or {"done": True}; None if unusable."""
@@ -294,6 +315,14 @@ def parse_move(text: str | None, keys_ok: bool = False) -> dict | None:
         return None
     if got.get("done") is True:
         return {"done": True, "why": str(got.get("why", ""))[:80]}
+    if keys_ok and isinstance(got.get("drive"), dict):
+        try:
+            bias = max(-1.0, min(1.0, float(got["drive"].get("bias", 0.0))))
+            speed = max(0.0, min(1.0, float(got["drive"].get("speed", 1.0))))
+        except (TypeError, ValueError):
+            return None
+        return {"drive": True, "bias": bias, "speed": speed,
+                "why": str(got.get("why", ""))[:80]}
     if keys_ok and isinstance(got.get("keys"), list):
         import laptop_research as lr
         keys = [str(k).lower() for k in got["keys"]][:3]
@@ -370,6 +399,19 @@ def _loop(game: str, stop: threading.Event, say=_say, fast: bool = False,
         system = PLAY_SYSTEM.format(game=game)
     pkey = pause_key(game) if fast else None
     paused = False
+    # The fast half (helper 10): the laptop drives between her looks.
+    auto = autopilot_for(game) if fast else None
+    if auto and lr.helper_version() < 10:
+        auto = None
+    if auto:
+        system = DRIVE_SYSTEM.format(game=game, keys=", ".join(lr.GAME_KEYS))
+        pause = float(getattr(config, "GAME_DRIVE_LOOK_S", 1.0))
+        got, err = lr.autopilot(game, **auto, for_s=float(config.GAME_AUTOPILOT_FOR_S))
+        if got is None:
+            log.info("autopilot did not start (%s): plain steps", err)
+            auto = None
+            system = KEYS_SYSTEM.format(game=game, keys=", ".join(lr.GAME_KEYS),
+                                        max_ms=int(getattr(config, "GAME_STEP_MAX_MS", 1500)))
     recent: list[str] = []
     bad = 0
     png = None
@@ -393,6 +435,8 @@ def _loop(game: str, stop: threading.Event, say=_say, fast: bool = False,
                    else f"I couldn't think ({err})")
             break
         move = parse_move(text, keys_ok=fast)
+        if move and move.get("drive") and not auto:
+            move = None                                 # no driver for this game
         if move is None:
             bad += 1
             if bad >= 3:
@@ -406,7 +450,19 @@ def _loop(game: str, stop: threading.Event, say=_say, fast: bool = False,
         if stop.is_set():
             why = "stopped"
             break
-        if "keys" in move:
+        if move.get("drive"):
+            # Directions for the laptop's driver; it keeps driving while she
+            # looks and thinks again. Renewing it is what keeps it alive.
+            got, err = lr.autopilot(game, **(auto or {"mode": "road"}), bias=move["bias"],
+                                    speed=move["speed"],
+                                    for_s=float(config.GAME_AUTOPILOT_FOR_S))
+            png = None
+            label = f"drive bias {move['bias']:+.1f} speed {move['speed']:.1f}"
+            if got is None:
+                why = ("the game isn't in front any more" if "not the window in front" in err
+                       else f"the autopilot would not drive ({err})")
+                break
+        elif "keys" in move:
             # One step: (un-pause,) hold the keys, the next picture, (pause).
             # "keep": they stay down while she decides the next one (helper 9).
             kept = (int(getattr(config, "GAME_KEEP_MS", 4000))
@@ -439,6 +495,8 @@ def _loop(game: str, stop: threading.Event, say=_say, fast: bool = False,
             break
     if fast:
         try:
+            if auto:
+                lr.autopilot(game, "off")
             lr.step(game, [], 0, shot=False)          # let go of any kept keys now
         except Exception:                           # noqa: BLE001
             pass
