@@ -220,6 +220,55 @@ check("gas on, picture frozen -> it backs out (brake + opposite steer)",
       ap2.report().get("stucks", 0) >= 1 and wall.reversed, str(ap2.report()))
 ap2.stop("test")
 
+print("keeping the camera behind the car (helper 15)")
+for deg, sign in ((60, 1), (-60, -1)):
+    MOVES: list = []
+    frame = chevron(deg)
+    cam = fa.Autopilot(lambda: "Grand Theft Auto V", grabber=lambda box, mw: (
+        (24, 14, bytes(24 * 14 * 4)) if box == (0.0, 0.0, 1.0, 1.0) else (MW, MH, frame)),
+        presser=lambda k, up: None, mouser=lambda dx, dy: MOVES.append((dx, dy)))
+    tune = dict(fa.tune_defaults(), cam_follow=1.0, cam_gain=3.0, cam_max=100.0)
+    cam.set(dict(fa_cfg, tune=tune))
+    time.sleep(0.5)
+    cam.stop("test")
+    check(f"car {deg:+d} deg off the camera -> the mouse turns it {'right' if sign > 0 else 'left'}"
+          f" (capped at cam_max)", MOVES and all(m[0] * sign > 0 and abs(m[0]) <= 100 and m[1] == 0
+                                                  for m in MOVES), str(MOVES[:3]))
+MOVES = []
+cam = fa.Autopilot(lambda: "Grand Theft Auto V", grabber=lambda box, mw: (
+    (24, 14, bytes(24 * 14 * 4)) if box == (0.0, 0.0, 1.0, 1.0) else (MW, MH, chevron(60))),
+    presser=lambda k, up: None, mouser=lambda dx, dy: MOVES.append((dx, dy)))
+cam.set(dict(fa_cfg, tune=fa.tune_defaults()))
+time.sleep(0.4)
+cam.stop("test")
+check("cam_follow off (the default) -> the mouse is never touched", MOVES == [], str(MOVES[:3]))
+up = fa.read_map(MW, MH, chevron(60), t=dict(fa.tune_defaults(), assume_up=1.0))
+check("assume_up: the arrow is trusted to point up (heading 0), and still reported",
+      up and up["heading"] == 0 and abs(up["arrow"] - 60) <= 15, str(up))
+
+print("stuck twice in a row backs out farther")
+wall2 = Car(blocked_at=6.0)
+ap3 = fa.Autopilot(lambda: "Grand Theft Auto V", grabber=wall2.grab, presser=wall2.press)
+BACKS: list = []
+real_wait = ap3._wait
+
+
+def timed_wait(seconds, _w=real_wait):
+    if "s" in wall2.down:
+        BACKS.append(round(seconds, 2))
+    return _w(seconds)
+
+
+ap3._wait = timed_wait
+ap3.set(dict(fa_cfg, tune=dict(fa.tune_defaults(), reverse_s=0.4)))
+end = time.monotonic() + 12
+while time.monotonic() < end and len(BACKS) < 2:
+    ap3.renew()
+    time.sleep(0.3)
+ap3.stop("test")
+check("the second back-out is longer than the first", len(BACKS) >= 2 and BACKS[1] > BACKS[0],
+      str(BACKS))
+
 print("through the helper's HTTP routes")
 held = []
 agent = fa.Agent({"token": "t" * 40, "port": 0, "bind": "127.0.0.1"},
@@ -272,6 +321,16 @@ call("POST", "/autopilot", {"game": GAME, "mode": "road"})
 st, got = call("POST", "/autopilot", {"mode": "off"})
 check("mode off -> stopped, keys up", st == 200 and not got.get("running") and not car.down,
       str(got))
+LOOKED: list = []
+agent.mouser = lambda dx, dy: LOOKED.append((dx, dy))
+st, _ = call("POST", "/look", {"game": GAME, "dx": 350, "dy": -20})
+check("/look moves the mouse by exactly that much, in small steps",
+      st == 200 and sum(m[0] for m in LOOKED) == 350 and sum(m[1] for m in LOOKED) == -20
+      and len(LOOKED) >= 3, str(LOOKED))
+st, _ = call("POST", "/look", {"game": GAME, "dx": 99999})
+check("/look too far -> 400", st == 400)
+st, _ = call("POST", "/look", {"game": "Solitaire", "dx": 10})
+check("/look with another window in front -> 409", st == 409)
 st, got = call("GET", "/screen?game=" + GAME.replace(" ", "+") + "&box=0,0.78,0.16,0.99")
 check("/screen with a box -> a picture", st == 200 and got == b"\x89PNG", str(st))
 st, _ = call("GET", "/screen?game=" + GAME.replace(" ", "+") + "&box=0,0,2,1")

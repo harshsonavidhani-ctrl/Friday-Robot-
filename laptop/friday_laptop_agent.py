@@ -19,6 +19,13 @@ WHAT IT DOES -- AND ONLY THIS
         installed unless someone presses Get. Only those, and only a URL
         built HERE from the words -- never a URL, a file name or a command
         sent by the Pi.
+  POST /look   {"game", "dx", "dy"}                            (helper 15+)
+        Moves the mouse BY that much (no click), only while that game is in
+        front: turns a 3D game's camera. At most LOOK_MAX each way.
+  POST /autopilot {"game", "mode": road|cruise|off, ...}         (helper 10+)
+        The laptop drives a fast game by itself between the Pi's looks; it
+        stops unless the Pi checks in every AUTO_LEASE_S. See the block
+        "the autopilot" below.
   POST /step   {"game", "keys": [...], "ms", "before", "after", "shot", "keep"} (helper 8+)
         Holds up to 3 GAME_KEYS (arrows, space, enter, escape, shift, w a s d
         n v x z; helper 9 adds f e q r c g h tab) together for at most
@@ -637,6 +644,19 @@ def click_at(fx: float, fy: float) -> str:
     return ""
 
 
+LOOK_MAX = 1500                           # /look: the most one call may move the mouse
+
+
+def mouse_move(dx: int, dy: int) -> None:
+    """Move the mouse BY (dx, dy) -- relative, the way a game reads it to turn
+    the camera (helper 15: GTA's camera can only be put back behind the car
+    with the mouse)."""
+    if os.name != "nt" or not (dx or dy):
+        return
+    import ctypes
+    ctypes.windll.user32.mouse_event(0x0001, int(dx), int(dy), 0, 0)   # MOUSEEVENTF_MOVE
+
+
 def _game_key(name: str, up: bool) -> None:
     import ctypes
     vk, scan, ext = GAME_KEYS[name]
@@ -768,6 +788,11 @@ TUNE_RANGES = {
     "stuck_diff": (0.5, 20.0), "reverse_s": (0.3, 3.0),
     "follow_route": (0.0, 1.0), "route_b": (100, 255), "route_gap": (20, 200),
     "route_r": (0, 255),
+    # helper 15: keep the camera behind the car with the mouse (the minimap
+    # turns with the CAMERA); assume_up = trust that it is, never read the arrow
+    "cam_follow": (0.0, 1.0), "cam_gain": (-30.0, 30.0), "cam_dead": (0.0, 90.0),
+    "cam_max": (0.0, 600.0), "assume_up": (0.0, 1.0),
+    "stuck_escalate": (1.0, 4.0),
 }
 
 
@@ -778,7 +803,9 @@ def tune_defaults() -> dict:
             "steer_full": STEER_FULL_DEG, "straight_pref": 0.18,
             "stuck_diff": STUCK_DIFF, "reverse_s": REVERSE_S,
             # GTA's GPS route (a waypoint): purple (168, 84, 243) over the road
-            "follow_route": 1.0, "route_b": 180, "route_gap": 100, "route_r": 100}
+            "follow_route": 1.0, "route_b": 180, "route_gap": 100, "route_r": 100,
+            "cam_follow": 0.0, "cam_gain": 3.0, "cam_dead": 12.0, "cam_max": 150.0,
+            "assume_up": 0.0, "stuck_escalate": 2.5}
 
 
 def parse_box(text: str) -> tuple[float, float, float, float] | None:
@@ -908,6 +935,9 @@ def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6,
     if arrow is None:
         return None
     cx, cy, heading = arrow
+    arrow_heading = heading
+    if t.get("assume_up", 0.0) >= 0.5:
+        heading = 0.0                           # the camera is behind the car
     rmax, limit_y = int(0.45 * w), h * MAP_BAR_FROM
     follow = t["follow_route"] >= 0.5
     rays: dict[int, int] = {}
@@ -942,7 +972,7 @@ def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6,
         if ring is not None:
             return {"heading": round(heading), "target": round(ring), "ray": best,
                     "ahead": rays.get(0, 0), "rmax": rmax, "best_len": pick[best],
-                    "route": True}
+                    "route": True, "arrow": round(arrow_heading)}
     # Aim at the MIDDLE of the road a short way along that ray (pure pursuit):
     # following the ray alone kept the car on the road but scraping its edge
     # (live 2026-10-21: a hedge on the left, then a wall on the right).
@@ -970,7 +1000,7 @@ def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6,
         aim = (aim + 180.0) % 360.0 - 180.0
     return {"heading": round(heading), "target": round(aim), "ray": best,
             "ahead": rays.get(0, 0), "rmax": rmax, "best_len": pick[best],
-            "route": use_route}
+            "route": use_route, "arrow": round(arrow_heading)}
 
 
 def _route_ring(w: int, h: int, bgra: bytes, cx: float, cy: float, heading: float,
@@ -1016,9 +1046,10 @@ def _thumb(got: tuple[int, int, bytes] | None) -> list[int] | None:
 class Autopilot:
     """The fast half of playing a fast game. One at a time; see the block above."""
 
-    def __init__(self, titler, grabber=grab, presser=None) -> None:
+    def __init__(self, titler, grabber=grab, presser=None, mouser=None) -> None:
         self.titler, self.grabber = titler, grabber
         self.presser = presser or _game_key
+        self.mouser = mouser or mouse_move
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -1088,6 +1119,7 @@ class Autopilot:
         why = "stopped"
         thumb_prev, still_since, gas_since, next_thumb = None, None, None, 0.0
         last_target = 0
+        last_stuck, streak = 0.0, 0
         try:
             while not self._stop.is_set():
                 now = time.monotonic()
@@ -1117,6 +1149,13 @@ class Autopilot:
                     if self._wait(AUTO_TICK_S * 3):
                         break
                     continue
+                # keep the camera behind the car: turn it toward where the
+                # car points (the arrow), a little each tick
+                arrow_deg = nav.get("arrow", nav["heading"])
+                if t["cam_follow"] >= 0.5 and abs(arrow_deg) > t["cam_dead"]:
+                    dx = max(-t["cam_max"], min(t["cam_max"], t["cam_gain"] * arrow_deg))
+                    self.mouser(int(dx), 0)
+                    self.state["cam_moves"] = self.state.get("cam_moves", 0) + 1
                 error = max(-90.0, min(90.0, nav["target"] + float(cfg.get("bias", 0.0)) * BIAS_DEG))
                 last_target = error
                 gas = speed > 0 and not (nav["best_len"] == 0 and abs(error) > 60)
@@ -1142,9 +1181,19 @@ class Autopilot:
                 if (gas_since and still_since and now - gas_since > STUCK_AFTER_S
                         and now - still_since > 1.0):
                     self.state["stucks"] = self.state.get("stucks", 0) + 1
+                    # stuck again soon after the last one: back out farther
+                    streak = streak + 1 if now - last_stuck < 8.0 else 0
+                    last_stuck = now
+                    back_s = t["reverse_s"] * min(t["stuck_escalate"], 1.0 + 0.5 * streak)
+                    # reversing with the wheels turned AWAY swings the nose toward the road
                     back_steer = keys["right"] if last_target < 0 else keys["left"]
                     self._keys({keys["brake"], back_steer})
-                    if self._wait(t["reverse_s"]):
+                    if self._wait(back_s):
+                        break
+                    # then pull away turning toward it, before steering normally
+                    to_steer = keys["left"] if last_target < 0 else keys["right"]
+                    self._keys({keys["gas"], to_steer})
+                    if self._wait(0.5):
                         break
                     self._keys(set())
                     gas_since = still_since = None
@@ -1184,9 +1233,9 @@ class Agent:
                  lister=start_apps, launcher=open_app, idler=idle_info,
                  titler=foreground_title, shooter=screen_png, clicker=click_at,
                  holder=hold_keys, keeper=hold_then_keep, grabber=grab,
-                 autokey=None) -> None:
-        self.holder, self.keeper = holder, keeper
-        self.autopilot = Autopilot(titler, grabber=grabber, presser=autokey)
+                 autokey=None, mouser=mouse_move) -> None:
+        self.holder, self.keeper, self.mouser = holder, keeper, mouser
+        self.autopilot = Autopilot(titler, grabber=grabber, presser=autokey, mouser=mouser)
         self._step_lock = threading.Lock()
         self._kept: tuple[threading.Event, threading.Thread | None] | None = None
         self.cfg = cfg
@@ -1222,7 +1271,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/14"
+            server_version = "FridayLaptopHelper/15"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -1263,13 +1312,13 @@ class Agent:
                     return self._send(200, {"ok": True, **agent.autopilot.report()})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 14})
+                return self._send(200, {"ok": True, "version": 15})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
                     return self._send(401, {"error": "unauthorised"})
                 if self.path not in ("/open", "/notes", "/key", "/launch", "/click", "/step",
-                                     "/autopilot"):
+                                     "/autopilot", "/look"):
                     return self._send(404, {"error": "not found"})
                 size = int(self.headers.get("Content-Length") or 0)
                 if size <= 0 or size > MAX_BODY:
@@ -1295,6 +1344,8 @@ class Agent:
                         return self._step(body)
                     if self.path == "/autopilot":
                         return self._autopilot(body)
+                    if self.path == "/look":
+                        return self._look(body)
                     return self._notes(body)
                 except Exception as exc:                # noqa: BLE001
                     log.warning("%s failed: %s", self.path, exc)
@@ -1413,6 +1464,26 @@ class Agent:
                     self.end_headers()
                     self.wfile.write(png)
                     return None
+                return self._send(200, {"ok": True})
+
+            def _look(self, body: dict):
+                """{game, dx, dy}: turn the game's camera by moving the mouse
+                that much (no click), only while that game is in front."""
+                game = str(body.get("game") or "").strip()
+                refused = self._game_in_front(game)
+                if refused:
+                    return self._send(refused[0], {"ok": False, "error": refused[1]})
+                try:
+                    dx, dy = int(body.get("dx") or 0), int(body.get("dy") or 0)
+                except (TypeError, ValueError):
+                    return self._send(400, {"error": "dx and dy are whole numbers"})
+                if abs(dx) > LOOK_MAX or abs(dy) > LOOK_MAX:
+                    return self._send(400, {"error": f"dx and dy within +-{LOOK_MAX}"})
+                steps = max(1, max(abs(dx), abs(dy)) // 100)    # a turn, not a jump
+                for i in range(steps):
+                    agent.mouser(dx * (i + 1) // steps - dx * i // steps,
+                                 dy * (i + 1) // steps - dy * i // steps)
+                    time.sleep(0.01)
                 return self._send(200, {"ok": True})
 
             def _autopilot(self, body: dict):

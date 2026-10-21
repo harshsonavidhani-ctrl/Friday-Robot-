@@ -596,6 +596,25 @@ def autopilot(game: str, mode: str, **settings) -> tuple[dict | None, str]:
     return got, ""
 
 
+def look(game: str, dx: int, dy: int = 0) -> tuple[bool, str]:
+    """Turn a 3D game's camera: move the laptop's mouse by (dx, dy), no click,
+    only while that game is in front (helper 15, POST /look). (done?, why)."""
+    try:
+        got = _request("/look", {"game": game, "dx": int(dx), "dy": int(dy)},
+                       float(config.LAPTOP_OPEN_TIMEOUT_S))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False, "old helper"
+        try:
+            why = json.loads(exc.read().decode("utf-8", "replace")).get("error", "")
+        except Exception:                           # noqa: BLE001
+            why = ""
+        return False, why or f"the laptop said {exc.code}"
+    except Exception as exc:                        # noqa: BLE001
+        return False, f"{type(exc).__name__}"
+    return bool(got.get("ok")), got.get("error", "")
+
+
 def autopilot_status() -> dict | None:
     try:
         return _request("/autopilot", None, float(config.LAPTOP_HEALTH_TIMEOUT_S))
