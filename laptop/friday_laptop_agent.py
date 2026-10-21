@@ -1135,24 +1135,31 @@ class Autopilot:
             self._keys(set())
             return self._wait(AUTO_TICK_S)
         x = thumb_grey(*view, tw, th) + route_features(*small)
-        steer, ps = mlp_predict(model["steer"], x)
-        pedal, pp = mlp_predict(model["pedal"], x)
-        if speed <= 0:
-            pedal = min(pedal, 0)
-        want = set()
-        if steer < 0:
-            want.add(keys["left"])
-        elif steer > 0:
-            want.add(keys["right"])
-        if pedal > 0:
-            want.add(keys["gas"])
-        elif pedal < 0:
-            want.add(keys["brake"])
-        self.state["last"] = {"steer": steer, "pedal": pedal,
-                              "p_steer": [round(v, 2) for v in ps],
-                              "p_pedal": [round(v, 2) for v in pp], "keys": "".join(sorted(want))}
-        self._keys(want)
-        return self._wait(AUTO_TICK_S)
+        steer, _ = mlp_predict(model["steer"], x)
+        pedal, _ = mlp_predict(model["pedal"], x)
+        if model["steer"].get("kind") != "regress":     # classes: full strength
+            steer = float(steer)
+        pedal = min(float(pedal), speed) if pedal > 0 else float(pedal)
+        bias = float(cfg.get("bias", 0.0)) * 0.5
+        steer = max(-1.0, min(1.0, steer + bias))
+        # how hard = for how much of this tick the key is held (as he taps)
+        s_key = keys["left"] if steer < 0 else keys["right"]
+        p_key = keys["gas"] if pedal > 0 else keys["brake"]
+        s_on = abs(steer) if abs(steer) >= 0.15 else 0.0
+        p_on = abs(pedal) if abs(pedal) >= 0.15 else 0.0
+        self.state["last"] = {"steer": round(steer, 2), "pedal": round(pedal, 2),
+                              "keys": (s_key if s_on else "") + (p_key if p_on else "")}
+        tick = AUTO_TICK_S
+        first = {k for k, on in ((s_key, s_on), (p_key, p_on)) if on}
+        self._keys(first)
+        times = sorted(t for t in (s_on * tick, p_on * tick) if 0 < t < tick)
+        done = 0.0
+        for cut in times:
+            if self._wait(cut - done):
+                return True
+            done = cut
+            self._keys({k for k, on in ((s_key, s_on), (p_key, p_on)) if on * tick > cut + 1e-6})
+        return self._wait(tick - done)
 
     def _wait(self, seconds: float) -> bool:
         """Sleep; True if told to stop."""
@@ -1319,9 +1326,10 @@ def route_features(w: int, h: int, bgra: bytes, t: dict | None = None) -> list[f
     return [1.0, math.sin(r), math.cos(r)]
 
 
-def mlp_predict(net: dict, x: list[float]) -> tuple[int, list[float]]:
+def mlp_predict(net: dict, x: list[float]) -> tuple[float, list[float]]:
     """(class, probabilities) of one sklearn-style MLP exported as lists:
-    coefs[layer][out][in], intercepts[layer][out]."""
+    coefs[layer][out][in], intercepts[layer][out]; a 'regress' net gives
+    (value -1..1, [value])."""
     act = x
     layers = len(net["coefs"])
     for li in range(layers):
@@ -1332,6 +1340,9 @@ def mlp_predict(net: dict, x: list[float]) -> tuple[int, list[float]]:
             nxt = [v if v > 0 else 0.0 for v in nxt] if net.get("activation") == "relu" \
                 else [math.tanh(v) for v in nxt]
         act = nxt
+    if net.get("kind") == "regress":                    # one number, -1..1
+        v = max(-1.0, min(1.0, act[0]))
+        return v, [v]
     if len(act) == 1:                                   # binary: one logistic output
         p1 = 1.0 / (1.0 + math.exp(-act[0]))
         probs = [1.0 - p1, p1]
@@ -1365,7 +1376,10 @@ def check_model(model) -> str:
                 if not all(isinstance(v, (int, float)) for row in wl for v in row):
                     return f"{name}: numbers only"
                 width = len(wl)
-            if set(net["classes"]) - {-1, 0, 1}:
+            if net.get("kind") == "regress":
+                if width != 1:
+                    return f"{name}: a regressor gives one number"
+            elif set(net["classes"]) - {-1, 0, 1}:
                 return f"{name}: classes"
             if net.get("activation") not in ("relu", "tanh"):
                 return f"{name}: activation"

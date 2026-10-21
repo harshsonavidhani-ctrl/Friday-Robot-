@@ -4,8 +4,9 @@
 Behaviour cloning, kept small enough to run on the LAPTOP in plain Python:
   input  = the game picture as a 32x18 grey thumbnail (576 numbers) plus where
            the GPS route goes on the minimap (3 numbers)
-  output = steer (left / straight / right) and pedal (gas / coast / brake),
-           two small MLPs (sklearn), exported as plain JSON weights.
+  output = how hard to steer (-1 left .. 1 right) and the pedal (-1 brake ..
+           1 gas), each averaged over 0.9 s of his driving (he TAPS keys);
+           two small MLP regressors (sklearn), exported as plain JSON weights.
 
     ./venv/bin/python scripts/train_driver.py                  # all sessions
     ./venv/bin/python scripts/train_driver.py --report-only    # data summary
@@ -80,6 +81,19 @@ def labels(keys: str) -> tuple[int, int]:
     return steer, pedal
 
 
+SMOOTH = 9            # frames (0.9 s at 10 Hz) the steer/pedal targets are averaged over
+
+
+def smooth(v: np.ndarray, n: int = SMOOTH) -> np.ndarray:
+    """Centred moving average: he TAPS A and D, the target is how hard he was
+    turning around that moment (-1..1), not whether a key was down."""
+    if len(v) < n:
+        return v.astype(np.float32)
+    k = np.ones(n, np.float32) / n
+    pad = n // 2
+    return np.convolve(np.pad(v.astype(np.float32), pad, mode="edge"), k, mode="valid")
+
+
 def load(session: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     X, S, P = [], [], []
     seen = dropped = 0
@@ -102,13 +116,20 @@ def load(session: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     info = {"session": session.name, "frames": seen, "dropped_menu": dropped, "kept": len(X)}
     if not X:
         return np.zeros((0, THUMB[0] * THUMB[1] + 3)), np.zeros(0), np.zeros(0), info
-    return np.stack(X), np.array(S), np.array(P), info
+    return np.stack(X), smooth(np.array(S)), smooth(np.array(P)), info
 
 
-def export(clf, classes: list[int]) -> dict:
-    return {"coefs": [c.T.round(5).tolist() for c in clf.coefs_],      # [out][in] per layer
-            "intercepts": [b.round(5).tolist() for b in clf.intercepts_],
-            "activation": clf.activation, "classes": [int(c) for c in classes]}
+def export(clf, classes: list[int] | None = None) -> dict:
+    """Plain lists for the laptop: coefs[layer][out][in]. A regressor (no
+    classes) is exported as kind 'regress': one number out, clipped to -1..1."""
+    out = {"coefs": [c.T.round(5).tolist() for c in clf.coefs_],
+           "intercepts": [b.round(5).tolist() for b in clf.intercepts_],
+           "activation": clf.activation}
+    if classes is None:
+        out["kind"] = "regress"
+    else:
+        out["classes"] = [int(c) for c in classes]
+    return out
 
 
 def main() -> int:
@@ -124,7 +145,6 @@ def main() -> int:
         got = lr._request("/model", {"model": json.loads(OUT.read_text())}, 30.0)
         print("laptop:", got)
         return 0 if got.get("ok") else 1
-    from sklearn.neural_network import MLPClassifier
     trX, trS, trP, teX, teS, teP = [], [], [], [], [], []
     for session in sorted(p for p in REC.iterdir() if p.is_dir()):
         t0 = time.time()
@@ -141,22 +161,27 @@ def main() -> int:
     trX, trS, trP = np.concatenate(trX), np.concatenate(trS), np.concatenate(trP)
     teX, teS, teP = np.concatenate(teX), np.concatenate(teS), np.concatenate(teP)
     for name, y in (("steer", trS), ("pedal", trP)):
-        vals, counts = np.unique(y, return_counts=True)
-        print(name, "train mix:", dict(zip(vals.tolist(), (counts / counts.sum()).round(3).tolist())))
+        print(f"{name} target: mean {y.mean():+.3f}, |>0.3| {(np.abs(y) > 0.3).mean():.3f} of frames")
     if args.report_only:
         return 0
+    from sklearn.neural_network import MLPRegressor
     model = {"thumb": list(THUMB), "made": time.strftime("%Y-%m-%d %H:%M"), "train": int(len(trX)),
-             "test": int(len(teX))}
+             "test": int(len(teX)), "smooth": SMOOTH}
     for name, ytr, yte in (("steer", trS, teS), ("pedal", trP, teP)):
-        clf = MLPClassifier(hidden_layer_sizes=(args.hidden,), alpha=1e-3, max_iter=300,
-                            early_stopping=True, random_state=0)
-        clf.fit(trX, ytr)
-        acc = float((clf.predict(teX) == yte).mean())
-        base = float(max((yte == c).mean() for c in np.unique(yte)))
-        print(f"{name}: held-out accuracy {acc:.3f} (always-the-commonest would get {base:.3f})")
-        model[name] = export(clf, list(clf.classes_))
-        model[name + "_acc"] = round(acc, 3)
-        model[name + "_baseline"] = round(base, 3)
+        reg = MLPRegressor(hidden_layer_sizes=(args.hidden,), alpha=1e-3, max_iter=400,
+                           early_stopping=True, random_state=0)
+        reg.fit(trX, ytr)
+        pred = np.clip(reg.predict(teX), -1, 1)
+        mae = float(np.abs(pred - yte).mean())
+        base = float(np.abs(ytr.mean() - yte).mean())
+        turning = np.abs(yte) > 0.3
+        agree = float((np.sign(pred[turning]) == np.sign(yte[turning])).mean()) if turning.any() else 0.0
+        corr = float(np.corrcoef(pred, yte)[0, 1]) if yte.std() > 0 else 0.0
+        print(f"{name}: held-out error {mae:.3f} (a constant guess: {base:.3f}), correlation "
+              f"{corr:+.2f}, right direction on {agree:.0%} of the clear turns/pedals")
+        model[name] = export(reg)
+        model[name + "_mae"], model[name + "_baseline"] = round(mae, 3), round(base, 3)
+        model[name + "_corr"], model[name + "_agree"] = round(corr, 3), round(agree, 3)
     OUT.write_text(json.dumps(model))
     print(f"wrote {OUT} ({OUT.stat().st_size // 1024} KB)")
     return 0

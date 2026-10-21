@@ -64,6 +64,17 @@ for name, y in (("three classes", y3), ("two classes", y2)):
                for i in range(100))
     check(f"forward pass == sklearn predict on 100 inputs ({name})", same)
 
+from sklearn.neural_network import MLPRegressor                   # noqa: E402
+yr = np.clip(rng.normal(0, 0.6, size=400), -1, 1)
+reg = MLPRegressor(hidden_layer_sizes=(16,), max_iter=200, random_state=0).fit(X, yr)
+rnet = json.loads(json.dumps(td.export(reg)))
+same = all(abs(fa.mlp_predict(rnet, X[i].tolist())[0] - float(np.clip(reg.predict(X[i:i + 1])[0], -1, 1)))
+           < 1e-3 for i in range(100))
+check("forward pass == sklearn predict (regressor, clipped to -1..1)", same)
+check("smoothing turns taps into a strength (5 taps of 9 frames -> 0.56)",
+      abs(float(td.smooth(np.array([0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0]))[4]) - 5 / 9) < 1e-6)
+model_r = {"thumb": list(td.THUMB), "made": "test", "train": 400, "steer": rnet, "pedal": rnet}
+check("check_model accepts a regressor export", fa.check_model(model_r) == "", fa.check_model(model_r))
 model = {"thumb": list(td.THUMB), "made": "test", "train": 400,
          "steer": td.export(MLPClassifier(hidden_layer_sizes=(8,), max_iter=50, random_state=0)
                             .fit(X, y3), [-1, 0, 1]),
@@ -102,7 +113,23 @@ ap.stop("test")
 ticks = rep.get("ticks", 0)
 check("model mode ticks along", ticks >= 3, str(rep))
 last = rep.get("last", {})
-check("...pressing what the network says", last.get("steer") == want_steer, str(last))
+check("...pressing what the network says", last.get("steer") == float(want_steer), str(last))
+PRESSED.clear()
+ap3 = fa.Autopilot(lambda: "Grand Theft Auto V", grabber=grab,
+                   presser=lambda k, up: PRESSED.append((k, up, time.monotonic())))
+fixed = json.loads(json.dumps(rnet))
+fixed["coefs"][-1] = [[0.0] * len(fixed["coefs"][-1][0])]
+fixed["intercepts"][-1] = [0.5]                     # always: steer/pedal +0.5
+ap3.model = {"thumb": list(td.THUMB), "made": "t", "train": 1, "steer": fixed, "pedal": fixed}
+ap3.set({"game": "Grand Theft Auto V Enhanced", "mode": "model", "keys": dict(fa.AUTO_KEYS),
+         "box": fa.MAP_BOX, "speed": 1.0, "for_s": 30})
+time.sleep(1.0)
+ap3.stop("test")
+downs = [p for p in PRESSED if p[0] == "d" and not p[1]]
+ups = [p for p in PRESSED if p[0] == "d" and p[1]]
+held = sum(u[2] - d[2] for d, u in zip(downs, ups)) / max(1, len(downs))
+check(f"steer +0.5 -> D held about half of each tick ({held * 1000:.0f} ms of 100)",
+      downs and 0.025 < held < 0.09, f"{len(downs)} presses")
 check("...and every key is up when it stops", not ap._down, str(ap._down))
 ap2 = fa.Autopilot(lambda: "Grand Theft Auto V", grabber=grab, presser=lambda k, up: None)
 ap2.set({"game": "Grand Theft Auto V Enhanced", "mode": "model", "keys": dict(fa.AUTO_KEYS),
