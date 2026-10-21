@@ -527,7 +527,7 @@ GAME_PLAY_PAUSE_S = 1.5
 GAME_PLAY_MAX_STEPS = 200
 GAME_STEP_MAX_MS = 1500
 GAME_PAUSE_KEYS: dict[str, str] = {}
-GAME_OPEN_WAIT_S = 45.0
+GAME_OPEN_WAIT_S = 90.0     # a Google Play Games game: the player boots first (~40 s)
 LAPTOP_GAME_STATE_FILE = ROOT / "state" / "laptop_game.json"   # for the dashboard
 # OFFLINE CHEERING: when she cannot look (no credit, helper 5, a failed look)
 # she cheers in the game's spirit instead, at most every LAPTOP_GAME_CHEER_GAP_S.

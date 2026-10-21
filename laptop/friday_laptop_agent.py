@@ -417,7 +417,7 @@ def start_apps() -> list[dict]:
     return sorted(out, key=lambda a: a["name"].lower())
 
 
-def _bring_to_front(name: str, wait_s: float = 12.0) -> None:
+def _bring_to_front(name: str, wait_s: float = 40.0) -> None:
     """Find the just-launched app's window by its title and put it in front.
     Windows refuses SetForegroundWindow to a background process, so it is
     preceded by one ALT tap (the usual way: the helper then owns the last
@@ -457,8 +457,15 @@ def _bring_to_front(name: str, wait_s: float = 12.0) -> None:
 
 def open_app(app_id: str, name: str = "") -> None:
     """Start one Start-menu entry by its own id (from start_apps, never the Pi),
-    then bring its window to the front."""
-    subprocess.Popen(["explorer.exe", "shell:AppsFolder\\" + app_id])
+    then bring its window to the front. A Google Play Games game's entry is a
+    googleplaygames:// link, not an app id: handed to shell:AppsFolder it
+    opened File Explorer on Documents (helper 9, 2026-10-21: Hill Climb
+    Racing, Asphalt 8) -- so a link is opened as a link."""
+    log.info("launch %s (%s)", name, app_id[:120])
+    if "://" in app_id and os.name == "nt":
+        os.startfile(app_id)                          # noqa: S606 -- the laptop's own entry
+    else:
+        subprocess.Popen(["explorer.exe", "shell:AppsFolder\\" + app_id])
     if name and os.name == "nt":
         threading.Thread(target=_bring_to_front, args=(name,), daemon=True).start()
 
@@ -685,7 +692,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/8"
+            server_version = "FridayLaptopHelper/9"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -722,7 +729,7 @@ class Agent:
                     return self._screen()
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 8})
+                return self._send(200, {"ok": True, "version": 9})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():

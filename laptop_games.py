@@ -72,6 +72,9 @@ KEYS_SYSTEM = ("You are Friday, a small robot playing {game} on a laptop with th
                "at most 3 keys from: {keys}; ms from 100 to {max_ms}. The game keeps "
                "running while you think, so prefer short holds. Racing: up = accelerate, "
                "left/right = steer, down = brake; steer toward the middle of the road. "
+               "Side-view driving (Hill Climb Racing): right = gas, left = brake; hold "
+               "gas long on hills (the car rolls back while you think), and if the "
+               "nose points up or the car is in the air nose-up, brake briefly. "
                'To press a button in a menu you may click instead: {{"x": 0.5, '
                '"y": 0.8, "why": "..."}} (x, y fractions of the image). Or {{"done": '
                'true, "why": "a few words"}} if the game is over or you are stuck. '
