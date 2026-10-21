@@ -141,7 +141,7 @@ check("open with a wrong token -> 401, and nothing opened",
 code, _ = raw("/notes", {"title": "t", "markdown": "m"}, token="x" * 40)
 check("notes with a wrong token -> 401, and nothing written",
       code == 401 and not NOTES.exists() or not list(NOTES.glob("*")))
-check("health with the token (helper 5+ also says its version)", raw("/health") == (200, {"ok": True, "version": 13}))
+check("health with the token (helper 5+ also says its version)", raw("/health") == (200, {"ok": True, "version": 14}))
 check("any other path -> 404", raw("/etc/passwd")[0] == 404
       and raw("/run", {"cmd": "calc.exe"})[0] == 404
       and raw("/research", {"query": "x"})[0] == 404)

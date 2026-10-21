@@ -834,6 +834,23 @@ def find_arrow(w: int, h: int, bgra: bytes,
         return None
     cx = sum(p[0] for p in blob) / len(blob)
     cy = sum(p[1] for p in blob) / len(blob)
+    # The two halves meet along the arrow's axis, so the axis is square to
+    # the line from the white half's centre to the grey half's (helper 14:
+    # the minimap is drawn in perspective, and a mirror test alone read an
+    # arrow pointing straight up as 120 deg on the live drive).
+    lit = [(x, y) for x, y in blob if min(_bgr(bgra, w, x, y)) >= 215]
+    shade = [(x, y) for x, y in blob if min(_bgr(bgra, w, x, y)) < 215]
+    if len(lit) >= 4 and len(shade) >= 4:
+        lx, ly = sum(p[0] for p in lit) / len(lit), sum(p[1] for p in lit) / len(lit)
+        sx, sy = sum(p[0] for p in shade) / len(shade), sum(p[1] for p in shade) / len(shade)
+        if math.hypot(sx - lx, sy - ly) >= 1.5:
+            across = math.degrees(math.atan2(sx - lx, -(sy - ly)))
+            axis = across - 90.0
+            a = math.radians(axis)
+            ux, uy = math.sin(a), -math.cos(a)
+            alongs = [(x - cx) * ux + (y - cy) * uy for x, y in blob]
+            heading = axis if max(alongs) >= -min(alongs) else axis + 180.0
+            return cx, cy, (heading + 180.0) % 360.0 - 180.0
     cells = {(x, y) for x, y in blob}
     best_axis, best_score = 0.0, -1.0
     for deg in range(0, 180, 5):
@@ -1205,7 +1222,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/13"
+            server_version = "FridayLaptopHelper/14"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -1246,7 +1263,7 @@ class Agent:
                     return self._send(200, {"ok": True, **agent.autopilot.report()})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 13})
+                return self._send(200, {"ok": True, "version": 14})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
