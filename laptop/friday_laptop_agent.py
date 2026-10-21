@@ -1088,7 +1088,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/10"
+            server_version = "FridayLaptopHelper/11"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -1129,7 +1129,7 @@ class Agent:
                     return self._send(200, {"ok": True, **agent.autopilot.report()})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 10})
+                return self._send(200, {"ok": True, "version": 11})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
