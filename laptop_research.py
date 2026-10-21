@@ -615,6 +615,33 @@ def look(game: str, dx: int, dy: int = 0) -> tuple[bool, str]:
     return bool(got.get("ok")), got.get("error", "")
 
 
+def record(game: str, action: str, max_s: float = 3600.0) -> tuple[dict | None, str]:
+    """Start/stop recording HIM driving (helper 17, POST /record): the game
+    picture, its minimap and W/A/S/D only, only while that game is in front.
+    (the recorder's report, "") or (None, why)."""
+    body = {"action": action, "game": game, "max_s": float(max_s)}
+    try:
+        got = _request("/record", body, float(config.LAPTOP_OPEN_TIMEOUT_S))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None, "old helper"
+        try:
+            why = json.loads(exc.read().decode("utf-8", "replace")).get("error", "")
+        except Exception:                           # noqa: BLE001
+            why = ""
+        return None, why or f"the laptop said {exc.code}"
+    except Exception as exc:                        # noqa: BLE001
+        return None, f"{type(exc).__name__}"
+    return got, ""
+
+
+def record_status() -> dict | None:
+    try:
+        return _request("/record", None, float(config.LAPTOP_HEALTH_TIMEOUT_S))
+    except Exception:                               # noqa: BLE001
+        return None
+
+
 def autopilot_status() -> dict | None:
     try:
         return _request("/autopilot", None, float(config.LAPTOP_HEALTH_TIMEOUT_S))

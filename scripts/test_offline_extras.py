@@ -122,6 +122,17 @@ for q in ("Watch", "words", "watch app", "what's app"):
     check(f"open {q!r} -> WhatsApp", got is not None and got["name"] == "WhatsApp", str(got))
 got, _ = laptop_research.match_app("Steam", apps)
 check("...and a real name still wins (Steam is Steam)", got and got["name"] == "Steam")
+print("recording his driving (helper 17)")
+for q in ("record my driving", "start recording", "record me driving", "watch how I drive"):
+    i = offline.understand(q, strict=True)
+    check(f"{q!r} -> starts recording", i is not None and i.tool == "laptop_record"
+          and i.args == {"action": "start"}, str(i and (i.tool, i.args)))
+i = offline.understand("stop recording", strict=True)
+check("'stop recording' stays a STOP (and the stop tool ends a recording)",
+      i is not None and i.name == "stop", str(i and i.name))
+mv = (ROOT / "mcp_server/tools/movement.py").read_text()
+check("...the stop tool ends a recording AFTER the motors",
+      mv.index("safety.emergency_stop()") < mv.index("research_tools.recording_on()"))
 check("help mentions the laptop and sums",
       "laptop" in offline.help_text() and "sums" in offline.help_text())
 

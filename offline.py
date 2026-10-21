@@ -875,6 +875,13 @@ _YOU_PLAY_RE = re.compile(
     r"|play\s+(?:it|this|the\s+game|(?P<g2>.{2,30}?))\s+(?:yourself|for\s+me)"
     r"|(?:it'?s\s+)?your\s+turn|can\s+you\s+play\s+(?:it|this|the\s+game))$",
     re.IGNORECASE)
+# Recording HIS driving, to teach her (2026-10-21). "stop recording" is NOT
+# here: it is the stop rule (a stop must stay a stop), and the stop tool ends
+# a recording too.
+_RECORD_RE = re.compile(
+    r"^(?:(?:start\s+)?record(?:ing)?\s+(?:my|me|the|how\s+i)\s+(?:driv(?:e|ing)|game(?:play)?|play(?:ing)?)"
+    r"|start\s+recording(?:\s+(?:my|the)\s+(?:driving|game|gameplay))?"
+    r"|(?:watch|learn)\s+(?:how\s+)?i\s+drive)$", re.IGNORECASE)
 _STOP_PLAYING_RE = re.compile(
     r"^(?:stop\s+playing(?:\s+the\s+game)?|i'?ll\s+play(?:\s+now)?|my\s+turn|"
     r"give\s+(?:it|me\s+the\s+game)\s+back|let\s+me\s+play)$", re.IGNORECASE)
@@ -910,6 +917,8 @@ def _laptop_intent(heard: str) -> Intent | None:
         return Intent(name="laptop_search", tool="laptop_search",
                       args={"query": config.LAPTOP_DEFAULT_MUSIC,
                             "site": "youtube", "play": True})
+    if _RECORD_RE.match(text):
+        return Intent(name="laptop_record", tool="laptop_record", args={"action": "start"})
     if _STOP_PLAYING_RE.match(text):
         return Intent(name="laptop_game", tool="laptop_game_play", args={"action": "stop"})
     match = _YOU_PLAY_RE.match(text)
@@ -1405,7 +1414,7 @@ _SPEAK_RESULT = frozenset({
     "briefing", "calendar_add", "calendar_ask", "calendar_remove",
     "remember_forever", "forget", "forget_answer",
     "laptop_search", "laptop_notes", "laptop_key", "places",
-    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest", "laptop_game",
+    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest", "laptop_game", "laptop_record",
 })
 
 _STRICT_MAX_WORDS = 5
@@ -1441,7 +1450,7 @@ _REFLEX_INTENTS = frozenset({
     "env_new", "env_switch", "env_name",
     # File 20
     "laptop_search", "laptop_notes", "laptop_key", "places",
-    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest", "laptop_game",
+    "laptop_app", "laptop_play", "laptop_list", "laptop_suggest", "laptop_game", "laptop_record",
     # offline_extras.py (2026-10-20); "talk" is never strict, so not here
     "date", "calc", "joke", "coin", "dice", "pick",
 })

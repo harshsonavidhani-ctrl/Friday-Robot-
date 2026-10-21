@@ -7,6 +7,10 @@ result is said between turns when it is saved. See laptop_research.py.
 
 from __future__ import annotations
 
+import json
+import time
+from pathlib import Path
+import config
 import laptop_research as lr
 from mcp_server.registry import tool
 
@@ -190,6 +194,57 @@ def laptop_suggest(kind: str = "game") -> str:
         pick = random.choice(games)
         return f"How about {pick}? Say: play {pick}."
     return "How about some music? Say: play a song."
+
+
+RECORDING_FILE = Path(config.ROOT) / "state" / "laptop_recording.json"
+
+
+def recording_on() -> bool:
+    try:
+        return bool(json.loads(RECORDING_FILE.read_text()).get("running"))
+    except (OSError, ValueError):
+        return False
+
+
+def _mark_recording(running: bool, **extra) -> None:
+    try:
+        RECORDING_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RECORDING_FILE.write_text(json.dumps({"running": running, "at": time.time(), **extra}))
+    except OSError:
+        pass
+
+
+@tool
+def laptop_record(action: str = "start") -> str:
+    """Record Harsh DRIVING the game in front on his laptop, to teach Friday to
+    drive it -- ONLY when he asks ("record my driving", "stop recording").
+    Saves the game picture, its minimap and whether W, A, S, D are held, 10
+    times a second, only while that game is in front. Nothing else is read.
+
+    Args:
+        action: "start" or "stop".
+    """
+    import laptop_games
+    if (action or "start").strip().lower() == "stop":
+        got, why = lr.record("", "stop")
+        _mark_recording(False)
+        if got is None:
+            return f"I couldn't stop the recording ({why})."
+        mins = float(got.get("seconds") or 0.0) / 60.0
+        return (f"Stopped recording. I have {mins:.0f} minutes of your driving "
+                f"({int(got.get('frames') or 0)} pictures).")
+    if not _up():
+        return NOT_AVAILABLE
+    game = laptop_games.game_in_front(lr.idle(), lr.known_apps())
+    if game is None:
+        return "Open the game and leave it in front, then tell me to record."
+    got, why = lr.record(game, "start", float(config.LAPTOP_RECORD_MAX_S))
+    if got is None:
+        return ("Your laptop's helper is too old to record. Copy the new one."
+                if why == "old helper" else f"I couldn't start recording ({why}).")
+    _mark_recording(True, game=game, session=got.get("session"))
+    return (f"Recording your driving in {game}. Drive normally, and say stop recording "
+            f"when you're done. I only save the game picture and the W, A, S, D keys.")
 
 
 @tool

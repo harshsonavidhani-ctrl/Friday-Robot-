@@ -87,6 +87,17 @@ def stop() -> str:
     except Exception as exc:                        # noqa: BLE001
         log.warning("could not stop the laptop game: %s", exc)
     try:
+        # ...and a recording of his driving ("stop recording" IS a stop, and
+        # stays one). On a thread: the laptop is a network call away.
+        from mcp_server.tools import research_tools
+        if research_tools.recording_on():
+            import threading
+            threading.Thread(target=research_tools.laptop_record, args=("stop",),
+                             name="stop-recording", daemon=True).start()
+            said += " I've stopped recording your driving."
+    except Exception as exc:                        # noqa: BLE001
+        log.warning("could not stop the recording: %s", exc)
+    try:
         from mcp_server.tools import autonomy
         if autonomy._running():
             # The unit's own teardown halts the motors and puts her services

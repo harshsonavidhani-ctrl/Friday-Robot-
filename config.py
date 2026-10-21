@@ -540,6 +540,7 @@ GAME_AUTOPILOT = {
 }
 GAME_DRIVE_LOOK_S = 1.0     # pause between her looks while the autopilot drives
 GAME_AUTOPILOT_FOR_S = 30.0  # renewed every look; it stops on its own after this
+LAPTOP_RECORD_MAX_S = 3600.0   # one recording of his driving stops by itself after this
 GAME_KEEP_MS = 4000          # "keep": keys stay down this long while she decides (helper 9)
 GAME_PAUSE_KEYS: dict[str, str] = {}
 GAME_OPEN_WAIT_S = 90.0     # a Google Play Games game: the player boots first (~40 s)

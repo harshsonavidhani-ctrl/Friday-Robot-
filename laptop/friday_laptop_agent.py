@@ -19,6 +19,12 @@ WHAT IT DOES -- AND ONLY THIS
         installed unless someone presses Get. Only those, and only a URL
         built HERE from the words -- never a URL, a file name or a command
         sent by the Pi.
+  POST /record {"action": "start"|"stop", "game", "max_s"}     (helper 17+)
+        Records HIM driving, to teach Friday: 10 times a second, while that
+        game is in front, a small picture of it, of its minimap, and whether
+        W, A, S, D are held -- ONLY those four keys, nothing else is read.
+        Files in ~/Friday_Recordings. GET /record (status), GET /record/list,
+        GET /record/file?session=&name= (one of its own files, by name).
   POST /look   {"game", "dx", "dy"}                            (helper 15+)
         Moves the mouse BY that much (no click), only while that game is in
         front: turns a 3D game's camera. At most LOOK_MAX each way.
@@ -1230,6 +1236,155 @@ class Autopilot:
             log.info("autopilot ended: %s", self.state["why"])
 
 
+# --- recording a human drive (helper 17) -----------------------------------------
+# Harsh, 2026-10-21, to teach Friday to drive from the game picture: "Ok do
+# the recording". What he agreed to, and all this does: between his start and
+# stop, while THAT game is the window in front, 10 times a second it saves a
+# small picture of the game window, a small picture of its minimap, and
+# whether W, A, S, D are held -- ONLY those four keys. Nothing is read while
+# another window is in front, nothing else from the keyboard is ever read,
+# and it stops by itself after REC_MAX_S or REC_MAX_MB. The files stay in
+# ~/Friday_Recordings on this laptop until the Pi fetches them.
+
+REC_KEYS = {"w": 0x57, "a": 0x41, "s": 0x53, "d": 0x44}
+REC_HZ = 10.0
+REC_SIZE = (160, 90)                      # the game picture, scaled to this
+REC_MAP_W = 64                            # the minimap picture, this wide
+REC_CHUNK = 200                           # frames per chunk file
+REC_MAX_S = 7200.0
+REC_MAX_MB = 2500.0
+
+
+def keys_held() -> str:
+    """Which of W, A, S, D are held right now, e.g. 'wd'. Nothing else is read."""
+    if os.name != "nt":
+        return ""
+    import ctypes
+    user32 = ctypes.windll.user32
+    return "".join(k for k, vk in REC_KEYS.items() if user32.GetAsyncKeyState(vk) & 0x8000)
+
+
+def recordings_dir() -> Path:
+    path = Path.home() / "Friday_Recordings"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+class Recorder:
+    """One recording at a time. Chunk files: frames_NNNNN.bin (zlib blobs back
+    to back) + labels_NNNNN.jsonl (one line per frame: t, keys, and where its
+    two blobs are in the .bin)."""
+
+    def __init__(self, titler, grabber=grab, keys=keys_held, root=None) -> None:
+        self.titler, self.grabber, self.keys = titler, grabber, keys
+        self.root = root
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.state: dict = {"running": False, "why": "never started"}
+
+    def running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
+    def start(self, game: str, max_s: float, map_box) -> dict:
+        if self.running():
+            return self.report()
+        root = Path(self.root) if self.root else recordings_dir()
+        session = datetime.now().strftime("%Y%m%d-%H%M%S")
+        folder = root / session
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "info.json").write_text(json.dumps({
+            "game": game, "hz": REC_HZ, "size": REC_SIZE, "map_w": REC_MAP_W,
+            "map_box": list(map_box), "keys": list(REC_KEYS), "started": time.time()}))
+        self._stop.clear()
+        self.state = {"running": True, "session": session, "game": game, "frames": 0,
+                      "skipped": 0, "bytes": 0, "chunks": 0, "why": "", "started": time.time()}
+        self._thread = threading.Thread(target=self._run, args=(folder, game, max_s, map_box),
+                                        name="recorder", daemon=True)
+        self._thread.start()
+        return self.report()
+
+    def stop(self, why: str = "stopped") -> dict:
+        if self.running():
+            self.state["why"] = why
+            self._stop.set()
+            self._thread.join(timeout=3.0)
+        return self.report()
+
+    def report(self) -> dict:
+        out = dict(self.state)
+        out["running"] = self.running()
+        if out.get("started"):
+            out["seconds"] = round(time.time() - out["started"], 1)
+        return out
+
+    def _run(self, folder: Path, game: str, max_s: float, map_box) -> None:
+        import zlib
+        why = "stopped"
+        chunk, bin_f, lab_f, in_chunk = -1, None, None, REC_CHUNK
+        t0 = time.monotonic()
+        try:
+            while not self._stop.is_set():
+                tick = time.monotonic()
+                if tick - t0 > max_s:
+                    why = "time is up"
+                    break
+                if self.state["bytes"] > REC_MAX_MB * 1e6:
+                    why = "the recording is full"
+                    break
+                if not title_matches(self.titler(), game):
+                    self.state["skipped"] += 1           # another window: nothing read
+                    self._stop.wait(1.0 / REC_HZ)
+                    continue
+                keys = self.keys()
+                view = self.grabber((0.0, 0.0, 1.0, 1.0), REC_SIZE[0])
+                small = self.grabber(tuple(map_box), REC_MAP_W)
+                if not view or not small:
+                    self._stop.wait(1.0 / REC_HZ)
+                    continue
+                if in_chunk >= REC_CHUNK:
+                    for f in (bin_f, lab_f):
+                        if f:
+                            f.close()
+                    chunk += 1
+                    in_chunk = 0
+                    bin_f = open(folder / f"frames_{chunk:05d}.bin", "wb")
+                    lab_f = open(folder / f"labels_{chunk:05d}.jsonl", "w", encoding="utf-8")
+                    self.state["chunks"] = chunk + 1
+                rows = []
+                for w, h, bgra in (view, small):
+                    blob = zlib.compress(bgra, 1)
+                    rows.append({"off": bin_f.tell(), "len": len(blob), "w": w, "h": h})
+                    bin_f.write(blob)
+                    self.state["bytes"] += len(blob)
+                lab_f.write(json.dumps({"i": self.state["frames"], "t": round(tick - t0, 3),
+                                        "keys": keys, "view": rows[0], "map": rows[1]}) + "\n")
+                in_chunk += 1
+                self.state["frames"] += 1
+                self._stop.wait(max(0.0, 1.0 / REC_HZ - (time.monotonic() - tick)))
+        except Exception as exc:                        # noqa: BLE001
+            why = f"error: {type(exc).__name__}: {str(exc)[:80]}"
+            log.warning("recorder %s", why)
+        finally:
+            for f in (bin_f, lab_f):
+                if f:
+                    f.close()
+            if not self.state.get("why"):
+                self.state["why"] = why
+            self.state["running"] = False
+            log.info("recording %s ended: %s, %d frames", self.state.get("session"),
+                     self.state["why"], self.state.get("frames", 0))
+
+
+def recording_file(root: Path, session: str, name: str) -> Path | None:
+    """A file of one recording, by name only -- never a path from outside."""
+    if not re.fullmatch(r"\d{8}-\d{6}", session or ""):
+        return None
+    if not re.fullmatch(r"(frames_\d{5}\.bin|labels_\d{5}\.jsonl|info\.json)", name or ""):
+        return None
+    path = root / session / name
+    return path if path.is_file() else None
+
+
 # --- the listener ---------------------------------------------------------------
 
 class Agent:
@@ -1238,9 +1393,12 @@ class Agent:
                  lister=start_apps, launcher=open_app, idler=idle_info,
                  titler=foreground_title, shooter=screen_png, clicker=click_at,
                  holder=hold_keys, keeper=hold_then_keep, grabber=grab,
-                 autokey=None, mouser=mouse_move) -> None:
+                 autokey=None, mouser=mouse_move, keyreader=keys_held,
+                 rec_root=None) -> None:
         self.holder, self.keeper, self.mouser = holder, keeper, mouser
         self.autopilot = Autopilot(titler, grabber=grabber, presser=autokey, mouser=mouser)
+        self.recorder = Recorder(titler, grabber=grabber, keys=keyreader, root=rec_root)
+        self.rec_root = rec_root
         self._step_lock = threading.Lock()
         self._kept: tuple[threading.Event, threading.Thread | None] | None = None
         self.cfg = cfg
@@ -1276,7 +1434,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/16"
+            server_version = "FridayLaptopHelper/17"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -1315,15 +1473,26 @@ class Agent:
                     return self._screen()
                 if self.path == "/autopilot":
                     return self._send(200, {"ok": True, **agent.autopilot.report()})
+                if self.path == "/record":
+                    return self._send(200, {"ok": True, **agent.recorder.report()})
+                if self.path.startswith("/record/file?"):
+                    return self._record_file()
+                if self.path == "/record/list":
+                    root = Path(agent.rec_root) if agent.rec_root else recordings_dir()
+                    sessions = sorted(p.name for p in root.iterdir()
+                                      if p.is_dir() and re.fullmatch(r"\d{8}-\d{6}", p.name))
+                    return self._send(200, {"ok": True, "sessions": [
+                        {"session": n, "files": sorted(f.name for f in (root / n).iterdir())}
+                        for n in sessions]})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 16})
+                return self._send(200, {"ok": True, "version": 17})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
                     return self._send(401, {"error": "unauthorised"})
                 if self.path not in ("/open", "/notes", "/key", "/launch", "/click", "/step",
-                                     "/autopilot", "/look"):
+                                     "/autopilot", "/look", "/record"):
                     return self._send(404, {"error": "not found"})
                 size = int(self.headers.get("Content-Length") or 0)
                 if size <= 0 or size > MAX_BODY:
@@ -1351,6 +1520,8 @@ class Agent:
                         return self._autopilot(body)
                     if self.path == "/look":
                         return self._look(body)
+                    if self.path == "/record":
+                        return self._record(body)
                     return self._notes(body)
                 except Exception as exc:                # noqa: BLE001
                     log.warning("%s failed: %s", self.path, exc)
@@ -1471,6 +1642,44 @@ class Agent:
                     return None
                 return self._send(200, {"ok": True})
 
+            def _record(self, body: dict):
+                """{action: start|stop, game, max_s?} -- see "recording a human drive"."""
+                action = str(body.get("action") or "")
+                if action == "stop":
+                    return self._send(200, {"ok": True, **agent.recorder.stop("he stopped it")})
+                if action != "start":
+                    return self._send(400, {"error": "action is start or stop"})
+                game = str(body.get("game") or "").strip()
+                if not game or not game_words(game):
+                    return self._send(400, {"error": "send the game's name"})
+                if agent.autopilot.running():
+                    return self._send(409, {"ok": False, "error": "the autopilot is driving: "
+                                                                  "a recording is of HIM driving"})
+                try:
+                    max_s = min(REC_MAX_S, max(10.0, float(body.get("max_s") or 3600)))
+                except (TypeError, ValueError):
+                    return self._send(400, {"error": "max_s is seconds"})
+                box = parse_box(",".join(str(v) for v in body["map_box"])) \
+                    if isinstance(body.get("map_box"), list) else MAP_BOX
+                if box is None:
+                    return self._send(400, {"error": "map_box is x0,y0,x1,y1"})
+                return self._send(200, {"ok": True, **agent.recorder.start(game, max_s, box)})
+
+            def _record_file(self):
+                query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                root = Path(agent.rec_root) if agent.rec_root else recordings_dir()
+                path = recording_file(root, query.get("session", [""])[0],
+                                      query.get("name", [""])[0])
+                if path is None:
+                    return self._send(404, {"error": "no such file"})
+                data = path.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return None
+
             def _look(self, body: dict):
                 """{game, dx, dy}: turn the game's camera by moving the mouse
                 that much (no click), only while that game is in front."""
@@ -1497,6 +1706,9 @@ class Agent:
                 if mode == "off":
                     agent.autopilot.stop("turned off")
                     return self._send(200, {"ok": True, **agent.autopilot.report()})
+                if agent.recorder.running():
+                    return self._send(409, {"ok": False, "error": "recording his driving: "
+                                                                  "the autopilot stays off"})
                 game = str(body.get("game") or "").strip()
                 refused = self._game_in_front(game)
                 if refused:
