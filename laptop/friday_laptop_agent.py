@@ -766,6 +766,8 @@ TUNE_RANGES = {
     "arrow_x": (0.2, 0.8), "arrow_y": (0.3, 0.9), "lookahead": (0.03, 0.3),
     "steer_dead": (0.0, 30.0), "steer_full": (10.0, 90.0), "straight_pref": (0.0, 1.0),
     "stuck_diff": (0.5, 20.0), "reverse_s": (0.3, 3.0),
+    "follow_route": (0.0, 1.0), "route_b": (100, 255), "route_gap": (20, 200),
+    "route_r": (0, 255),
 }
 
 
@@ -774,7 +776,9 @@ def tune_defaults() -> dict:
             "arrow_white": ARROW_WHITE, "arrow_x": ARROW_AT[0], "arrow_y": ARROW_AT[1],
             "lookahead": LOOKAHEAD, "steer_dead": STEER_DEAD_DEG,
             "steer_full": STEER_FULL_DEG, "straight_pref": 0.18,
-            "stuck_diff": STUCK_DIFF, "reverse_s": REVERSE_S}
+            "stuck_diff": STUCK_DIFF, "reverse_s": REVERSE_S,
+            # GTA's GPS route (a waypoint): purple (168, 84, 243) over the road
+            "follow_route": 1.0, "route_b": 180, "route_gap": 100, "route_r": 100}
 
 
 def parse_box(text: str) -> tuple[float, float, float, float] | None:
@@ -797,6 +801,10 @@ def _is_road(r: int, g: int, b: int, t: dict | None = None) -> bool:
     if t is None:
         return ROAD_LO <= mx <= ROAD_HI and mx - mn <= ROAD_SAT
     return t["road_lo"] <= mx <= t["road_hi"] and mx - mn <= t["road_sat"]
+
+
+def _is_route(r: int, g: int, b: int, t: dict) -> bool:
+    return b >= t["route_b"] and b - g >= t["route_gap"] and r >= t["route_r"]
 
 
 def find_arrow(w: int, h: int, bgra: bytes,
@@ -829,28 +837,45 @@ def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6,
         return None
     cx, cy, heading = arrow
     rmax, limit_y = int(0.45 * w), h * MAP_BAR_FROM
+    follow = t["follow_route"] >= 0.5
     rays: dict[int, int] = {}
+    route: dict[int, int] = {}                  # how far each ray stays on the GPS route
     for rel in range(-span, span + 1, step):
         a = math.radians(heading + rel)
         dx, dy = math.sin(a), -math.cos(a)
-        length, misses, started = 0, 0, False
+        length, on_route, misses, started = 0, 0, 0, False
         for r in range(3, rmax):
             x, y = int(cx + dx * r), int(cy + dy * r)
             if not (0 <= x < w and 0 <= y < limit_y):
                 break
-            if _is_road(*_bgr(bgra, w, x, y), t):
+            pix = _bgr(bgra, w, x, y)
+            purple = follow and _is_route(*pix, t)
+            if purple or _is_road(*pix, t):
                 started, misses, length = True, 0, r
+                if purple:
+                    on_route = r
             else:
                 misses += 1
                 if (started and misses > 2) or (not started and r > 0.05 * w):
                     break
-        rays[rel] = length
-    best = max(rays, key=lambda k: rays[k] - t["straight_pref"] * abs(k) * (rmax / 60.0))
+        rays[rel], route[rel] = length, on_route
+    pref = t["straight_pref"] * (rmax / 60.0)
+    # A waypoint's purple route near the car wins over plain road: that is
+    # how it takes the right turn at a junction instead of the straightest.
+    use_route = follow and max(route.values()) >= 0.04 * w
+    pick = route if use_route else rays
+    best = max(pick, key=lambda k: pick[k] - pref * abs(k))
+    if use_route:
+        ring = _route_ring(w, h, bgra, cx, cy, heading, t["lookahead"] * w, limit_y, t)
+        if ring is not None:
+            return {"heading": round(heading), "target": round(ring), "ray": best,
+                    "ahead": rays.get(0, 0), "rmax": rmax, "best_len": pick[best],
+                    "route": True}
     # Aim at the MIDDLE of the road a short way along that ray (pure pursuit):
     # following the ray alone kept the car on the road but scraping its edge
     # (live 2026-10-21: a hedge on the left, then a wall on the right).
     aim = best
-    look = min(t["lookahead"] * w, max(rays[best] * 0.8, 0.0))
+    look = min(t["lookahead"] * w, max(pick[best] * 0.8, 0.0))
     if look >= 0.03 * w:
         a = math.radians(heading + best)
         px, py = cx + math.sin(a) * look, cy - math.cos(a) * look
@@ -860,7 +885,10 @@ def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6,
             far = 0
             for d in range(1, int(0.12 * w)):
                 x, y = int(px + side * nx * d), int(py + side * ny * d)
-                if not (0 <= x < w and 0 <= y < limit_y) or not _is_road(*_bgr(bgra, w, x, y), t):
+                if not (0 <= x < w and 0 <= y < limit_y):
+                    break
+                pix = _bgr(bgra, w, x, y)
+                if not (_is_route(*pix, t) if use_route else _is_road(*pix, t)):
                     break
                 far = d
             edges.append(far)
@@ -869,7 +897,40 @@ def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6,
         aim = math.degrees(math.atan2(mx - cx, -(my - cy))) - heading
         aim = (aim + 180.0) % 360.0 - 180.0
     return {"heading": round(heading), "target": round(aim), "ray": best,
-            "ahead": rays.get(0, 0), "rmax": rmax, "best_len": rays[best]}
+            "ahead": rays.get(0, 0), "rmax": rmax, "best_len": pick[best],
+            "route": use_route}
+
+
+def _route_ring(w: int, h: int, bgra: bytes, cx: float, cy: float, heading: float,
+                look: float, limit_y: float, t: dict) -> float | None:
+    """Where the purple route crosses a circle of radius `look` round the car:
+    the angle (to the heading) of the crossing nearest straight ahead. A ray
+    only sees straight lines; the circle follows a bend or a turn coming up
+    (the junction test: road straight on, route turning left)."""
+    look = max(4.0, look)
+    angles = []
+    for y in range(max(0, int(cy - look - 2)), min(int(limit_y), int(cy + look + 2))):
+        for x in range(max(0, int(cx - look - 2)), min(w, int(cx + look + 2))):
+            d = math.hypot(x - cx, y - cy)
+            if abs(d - look) > 1.5 or not _is_route(*_bgr(bgra, w, x, y), t):
+                continue
+            rel = math.degrees(math.atan2(x - cx, -(y - cy))) - heading
+            rel = (rel + 180.0) % 360.0 - 180.0
+            if abs(rel) <= 120.0:
+                angles.append(rel)
+    if not angles:
+        return None
+    angles.sort()
+    groups, cur = [], [angles[0]]
+    for a in angles[1:]:
+        if a - cur[-1] > 15.0:
+            groups.append(cur)
+            cur = [a]
+        else:
+            cur.append(a)
+    groups.append(cur)
+    best = min(groups, key=lambda g: abs(sum(g) / len(g)))
+    return sum(best) / len(best)
 
 
 def _thumb(got: tuple[int, int, bytes] | None) -> list[int] | None:
@@ -991,6 +1052,7 @@ class Autopilot:
                         else min(1.0, abs(error) / t["steer_full"]))
                 steer = keys["left"] if error < 0 else keys["right"]
                 self.state["last"] = {"target": nav["target"], "ray": nav.get("ray"),
+                                      "route": nav.get("route"),
                                       "error": round(error),
                                       "ahead": nav["ahead"], "heading": nav["heading"],
                                       "steer": steer if duty else "", "duty": round(duty, 2),
@@ -1088,7 +1150,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/11"
+            server_version = "FridayLaptopHelper/12"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -1129,7 +1191,7 @@ class Agent:
                     return self._send(200, {"ok": True, **agent.autopilot.report()})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 11})
+                return self._send(200, {"ok": True, "version": 12})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():

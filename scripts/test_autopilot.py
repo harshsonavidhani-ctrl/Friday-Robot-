@@ -112,6 +112,40 @@ check("...and sees road straight ahead", nav and nav["ahead"] > 20, str(nav))
 check("parse_box", fa.parse_box("0,0.78,0.16,0.99") == (0.0, 0.78, 0.16, 0.99)
       and fa.parse_box("0.5,0.2,0.1,0.9") is None and fa.parse_box("x") is None)
 
+print("a junction: the road goes straight on, the GPS route turns left")
+
+
+def junction(route_left: bool, at: int = 10) -> bytes:
+    out = bytearray(MW * MH * 4)
+    ax, ay = int(fa.ARROW_AT[0] * MW), int(fa.ARROW_AT[1] * MH)
+    for py in range(MH):
+        for px in range(MW):
+            straight = abs(px - ax) <= 5 and py <= ay + 10
+            branch = abs(py - (ay - at)) <= 5 and px <= ax
+            purple = route_left and ((abs(px - ax) <= 3 and ay - at <= py <= ay + 5)
+                                     or (abs(py - (ay - at)) <= 3 and px <= ax))
+            r, g, b = ((168, 84, 243) if purple else (130, 130, 130) if (straight or branch)
+                       else (55, 55, 55))
+            out[(py * MW + px) * 4:(py * MW + px) * 4 + 4] = bytes((b, g, r, 255))
+    for dy in range(7):
+        for dx in range(-(dy // 2), dy // 2 + 1):
+            i = ((ay - 3 + dy) * MW + ax + dx) * 4
+            out[i:i + 4] = bytes((255, 255, 255, 255))
+    return bytes(out)
+
+
+plain = fa.read_map(MW, MH, junction(False))
+routed = fa.read_map(MW, MH, junction(True))
+check("no route: it goes straight on (the straightest road)",
+      plain and not plain["route"] and abs(plain["ray"]) <= 12, str(plain))
+check("with the purple route turning left just ahead: it steers left, onto the route",
+      routed and routed["route"] and routed["target"] < -30, str(routed))
+far = fa.read_map(MW, MH, junction(True, at=40))
+check("...and while the turn is still far off it keeps straight to it",
+      far and far["route"] and abs(far["target"]) < 12, str(far))
+off = dict(fa.tune_defaults(), follow_route=0.0)
+check("follow_route 0 (tune) ignores the route", not fa.read_map(MW, MH, junction(True), t=off)["route"])
+
 print("driving the S-bend (12 s, real time)")
 TITLE = {"t": "Grand Theft Auto V"}
 ap = fa.Autopilot(lambda: TITLE["t"], grabber=car.grab, presser=car.press)
