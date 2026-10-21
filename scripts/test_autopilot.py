@@ -109,6 +109,32 @@ w, h, bgra = car.grab(fa.MAP_BOX, 320)
 nav = fa.read_map(w, h, bgra)
 check("finds the arrow pointing up the map", nav is not None and abs(nav["heading"]) <= 10, str(nav))
 check("...and sees road straight ahead", nav and nav["ahead"] > 20, str(nav))
+
+
+def chevron(deg: float) -> bytes:
+    """GTA's arrow: a notched chevron, one half white and one light grey."""
+    out = bytearray(bytes((70, 66, 72, 255)) * (MW * MH))
+    ax, ay = fa.ARROW_AT[0] * MW, fa.ARROW_AT[1] * MH
+    a = math.radians(deg)
+    ux, uy, nx, ny = math.sin(a), -math.cos(a), math.cos(a), math.sin(a)
+    for py in range(MH):
+        for px in range(MW):
+            dx, dy = px - ax, py - ay
+            along, side = dx * ux + dy * uy, dx * nx + dy * ny
+            # tip at along=+7, back at along=-5, half-width 6 at the back, notch 2
+            if -5 <= along <= 7 and abs(side) <= (7 - along) * 0.5 and along >= -5 + 2 - abs(side) * 0.4:
+                v = 255 if side < 0 else 185
+                out[(py * MW + px) * 4:(py * MW + px) * 4 + 4] = bytes((v, v, v, 255))
+    return bytes(out)
+
+
+worst = 0.0
+for deg in range(-180, 180, 30):
+    got = fa.find_arrow(MW, MH, chevron(deg))
+    err = abs(((got[2] - deg) + 180) % 360 - 180) if got else 999
+    worst = max(worst, err)
+check(f"the half-white, half-grey arrow, every 30 degrees round: worst {worst:.0f} deg off",
+      worst <= 15)
 check("parse_box", fa.parse_box("0,0.78,0.16,0.99") == (0.0, 0.78, 0.16, 0.99)
       and fa.parse_box("0.5,0.2,0.1,0.9") is None and fa.parse_box("x") is None)
 

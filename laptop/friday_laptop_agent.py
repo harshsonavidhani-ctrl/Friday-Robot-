@@ -751,7 +751,7 @@ AUTO_KEYS = {"gas": "w", "brake": "s", "left": "a", "right": "d"}      # GTA's
 MAP_BOX = (0.0, 0.787, 0.162, 0.99)       # GTA V's minimap, fractions of the window
 MAP_MAX_W = 320
 ROAD_LO, ROAD_HI, ROAD_SAT = 92, 190, 28  # minimap road: light grey, not white
-ARROW_WHITE = 215
+ARROW_WHITE = 165                         # both halves of the arrow; roads are below 160
 ARROW_AT = (0.52, 0.70)                   # the player arrow in MAP_BOX
 MAP_BAR_FROM = 0.86                       # health/armour bar below it
 STEER_DEAD_DEG, STEER_FULL_DEG, BIAS_DEG = 6.0, 35.0, 45.0
@@ -809,8 +809,16 @@ def _is_route(r: int, g: int, b: int, t: dict) -> bool:
 
 def find_arrow(w: int, h: int, bgra: bytes,
                t: dict | None = None) -> tuple[float, float, float] | None:
-    """(x, y, heading) of the white player arrow near ARROW_AT; heading in
-    degrees, 0 = up the map, positive = clockwise."""
+    """(x, y, heading) of the player arrow near ARROW_AT; heading in degrees,
+    0 = up the map, positive = clockwise.
+
+    GTA's arrow is HALF white and half light grey (lit and shaded sides).
+    Helper 10-12 took only the white half and called the pixel farthest from
+    its centre the tip -- on half an arrow that is often a back corner, and on
+    2026-10-21 the car was steered back the way it came. Now: both halves
+    (brighter than any road), the arrow's mirror axis (the angle where the
+    shape best matches its own reflection), and the tip is the end of that
+    axis that reaches farthest from the centre."""
     t = t or tune_defaults()
     ex, ey, rad = t["arrow_x"] * w, t["arrow_y"] * h, 0.12 * w
     pts = []
@@ -818,12 +826,59 @@ def find_arrow(w: int, h: int, bgra: bytes,
         for x in range(max(0, int(ex - rad)), min(w, int(ex + rad))):
             if min(_bgr(bgra, w, x, y)) >= t["arrow_white"]:
                 pts.append((x, y))
-    if len(pts) < 3:
+    if len(pts) < 4:
         return None
-    cx = sum(p[0] for p in pts) / len(pts)
-    cy = sum(p[1] for p in pts) / len(pts)
-    tx, ty = max(pts, key=lambda p: (p[0] - cx) ** 2 + (p[1] - cy) ** 2)  # the tip
-    return cx, cy, math.degrees(math.atan2(tx - cx, -(ty - cy)))
+    # the arrow is the biggest bright blob nearest the expected spot
+    blob = _blob_near(pts, ex, ey)
+    if len(blob) < 4:
+        return None
+    cx = sum(p[0] for p in blob) / len(blob)
+    cy = sum(p[1] for p in blob) / len(blob)
+    cells = {(x, y) for x, y in blob}
+    best_axis, best_score = 0.0, -1.0
+    for deg in range(0, 180, 5):
+        a = math.radians(deg)
+        ux, uy = math.sin(a), -math.cos(a)
+        score = 0
+        for x, y in blob:
+            dx, dy = x - cx, y - cy
+            along = dx * ux + dy * uy
+            # reflect across the axis: keep `along`, flip the sideways part
+            rx, ry = cx + 2 * along * ux - dx, cy + 2 * along * uy - dy
+            if (round(rx), round(ry)) in cells:
+                score += 1
+        if score > best_score:
+            best_axis, best_score = float(deg), float(score)
+    a = math.radians(best_axis)
+    ux, uy = math.sin(a), -math.cos(a)
+    alongs = [(x - cx) * ux + (y - cy) * uy for x, y in blob]
+    heading = best_axis if max(alongs) >= -min(alongs) else best_axis + 180.0
+    return cx, cy, (heading + 180.0) % 360.0 - 180.0
+
+
+def _blob_near(pts: list[tuple[int, int]], ex: float, ey: float) -> list[tuple[int, int]]:
+    """The 8-connected group of `pts` with the most pixels, ties to the
+    nearest the expected spot (a white icon nearby is not the arrow)."""
+    left = set(pts)
+    groups = []
+    while left:
+        seed = left.pop()
+        group, todo = [seed], [seed]
+        while todo:
+            x, y = todo.pop()
+            for nx in (x - 1, x, x + 1):
+                for ny in (y - 1, y, y + 1):
+                    if (nx, ny) in left:
+                        left.discard((nx, ny))
+                        group.append((nx, ny))
+                        todo.append((nx, ny))
+        groups.append(group)
+
+    def key(g):
+        gx = sum(p[0] for p in g) / len(g)
+        gy = sum(p[1] for p in g) / len(g)
+        return (len(g) >= 8, -math.hypot(gx - ex, gy - ey))
+    return max(groups, key=key)
 
 
 def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6,
@@ -1150,7 +1205,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/12"
+            server_version = "FridayLaptopHelper/13"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -1191,7 +1246,7 @@ class Agent:
                     return self._send(200, {"ok": True, **agent.autopilot.report()})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 12})
+                return self._send(200, {"ok": True, "version": 13})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
