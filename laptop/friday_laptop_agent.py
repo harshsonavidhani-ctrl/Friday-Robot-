@@ -19,11 +19,14 @@ WHAT IT DOES -- AND ONLY THIS
         installed unless someone presses Get. Only those, and only a URL
         built HERE from the words -- never a URL, a file name or a command
         sent by the Pi.
-  POST /step   {"game", "keys": [...], "ms", "before", "after", "shot"} (helper 8+)
+  POST /step   {"game", "keys": [...], "ms", "before", "after", "shot", "keep"} (helper 8+)
         Holds up to 3 GAME_KEYS (arrows, space, enter, escape, shift, w a s d
-        n v x z) together for at most STEP_MAX_MS, ONLY while that game is the
-        window in front -- let go the moment it is not -- and hands back the
-        next picture. How she plays a fast game, a short step at a time.
+        n v x z; helper 9 adds f e q r c g h tab) together for at most
+        STEP_MAX_MS, ONLY while that game is the window in front -- let go the
+        moment it is not -- and hands back the next picture. "keep" (helper 9,
+        ms, at most KEEP_MAX_MS) leaves them down after the picture until the
+        next /step, so a car keeps going while she decides. How she plays a
+        fast game, a short step at a time.
   POST /notes  {"title": "...", "markdown": "..."}
         Writes ONE .md file into NOTES_DIR (default ~/Friday_Notes), never
         overwriting, never outside that folder, and opens it in Notepad.
@@ -151,9 +154,19 @@ GAME_KEYS = {
     "w": (0x57, 0x11, False), "a": (0x41, 0x1E, False), "s": (0x53, 0x1F, False),
     "d": (0x44, 0x20, False), "n": (0x4E, 0x31, False), "v": (0x56, 0x2F, False),
     "x": (0x58, 0x2D, False), "z": (0x5A, 0x2C, False),
+    # helper 9 (GTA V: F gets in a car, E horn/ability, Q cover, R reload,
+    # C look back, G throw, H headlights, Tab weapon wheel)
+    "f": (0x46, 0x21, False), "e": (0x45, 0x12, False), "q": (0x51, 0x10, False),
+    "r": (0x52, 0x13, False), "c": (0x43, 0x2E, False), "g": (0x47, 0x22, False),
+    "h": (0x48, 0x23, False), "tab": (0x09, 0x0F, False),
 }
 STEP_MAX_MS = 2000                         # longest a key is ever held
 STEP_MAX_KEYS = 3
+# /step "keep" (helper 9): the keys STAY DOWN after the picture, for at most
+# KEEP_MAX_MS, so a car does not stop while the next move is being decided
+# (2026-10-21: "the time it analyzes the car was stopping"). Let go at once
+# by the next /step, by the game leaving the front, or when the time is up.
+KEEP_MAX_MS = 6000
 STARTUP_NAME = "friday_laptop_helper.cmd"
 PI_FILE = "friday_pi.json"                  # where the Pi last called from
 NOWHERE = "192.0.2.1"                       # never sent to: only picks a route
@@ -641,6 +654,48 @@ def hold_keys(keys: list[str], ms: int, still_in_front) -> str:
     return why
 
 
+def hold_then_keep(keys: list[str], ms: int, keep_ms: int, still_in_front,
+                   stop: threading.Event) -> tuple[str, threading.Thread | None]:
+    """Hold `keys` for `ms` like hold_keys, then return with them STILL DOWN:
+    a thread lets go after keep_ms, when `stop` is set, or the moment the game
+    leaves the front. ('' or why, that thread)."""
+    if os.name != "nt":
+        return "keys work on Windows only", None
+    down: list[str] = []
+
+    def release() -> None:
+        for key in reversed(down):
+            _game_key(key, True)
+
+    try:
+        for key in keys:
+            _game_key(key, False)
+            down.append(key)
+        end = time.monotonic() + ms / 1000.0
+        while time.monotonic() < end:
+            if not still_in_front():
+                release()
+                return "the game is no longer the window in front", None
+            time.sleep(min(0.025, max(0.0, end - time.monotonic())))
+    except BaseException:
+        release()
+        raise
+
+    def keeper() -> None:
+        until = time.monotonic() + keep_ms / 1000.0
+        try:
+            while time.monotonic() < until and not stop.is_set():
+                if not still_in_front():
+                    break
+                stop.wait(0.05)
+        finally:
+            release()
+
+    t = threading.Thread(target=keeper, name="keys-kept", daemon=True)
+    t.start()
+    return "", t
+
+
 def idle_info() -> dict:
     """Seconds since the keyboard or mouse was last used, and the app in front."""
     if os.name != "nt":
@@ -665,9 +720,10 @@ class Agent:
                  fetch=_fetch, hello: Hello | None = None, presser=press,
                  lister=start_apps, launcher=open_app, idler=idle_info,
                  titler=foreground_title, shooter=screen_png, clicker=click_at,
-                 holder=hold_keys) -> None:
-        self.holder = holder
+                 holder=hold_keys, keeper=hold_then_keep) -> None:
+        self.holder, self.keeper = holder, keeper
         self._step_lock = threading.Lock()
+        self._kept: tuple[threading.Event, threading.Thread | None] | None = None
         self.cfg = cfg
         self.opener = opener
         self.shower = shower
@@ -679,6 +735,15 @@ class Agent:
         self._apps: list[dict] = []
         self._apps_at = 0.0
         self._apps_lock = threading.Lock()
+
+    def stop_keeping(self) -> None:
+        """Let go of keys a previous /step kept down -- and WAIT until they are
+        up, or the old thread would release keys this step just pressed."""
+        kept, self._kept = self._kept, None
+        if kept is not None:
+            kept[0].set()
+            if kept[1] is not None:
+                kept[1].join(timeout=1.0)
 
     def apps(self, fresh: bool = False) -> list[dict]:
         """The Start-menu list, cached APPS_REFRESH_S (PowerShell takes a second)."""
@@ -828,24 +893,31 @@ class Agent:
                 taps = [body.get("before"), body.get("after")]
                 try:
                     ms = int(body.get("ms") or 0)
+                    keep = int(body.get("keep") or 0)
                 except (TypeError, ValueError):
-                    ms = -1
+                    ms = keep = -1
                 if (not isinstance(keys, list) or len(keys) > STEP_MAX_KEYS
                         or any(k not in GAME_KEYS for k in keys)
                         or any(t is not None and t not in GAME_KEYS for t in taps)
-                        or not 0 <= ms <= STEP_MAX_MS):
-                    return self._send(400, {"error": "keys from GAME_KEYS, ms 0..%d"
-                                                     % STEP_MAX_MS})
+                        or not 0 <= ms <= STEP_MAX_MS or not 0 <= keep <= KEEP_MAX_MS):
+                    return self._send(400, {"error": "keys from GAME_KEYS, ms 0..%d, "
+                                                     "keep 0..%d" % (STEP_MAX_MS, KEEP_MAX_MS)})
                 if not agent._step_lock.acquire(blocking=False):
                     return self._send(409, {"ok": False, "error": "busy"})
                 try:
+                    agent.stop_keeping()
                     def front() -> bool:
                         return title_matches(agent.titler(), game)
                     why = ""
                     if taps[0]:
                         why = agent.holder([taps[0]], 60, front)
                         time.sleep(0.15)
-                    if not why and keys and ms:
+                    if not why and keys and ms and keep:
+                        stop = threading.Event()
+                        why, kept = agent.keeper(keys, ms, keep, front, stop)
+                        if not why:
+                            agent._kept = (stop, kept)
+                    elif not why and keys and ms:
                         why = agent.holder(keys, ms, front)
                     png = agent.shooter() if not why and body.get("shot") else None
                     if not why and taps[1]:

@@ -72,9 +72,13 @@ KEYS_SYSTEM = ("You are Friday, a small robot playing {game} on a laptop with th
                "at most 3 keys from: {keys}; ms from 100 to {max_ms}. The game keeps "
                "running while you think, so prefer short holds. Racing: up = accelerate, "
                "left/right = steer, down = brake; steer toward the middle of the road. "
-               "Side-view driving (Hill Climb Racing): right = gas, left = brake; hold "
-               "gas long on hills (the car rolls back while you think), and if the "
+               "Side-view driving (Hill Climb Racing): right = gas, left = brake; if the "
                "nose points up or the car is in the air nose-up, brake briefly. "
+               "GTA: w = forward/accelerate, s = brake/reverse, a/d = steer, f = get "
+               "in or out of a car, space = handbrake, shift = sprint. "
+               'Add "keep": true to keep those keys held while you decide your next '
+               "move (gas on a hill, driving straight) -- otherwise they are let go "
+               "and the car slows while you think. "
                'To press a button in a menu you may click instead: {{"x": 0.5, '
                '"y": 0.8, "why": "..."}} (x, y fractions of the image). Or {{"done": '
                'true, "why": "a few words"}} if the game is over or you are stuck. '
@@ -300,7 +304,8 @@ def parse_move(text: str | None, keys_ok: bool = False) -> dict | None:
         except (TypeError, ValueError):
             return None
         ms = min(max(ms, 100), int(getattr(config, "GAME_STEP_MAX_MS", 1500)))
-        return {"keys": keys, "ms": ms, "why": str(got.get("why", ""))[:80]}
+        return {"keys": keys, "ms": ms, "keep": got.get("keep") is True,
+                "why": str(got.get("why", ""))[:80]}
     try:
         x, y = float(got["x"]), float(got["y"])
     except (KeyError, TypeError, ValueError):
@@ -403,8 +408,12 @@ def _loop(game: str, stop: threading.Event, say=_say, fast: bool = False,
             break
         if "keys" in move:
             # One step: (un-pause,) hold the keys, the next picture, (pause).
+            # "keep": they stay down while she decides the next one (helper 9).
+            kept = (int(getattr(config, "GAME_KEEP_MS", 4000))
+                    if move.get("keep") and not pkey else 0)
             png, err = lr.step(game, move["keys"], move["ms"],
-                               before=pkey if paused else None, after=pkey, shot=True)
+                               before=pkey if paused else None, after=pkey, shot=True,
+                               keep=kept)
             paused = bool(pkey)
             label = f"{'+'.join(move['keys'])} {move['ms']} ms"
             if png is None:
@@ -428,6 +437,11 @@ def _loop(game: str, stop: threading.Event, say=_say, fast: bool = False,
         if stop.wait(pause):
             why = "stopped"
             break
+    if fast:
+        try:
+            lr.step(game, [], 0, shot=False)          # let go of any kept keys now
+        except Exception:                           # noqa: BLE001
+            pass
     _play["why"] = why
     _publish(False, recent[-1] if recent else "")
     log.info("game play of %s ended after %d moves: %s", game, _play["moves"], why)

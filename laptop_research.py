@@ -520,7 +520,8 @@ def click(game: str, x: float, y: float) -> tuple[bool, str]:
 
 # The helper's own GAME_KEYS (helper 8): the only key names /step takes.
 GAME_KEYS = ("up", "down", "left", "right", "space", "enter", "escape", "shift",
-             "w", "a", "s", "d", "n", "v", "x", "z")
+             "w", "a", "s", "d", "n", "v", "x", "z",
+             "f", "e", "q", "r", "c", "g", "h", "tab")          # helper 9: the last row
 
 
 def helper_version() -> int:
@@ -536,16 +537,22 @@ def helper_version() -> int:
 
 
 def step(game: str, keys: list[str], ms: int, before: str | None = None,
-         after: str | None = None, shot: bool = True) -> tuple[bytes | None, str]:
+         after: str | None = None, shot: bool = True,
+         keep: int = 0) -> tuple[bytes | None, str]:
     """One move in a real-time game (helper 8): tap `before`, hold `keys`
     together for `ms`, picture, tap `after`. The laptop refuses unless that
     game is the window in front, and lets go of the keys the moment it is not.
+    keep (helper 9): ms the keys stay down AFTER the picture, until the next
+    step -- so the car does not stop while she decides.
     (png -- b"" with shot=False -- , "") or (None, why)."""
     s = _settings()
     if s is None:
         return None, "the laptop is not set up"
-    body = json.dumps({"game": game, "keys": list(keys), "ms": int(ms), "before": before,
-                       "after": after, "shot": bool(shot)}).encode()
+    sent = {"game": game, "keys": list(keys), "ms": int(ms), "before": before,
+            "after": after, "shot": bool(shot)}
+    if keep:
+        sent["keep"] = int(keep)            # helper 8 ignores it: keys let go as before
+    body = json.dumps(sent).encode()
     req = urllib.request.Request(s["url"].rstrip("/") + "/step", data=body, method="POST",
                                  headers={"X-Friday-Token": s["token"],
                                           "Content-Type": "application/json"})

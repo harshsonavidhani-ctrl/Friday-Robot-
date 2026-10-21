@@ -61,8 +61,17 @@ lr.click = lambda game, x, y: (CLICKS.append((game, round(x, 2), round(y, 2))) o
 STEPS, LAUNCHED = [], []
 VERSION = {"v": 7}
 lr.helper_version = lambda: VERSION["v"]
-lr.step = lambda game, keys, ms, before=None, after=None, shot=True: (
-    STEPS.append((game, tuple(keys), ms, before, after)) or ((b"\x89PNG step" if shot else b""), ""))
+KEPT: list = []
+
+
+def fake_step(game, keys, ms, before=None, after=None, shot=True, keep=0):
+    if keys:
+        STEPS.append((game, tuple(keys), ms, before, after))
+        KEPT.append(keep)
+    return (b"\x89PNG step" if shot else b""), ""
+
+
+lr.step = fake_step
 
 
 def fake_launch(name):
@@ -167,7 +176,7 @@ print("a fast game, with the keyboard (helper 8)")
 VERSION["v"] = 8
 SAID.clear()
 CALLS.clear()
-REPLIES[:] = [('{"keys": ["up"], "ms": 900, "why": "go"}', ""),
+REPLIES[:] = [('{"keys": ["up"], "ms": 900, "keep": true, "why": "go"}', ""),
               ('{"keys": ["up", "left"], "ms": 400, "why": "bend"}', ""),
               ('{"keys": ["alt", "f4"], "ms": 100}', ""),
               ('{"x": 0.5, "y": 0.8, "why": "continue button"}', ""),
@@ -182,6 +191,8 @@ for _ in range(200):
     time.sleep(0.02)
 check("...each step holds the keys she chose, for as long as she chose",
       [x[1:3] for x in STEPS] == [(("up",), 900), (("up", "left"), 400)], str(STEPS))
+check("...'keep' keeps the keys down while she thinks (GAME_KEEP_MS), only when she asks",
+      KEPT[:2] == [config.GAME_KEEP_MS, 0], str(KEPT))
 check("...keys the laptop would refuse are never sent (alt+f4)",
       all("f4" not in x[1] for x in STEPS))
 check("...a menu button is still a click", CLICKS[-1:] == [("Grand Theft Auto V Enhanced", 0.5, 0.8)],
@@ -231,7 +242,7 @@ VERSION["v"] = 8
 
 print("parse_move")
 check("keys", lg.parse_move('{"keys": ["UP", "left"], "ms": 600, "why": "w"}', keys_ok=True)
-      == {"keys": ["up", "left"], "ms": 600, "why": "w"})
+      == {"keys": ["up", "left"], "ms": 600, "keep": False, "why": "w"})
 check("keys only in a keyboard game", lg.parse_move('{"keys": ["up"], "ms": 600}') is None)
 check("a key the laptop does not have -> refused",
       lg.parse_move('{"keys": ["ctrl", "w"], "ms": 600}', keys_ok=True) is None)

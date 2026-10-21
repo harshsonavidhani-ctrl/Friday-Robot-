@@ -526,6 +526,7 @@ GAME_PLAY_PAUSE_S = 1.5
 # come to the front.
 GAME_PLAY_MAX_STEPS = 200
 GAME_STEP_MAX_MS = 1500
+GAME_KEEP_MS = 4000          # "keep": keys stay down this long while she decides (helper 9)
 GAME_PAUSE_KEYS: dict[str, str] = {}
 GAME_OPEN_WAIT_S = 90.0     # a Google Play Games game: the player boots first (~40 s)
 LAPTOP_GAME_STATE_FILE = ROOT / "state" / "laptop_game.json"   # for the dashboard
