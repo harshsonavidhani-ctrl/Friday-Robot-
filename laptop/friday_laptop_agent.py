@@ -754,8 +754,27 @@ ROAD_LO, ROAD_HI, ROAD_SAT = 92, 190, 28  # minimap road: light grey, not white
 ARROW_WHITE = 215
 ARROW_AT = (0.52, 0.70)                   # the player arrow in MAP_BOX
 MAP_BAR_FROM = 0.86                       # health/armour bar below it
-STEER_DEAD_DEG, STEER_FULL_DEG, BIAS_DEG = 8.0, 40.0, 45.0
+STEER_DEAD_DEG, STEER_FULL_DEG, BIAS_DEG = 6.0, 35.0, 45.0
+LOOKAHEAD = 0.09                          # pure-pursuit distance, fraction of the box width
 STUCK_AFTER_S, STUCK_DIFF, REVERSE_S = 2.0, 3.0, 1.2
+
+
+# What the Pi may tune per run (POST /autopilot "tune"), with the range each is
+# held to -- numbers only, so tuning never needs a new helper copied over.
+TUNE_RANGES = {
+    "road_lo": (40, 200), "road_hi": (80, 255), "road_sat": (5, 80), "arrow_white": (150, 255),
+    "arrow_x": (0.2, 0.8), "arrow_y": (0.3, 0.9), "lookahead": (0.03, 0.3),
+    "steer_dead": (0.0, 30.0), "steer_full": (10.0, 90.0), "straight_pref": (0.0, 1.0),
+    "stuck_diff": (0.5, 20.0), "reverse_s": (0.3, 3.0),
+}
+
+
+def tune_defaults() -> dict:
+    return {"road_lo": ROAD_LO, "road_hi": ROAD_HI, "road_sat": ROAD_SAT,
+            "arrow_white": ARROW_WHITE, "arrow_x": ARROW_AT[0], "arrow_y": ARROW_AT[1],
+            "lookahead": LOOKAHEAD, "steer_dead": STEER_DEAD_DEG,
+            "steer_full": STEER_FULL_DEG, "straight_pref": 0.18,
+            "stuck_diff": STUCK_DIFF, "reverse_s": REVERSE_S}
 
 
 def parse_box(text: str) -> tuple[float, float, float, float] | None:
@@ -773,19 +792,23 @@ def _bgr(bgra: bytes, w: int, x: int, y: int) -> tuple[int, int, int]:
     return bgra[i + 2], bgra[i + 1], bgra[i]
 
 
-def _is_road(r: int, g: int, b: int) -> bool:
+def _is_road(r: int, g: int, b: int, t: dict | None = None) -> bool:
     mx, mn = max(r, g, b), min(r, g, b)
-    return ROAD_LO <= mx <= ROAD_HI and mx - mn <= ROAD_SAT
+    if t is None:
+        return ROAD_LO <= mx <= ROAD_HI and mx - mn <= ROAD_SAT
+    return t["road_lo"] <= mx <= t["road_hi"] and mx - mn <= t["road_sat"]
 
 
-def find_arrow(w: int, h: int, bgra: bytes) -> tuple[float, float, float] | None:
+def find_arrow(w: int, h: int, bgra: bytes,
+               t: dict | None = None) -> tuple[float, float, float] | None:
     """(x, y, heading) of the white player arrow near ARROW_AT; heading in
     degrees, 0 = up the map, positive = clockwise."""
-    ex, ey, rad = ARROW_AT[0] * w, ARROW_AT[1] * h, 0.12 * w
+    t = t or tune_defaults()
+    ex, ey, rad = t["arrow_x"] * w, t["arrow_y"] * h, 0.12 * w
     pts = []
     for y in range(max(0, int(ey - rad)), min(int(h * MAP_BAR_FROM), int(ey + rad))):
         for x in range(max(0, int(ex - rad)), min(w, int(ex + rad))):
-            if min(_bgr(bgra, w, x, y)) >= ARROW_WHITE:
+            if min(_bgr(bgra, w, x, y)) >= t["arrow_white"]:
                 pts.append((x, y))
     if len(pts) < 3:
         return None
@@ -795,11 +818,13 @@ def find_arrow(w: int, h: int, bgra: bytes) -> tuple[float, float, float] | None
     return cx, cy, math.degrees(math.atan2(tx - cx, -(ty - cy)))
 
 
-def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6) -> dict | None:
+def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6,
+             t: dict | None = None) -> dict | None:
     """Where the road goes ahead of the car, from the minimap: a ray every
     `step` degrees within +-span of the arrow's heading, each as long as it
     stays on road. target = the best ray, straight ahead preferred."""
-    arrow = find_arrow(w, h, bgra)
+    t = t or tune_defaults()
+    arrow = find_arrow(w, h, bgra, t)
     if arrow is None:
         return None
     cx, cy, heading = arrow
@@ -813,16 +838,38 @@ def read_map(w: int, h: int, bgra: bytes, span: int = 90, step: int = 6) -> dict
             x, y = int(cx + dx * r), int(cy + dy * r)
             if not (0 <= x < w and 0 <= y < limit_y):
                 break
-            if _is_road(*_bgr(bgra, w, x, y)):
+            if _is_road(*_bgr(bgra, w, x, y), t):
                 started, misses, length = True, 0, r
             else:
                 misses += 1
                 if (started and misses > 2) or (not started and r > 0.05 * w):
                     break
         rays[rel] = length
-    best = max(rays, key=lambda k: rays[k] - 0.18 * abs(k) * (rmax / 60.0))
-    return {"heading": round(heading), "target": best, "ahead": rays.get(0, 0),
-            "rmax": rmax, "best_len": rays[best]}
+    best = max(rays, key=lambda k: rays[k] - t["straight_pref"] * abs(k) * (rmax / 60.0))
+    # Aim at the MIDDLE of the road a short way along that ray (pure pursuit):
+    # following the ray alone kept the car on the road but scraping its edge
+    # (live 2026-10-21: a hedge on the left, then a wall on the right).
+    aim = best
+    look = min(t["lookahead"] * w, max(rays[best] * 0.8, 0.0))
+    if look >= 0.03 * w:
+        a = math.radians(heading + best)
+        px, py = cx + math.sin(a) * look, cy - math.cos(a) * look
+        nx, ny = math.cos(a), math.sin(a)               # to the right of the ray
+        edges = []
+        for side in (-1, 1):
+            far = 0
+            for d in range(1, int(0.12 * w)):
+                x, y = int(px + side * nx * d), int(py + side * ny * d)
+                if not (0 <= x < w and 0 <= y < limit_y) or not _is_road(*_bgr(bgra, w, x, y), t):
+                    break
+                far = d
+            edges.append(far)
+        shift = (edges[1] - edges[0]) / 2.0             # + = the middle is to the right
+        mx, my = px + nx * shift, py + ny * shift
+        aim = math.degrees(math.atan2(mx - cx, -(my - cy))) - heading
+        aim = (aim + 180.0) % 360.0 - 180.0
+    return {"heading": round(heading), "target": round(aim), "ray": best,
+            "ahead": rays.get(0, 0), "rmax": rmax, "best_len": rays[best]}
 
 
 def _thumb(got: tuple[int, int, bytes] | None) -> list[int] | None:
@@ -928,8 +975,9 @@ class Autopilot:
                     if self._wait(AUTO_TICK_S):
                         break
                     continue
+                t = cfg.get("tune") or tune_defaults()
                 got = self.grabber(tuple(cfg.get("box") or MAP_BOX), MAP_MAX_W)
-                nav = read_map(*got) if got else None
+                nav = read_map(*got, t=t) if got else None
                 if nav is None:
                     self._keys(set())
                     self.state["last"] = {"map": "no arrow (on foot? map hidden?)"}
@@ -939,9 +987,11 @@ class Autopilot:
                 error = max(-90.0, min(90.0, nav["target"] + float(cfg.get("bias", 0.0)) * BIAS_DEG))
                 last_target = error
                 gas = speed > 0 and not (nav["best_len"] == 0 and abs(error) > 60)
-                duty = 0.0 if abs(error) < STEER_DEAD_DEG else min(1.0, abs(error) / STEER_FULL_DEG)
+                duty = (0.0 if abs(error) < t["steer_dead"]
+                        else min(1.0, abs(error) / t["steer_full"]))
                 steer = keys["left"] if error < 0 else keys["right"]
-                self.state["last"] = {"target": nav["target"], "error": round(error),
+                self.state["last"] = {"target": nav["target"], "ray": nav.get("ray"),
+                                      "error": round(error),
                                       "ahead": nav["ahead"], "heading": nav["heading"],
                                       "steer": steer if duty else "", "duty": round(duty, 2),
                                       "gas": gas}
@@ -953,14 +1003,14 @@ class Autopilot:
                     if thumb and thumb_prev and len(thumb) == len(thumb_prev):
                         diff = sum(abs(a - b) for a, b in zip(thumb, thumb_prev)) / len(thumb)
                         self.state["last"]["change"] = round(diff, 1)
-                        still_since = (still_since or now) if diff < STUCK_DIFF else None
+                        still_since = (still_since or now) if diff < t["stuck_diff"] else None
                     thumb_prev = thumb
                 if (gas_since and still_since and now - gas_since > STUCK_AFTER_S
                         and now - still_since > 1.0):
                     self.state["stucks"] = self.state.get("stucks", 0) + 1
                     back_steer = keys["right"] if last_target < 0 else keys["left"]
                     self._keys({keys["brake"], back_steer})
-                    if self._wait(REVERSE_S):
+                    if self._wait(t["reverse_s"]):
                         break
                     self._keys(set())
                     gas_since = still_since = None
@@ -1266,7 +1316,17 @@ class Agent:
                         return min(hi, max(lo, float(body.get(name, default))))
                     except (TypeError, ValueError):
                         return default
-                cfg = {"game": game, "mode": mode, "keys": keys, "hold": hold,
+                tune = tune_defaults()
+                given_tune = body.get("tune") or {}
+                if not isinstance(given_tune, dict) or set(given_tune) - set(TUNE_RANGES):
+                    return self._send(400, {"error": "tune keys: " + ", ".join(sorted(TUNE_RANGES))})
+                for name, value in given_tune.items():
+                    lo, hi = TUNE_RANGES[name]
+                    try:
+                        tune[name] = min(hi, max(lo, float(value)))
+                    except (TypeError, ValueError):
+                        return self._send(400, {"error": f"tune {name} must be a number"})
+                cfg = {"game": game, "mode": mode, "keys": keys, "hold": hold, "tune": tune,
                        "box": box or MAP_BOX, "bias": num("bias", -1.0, 1.0, 0.0),
                        "speed": num("speed", 0.0, 1.0, 1.0),
                        "for_s": num("for_s", 1.0, AUTO_MAX_S, 30.0)}

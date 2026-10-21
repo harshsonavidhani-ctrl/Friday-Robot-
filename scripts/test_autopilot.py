@@ -198,6 +198,14 @@ for bad in ({"game": GAME, "mode": "fly"}, {"game": GAME, "mode": "road", "keys"
             {"game": GAME, "mode": "road", "box": "1,1,0,0"}):
     st, _ = call("POST", "/autopilot", bad)
     check(f"refused: {json.dumps(bad)[len(GAME) + 14:]}", st == 400, str(st))
+st, got = call("POST", "/autopilot", {"game": GAME, "mode": "road",
+                                       "tune": {"lookahead": 0.5, "road_lo": 100}})
+check("tune: numbers in range are taken (lookahead held to its 0.3 top)",
+      st == 200 and agent.autopilot.cfg["tune"]["lookahead"] == 0.3
+      and agent.autopilot.cfg["tune"]["road_lo"] == 100, str(agent.autopilot.cfg.get("tune")))
+call("POST", "/autopilot", {"mode": "off"})
+st, _ = call("POST", "/autopilot", {"game": GAME, "mode": "road", "tune": {"exec": 1}})
+check("tune: an unknown setting -> 400", st == 400)
 st, _ = call("POST", "/autopilot", {"game": "Solitaire", "mode": "road"})
 check("a game that is not in front -> 409", st == 409)
 call("POST", "/autopilot", {"game": GAME, "mode": "road"})
