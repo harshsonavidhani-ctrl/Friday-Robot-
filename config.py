@@ -531,8 +531,11 @@ GAME_STEP_MAX_MS = 1500
 # Keyed by a word of the game's name. "road" follows the minimap (box =
 # fractions of the window; GTA V's is bottom-left), "cruise" holds keys.
 GAME_AUTOPILOT = {
+    # GTA's minimap turns with the CAR (its arrow is always ~up -- found
+    # 2026-10-21 after three arrow readers misread it), so trust it is up.
     "grand": {"mode": "road", "box": [0.0, 0.787, 0.162, 0.99],
-              "keys": {"gas": "w", "brake": "s", "left": "a", "right": "d"}},
+              "keys": {"gas": "w", "brake": "s", "left": "a", "right": "d"},
+              "tune": {"assume_up": 1.0, "cam_follow": 0.0}},
     "hill": {"mode": "cruise", "hold": ["right"]},
 }
 GAME_DRIVE_LOOK_S = 1.0     # pause between her looks while the autopilot drives
