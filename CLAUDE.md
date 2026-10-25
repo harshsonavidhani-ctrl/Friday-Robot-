@@ -1309,12 +1309,22 @@ laptop: "Friday laptop helper", inbound TCP 8765 from LocalSubnet.
     # Administrator PowerShell:
     New-NetFirewallRule -DisplayName "Friday laptop helper" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8765 -RemoteAddress LocalSubnet -Profile Any
 
-**Updating the helper** (a new `friday_laptop_agent.py`): in the Friday
-folder, copy it again, stop the running copy, start the new one. The old copy
-holds port 8765, so the new one cannot start beside it.
+**Updating the helper** (since 2026-10-25): from the Pi, never by him.
 
-    scp harsh@<pi>:friday/laptop/friday_laptop_agent.py .
-    taskkill /F /IM pythonw*
-    python friday_laptop_agent.py --install
+    ./venv/bin/python scripts/laptop_update.py           # copy + restart + version check
+    ./venv/bin/python scripts/laptop_update.py --check   # which version answers?
+
+It goes over SSH (he turned on Windows' OpenSSH server for this, key-only:
+`ssh "Harsh Vidhani@<laptop ip>"`), copies the helper, then runs
+`restart_helper.ps1 -RestartOnly`: stop every running copy, start the new one
+in HIS desktop session through the on-demand scheduled task "Friday laptop
+helper". Harsh made that task himself by running `restart_helper.ps1` once
+(it also pointed the Startup entry at `Friday\friday_laptop_agent.py` run by
+`FridayML\py\pythonw.exe`; the old entry started a stale copy from his home
+folder, so every reboot brought back helper 9). ⚠ The auto-mode classifier
+refuses to let Claude create that task or change the Startup entry
+(persistence) — -RestartOnly creates nothing. FridayML is a separate Python
+3.12 (torch cu126, numpy, onnxruntime) for the helper's driving networks and
+training; the Store Python is "Access is denied" over SSH.
 
     ./venv/bin/python scripts/test_file20.py   # 127 cases, helper in-process, no browser, no money
