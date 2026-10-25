@@ -14,6 +14,9 @@ refuses every port name but its own), with the measured drivetrain model moving
 the world, and the loop on its real-hardware branch (gyro, executed(), unstick).
 CAP_V (BODY only): a top forward speed at the wheels, m/s -- the experiment for
 "drive at the 4 Sept 03:52 speed" (0.125).
+POLICY=<file.onnx> (2026-10-25): drive with that PPO policy through
+pi_deploy.main (the 146-input exploration_model.onnx kind) instead of today's
+ACT policy through friday_localnav_deploy -- the same chain after it.
 """
 import os
 import sys
@@ -48,8 +51,9 @@ else:
 
 import friday_localnav_deploy as fld  # noqa: E402
 
+PPO = os.environ.get("POLICY", "")
 if BODY:
-    cls = fld.LeRobotExperimentalControlLoop
+    cls = pi_deploy.ControlLoop if PPO else fld.LeRobotExperimentalControlLoop
     _run = cls.run
 
     def run(self, *a, **k):
@@ -72,8 +76,8 @@ if BODY:
             "--motor-max-duty", "0.85", "--motor-min-duty", "80"]
 else:
     argv = ["--simulate", "--motor", "null"]
-argv += ["--no-voice", "--duration", seconds] + extra
-rc = fld.main(argv) or 0
+argv += ([] if PPO else ["--no-voice"]) + ["--duration", seconds] + extra   # pi_deploy is silent by default
+rc = (pi_deploy.main(argv + ["--model", PPO]) if PPO else fld.main(argv)) or 0
 if simworlds.LAST[0] is not None:
     simworlds.LAST[0].dump()
 print("A/B run finished rc", rc, flush=True)
