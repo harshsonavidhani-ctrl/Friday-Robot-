@@ -817,7 +817,8 @@ TUNE_RANGES = {
     "cam_max": (0.0, 600.0), "assume_up": (0.0, 1.0),
     "stuck_escalate": (1.0, 4.0),
     "tilt_back": (5.0, 150.0), "tilt_brake": (10.0, 170.0), "tilt_fwd": (5.0, 150.0),
-    "tilt_lead": (0.0, 1.0),
+    "tilt_lead": (0.0, 1.0), "gas_max": (0.2, 1.0), "gas_ease": (0.0, 60.0),
+    "dive_gas": (0.0, 1.0),
 }
 
 
@@ -834,7 +835,10 @@ def tune_defaults() -> dict:
             # mode "balance" (Hill Climb Racing): how far back the driver's head may
             # lean (degrees) before the gas comes off / the brake goes on, and how far
             # forward before the gas lifts the nose
-            "tilt_back": 40.0, "tilt_brake": 60.0, "tilt_fwd": 45.0, "tilt_lead": 0.3}
+            "tilt_back": 40.0, "tilt_brake": 60.0, "tilt_fwd": 60.0, "tilt_lead": 0.3,
+            # 2026-10-26 Harsh: "good balance ... just it was giving race too fast":
+            # at most this share of each tick on the gas, easing off from gas_ease deg
+            "gas_max": 0.9, "gas_ease": 15.0, "dive_gas": 0.5}
 
 
 def parse_box(text: str) -> tuple[float, float, float, float] | None:
@@ -1316,9 +1320,15 @@ class Autopilot:
         elif ahead > t["tilt_back"]:
             press = []                                  # coast: the nose comes down by itself
         elif ahead < -t["tilt_fwd"]:
-            press = [(keys["gas"], min(1.0, 0.3 + (-t["tilt_fwd"] - ahead) / 40.0))]
+            # a steep dive: short taps only. 2026-10-26: FULL gas at -84..-105
+            # over-rotated the jeep to +100..+144 and onto its roof, 3 runs of 3
+            press = [(keys["gas"], min(t["dive_gas"], 0.2 + (-t["tilt_fwd"] - ahead) / 80.0))]
+        elif ahead < -t["gas_ease"]:
+            press = []                                  # nose down: let it land on the front wheels
         else:
-            press = [(keys["gas"], 1.0)]
+            # gentle gas: gas_max on the flat, down to 40% of it as the nose rises to tilt_back
+            rise = (ahead - t["gas_ease"]) / max(1.0, t["tilt_back"] - t["gas_ease"])
+            press = [(keys["gas"], t["gas_max"] * (1.0 - 0.6 * min(1.0, max(0.0, rise))))]
         self.state["last"] = {"tilt": round(tilt), "ahead": round(ahead),
                               "keys": "+".join(f"{k}{d:.1f}" for k, d in press)}
         return self._pulse(press, AUTO_TICK_S)
