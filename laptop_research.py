@@ -615,11 +615,15 @@ def look(game: str, dx: int, dy: int = 0) -> tuple[bool, str]:
     return bool(got.get("ok")), got.get("error", "")
 
 
-def record(game: str, action: str, max_s: float = 3600.0) -> tuple[dict | None, str]:
+def record(game: str, action: str, max_s: float = 3600.0,
+           vehicle: str = "car") -> tuple[dict | None, str]:
     """Start/stop recording HIM driving (helper 17, POST /record): the game
-    picture, its minimap and W/A/S/D only, only while that game is in front.
+    picture, its minimap and W/A/S/D only (helper 19: + numpad 8/5/4/6 for a
+    heli or plane), only while that game is in front.
     (the recorder's report, "") or (None, why)."""
     body = {"action": action, "game": game, "max_s": float(max_s)}
+    if vehicle != "car":
+        body["vehicle"] = vehicle                    # helper 19+; older ones record a car
     try:
         got = _request("/record", body, float(config.LAPTOP_OPEN_TIMEOUT_S))
     except urllib.error.HTTPError as exc:

@@ -882,6 +882,24 @@ _RECORD_RE = re.compile(
     r"^(?:(?:start\s+)?record(?:ing)?\s+(?:my|me|the|how\s+i)\s+(?:driv(?:e|ing)|game(?:play)?|play(?:ing)?)"
     r"|start\s+recording(?:\s+(?:my|the)\s+(?:driving|game|gameplay))?"
     r"|(?:watch|learn)\s+(?:how\s+)?i\s+drive)$", re.IGNORECASE)
+# helper 19 (2026-10-25, "for all vehicles"): which vehicle he will record
+_RECORD_VEHICLE_RE = re.compile(
+    r"^(?:start\s+)?record(?:ing)?\s+(?:my|me|how\s+i)\s+(?:driving\s+|riding\s+|flying\s+)?"
+    r"(?:a\s+|the\s+)?(?P<v>flying|fly|plane|jet|aeroplane|airplane|helicopter|heli|chopper|"
+    r"boat|bike|motorbike|motorcycle)(?:\s+(?:driving|riding|flying))?$", re.IGNORECASE)
+
+
+def _vehicle_word(word: str) -> str:
+    word = word.lower()
+    if word in ("helicopter", "heli", "chopper"):
+        return "heli"
+    if word in ("boat",):
+        return "boat"
+    if word in ("bike", "motorbike", "motorcycle"):
+        return "bike"
+    return "plane"
+
+
 _STOP_PLAYING_RE = re.compile(
     r"^(?:stop\s+playing(?:\s+the\s+game)?|i'?ll\s+play(?:\s+now)?|my\s+turn|"
     r"give\s+(?:it|me\s+the\s+game)\s+back|let\s+me\s+play)$", re.IGNORECASE)
@@ -919,6 +937,10 @@ def _laptop_intent(heard: str) -> Intent | None:
                             "site": "youtube", "play": True})
     if _RECORD_RE.match(text):
         return Intent(name="laptop_record", tool="laptop_record", args={"action": "start"})
+    match = _RECORD_VEHICLE_RE.match(text)
+    if match:
+        return Intent(name="laptop_record", tool="laptop_record",
+                      args={"action": "start", "vehicle": _vehicle_word(match.group("v"))})
     if _STOP_PLAYING_RE.match(text):
         return Intent(name="laptop_game", tool="laptop_game_play", args={"action": "stop"})
     match = _YOU_PLAY_RE.match(text)

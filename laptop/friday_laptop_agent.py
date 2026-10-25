@@ -19,16 +19,21 @@ WHAT IT DOES -- AND ONLY THIS
         installed unless someone presses Get. Only those, and only a URL
         built HERE from the words -- never a URL, a file name or a command
         sent by the Pi.
-  POST /record {"action": "start"|"stop", "game", "max_s"}     (helper 17+)
+  POST /record {"action": "start"|"stop", "game", "max_s", "vehicle"} (helper 17+)
         Records HIM driving, to teach Friday: 10 times a second, while that
         game is in front, a small picture of it, of its minimap, and whether
         W, A, S, D are held -- ONLY those four keys, nothing else is read.
-        Files in ~/Friday_Recordings. GET /record (status), GET /record/list,
+        Helper 19: "vehicle" heli or plane also reads numpad 8, 5, 4, 6 (the
+        flying keys), and nothing more. Files in ~/Friday_Recordings.
+        GET /record (status), GET /record/list,
         GET /record/file?session=&name= (one of its own files, by name).
-  POST /model  {"model": {...}}                                 (helper 18+)
+  POST /model  {"model": {...}} | {"reload": true}              (helper 18+)
         The driving network trained on the Pi from his recordings: plain
         numbers, checked, saved beside this script. /autopilot mode "model"
-        drives with it. GET /model says whether one is loaded.
+        drives with it. GET /model says whether one is loaded. Helper 19:
+        "reload" re-reads the image networks (friday_driver_<vehicle>.onnx,
+        made on THIS laptop by train_driver_net.py) that mode "net" drives
+        with; GET /model lists them and their scores.
   POST /look   {"game", "dx", "dy"}                            (helper 15+)
         Moves the mouse BY that much (no click), only while that game is in
         front: turns a 3D game's camera. At most LOOK_MAX each way.
@@ -177,6 +182,9 @@ GAME_KEYS = {
     "f": (0x46, 0x21, False), "e": (0x45, 0x12, False), "q": (0x51, 0x10, False),
     "r": (0x52, 0x13, False), "c": (0x43, 0x2E, False), "g": (0x47, 0x22, False),
     "h": (0x48, 0x23, False), "tab": (0x09, 0x0F, False),
+    # helper 19: GTA's flying keys (numpad 8/5 pitch, 4/6 roll)
+    "num8": (0x68, 0x48, False), "num5": (0x65, 0x4C, False),
+    "num4": (0x64, 0x4B, False), "num6": (0x66, 0x4D, False),
 }
 STEP_MAX_MS = 2000                         # longest a key is ever held
 STEP_MAX_KEYS = 3
@@ -776,7 +784,7 @@ def idle_info() -> dict:
 AUTO_LEASE_S = 8.0
 AUTO_MAX_S = 120.0
 AUTO_TICK_S = 0.1
-AUTO_MODES = ("road", "cruise", "model")
+AUTO_MODES = ("road", "cruise", "model", "net")
 AUTO_KEYS = {"gas": "w", "brake": "s", "left": "a", "right": "d"}      # GTA's
 MAP_BOX = (0.0, 0.787, 0.162, 0.99)       # GTA V's minimap, fractions of the window
 MAP_MAX_W = 320
@@ -1058,6 +1066,8 @@ class Autopilot:
 
     def __init__(self, titler, grabber=grab, presser=None, mouser=None) -> None:
         self.model: dict | None = None                  # POST /model (helper 18)
+        self.nets: Nets | None = None                   # mode "net" (helper 19)
+        self._views: list = []                          # its last few game pictures
         self.titler, self.grabber = titler, grabber
         self.presser = presser or _game_key
         self.mouser = mouser or mouse_move
@@ -1084,6 +1094,7 @@ class Autopilot:
                 self._stop.clear()
                 self.state = {"running": True, "mode": self.cfg["mode"], "ticks": 0,
                               "stucks": 0, "why": ""}
+                self._views = []
                 self._thread = threading.Thread(target=self._run, name="autopilot",
                                                 daemon=True)
         if start:
@@ -1161,6 +1172,51 @@ class Autopilot:
             self._keys({k for k, on in ((s_key, s_on), (p_key, p_on)) if on * tick > cut + 1e-6})
         return self._wait(tick - done)
 
+    def _net_tick(self, cfg: dict, speed: float) -> bool:
+        """One tick driven by the vehicle's image network; True if told to stop."""
+        import numpy as np
+        t0 = time.monotonic()
+        got = self.nets.get(cfg["vehicle"]) if self.nets else "no driving networks here"
+        if isinstance(got, str):
+            self.state["why"] = got
+            return True
+        sess, meta = got
+        view = self.grabber((0.0, 0.0, 1.0, 1.0), int(meta["view"][0]))
+        small = self.grabber(tuple(cfg.get("box") or MAP_BOX), int(meta["map"][0]))
+        if not view or not small:
+            self._keys(set())
+            return self._wait(AUTO_TICK_S)
+        pic = net_picture(*view, meta["view"])
+        self._views = (self._views + [pic])[-(int(meta["gap"]) + 1):]
+        stack = np.concatenate([pic, self._views[0]])[None].astype(np.float32) / 255.0
+        mini = net_picture(*small, meta["map"])[None].astype(np.float32) / 255.0
+        out = sess.run(None, {"view": stack, "map": mini})[0][0]
+        bias = float(cfg.get("bias", 0.0)) * 0.5
+        press, shown = [], {}
+        for (name, neg, pos), v in zip(VEHICLES[cfg["vehicle"]], out):
+            v = float(v)
+            if name in GAS_AXES and v > 0:
+                v = min(v, speed)
+            if name in ("steer", "yaw"):               # the Pi's bias leans the steering
+                v = max(-1.0, min(1.0, v + bias))
+            shown[name] = round(v, 2)
+            if abs(v) >= NET_DEAD:
+                press.append((neg if v < 0 else pos, min(1.0, abs(v))))
+        self.state["last"] = {**shown, "keys": "+".join(k for k, _ in press)}
+        return self._pulse(press, max(0.05, AUTO_TICK_S - (time.monotonic() - t0)))
+
+    def _pulse(self, press: list[tuple[str, float]], tick: float) -> bool:
+        """Hold each key for its share of one tick (the way he taps); True if
+        told to stop."""
+        self._keys({k for k, _ in press})
+        done = 0.0
+        for cut in sorted({share * tick for _, share in press if share < 1.0}):
+            if self._wait(cut - done):
+                return True
+            done = cut
+            self._keys({k for k, share in press if share * tick > cut + 1e-6})
+        return self._wait(tick - done)
+
     def _wait(self, seconds: float) -> bool:
         """Sleep; True if told to stop."""
         return self._stop.wait(max(0.0, seconds))
@@ -1192,6 +1248,10 @@ class Autopilot:
                     continue
                 if cfg["mode"] == "model":
                     if self._model_tick(cfg, keys, speed):
+                        break
+                    continue
+                if cfg["mode"] == "net":
+                    if self._net_tick(cfg, speed):
                         break
                     continue
                 t = cfg.get("tune") or tune_defaults()
@@ -1388,6 +1448,106 @@ def check_model(model) -> str:
     return ""
 
 
+# --- driving from an image network, any vehicle (helper 19) ---------------------
+# Harsh, 2026-10-25: "train a good model in my laptop for all vehicles in gta 5".
+# The helper-18 network learned no steering at all (right direction on 51% of
+# his turns): a 32x18 grey thumbnail loses the road. This one is a small
+# convolutional network trained ON THIS LAPTOP's graphics card by
+# train_driver_net.py (beside this script) from his recordings: two game
+# pictures NET_GAP ticks apart (so it can see its own speed) plus the minimap
+# (the GPS route) -> one number per axis, -1..1. It runs here with
+# onnxruntime on the processor, a few ms a tick. One network per vehicle, each
+# with its own keys: the keys a recording of that vehicle reads are exactly
+# the keys its network presses, so nothing about GTA's controls is assumed.
+# Needs numpy + onnxruntime (the FridayML Python); without them the rest of
+# the helper runs as before and mode "net" says why it cannot.
+
+# vehicle -> its axes, each (name, key for -1, key for +1)
+VEHICLES = {
+    "car": (("steer", "a", "d"), ("pedal", "s", "w")),
+    "bike": (("steer", "a", "d"), ("pedal", "s", "w")),
+    "boat": (("steer", "a", "d"), ("pedal", "s", "w")),
+    "heli": (("yaw", "a", "d"), ("throttle", "s", "w"),
+             ("pitch", "num5", "num8"), ("roll", "num4", "num6")),
+    "plane": (("yaw", "a", "d"), ("throttle", "s", "w"),
+              ("pitch", "num5", "num8"), ("roll", "num4", "num6")),
+}
+MIRRORED_AXES = ("steer", "yaw", "roll")     # a left-right flipped picture flips these
+GAS_AXES = ("pedal", "throttle")             # "speed" caps these going forward
+NET_FILE = "friday_driver_{}.onnx"            # its .json beside it: sizes, keys, scores
+NET_DEAD = 0.15                               # an axis below this presses nothing
+
+
+def net_picture(w: int, h: int, bgra: bytes, size) -> "object":
+    """A grabbed picture as uint8 [3, height, width] RGB at `size` (width,
+    height) -- the same numbers train_driver_net.py trains on. numpy."""
+    import numpy as np
+    a = np.frombuffer(bgra, dtype=np.uint8).reshape(h, w, 4)
+    tw, th = int(size[0]), int(size[1])
+    if (w, h) != (tw, th):
+        a = a[(np.arange(th) * h) // th][:, (np.arange(tw) * w) // tw]
+    return np.ascontiguousarray(a[:, :, 2::-1].transpose(2, 0, 1))
+
+
+class Nets:
+    """The image networks beside this script, one per vehicle, each loaded on
+    first use (a load takes well under a second here)."""
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = Path(folder)
+        self._lock = threading.Lock()
+        self._loaded: dict[str, tuple] = {}
+
+    def files(self, vehicle: str) -> tuple[Path, Path]:
+        onnx = self.folder / NET_FILE.format(vehicle)
+        return onnx, onnx.with_suffix(".json")
+
+    def info(self) -> dict:
+        """vehicle -> what its .json says (when made, scores) for each one here."""
+        out = {}
+        for vehicle in VEHICLES:
+            onnx, meta = self.files(vehicle)
+            if onnx.is_file() and meta.is_file():
+                try:
+                    m = json.loads(meta.read_text())
+                except (OSError, ValueError):
+                    continue
+                out[vehicle] = {k: m.get(k) for k in ("made", "frames", "scores")}
+        return out
+
+    def reload(self) -> dict:
+        with self._lock:
+            self._loaded.clear()
+        return self.info()
+
+    def get(self, vehicle: str):
+        """(session, meta) for this vehicle, or a string saying why not."""
+        with self._lock:
+            if vehicle in self._loaded:
+                return self._loaded[vehicle]
+            onnx, meta_path = self.files(vehicle)
+            if not onnx.is_file() or not meta_path.is_file():
+                return f"no driving network for a {vehicle} yet (record some {vehicle} driving)"
+            try:
+                import numpy  # noqa: F401
+                import onnxruntime as ort
+            except ImportError:
+                return "this helper's Python has no numpy/onnxruntime (start it with FridayML)"
+            try:
+                meta = json.loads(meta_path.read_text())
+                axes = [tuple(a) for a in meta["axes"]]
+                if axes != [tuple(a) for a in VEHICLES[vehicle]]:
+                    return f"the {vehicle} network was made for other keys"
+                opts = ort.SessionOptions()
+                opts.intra_op_num_threads = 2           # leave the game its cores
+                sess = ort.InferenceSession(str(onnx), opts,
+                                            providers=["CPUExecutionProvider"])
+            except Exception as exc:                    # noqa: BLE001
+                return f"the {vehicle} network did not load: {type(exc).__name__}"
+            self._loaded[vehicle] = (sess, meta)
+            return self._loaded[vehicle]
+
+
 # --- recording a human drive (helper 17) -----------------------------------------
 # Harsh, 2026-10-21, to teach Friday to drive from the game picture: "Ok do
 # the recording". What he agreed to, and all this does: between his start and
@@ -1399,6 +1559,10 @@ def check_model(model) -> str:
 # ~/Friday_Recordings on this laptop until the Pi fetches them.
 
 REC_KEYS = {"w": 0x57, "a": 0x41, "s": 0x53, "d": 0x44}
+# helper 19, Harsh 2026-10-25 "for all vehicles": flying also needs GTA's
+# numpad keys (pitch 8/5, roll 4/6), read ONLY when he records a heli or plane.
+# Num Lock must be on (with it off Windows reports them as other keys).
+REC_AIR_KEYS = {**REC_KEYS, "num8": 0x68, "num5": 0x65, "num4": 0x64, "num6": 0x66}
 REC_HZ = 10.0
 REC_SIZE = (160, 90)                      # the game picture, scaled to this
 REC_MAP_W = 64                            # the minimap picture, this wide
@@ -1407,13 +1571,22 @@ REC_MAX_S = 7200.0
 REC_MAX_MB = 2500.0
 
 
-def keys_held() -> str:
-    """Which of W, A, S, D are held right now, e.g. 'wd'. Nothing else is read."""
+def rec_keys_for(vehicle: str) -> dict[str, int]:
+    """The keys a recording of this vehicle reads: W A S D, plus the numpad
+    flying keys for a heli or plane."""
+    return REC_AIR_KEYS if vehicle in ("heli", "plane") else REC_KEYS
+
+
+def keys_held(table: dict[str, int] = REC_KEYS) -> str | list[str]:
+    """Which keys of `table` (REC_KEYS or REC_AIR_KEYS) are held right now:
+    'wd' for the four letters (as helper 17 wrote it), a list such as
+    ['w', 'num8'] for the flying keys. Nothing else is read."""
     if os.name != "nt":
-        return ""
+        return "" if table is REC_KEYS else []
     import ctypes
     user32 = ctypes.windll.user32
-    return "".join(k for k, vk in REC_KEYS.items() if user32.GetAsyncKeyState(vk) & 0x8000)
+    held = [k for k, vk in table.items() if user32.GetAsyncKeyState(vk) & 0x8000]
+    return "".join(held) if table is REC_KEYS else held
 
 
 def recordings_dir() -> Path:
@@ -1430,6 +1603,7 @@ class Recorder:
     def __init__(self, titler, grabber=grab, keys=keys_held, root=None) -> None:
         self.titler, self.grabber, self.keys = titler, grabber, keys
         self.root = root
+        self._table = REC_KEYS
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.state: dict = {"running": False, "why": "never started"}
@@ -1437,19 +1611,22 @@ class Recorder:
     def running(self) -> bool:
         return bool(self._thread and self._thread.is_alive())
 
-    def start(self, game: str, max_s: float, map_box) -> dict:
+    def start(self, game: str, max_s: float, map_box, vehicle: str = "car") -> dict:
         if self.running():
             return self.report()
         root = Path(self.root) if self.root else recordings_dir()
         session = datetime.now().strftime("%Y%m%d-%H%M%S")
         folder = root / session
         folder.mkdir(parents=True, exist_ok=True)
+        self._table = rec_keys_for(vehicle)
         (folder / "info.json").write_text(json.dumps({
             "game": game, "hz": REC_HZ, "size": REC_SIZE, "map_w": REC_MAP_W,
-            "map_box": list(map_box), "keys": list(REC_KEYS), "started": time.time()}))
+            "map_box": list(map_box), "keys": list(self._table), "vehicle": vehicle,
+            "started": time.time()}))
         self._stop.clear()
         self.state = {"running": True, "session": session, "game": game, "frames": 0,
-                      "skipped": 0, "bytes": 0, "chunks": 0, "why": "", "started": time.time()}
+                      "vehicle": vehicle, "skipped": 0, "bytes": 0, "chunks": 0, "why": "",
+                      "started": time.time()}
         self._thread = threading.Thread(target=self._run, args=(folder, game, max_s, map_box),
                                         name="recorder", daemon=True)
         self._thread.start()
@@ -1487,7 +1664,7 @@ class Recorder:
                     self.state["skipped"] += 1           # another window: nothing read
                     self._stop.wait(1.0 / REC_HZ)
                     continue
-                keys = self.keys()
+                keys = self.keys(self._table)
                 view = self.grabber((0.0, 0.0, 1.0, 1.0), REC_SIZE[0])
                 small = self.grabber(tuple(map_box), REC_MAP_W)
                 if not view or not small:
@@ -1552,6 +1729,7 @@ class Agent:
         self.recorder = Recorder(titler, grabber=grabber, keys=keyreader, root=rec_root)
         self.rec_root = rec_root
         self.model_path = Path(rec_root or HERE) / MODEL_FILE
+        self.autopilot.nets = Nets(Path(rec_root or HERE))
         try:
             saved = json.loads(self.model_path.read_text())
             if not check_model(saved):
@@ -1593,7 +1771,7 @@ class Agent:
         agent = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "FridayLaptopHelper/18"
+            server_version = "FridayLaptopHelper/19"
 
             def log_message(self, fmt, *args):         # no tokens in logs
                 log.info("%s %s", self.address_string(), fmt % args)
@@ -1638,7 +1816,8 @@ class Agent:
                     m = agent.autopilot.model
                     return self._send(200, {"ok": True, "loaded": m is not None,
                                             "made": (m or {}).get("made", ""),
-                                            "train": (m or {}).get("train")})
+                                            "train": (m or {}).get("train"),
+                                            "nets": agent.autopilot.nets.info()})
                 if self.path.startswith("/record/file?"):
                     return self._record_file()
                 if self.path == "/record/list":
@@ -1650,7 +1829,7 @@ class Agent:
                         for n in sessions]})
                 if self.path != "/health":
                     return self._send(404, {"error": "not found"})
-                return self._send(200, {"ok": True, "version": 18})
+                return self._send(200, {"ok": True, "version": 19})
 
             def do_POST(self):                          # noqa: N802
                 if not self._authorised():
@@ -1810,7 +1989,10 @@ class Agent:
                 return self._send(200, {"ok": True})
 
             def _model(self, body: dict):
-                """{model: {...}}: the driving network, numbers only, checked."""
+                """{model: {...}}: the driving network, numbers only, checked.
+                {reload: true}: re-read the image networks beside this script."""
+                if body.get("reload") is True:
+                    return self._send(200, {"ok": True, "nets": agent.autopilot.nets.reload()})
                 model = body.get("model")
                 why = check_model(model)
                 if why:
@@ -1844,7 +2026,11 @@ class Agent:
                     if isinstance(body.get("map_box"), list) else MAP_BOX
                 if box is None:
                     return self._send(400, {"error": "map_box is x0,y0,x1,y1"})
-                return self._send(200, {"ok": True, **agent.recorder.start(game, max_s, box)})
+                vehicle = str(body.get("vehicle") or "car")
+                if vehicle not in VEHICLES:
+                    return self._send(400, {"error": "vehicle is " + ", ".join(VEHICLES)})
+                return self._send(200, {"ok": True, **agent.recorder.start(game, max_s, box,
+                                                                           vehicle)})
 
             def _record_file(self):
                 query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -1882,7 +2068,8 @@ class Agent:
                 return self._send(200, {"ok": True})
 
             def _autopilot(self, body: dict):
-                """{game, mode: road|cruise|off, box?, keys?, hold?, bias?, speed?, for_s?}"""
+                """{game, mode: road|cruise|model|net|off, vehicle? (net), box?, keys?,
+                hold?, bias?, speed?, for_s?}"""
                 mode = str(body.get("mode") or "")
                 if mode == "off":
                     agent.autopilot.stop("turned off")
@@ -1909,10 +2096,13 @@ class Agent:
                        or (mode == "cruise" and not hold)
                        or ("box" in body and box is None))
                 if bad:
-                    return self._send(400, {"error": "mode road|cruise|off; keys gas/brake/"
+                    return self._send(400, {"error": "mode road|cruise|model|net|off; keys gas/brake/"
                                                      "left/right and hold from GAME_KEYS; "
                                                      "box x0,y0,x1,y1"})
                 keys.update(given)
+                vehicle = str(body.get("vehicle") or "car")
+                if vehicle not in VEHICLES:
+                    return self._send(400, {"error": "vehicle is " + ", ".join(VEHICLES)})
 
                 def num(name: str, lo: float, hi: float, default: float) -> float:
                     try:
@@ -1930,6 +2120,7 @@ class Agent:
                     except (TypeError, ValueError):
                         return self._send(400, {"error": f"tune {name} must be a number"})
                 cfg = {"game": game, "mode": mode, "keys": keys, "hold": hold, "tune": tune,
+                       "vehicle": vehicle,
                        "box": box or MAP_BOX, "bias": num("bias", -1.0, 1.0, 0.0),
                        "speed": num("speed", 0.0, 1.0, 1.0),
                        "for_s": num("for_s", 1.0, AUTO_MAX_S, 30.0)}

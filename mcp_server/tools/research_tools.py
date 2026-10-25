@@ -214,15 +214,26 @@ def _mark_recording(running: bool, **extra) -> None:
         pass
 
 
+# what she calls each vehicle's recording, and the keys it reads
+VEHICLE_WORDS = {
+    "car": ("driving", "W, A, S, D"), "bike": ("bike riding", "W, A, S, D"),
+    "boat": ("boat driving", "W, A, S, D"),
+    "heli": ("helicopter flying", "W, A, S, D and numpad 8, 5, 4, 6"),
+    "plane": ("flying", "W, A, S, D and numpad 8, 5, 4, 6"),
+}
+
+
 @tool
-def laptop_record(action: str = "start") -> str:
+def laptop_record(action: str = "start", vehicle: str = "car") -> str:
     """Record Harsh DRIVING the game in front on his laptop, to teach Friday to
-    drive it -- ONLY when he asks ("record my driving", "stop recording").
-    Saves the game picture, its minimap and whether W, A, S, D are held, 10
-    times a second, only while that game is in front. Nothing else is read.
+    drive it -- ONLY when he asks ("record my driving", "record my flying",
+    "stop recording"). Saves the game picture, its minimap and whether W, A,
+    S, D are held (a heli or plane: also numpad 8, 5, 4, 6), 10 times a
+    second, only while that game is in front. Nothing else is read.
 
     Args:
         action: "start" or "stop".
+        vehicle: car, bike, boat, heli or plane -- what he is about to drive.
     """
     import laptop_games
     if (action or "start").strip().lower() == "stop":
@@ -238,13 +249,20 @@ def laptop_record(action: str = "start") -> str:
     game = laptop_games.game_in_front(lr.idle(), lr.known_apps())
     if game is None:
         return "Open the game and leave it in front, then tell me to record."
-    got, why = lr.record(game, "start", float(config.LAPTOP_RECORD_MAX_S))
+    vehicle = (vehicle or "car").strip().lower()
+    if vehicle not in VEHICLE_WORDS:
+        vehicle = "car"
+    got, why = lr.record(game, "start", float(config.LAPTOP_RECORD_MAX_S), vehicle)
     if got is None:
         return ("Your laptop's helper is too old to record. Copy the new one."
                 if why == "old helper" else f"I couldn't start recording ({why}).")
-    _mark_recording(True, game=game, session=got.get("session"))
-    return (f"Recording your driving in {game}. Drive normally, and say stop recording "
-            f"when you're done. I only save the game picture and the W, A, S, D keys.")
+    if got.get("vehicle", "car") != vehicle:          # a helper older than 19
+        lr.record("", "stop")
+        return f"Your laptop's helper is too old to record a {vehicle}. Copy the new one."
+    _mark_recording(True, game=game, session=got.get("session"), vehicle=vehicle)
+    doing, keys = VEHICLE_WORDS[vehicle]
+    return (f"Recording your {doing} in {game}. Play normally, and say stop recording "
+            f"when you're done. I only save the game picture and the {keys} keys.")
 
 
 @tool

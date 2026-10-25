@@ -36,10 +36,12 @@ GAME = "Grand Theft Auto V Enhanced"
 TITLE = {"t": "Grand Theft Auto V"}
 READS = {"n": 0}
 HELD = {"k": "wd"}
+TABLES: list = []
 
 
-def keys():
+def keys(table=None):
     READS["n"] += 1
+    TABLES.append(table)
     return HELD["k"]
 
 
@@ -49,12 +51,23 @@ def grab(box, max_w):
     return w, h, bytes([90, 90, 90, 255]) * (w * h)
 
 
-print("source: only W, A, S, D are ever read")
+print("source: only W, A, S, D are ever read (and the 4 numpad flying keys for a heli/plane)")
 src = (ROOT / "laptop" / "friday_laptop_agent.py").read_text()
 check("REC_KEYS is exactly W A S D", fa.REC_KEYS == {"w": 0x57, "a": 0x41, "s": 0x53, "d": 0x44})
-check("GetAsyncKeyState appears once, inside keys_held, over REC_KEYS only",
+check("REC_AIR_KEYS is W A S D + numpad 8 5 4 6, nothing else",
+      fa.REC_AIR_KEYS == {"w": 0x57, "a": 0x41, "s": 0x53, "d": 0x44,
+                          "num8": 0x68, "num5": 0x65, "num4": 0x64, "num6": 0x66})
+check("cars, bikes, boats read REC_KEYS; only heli/plane read the numpad",
+      all(fa.rec_keys_for(v) is fa.REC_KEYS for v in ("car", "bike", "boat"))
+      and all(fa.rec_keys_for(v) is fa.REC_AIR_KEYS for v in ("heli", "plane")))
+check("GetAsyncKeyState appears once, inside keys_held, over its table only",
       src.count("GetAsyncKeyState") == 1
-      and "for k, vk in REC_KEYS.items() if user32.GetAsyncKeyState(vk)" in src)
+      and "held = [k for k, vk in table.items() if user32.GetAsyncKeyState(vk)" in src)
+check("every key a vehicle's network presses is a key its recording reads",
+      all({k for _, neg, pos in axes for k in (neg, pos)} == set(fa.rec_keys_for(v))
+          for v, axes in fa.VEHICLES.items() if v in ("heli", "plane"))
+      and all({k for _, neg, pos in axes for k in (neg, pos)} <= set(fa.REC_KEYS)
+              for v, axes in fa.VEHICLES.items() if v not in ("heli", "plane")))
 check("no keyboard hook anywhere (SetWindowsHookEx / GetKeyboardState)",
       "SetWindowsHookEx" not in src and "GetKeyboardState" not in src)
 
@@ -101,6 +114,21 @@ time.sleep(1.0)
 check("max_s reached -> it stops by itself", not rec2.running() and rec2.report()["why"] == "time is up",
       str(rec2.report()))
 
+print("a plane: the flying keys too")
+time.sleep(1.1)                                  # sessions are named by the second
+rec3 = fa.Recorder(lambda: "Grand Theft Auto V", grabber=grab, keys=keys, root=tmp)
+TABLES.clear()
+HELD["k"] = ["w", "num8"]
+got = rec3.start(GAME, 0.4, fa.MAP_BOX, "plane")
+time.sleep(1.0)
+info3 = json.loads((tmp / got["session"] / "info.json").read_text())
+lines3 = [json.loads(x) for x in (tmp / got["session"] / "labels_00000.jsonl").read_text().splitlines()]
+check("info.json says plane and its keys", info3.get("vehicle") == "plane"
+      and info3["keys"] == list(fa.REC_AIR_KEYS), str(info3))
+check("the keys were read from REC_AIR_KEYS", TABLES and all(t is fa.REC_AIR_KEYS for t in TABLES))
+check("labels carry them as a list", lines3 and lines3[0]["keys"] == ["w", "num8"], str(lines3[:1]))
+HELD["k"] = "wd"
+
 print("through the HTTP routes")
 agent = fa.Agent({"token": "t" * 40, "port": 0, "bind": "127.0.0.1"},
                  titler=lambda: TITLE["t"], grabber=grab, keyreader=keys, rec_root=tmp,
@@ -124,8 +152,11 @@ def call(method: str, path: str, body: dict | None = None):
         return r.status, raw
 
 
+st, got = call("POST", "/record", {"action": "start", "game": GAME, "vehicle": "tank"})
+check("an unknown vehicle is refused", st == 400 and not agent.recorder.running(), str(got))
 st, got = call("POST", "/record", {"action": "start", "game": GAME, "max_s": 30})
-check("POST /record start", st == 200 and got.get("running"), str(got))
+check("POST /record start (a car by default)", st == 200 and got.get("running")
+      and got.get("vehicle") == "car", str(got))
 st, got = call("POST", "/autopilot", {"game": GAME, "mode": "road"})
 check("the autopilot refuses while he is being recorded (labels must be HIS keys)", st == 409, str(got))
 time.sleep(0.4)
