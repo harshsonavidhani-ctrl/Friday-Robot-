@@ -784,7 +784,7 @@ def idle_info() -> dict:
 AUTO_LEASE_S = 8.0
 AUTO_MAX_S = 120.0
 AUTO_TICK_S = 0.1
-AUTO_MODES = ("road", "cruise", "model", "net")
+AUTO_MODES = ("road", "cruise", "model", "net", "mix")
 AUTO_KEYS = {"gas": "w", "brake": "s", "left": "a", "right": "d"}      # GTA's
 MAP_BOX = (0.0, 0.787, 0.162, 0.99)       # GTA V's minimap, fractions of the window
 MAP_MAX_W = 320
@@ -1172,29 +1172,52 @@ class Autopilot:
             self._keys({k for k, on in ((s_key, s_on), (p_key, p_on)) if on * tick > cut + 1e-6})
         return self._wait(tick - done)
 
-    def _net_tick(self, cfg: dict, speed: float) -> bool:
-        """One tick driven by the vehicle's image network; True if told to stop."""
+    def _net_axes(self, cfg: dict):
+        """The vehicle's network on the game as it is now: its raw axis values
+        (a list, VEHICLES order), None if no picture this tick, or a string
+        saying why there is no network."""
         import numpy as np
-        t0 = time.monotonic()
         got = self.nets.get(cfg["vehicle"]) if self.nets else "no driving networks here"
         if isinstance(got, str):
-            self.state["why"] = got
-            return True
+            return got
         sess, meta = got
         view = self.grabber((0.0, 0.0, 1.0, 1.0), int(meta["view"][0]))
         small = self.grabber(tuple(cfg.get("box") or MAP_BOX), int(meta["map"][0]))
         if not view or not small:
-            self._keys(set())
-            return self._wait(AUTO_TICK_S)
+            return None
         pic = net_picture(*view, meta["view"])
         self._views = (self._views + [pic])[-(int(meta["gap"]) + 1):]
         stack = np.concatenate([pic, self._views[0]])[None].astype(np.float32) / 255.0
         mini = net_picture(*small, meta["map"])[None].astype(np.float32) / 255.0
-        out = sess.run(None, {"view": stack, "map": mini})[0][0]
+        return [float(v) for v in sess.run(None, {"view": stack, "map": mini})[0][0]]
+
+    def _net_pedal(self, cfg: dict) -> float | None:
+        """Mode "mix": just the gas/brake axis of the network, or None (no
+        network: the map autopilot drives the gas as in "road")."""
+        got = self._net_axes(cfg)
+        if isinstance(got, str):
+            self.state["net"] = got
+            return None
+        if got is None:
+            return 0.0
+        for (name, _, _), v in zip(VEHICLES[cfg["vehicle"]], got):
+            if name in GAS_AXES:
+                return v
+        return None
+
+    def _net_tick(self, cfg: dict, speed: float) -> bool:
+        """One tick driven by the vehicle's image network; True if told to stop."""
+        t0 = time.monotonic()
+        out = self._net_axes(cfg)
+        if isinstance(out, str):
+            self.state["why"] = out
+            return True
+        if out is None:
+            self._keys(set())
+            return self._wait(AUTO_TICK_S)
         bias = float(cfg.get("bias", 0.0)) * 0.5
         press, shown = [], {}
         for (name, neg, pos), v in zip(VEHICLES[cfg["vehicle"]], out):
-            v = float(v)
             if name in GAS_AXES and v > 0:
                 v = min(v, speed)
             if name in ("steer", "yaw"):               # the Pi's bias leans the steering
@@ -1272,7 +1295,9 @@ class Autopilot:
                     self.state["cam_moves"] = self.state.get("cam_moves", 0) + 1
                 error = max(-90.0, min(90.0, nav["target"] + float(cfg.get("bias", 0.0)) * BIAS_DEG))
                 last_target = error
-                gas = speed > 0
+                # mode "mix" (helper 19): the map steers, the network works the pedals
+                pedal = self._net_pedal(cfg) if cfg["mode"] == "mix" else None
+                gas = speed > 0 if pedal is None else pedal >= NET_DEAD
                 # a sharp turn: crawl round it -- a car (or bike) that steers
                 # with no gas never turns (2026-10-21: a bike sat sideways to
                 # its route for 40 s, wheel turned, gas off)
@@ -1316,6 +1341,15 @@ class Autopilot:
                         break
                     self._keys(set())
                     gas_since = still_since = None
+                    continue
+                if pedal is not None:
+                    self.state["last"]["pedal"] = round(pedal, 2)
+                    press = [(steer, duty)] if duty > 0 else []
+                    if abs(pedal) >= NET_DEAD:
+                        press.append((keys["gas"], min(pedal, speed)) if pedal > 0
+                                     else (keys["brake"], min(1.0, -pedal)))
+                    if self._pulse(press, AUTO_TICK_S):
+                        break
                     continue
                 # one tick: steer for duty*tick, gas for speed*tick
                 tick = AUTO_TICK_S

@@ -119,13 +119,17 @@ check("the car network loads", not isinstance(got, str), str(got))
 
 
 def drive(vehicle: str, seconds: float, **cfg):
+    return drive_mode("net", vehicle, seconds, **cfg)
+
+
+def drive_mode(mode: str, vehicle: str, seconds: float, **cfg):
     pressed: list = []
     ap = fa.Autopilot(lambda: "Grand Theft Auto V", grabber=grab,
                       presser=lambda k, up: pressed.append((k, up, time.monotonic())))
     ap.nets = nets
-    ap.set({"game": "Grand Theft Auto V Enhanced", "mode": "net", "vehicle": vehicle,
+    ap.set({"game": "Grand Theft Auto V Enhanced", "mode": mode, "vehicle": vehicle,
             "keys": dict(fa.AUTO_KEYS), "box": fa.MAP_BOX, "speed": cfg.get("speed", 1.0),
-            "bias": cfg.get("bias", 0.0), "for_s": 30})
+            "bias": cfg.get("bias", 0.0), "tune": fa.tune_defaults(), "for_s": 30})
     time.sleep(seconds)
     rep = ap.report()
     ap.stop("test")
@@ -175,6 +179,26 @@ check("only the plane's keys were pressed", {p[0] for p in pressed} <= {"num8", 
 check("numpad keys are game keys the helper may press",
       all(k in fa.GAME_KEYS for _, neg, pos in fa.VEHICLES["plane"] for k in (neg, pos)))
 SCENE["map_bgr"] = (0, 0, 0)
+
+print("mix: the map steers, the network works the pedals")
+real_read_map = fa.read_map
+fa.read_map = lambda w, h, bgra, t=None: {"target": 30.0, "heading": 0.0, "ahead": 0.5,
+                                         "ray": 30.0, "route": None}
+ap, rep, pressed = drive_mode("mix", "car", 1.0)
+last = rep.get("last", {})
+check("steers toward the map's road (30 deg right -> D)", last.get("steer") == "d", str(last))
+check("the pedal comes from the network (+0.6)", abs(last.get("pedal", 0) - 0.6) < 0.01, str(last))
+share_w, share_d = held_share(pressed, "w"), held_share(pressed, "d")
+check(f"W about 60% of a tick ({share_w:.0%}), D about 30/35 ({share_d:.0%})",
+      0.4 < share_w < 0.8 and 0.65 < share_d < 1.01, f"{share_w} {share_d}")
+nets_saved = nets
+nets = fa.Nets(Path(tempfile.mkdtemp()))            # no networks at all
+ap, rep, pressed = drive_mode("mix", "car", 0.6)
+check("no car network -> still drives, like road mode, and says why",
+      rep.get("ticks", 0) >= 3 and "w" in {p[0] for p in pressed} and "network" in rep.get("net", ""),
+      str(rep))
+nets = nets_saved
+fa.read_map = real_read_map
 
 print("refusals")
 ap, rep, _ = drive("boat", 0.3)

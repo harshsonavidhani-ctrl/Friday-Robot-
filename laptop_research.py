@@ -578,8 +578,18 @@ def step(game: str, keys: list[str], ms: int, before: str | None = None,
 def autopilot(game: str, mode: str, **settings) -> tuple[dict | None, str]:
     """Start / steer / stop the laptop's own fast driver (helper 10, POST
     /autopilot): mode "road" follows the minimap's road, "cruise" holds
-    settings["hold"], "off" stops. settings: box, keys, hold, bias (-1 left ..
-    1 right), speed (0..1), for_s. (its report, "") or (None, why)."""
+    settings["hold"], "mix" (helper 19) steers by the minimap with the pedals
+    from the trained network, "off" stops. settings: box, keys, hold, bias
+    (-1 left .. 1 right), speed (0..1), for_s, vehicle. (its report, "") or
+    (None, why). A helper too old for "mix" gets "road" instead, so the drive
+    still starts."""
+    got, why = _autopilot_once(game, mode, settings)
+    if got is None and mode == "mix" and why.startswith("mode "):
+        return _autopilot_once(game, "road", settings)
+    return got, why
+
+
+def _autopilot_once(game: str, mode: str, settings: dict) -> tuple[dict | None, str]:
     body = {"game": game, "mode": mode, **settings}
     try:
         got = _request("/autopilot", body, float(config.LAPTOP_OPEN_TIMEOUT_S))

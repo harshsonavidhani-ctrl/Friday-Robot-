@@ -235,16 +235,17 @@ for _ in range(300):
     if not lg.playing():
         break
     time.sleep(0.02)
-check("GTA + helper 10: the laptop's driver starts first, in road mode",
-      AUTO and AUTO[0][0] == "road", str(AUTO))
+check("GTA + helper 19: the laptop's driver starts first, in mix mode (map steers, network pedals)",
+      AUTO and AUTO[0][0] == "mix", str(AUTO))
 check("...her looks become directions to it (bias, speed)",
-      ("road", -0.5, 0.8) in AUTO and ("road", 0.0, 1.0) in AUTO, str(AUTO))
+      ("mix", -0.5, 0.8) in AUTO and ("mix", 0.0, 1.0) in AUTO, str(AUTO))
 check("...she is told it drives for her", any("AUTOPILOT" in c[2] or "autopilot" in c[2].lower()
                                              for c in CALLS) or "AUTOPILOT" in lg.DRIVE_SYSTEM)
 check("...a manual move is still a step", [x[1] for x in STEPS] == [("s",)], str(STEPS))
 check("...and when she is done the driver is switched off", AUTO[-1][0] == "off", str(AUTO))
-check("autopilot_for: GTA drives on the road, Hill Climb cruises, Solitaire has none",
-      lg.autopilot_for("Grand Theft Auto V Enhanced")["mode"] == "road"
+check("autopilot_for: GTA drives mix (a car), Hill Climb cruises, Solitaire has none",
+      lg.autopilot_for("Grand Theft Auto V Enhanced")["mode"] == "mix"
+      and lg.autopilot_for("Grand Theft Auto V Enhanced")["vehicle"] == "car"
       and lg.autopilot_for("Hill Climb Racing")["mode"] == "cruise"
       and lg.autopilot_for("Solitaire & Casual Games") is None)
 check("'drive' parses, clamped",

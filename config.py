@@ -533,7 +533,10 @@ GAME_STEP_MAX_MS = 1500
 GAME_AUTOPILOT = {
     # GTA's minimap turns with the CAR (its arrow is always ~up -- found
     # 2026-10-21 after three arrow readers misread it), so trust it is up.
-    "grand": {"mode": "road", "box": [0.0, 0.787, 0.162, 0.99],
+    # helper 19 (Harsh 2026-10-25, "mix"): the minimap steers, the car network
+    # trained on his driving works the gas and brake (its steering is not good
+    # enough yet: 51% on minutes it never saw); an older helper drives "road".
+    "grand": {"mode": "mix", "vehicle": "car", "box": [0.0, 0.787, 0.162, 0.99],
               "keys": {"gas": "w", "brake": "s", "left": "a", "right": "d"},
               "tune": {"assume_up": 1.0, "cam_follow": 0.0}},
     "hill": {"mode": "cruise", "hold": ["right"]},
