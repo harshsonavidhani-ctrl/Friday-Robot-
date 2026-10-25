@@ -243,10 +243,10 @@ check("...she is told it drives for her", any("AUTOPILOT" in c[2] or "autopilot"
                                              for c in CALLS) or "AUTOPILOT" in lg.DRIVE_SYSTEM)
 check("...a manual move is still a step", [x[1] for x in STEPS] == [("s",)], str(STEPS))
 check("...and when she is done the driver is switched off", AUTO[-1][0] == "off", str(AUTO))
-check("autopilot_for: GTA drives mix (a car), Hill Climb cruises, Solitaire has none",
+check("autopilot_for: GTA drives mix (a car), Hill Climb balances, Solitaire has none",
       lg.autopilot_for("Grand Theft Auto V Enhanced")["mode"] == "mix"
       and lg.autopilot_for("Grand Theft Auto V Enhanced")["vehicle"] == "car"
-      and lg.autopilot_for("Hill Climb Racing")["mode"] == "cruise"
+      and lg.autopilot_for("Hill Climb Racing")["mode"] == "balance"
       and lg.autopilot_for("Solitaire & Casual Games") is None)
 check("'drive' parses, clamped",
       lg.parse_move('{"drive": {"bias": -3, "speed": 2}}', keys_ok=True)

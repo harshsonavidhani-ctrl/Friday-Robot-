@@ -539,7 +539,9 @@ GAME_AUTOPILOT = {
     "grand": {"mode": "mix", "vehicle": "car", "box": [0.0, 0.787, 0.162, 0.99],
               "keys": {"gas": "w", "brake": "s", "left": "a", "right": "d"},
               "tune": {"assume_up": 1.0, "cam_follow": 0.0}},
-    "hill": {"mode": "cruise", "hold": ["right"]},
+    # helper 19 (2026-10-25): gas, easing off / braking as the nose rears up
+    # (two near-flips at 29 m on plain cruise); right = gas, left = brake
+    "hill": {"mode": "balance", "keys": {"gas": "right", "brake": "left"}},
 }
 GAME_DRIVE_LOOK_S = 1.0     # pause between her looks while the autopilot drives
 GAME_AUTOPILOT_FOR_S = 30.0  # renewed every look; it stops on its own after this

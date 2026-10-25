@@ -516,9 +516,14 @@ def game_words(name: str) -> set[str]:
 
 
 def title_matches(title: str, game: str) -> bool:
-    words = game_words(game)
+    """The window is that game: the FIRST significant word of its name is in the
+    title (helper 19). Any one word was not enough -- 2026-10-25, "Hill Climb
+    Racing" matched the Asphalt 8 window ("... Car Racing Game") on "racing",
+    so its pictures and keys went to the wrong game."""
+    words = re.findall(r"[a-z0-9]+", (game or "").lower())
+    head = next((w for w in words if len(w) >= 3 and w not in _GENERIC_WORDS), None)
     have = set(re.findall(r"[a-z0-9]+", (title or "").lower()))
-    return bool(words) and bool(words & have)
+    return head is not None and head in have
 
 
 def _dpi_aware() -> None:
@@ -784,7 +789,7 @@ def idle_info() -> dict:
 AUTO_LEASE_S = 8.0
 AUTO_MAX_S = 120.0
 AUTO_TICK_S = 0.1
-AUTO_MODES = ("road", "cruise", "model", "net", "mix")
+AUTO_MODES = ("road", "cruise", "model", "net", "mix", "balance")
 AUTO_KEYS = {"gas": "w", "brake": "s", "left": "a", "right": "d"}      # GTA's
 MAP_BOX = (0.0, 0.787, 0.162, 0.99)       # GTA V's minimap, fractions of the window
 MAP_MAX_W = 320
@@ -811,6 +816,8 @@ TUNE_RANGES = {
     "cam_follow": (0.0, 1.0), "cam_gain": (-30.0, 30.0), "cam_dead": (0.0, 90.0),
     "cam_max": (0.0, 600.0), "assume_up": (0.0, 1.0),
     "stuck_escalate": (1.0, 4.0),
+    "tilt_back": (5.0, 150.0), "tilt_brake": (10.0, 170.0), "tilt_fwd": (5.0, 150.0),
+    "tilt_lead": (0.0, 1.0),
 }
 
 
@@ -823,7 +830,11 @@ def tune_defaults() -> dict:
             # GTA's GPS route (a waypoint): purple (168, 84, 243) over the road
             "follow_route": 1.0, "route_b": 180, "route_gap": 100, "route_r": 100,
             "cam_follow": 0.0, "cam_gain": 3.0, "cam_dead": 12.0, "cam_max": 150.0,
-            "assume_up": 0.0, "stuck_escalate": 2.5}
+            "assume_up": 0.0, "stuck_escalate": 2.5,
+            # mode "balance" (Hill Climb Racing): how far back the driver's head may
+            # lean (degrees) before the gas comes off / the brake goes on, and how far
+            # forward before the gas lifts the nose
+            "tilt_back": 40.0, "tilt_brake": 60.0, "tilt_fwd": 45.0, "tilt_lead": 0.3}
 
 
 def parse_box(text: str) -> tuple[float, float, float, float] | None:
@@ -1053,6 +1064,45 @@ def _route_ring(w: int, h: int, bgra: bytes, cx: float, cy: float, heading: floa
     return sum(best) / len(best)
 
 
+def head_tilt(w: int, h: int, bgra: bytes) -> float | None:
+    """Hill Climb Racing (helper 19, 2026-10-25): how far the vehicle is tipped,
+    read from where the driver's HEAD is against the red body -- 0 = head straight
+    above it, + = leaning back (the nose is rearing up), - = forward (diving).
+    His wheelies read 113, a level jeep -2..-5. None when no jeep is in view
+    (menus, the end screen). The red Hill Climber; numpy."""
+    import numpy as np
+    a = np.frombuffer(bgra, dtype=np.uint8).reshape(h, w, 4)[:, :, 2::-1].astype(np.int16)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    keep = np.zeros((h, w), bool)
+    keep[int(0.18 * h):int(0.72 * h), int(0.06 * w):] = True   # not the HUD, pedals, side bar
+    body = (r > 150) & (g < 100) & (b < 100) & (r - g > 80) & keep
+    skin = ((r > 165) & (g > 140) & (b > 115) & (b < 205) & (r - g >= 6) & (r - g < 45)
+            & (g - b > 8) & (g - b < 50) & keep)
+    if body.sum() < 30 or skin.sum() < 4:
+        return None
+    by, bx = np.nonzero(body)
+    sy, sx = np.nonzero(skin)
+    span = max(bx.max() - bx.min(), by.max() - by.min())
+    cx, cy = float(np.median(bx)), float(np.median(by))
+    near = (np.abs(sx - cx) < span) & (np.abs(sy - cy) < span)
+    if near.sum() < 4:
+        return None
+    return math.degrees(math.atan2(-(float(sx[near].mean()) - cx), -(float(sy[near].mean()) - cy)))
+
+
+def pedals_shown(w: int, h: int, bgra: bytes) -> bool:
+    """Hill Climb Racing is being DRIVEN: its grey GAS pedal is at the bottom
+    right (share of metal grey 0.58-0.60 while driving, 0.0 on every menu and
+    end screen). 2026-10-25: the menus and the end screen show a PICTURE of
+    the jeep and its driver, head_tilt read it, and the keys went to the menu."""
+    import numpy as np
+    a = np.frombuffer(bgra, dtype=np.uint8).reshape(h, w, 4)
+    sub = a[int(0.74 * h):int(0.95 * h), int(0.85 * w):int(0.95 * w), 2::-1].astype(np.int16)
+    r, g, b = sub[..., 0], sub[..., 1], sub[..., 2]
+    metal = (np.abs(r - g) < 14) & (np.abs(g - b) < 14) & (r > 120) & (r < 235)
+    return bool(sub.size) and float(metal.mean()) > 0.45
+
+
 def _thumb(got: tuple[int, int, bytes] | None) -> list[int] | None:
     """Grey levels of a small whole-window picture (stuck test)."""
     if not got:
@@ -1068,6 +1118,7 @@ class Autopilot:
         self.model: dict | None = None                  # POST /model (helper 18)
         self.nets: Nets | None = None                   # mode "net" (helper 19)
         self._views: list = []                          # its last few game pictures
+        self._tilt_prev: tuple[float, float] | None = None    # mode "balance"
         self.titler, self.grabber = titler, grabber
         self.presser = presser or _game_key
         self.mouser = mouser or mouse_move
@@ -1240,6 +1291,38 @@ class Autopilot:
             self._keys({k for k, share in press if share * tick > cut + 1e-6})
         return self._wait(tick - done)
 
+    def _balance_tick(self, cfg: dict, keys: dict) -> bool:
+        """Mode "balance": gas, but ease off / brake as the nose rears up and gas
+        when it dives (in the air the pedals turn the car). True if told to stop."""
+        t = {**tune_defaults(), **(cfg.get("tune") or {})}
+        now = time.monotonic()
+        got = self.grabber((0.0, 0.0, 1.0, 1.0), 480)
+        tilt = head_tilt(*got) if got and pedals_shown(*got) else None
+        if tilt is None or abs(tilt) > 150:
+            # a menu, the end screen, or upside down (the run is over): hands off
+            self._keys(set())
+            self._tilt_prev = None
+            self.state["last"] = {"tilt": None if tilt is None else round(tilt), "keys": ""}
+            return self._wait(AUTO_TICK_S)
+        # act on where the tilt is GOING (2026-10-25: full gas at -93 in the air
+        # spun it to +127 and over): tilt + rate * lead
+        rate = 0.0
+        if self._tilt_prev is not None and now - self._tilt_prev[1] < 0.5:
+            rate = ((tilt - self._tilt_prev[0] + 180) % 360 - 180) / max(0.05, now - self._tilt_prev[1])
+        self._tilt_prev = (tilt, now)
+        ahead = tilt + rate * t["tilt_lead"]
+        if ahead > t["tilt_brake"]:
+            press = [(keys["brake"], min(1.0, 0.3 + (ahead - t["tilt_brake"]) / 40.0))]
+        elif ahead > t["tilt_back"]:
+            press = []                                  # coast: the nose comes down by itself
+        elif ahead < -t["tilt_fwd"]:
+            press = [(keys["gas"], min(1.0, 0.3 + (-t["tilt_fwd"] - ahead) / 40.0))]
+        else:
+            press = [(keys["gas"], 1.0)]
+        self.state["last"] = {"tilt": round(tilt), "ahead": round(ahead),
+                              "keys": "+".join(f"{k}{d:.1f}" for k, d in press)}
+        return self._pulse(press, AUTO_TICK_S)
+
     def _wait(self, seconds: float) -> bool:
         """Sleep; True if told to stop."""
         return self._stop.wait(max(0.0, seconds))
@@ -1275,6 +1358,10 @@ class Autopilot:
                     continue
                 if cfg["mode"] == "net":
                     if self._net_tick(cfg, speed):
+                        break
+                    continue
+                if cfg["mode"] == "balance":
+                    if self._balance_tick(cfg, keys):
                         break
                     continue
                 t = cfg.get("tune") or tune_defaults()

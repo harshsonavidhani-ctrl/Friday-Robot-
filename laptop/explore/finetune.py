@@ -75,7 +75,7 @@ def score(model_zip: Path, episodes: int, seed: int, steps: int) -> dict:
     import numpy as np
     from stable_baselines3 import PPO
     model = PPO.load(str(model_zip), device="cpu")
-    cfg = T.EnvConfig(max_episode_steps=steps, coverage_target=1.01)   # never "succeeds" early
+    cfg = T.EnvConfig(max_episode_steps=steps, coverage_target=1.0)    # never "succeeds" early
     env = fb.FridayExplorationEnv(cfg)
     seen, crashes, driven, still = [], 0, [], []
     for ep in range(episodes):
