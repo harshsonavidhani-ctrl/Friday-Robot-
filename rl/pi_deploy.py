@@ -199,6 +199,12 @@ class RobotConfig:
     omega_max: float = 1.60
     resolution: float = 0.10
     use_frontier_rays: bool = True
+    # A GYRO-INPUT policy (2026-10-27, Harsh: "train the model like with gyro
+    # also"): one more input between the frontier rays and the last action --
+    # the turn rate she MADE (the board's gyro, else the executed turn) over
+    # omega_max. Never set by hand: PolicyRunner turns it on when the loaded
+    # model is exactly one input wider, so every other model runs as before.
+    gyro_input: bool = False
 
     # ---- control loop ----
     control_hz: float = 10.0            # policy rate; matches training dt = 0.1 s
@@ -581,7 +587,7 @@ class RobotConfig:
 
     @property
     def obs_dim(self) -> int:
-        return (2 if self.use_frontier_rays else 1) * self.n_beams + 2
+        return (2 if self.use_frontier_rays else 1) * self.n_beams + 2 + (1 if self.gyro_input else 0)
 
     def to_si(self, action: np.ndarray) -> tuple[float, float]:
         """Normalised [-1,1]^2 -> (v, omega). Only used if the ONNX outputs normalised."""
@@ -3183,6 +3189,11 @@ class PolicyRunner:
         # is the single easiest way to put a robot into a wall.
         expected = cfg.obs_dim
         actual = inp.shape[-1]
+        if (isinstance(actual, int) and actual == expected + 1 and cfg.use_frontier_rays
+                and not cfg.gyro_input):
+            cfg.gyro_input = True              # a gyro-input policy: see RobotConfig
+            expected = cfg.obs_dim
+            LOGGER.info("Gyro-input policy: the measured turn rate is input %d", 2 * cfg.n_beams)
         if isinstance(actual, int) and actual != expected:
             raise ValueError(
                 f"Observation width mismatch: model expects {actual}, config produces {expected}. "
@@ -3394,6 +3405,7 @@ class ControlLoop:
 
         self.last_action = np.zeros(2, np.float32)
         self._obs = np.zeros(cfg.obs_dim, np.float32)
+        self._gyro_obs = 0.0           # the turn rate she made last tick / omega_max (gyro_input)
         self._stop = threading.Event()
         self._reflex_thread: threading.Thread | None = None
         self.stats = {"ticks": 0, "reflex_stops": 0, "visual_stops": 0,
@@ -3798,6 +3810,8 @@ class ControlLoop:
         self._obs[:n] = np.clip(scan / c.lidar_max_range, 0.0, 1.0)
         if c.use_frontier_rays:
             self._obs[n:2 * n] = np.clip(frontier / c.lidar_max_range, 0.0, 1.0)
+        if getattr(c, "gyro_input", False):
+            self._obs[2 * n] = self._gyro_obs
         self._obs[-2:] = self.last_action
         return self._obs
 
@@ -4578,6 +4592,7 @@ class ControlLoop:
         if self.sim is not None:
             self.sim.step(v, omega, c.dt)
             self.map.dead_reckon(v, omega, c.dt)
+            self._gyro_obs = float(np.clip(omega / c.omega_max, -1.0, 1.0))
             if self.unstick_enabled:
                 self.unstick.record(v, omega, c.dt)
         else:
@@ -4588,6 +4603,7 @@ class ControlLoop:
             # every one -- the 2026-10-04 run ended ~98 deg out.
             dtheta = self._gyro_dtheta()
             omega_dr = ex_omega if dtheta is None else dtheta / c.dt
+            self._gyro_obs = float(np.clip(omega_dr / c.omega_max, -1.0, 1.0))
             if dtheta is not None:
                 self._note_pivot_stall(ex_v, ex_omega, omega_dr)
             self.map.dead_reckon(ex_v, omega_dr, c.dt)
