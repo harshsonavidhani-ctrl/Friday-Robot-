@@ -33,7 +33,7 @@ import laptop_research as lr                              # noqa: E402
 
 LAPTOP_USER = "Harsh Vidhani"
 FILES = ("friday_laptop_agent.py", "train_driver_net.py", "restart_helper.ps1")
-SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
+SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "HostKeyAlias=friday-laptop"]
 
 
 def wanted_version() -> int:
@@ -69,7 +69,7 @@ def main() -> int:
     if args.check:
         return 0 if have == want else 1
     target = f"{LAPTOP_USER}@{host}"
-    got = subprocess.run(["scp", "-q", "-o", "BatchMode=yes",
+    got = subprocess.run(["scp", "-q", "-o", "BatchMode=yes", "-o", "HostKeyAlias=friday-laptop",
                           *[str(ROOT / "laptop" / f) for f in FILES], f"{target}:Friday/"],
                          capture_output=True, text=True, timeout=60)
     if got.returncode:

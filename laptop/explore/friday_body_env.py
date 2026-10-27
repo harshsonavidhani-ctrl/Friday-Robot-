@@ -32,8 +32,18 @@ taken from the robot rather than invented:
    smaller furniture, and 10 cm posts (chair and table legs) that 5-degree
    beams can miss at a distance.
 
+ROUND 2 (2026-10-27, after the ft1 A/B on the Pi: ft1 reversed 17-26% of the
+time where ACT reverses ~0%, and in "two_rooms" it seldom went through the
+door -- 18.4 m2 seen against ACT's 31.4):
+6. STRICT REVERSE, as the robot does it (MODE_STRICT_REVERSE): backing up only
+   into space the LiDAR SEES clear behind her (a blind beam is not clear), at
+   most 1.2 s at a time; otherwise the reverse executes as a stop. Plus a
+   small cost per reversing step (R_REVERSE).
+7. HOUSES: HOUSE_SHARE of the rooms are 2-6 rooms in a grid joined by
+   0.8-1.1 m doorways, with furniture kept out of every door.
+
 Not modelled (they only ever REDUCE authority on the robot): the governor,
-navigator, ToF reflex, strict reverse and rate limiter. The A/B on the Pi
+navigator, ToF reflex and rate limiter. The A/B on the Pi
 (scripts/sim_ab, BODY=1) runs the policy through ALL of them and is the judge.
 """
 from __future__ import annotations
@@ -58,6 +68,13 @@ WHEEL_BASE = 0.35
 CEILING = int(255 * 0.85)
 MIN_DUTY, TURN_MIN_DUTY, CUTOFF = 80, 112, 40
 KICK_TICKS, KICK_SCALE = 2, 1.6
+
+# round 2
+R_REVERSE = -0.03                 # per step that backs up
+REVERSE_MAX_STEPS = 12            # strict reverse: at most 1.2 s at a time
+REAR_CLEAR_M = 0.50               # ... and only with this much SEEN clear behind
+REAR_BEAMS = np.arange(27, 46)    # 135..225 deg
+HOUSE_SHARE = 0.6
 
 # scripts/sim_ab/body.py (measured)
 SIDE_VMAX, B_EFF, TAU = 0.55, 0.42, 0.12
@@ -111,6 +128,9 @@ class FridayExplorationEnv(T.DiffDriveExplorationEnv):
         self._moving = [False, False]
         self._pivot_start: float | None = None
         self._vw = [0.0, 0.0]
+        self._rev_steps = 0
+        self._reversed = False
+        self.reverse_blocked = 0
         rng = getattr(self, "np_random", None)
         weak = float(rng.uniform(0.88, 0.98)) if rng is not None else 0.93
         right_weaker = bool(rng.random() < 0.8) if rng is not None else True
@@ -118,6 +138,9 @@ class FridayExplorationEnv(T.DiffDriveExplorationEnv):
 
     # --------------------------------------------------------------- rooms ----
     def _generate_map(self) -> None:
+        self.house = bool(self.np_random.random() < HOUSE_SHARE)
+        if self.house:
+            return self._generate_house()
         c, n = self.cfg, self.n_cells
         rng = self.np_random
         self.occ = np.zeros((n, n), np.uint8)
@@ -144,6 +167,41 @@ class FridayExplorationEnv(T.DiffDriveExplorationEnv):
         for _ in range(rng.integers(0, 7)):                    # chair / table legs
             r0, c0 = int(rng.integers(3, n - 3)), int(rng.integers(3, n - 3))
             self.occ[r0, c0] = self.OCCUPIED
+
+    def _generate_house(self) -> None:
+        """2-3 x 1-2 rooms, a 0.8-1.1 m door in every wall between two rooms,
+        furniture and chair legs, and every door kept clear 0.4 m each side."""
+        c, n, rng = self.cfg, self.n_cells, self.np_random
+        res = c.resolution
+        self.occ = np.zeros((n, n), np.uint8)
+        self.occ[:2, :] = self.occ[-2:, :] = self.occ[:, :2] = self.occ[:, -2:] = self.OCCUPIED
+
+        def cuts(k: int) -> list[int]:
+            return [int(b + rng.integers(-5, 6)) for b in np.linspace(2, n - 2, k + 1)[1:-1]]
+        xc, yc = cuts(int(rng.integers(2, 4))), cuts(int(rng.integers(1, 3)))
+        xs, ys = [2] + xc + [n - 2], [2] + yc + [n - 2]
+        doors = []
+        for x in xc:                                           # walls along y, a door per stretch
+            self.occ[:, x:x + 2] = self.OCCUPIED
+            for y0, y1 in zip(ys[:-1], ys[1:]):
+                w = int(round(rng.uniform(0.8, 1.1) / res))
+                d = int(rng.integers(y0 + 3, max(y0 + 4, y1 - w - 2)))
+                doors.append((d, d + w, x - 4, x + 6))
+        for y in yc:                                           # walls along x
+            self.occ[y:y + 2, :] = self.OCCUPIED
+            for x0, x1 in zip(xs[:-1], xs[1:]):
+                w = int(round(rng.uniform(0.8, 1.1) / res))
+                d = int(rng.integers(x0 + 3, max(x0 + 4, x1 - w - 2)))
+                doors.append((y - 4, y + 6, d, d + w))
+        for _ in range(rng.integers(4, 11)):
+            h = int(rng.integers(int(0.2 / res), int(0.8 / res) + 1))
+            w = int(rng.integers(int(0.2 / res), int(0.8 / res) + 1))
+            r0, c0 = int(rng.integers(3, n - h - 3)), int(rng.integers(3, n - w - 3))
+            self.occ[r0:r0 + h, c0:c0 + w] = self.OCCUPIED
+        for _ in range(rng.integers(0, 7)):
+            self.occ[int(rng.integers(3, n - 3)), int(rng.integers(3, n - 3))] = self.OCCUPIED
+        for r0, r1, c0, c1 in doors:                           # the door and 0.4 m each side
+            self.occ[max(2, r0):min(n - 2, r1), max(2, c0):min(n - 2, c1)] = self.FREE
 
     def _sample_free_pose(self) -> np.ndarray:
         pose = super()._sample_free_pose()
@@ -220,6 +278,14 @@ class FridayExplorationEnv(T.DiffDriveExplorationEnv):
         v = min(v, MAX_FORWARD)
         if v < 0.0 and abs(v) < REVERSE_FLOOR:
             v = -REVERSE_FLOOR
+        if v < 0.0:
+            self._rev_steps += 1
+            if self._rev_steps > REVERSE_MAX_STEPS or not self._rear_seen_clear():
+                v = 0.0                                        # strict reverse: refused
+                self.reverse_blocked += 1
+        else:
+            self._rev_steps = 0
+        self._reversed = v < 0.0
         vr, vl = v + omega * WHEEL_BASE / 2.0, v - omega * WHEEL_BASE / 2.0
         peak = max(abs(vr), abs(vl))
         if peak > WHEEL_SPEED_MAX:
@@ -274,6 +340,19 @@ class FridayExplorationEnv(T.DiffDriveExplorationEnv):
             if self._stencil_hits(x, y, self._collision_stencil):
                 return True
         return False
+
+
+    def _rear_seen_clear(self) -> bool:
+        """The robot's strict reverse: the rear beams it can SEE all show more
+        than REAR_CLEAR_M; a blind beam is unknown, not clear."""
+        seen = REAR_BEAMS[~self.blind[REAR_BEAMS]]
+        return bool(seen.size) and float(self._last_scan[seen].min()) > REAR_CLEAR_M
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = super().step(action)
+        if self._reversed:
+            reward += R_REVERSE
+        return obs, reward, terminated, truncated, info
 
 
 def make_env_fn(cfg: T.EnvConfig, seed: int, rank: int):

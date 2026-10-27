@@ -77,14 +77,15 @@ def score(model_zip: Path, episodes: int, seed: int, steps: int) -> dict:
     model = PPO.load(str(model_zip), device="cpu")
     cfg = T.EnvConfig(max_episode_steps=steps, coverage_target=1.0)    # never "succeeds" early
     env = fb.FridayExplorationEnv(cfg)
-    seen, crashes, driven, still = [], 0, [], []
+    seen, crashes, driven, still, backing, house = [], 0, [], [], [], []
     for ep in range(episodes):
         obs, _ = env.reset(seed=seed + ep)
         start = env.pose[:2].copy()
-        path, prev, idle = 0.0, env.pose[:2].copy(), 0
+        path, prev, idle, back = 0.0, env.pose[:2].copy(), 0, 0
         for _ in range(steps):
             action, _ = model.predict(obs, deterministic=True)
             obs, _, term, trunc, info = env.step(action)
+            back += bool(getattr(env, "_reversed", False))
             step = float(np.linalg.norm(env.pose[:2] - prev))
             path += step
             idle += step < 0.002
@@ -95,8 +96,13 @@ def score(model_zip: Path, episodes: int, seed: int, steps: int) -> dict:
         seen.append(env._known_free_count * env.cell_area)
         driven.append(path)
         still.append(idle / max(1, env._steps))
+        backing.append(back / max(1, env._steps))
+        if getattr(env, "house", False):
+            house.append(seen[-1])
     return {"area_m2": round(float(np.mean(seen)), 2), "crashes": crashes, "episodes": episodes,
-            "driven_m": round(float(np.mean(driven)), 2), "still": round(float(np.mean(still)), 2)}
+            "driven_m": round(float(np.mean(driven)), 2), "still": round(float(np.mean(still)), 2),
+            "reversing": round(float(np.mean(backing)), 3),
+            "house_area_m2": round(float(np.mean(house)), 2) if house else None, "houses": len(house)}
 
 
 def main() -> int:
@@ -104,7 +110,11 @@ def main() -> int:
     ap.add_argument("--timesteps", type=int, default=3_000_000)
     ap.add_argument("--n-envs", type=int, default=10)
     ap.add_argument("--max-episode-steps", type=int, default=1500)
-    ap.add_argument("--compare", default="", help="a run folder: score its best model against his original")
+    ap.add_argument("--compare", default="", help="a run folder: score its best model against --against")
+    ap.add_argument("--against", default=str(ORIGINAL), help="the model --compare scores it against")
+    ap.add_argument("--from", dest="start", default=str(ORIGINAL),
+                    help="the model to fine-tune (round 2: round 1's best_model.zip)")
+    ap.add_argument("--from-norm", default=str(ORIGINAL_NORM), help="its VecNormalize statistics")
     ap.add_argument("--episodes", type=int, default=30)
     args = ap.parse_args()
     safe_ppo_load()
@@ -113,7 +123,8 @@ def main() -> int:
         run = Path(args.compare)
         best = run / "checkpoints" / "best" / "best_model.zip"
         new = best if best.exists() else run / "ppo_exploration_model.zip"
-        result = {"original": score(ORIGINAL, args.episodes, 5000, args.max_episode_steps),
+        result = {"against": args.against,
+                  "before": score(Path(args.against), args.episodes, 5000, args.max_episode_steps),
                   "fine_tuned": score(new, args.episodes, 5000, args.max_episode_steps),
                   "rooms": f"{args.episodes} Friday-body rooms, seeds 5000+, {args.max_episode_steps} steps"}
         (run / "compare.json").write_text(json.dumps(result, indent=1))
@@ -122,11 +133,11 @@ def main() -> int:
 
     run = RUNS / time.strftime("run-%Y%m%d-%H%M")
     run.mkdir(parents=True, exist_ok=False)
-    shutil.copy2(ORIGINAL, run / "ppo_exploration_model.zip")
-    shutil.copy2(ORIGINAL_NORM, run / "vecnormalize.pkl")
+    shutil.copy2(args.start, run / "ppo_exploration_model.zip")
+    shutil.copy2(args.from_norm, run / "vecnormalize.pkl")
     point_train_at(run)
     (run / "about.txt").write_text(
-        f"fine-tune of {ORIGINAL} on Friday's body (friday_body_env.py), started "
+        f"fine-tune of {args.start} on Friday's body (friday_body_env.py), started "
         f"{time.strftime('%Y-%m-%d %H:%M')}, {args.timesteps} steps\n")
     print(f"run folder: {run}", flush=True)
     return T.main(["--resume", "--timesteps", str(args.timesteps), "--n-envs", str(args.n_envs),
