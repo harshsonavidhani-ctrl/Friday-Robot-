@@ -56,6 +56,10 @@ GYRO_AT = 144                          # its place in the observation
 SCENES = (("corridor", 0.12), ("dining", 0.12), ("two_rooms", 0.12), ("low_things", 0.12),
           ("open", 0.10), ("house", 0.27), ("random", 0.15))
 POPUP_SHARE = 0.3                      # of the non-"open" rooms that also get a person
+# HIS env class, taken from the class itself: finetune.point_train_at swaps
+# T.DiffDriveExplorationEnv for this file's class, and calling the base through
+# that name recursed until Python gave up (round 3's first start, 22:38).
+_BASE = fb.FridayExplorationEnv.__bases__[0]
 
 
 def friday3_config(cfg: T.EnvConfig) -> T.EnvConfig:
@@ -66,7 +70,7 @@ class Friday3Env(fb.FridayExplorationEnv):
     MIN_ROOM_M2 = 6.0      # train.py's reset keeps a map only above 25% of the world (36 m2 here)
 
     def __init__(self, cfg: T.EnvConfig | None = None, render_mode: str | None = None) -> None:
-        T.DiffDriveExplorationEnv.__init__(self, friday3_config(cfg or T.EnvConfig()), render_mode)
+        _BASE.__init__(self, friday3_config(cfg or T.EnvConfig()), render_mode)
         c = self.cfg
         self.blind = np.zeros(c.n_beams, bool)
         self.blind[fb.BLIND[fb.BLIND < c.n_beams]] = True
