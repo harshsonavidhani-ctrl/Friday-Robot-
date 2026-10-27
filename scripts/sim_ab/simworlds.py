@@ -227,6 +227,10 @@ def make_world_class(base, world, out_path):
             x0, y0, th0 = (float(p) for p in self.pose)
             super().step(v, omega, dt)
             x1, y1, th1 = (float(p) for p in self.pose)
+            # where she went, once a simulated second (2026-10-27: why no model
+            # gets through two_rooms' door)
+            if int(self.t) != int(self.t - dt):
+                s.setdefault("path", []).append((round(x1, 2), round(y1, 2)))
             segs = walls + low_w
             circ = self._circles(low=True)
             clear1 = _clearance(x1, y1, segs, circ)
