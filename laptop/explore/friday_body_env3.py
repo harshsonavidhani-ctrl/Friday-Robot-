@@ -67,6 +67,9 @@ def friday3_config(cfg: T.EnvConfig) -> T.EnvConfig:
 
 
 class Friday3Env(fb.FridayExplorationEnv):
+    SCENES = SCENES
+    DOOR_W = (0.8, 1.0)                 # two_rooms
+    CORRIDOR_W, CORRIDOR_L1 = (1.2, 1.6), (6.0, 9.5)
     MIN_ROOM_M2 = 6.0      # train.py's reset keeps a map only above 25% of the world (36 m2 here)
 
     def __init__(self, cfg: T.EnvConfig | None = None, render_mode: str | None = None) -> None:
@@ -122,7 +125,7 @@ class Friday3Env(fb.FridayExplorationEnv):
     # ------------------------------------------------------------------ rooms ---
     def _generate_map(self) -> None:
         rng = self.np_random
-        names, weights = zip(*SCENES)
+        names, weights = zip(*self.SCENES)
         self.scene = str(rng.choice(names, p=np.array(weights) / sum(weights)))
         n = self.n_cells
         self.occ_low = np.zeros((n, n), np.uint8)
@@ -169,9 +172,9 @@ class Friday3Env(fb.FridayExplorationEnv):
     def _room_corridor(self) -> None:
         rng = self.np_random
         self._blank()
-        w = float(rng.uniform(1.2, 1.6))
+        w = float(rng.uniform(*self.CORRIDOR_W))
         x0, y0 = 1.0, float(rng.uniform(1.5, 4.0))
-        l1, l2 = float(rng.uniform(6.0, 9.5)), float(rng.uniform(3.0, 5.5))
+        l1, l2 = float(rng.uniform(*self.CORRIDOR_L1)), float(rng.uniform(3.0, 5.5))
         self._carve(x0, y0, x0 + l1, y0 + w)                       # the long leg
         self._carve(x0 + l1 - w, y0, x0 + l1, y0 + w + l2)         # the turn
         for _ in range(int(rng.integers(0, 3))):                    # door recesses
@@ -206,7 +209,7 @@ class Friday3Env(fb.FridayExplorationEnv):
         self._carve(x0, y0, x0 + W, y0 + H)
         wx = x0 + W * float(rng.uniform(0.4, 0.6))
         self._box(wx, y0, wx + 0.1, y0 + H)                          # the dividing wall
-        d = float(rng.uniform(0.8, 1.0))
+        d = float(rng.uniform(*self.DOOR_W))
         dy = y0 + float(rng.uniform(0.3, H - d - 0.3))
         self._carve(wx - 0.05, dy, wx + 0.15, dy + d)                # its door
         for _ in range(int(rng.integers(3, 6))):
@@ -329,10 +332,32 @@ class Friday3Env(fb.FridayExplorationEnv):
         self._popups += 1
 
 
+class Friday4Env(Friday3Env):
+    """Round 4 (2026-10-27): round 3 lost the Pi A/B on two_rooms' 0.8 m door
+    (18.4 m2 vs ACT's 31.4: centred, the jambs are 0.40 m from her centre and
+    the governor stops at 0.36) and on the corridor (13.8 vs 22.9). Same body,
+    more and narrower doorways, longer and narrower corridors."""
+    SCENES = (("corridor", 0.20), ("dining", 0.08), ("two_rooms", 0.22), ("low_things", 0.10),
+              ("open", 0.08), ("house", 0.22), ("random", 0.10))
+    DOOR_W = (0.78, 0.95)
+    HOUSE_DOOR_W = (0.78, 0.95)
+    CORRIDOR_W, CORRIDOR_L1 = (1.0, 1.5), (7.5, 10.5)
+
+
 def make_env_fn(cfg: T.EnvConfig, seed: int, rank: int):
     """train.make_env_fn with round 3's env (top level, so SubprocVecEnv can pickle it)."""
     def _init():
         env = Friday3Env(cfg)
+        env.reset(seed=seed + rank)
+        env.action_space.seed(seed + rank)
+        return env
+    return _init
+
+
+def make_env_fn4(cfg: T.EnvConfig, seed: int, rank: int):
+    """The same for round 4."""
+    def _init():
+        env = Friday4Env(cfg)
         env.reset(seed=seed + rank)
         env.action_space.seed(seed + rank)
         return env

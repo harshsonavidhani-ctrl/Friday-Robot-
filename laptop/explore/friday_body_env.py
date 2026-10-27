@@ -114,6 +114,7 @@ def side_speed(d: float, moving: bool, mode: str, pivot_start: float, gain: floa
 
 
 class FridayExplorationEnv(T.DiffDriveExplorationEnv):
+    HOUSE_DOOR_W = (0.8, 1.1)          # m
     def __init__(self, cfg: T.EnvConfig | None = None, render_mode: str | None = None) -> None:
         super().__init__(friday_config(cfg or T.EnvConfig()), render_mode)
         self.blind = np.zeros(self.cfg.n_beams, bool)
@@ -184,13 +185,13 @@ class FridayExplorationEnv(T.DiffDriveExplorationEnv):
         for x in xc:                                           # walls along y, a door per stretch
             self.occ[:, x:x + 2] = self.OCCUPIED
             for y0, y1 in zip(ys[:-1], ys[1:]):
-                w = int(round(rng.uniform(0.8, 1.1) / res))
+                w = int(round(rng.uniform(*self.HOUSE_DOOR_W) / res))
                 d = int(rng.integers(y0 + 3, max(y0 + 4, y1 - w - 2)))
                 doors.append((d, d + w, x - 4, x + 6))
         for y in yc:                                           # walls along x
             self.occ[y:y + 2, :] = self.OCCUPIED
             for x0, x1 in zip(xs[:-1], xs[1:]):
-                w = int(round(rng.uniform(0.8, 1.1) / res))
+                w = int(round(rng.uniform(*self.HOUSE_DOOR_W) / res))
                 d = int(rng.integers(x0 + 3, max(x0 + 4, x1 - w - 2)))
                 doors.append((y - 4, y + 6, d, d + w))
         for _ in range(rng.integers(4, 11)):

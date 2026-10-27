@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 
 import numpy as np
 
@@ -182,7 +183,21 @@ def make_world_class(base, world, out_path):
                     gy = np.floor((y + d * np.sin(aa[m])) / 0.1).astype(int)
                     self._seen.update(zip(gx.tolist(), gy.tolist()))
             noise = self.rng.normal(0, 0.015, c.n_beams)
-            return np.clip(rng + noise, 0.0, c.lidar_max_range).astype(np.float32)
+            out = np.clip(rng + noise, 0.0, c.lidar_max_range).astype(np.float32)
+            # THE CHASSIS BEAMS (2026-10-27): the real LD19 thread masks the
+            # self-mask bearings, so those bins go out as lidar_max_range. This sim
+            # used to hand the policy TRUE ranges there -- inputs it never gets on
+            # the robot or in training (round 3 reversed 30%+ here, 0.1% in
+            # training). SIM_MASK=0 = the old behaviour, to reproduce old results.
+            if os.environ.get("SIM_MASK", "1") != "0":
+                if getattr(self, "_blind", None) is None:
+                    mod = sys.modules[base.__module__]
+                    mask = getattr(c, "self_mask_deg", ()) or ()
+                    self._blind = (np.asarray(mod.masked_beam_indices(
+                        mask, getattr(c, "lidar_offset_deg", 0.0), c.n_beams), int)
+                        if mask and hasattr(mod, "masked_beam_indices") else np.zeros(0, int))
+                out[self._blind] = c.lidar_max_range
+            return out
 
         def tof(self):
             """8x8 OBSTACLE ranges in metres, as the hardware thread publishes after

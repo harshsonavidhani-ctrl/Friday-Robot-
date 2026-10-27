@@ -31,7 +31,8 @@ import friday_body_env as fb                              # noqa: E402
 import friday_body_env3 as fb3                            # noqa: E402
 import train as T                                         # noqa: E402
 
-ENVS = {1: (fb.FridayExplorationEnv, fb.make_env_fn), 3: (fb3.Friday3Env, fb3.make_env_fn)}
+ENVS = {1: (fb.FridayExplorationEnv, fb.make_env_fn), 3: (fb3.Friday3Env, fb3.make_env_fn),
+        4: (fb3.Friday4Env, fb3.make_env_fn4)}
 
 RUNS = Path.home() / "FridayML" / "explore_runs"
 FINETUNE_LR = 1e-4        # his runs used 3e-4 from scratch; a fine-tune nudges, it does not relearn
@@ -151,7 +152,7 @@ def score(model_zip: Path, episodes: int, seed: int, steps: int, env_no: int = 1
            "driven_m": round(float(np.mean(driven)), 2), "still": round(float(np.mean(still)), 2),
            "reversing": round(float(np.mean(backing)), 3),
            "house_area_m2": round(float(np.mean(house)), 2) if house else None, "houses": len(house)}
-    if env_no == 3:
+    if env_no >= 3:
         out["safety_stops"] = round(float(np.mean(stops)), 3)
         out["by_room"] = {k: {"n": len(v), "area_m2": round(float(np.mean([a for a, _ in v])), 1),
                               "crashes": sum(c for _, c in v)} for k, v in sorted(by_scene.items())}
@@ -170,7 +171,8 @@ def main() -> int:
     ap.add_argument("--from-norm", default=str(ORIGINAL_NORM), help="its VecNormalize statistics")
     ap.add_argument("--episodes", type=int, default=30)
     ap.add_argument("--env", type=int, default=3, choices=sorted(ENVS),
-                    help="1 = rounds 1-2's body; 3 = round 3: gyro input, the safety layers, the 2-min rooms")
+                    help="1 = rounds 1-2's body; 3 = round 3: gyro input, the safety layers, the 2-min rooms; "
+                         "4 = round 4: narrower doors, longer corridors")
     args = ap.parse_args()
     safe_ppo_load()
 
@@ -188,9 +190,9 @@ def main() -> int:
 
     run = RUNS / time.strftime("run-%Y%m%d-%H%M")
     run.mkdir(parents=True, exist_ok=False)
-    widened = widen(Path(args.start), run / "ppo_exploration_model.zip") if args.env == 3 else False
+    widened = widen(Path(args.start), run / "ppo_exploration_model.zip") if args.env >= 3 else False
     if not widened:
-        if args.env != 3:
+        if args.env < 3:
             shutil.copy2(args.start, run / "ppo_exploration_model.zip")
         shutil.copy2(args.from_norm, run / "vecnormalize.pkl")    # a widened model starts a fresh one
     point_train_at(run, args.env)
