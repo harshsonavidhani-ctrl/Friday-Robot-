@@ -4,6 +4,7 @@
 # the next time. Three more of each, every room, the masked harness.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+export SKIP_DONE=1          # a stopped batch picks up where it was (10-28: stopped after 7 of 30)
 for k in 1 2 3; do
   "$HERE/run_ft.sh" rep$k "$ROOT/state/sim_ab/models/exploration_model_ft3.onnx" act ppo_ft
 done

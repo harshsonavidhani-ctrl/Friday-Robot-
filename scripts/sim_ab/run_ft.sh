@@ -23,6 +23,9 @@ for w in chairs popup two_rooms low_things corridor; do
       ppo_old) POL="$ROOT/rl/exploration_model.onnx" ;;
       ppo_ft) POL="$FT" ;;
     esac
+    if [ "${SKIP_DONE:-0}" = "1" ] && [ -f "$O/${TAG}_${code}_$w.json" ]; then
+      echo "$code $w already done"; continue           # resuming (run_repeats.sh)
+    fi
     POLICY="$POL" nice -n 10 timeout 300 $PY $HERE/run_one.py "$ROOT" $w $O/${TAG}_${code}_$w.json 120 "${FLAGS[@]}" \
       > $O/${TAG}_${code}_$w.log 2>&1
     echo "$code $w exit $?"
