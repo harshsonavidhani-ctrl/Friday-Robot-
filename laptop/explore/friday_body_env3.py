@@ -71,6 +71,7 @@ class Friday3Env(fb.FridayExplorationEnv):
     DOOR_W = (0.8, 1.0)                 # two_rooms
     CORRIDOR_W, CORRIDOR_L1 = (1.2, 1.6), (6.0, 9.5)
     MIN_ROOM_M2 = 6.0      # train.py's reset keeps a map only above 25% of the world (36 m2 here)
+    PENALISE_SLOWING = True    # R_INTERVENE for any cut in forward speed (round 5: only a stop)
 
     def __init__(self, cfg: T.EnvConfig | None = None, render_mode: str | None = None) -> None:
         _BASE.__init__(self, friday3_config(cfg or T.EnvConfig()), render_mode)
@@ -129,6 +130,7 @@ class Friday3Env(fb.FridayExplorationEnv):
         self.scene = str(rng.choice(names, p=np.array(weights) / sum(weights)))
         n = self.n_cells
         self.occ_low = np.zeros((n, n), np.uint8)
+        self.room_lab = np.zeros((n, n), np.uint8)               # two_rooms: sides 1, 2 and the door 3
         self.house = self.scene == "house"
         if self.scene == "house":
             self._generate_house()
@@ -139,9 +141,9 @@ class Friday3Env(fb.FridayExplorationEnv):
             getattr(self, "_room_" + self.scene)()
         self.popup = self.scene == "open" or bool(rng.random() < POPUP_SHARE)
         k = int(rng.integers(0, 4))                               # rotate / mirror
-        self.occ, self.occ_low = np.rot90(self.occ, k).copy(), np.rot90(self.occ_low, k).copy()
+        self.occ, self.occ_low, self.room_lab = (np.rot90(g, k).copy() for g in (self.occ, self.occ_low, self.room_lab))
         if rng.random() < 0.5:
-            self.occ, self.occ_low = self.occ[:, ::-1].copy(), self.occ_low[:, ::-1].copy()
+            self.occ, self.occ_low, self.room_lab = (g[:, ::-1].copy() for g in (self.occ, self.occ_low, self.room_lab))
 
     def _cells(self, m: float) -> int:
         return int(round(m / self.cfg.resolution))
@@ -216,6 +218,10 @@ class Friday3Env(fb.FridayExplorationEnv):
             self._disk(float(rng.uniform(x0 + 0.6, x0 + W - 0.6)), float(rng.uniform(y0 + 0.6, y0 + H - 0.6)),
                        float(rng.uniform(0.25, 0.4)))
         self._carve(wx - 0.5, dy, wx + 0.6, dy + d)                  # keep the doorway clear
+        r0, r1 = self._cells(y0), self._cells(y0 + H)
+        self.room_lab[r0:r1, self._cells(x0):self._cells(wx)] = 1
+        self.room_lab[r0:r1, self._cells(wx + 0.1):self._cells(x0 + W)] = 2
+        self.room_lab[self._cells(dy):self._cells(dy + d), self._cells(wx - 0.05):self._cells(wx + 0.15)] = 3
 
     def _room_low_things(self) -> None:
         rng = self.np_random
@@ -280,7 +286,8 @@ class Friday3Env(fb.FridayExplorationEnv):
                 v *= (d - GOV_STOP) / (GOV_SLOW - GOV_STOP)
             if self._tof < TOF_STOP:
                 v = 0.0
-        self._intervened = asked > 0.02 and v < asked - 0.02
+        cut = asked - 0.02 if self.PENALISE_SLOWING else 0.25 * asked
+        self._intervened = asked > 0.02 and v < cut
         self.interventions += self._intervened
         b_th0 = float(self.belief[2])
         th0 = float(self.pose[2])
@@ -344,6 +351,64 @@ class Friday4Env(Friday3Env):
     CORRIDOR_W, CORRIDOR_L1 = (1.0, 1.5), (7.5, 10.5)
 
 
+R_DOOR = 5.0          # round 5: the first time she reaches the far side of two_rooms' door
+DOOR_START = 0.5      # of two_rooms maps, the share that start her 0.7-2.5 m from the door
+
+
+class Friday5Env(Friday3Env):
+    """Round 5 (2026-10-28). The 10-28 repeats (4 runs each, masked harness):
+    round 3 had the fewest bumps but lost doorways -- two_rooms 26.2 m2 vs
+    ACT's 29.9 (2 of 4 runs never got through), corridor 20.4 vs 22.9. Round
+    4's answer (narrower doors, longer corridors) did worse, and 3M more
+    round-3 steps (3b) did worse too. So the rooms stay round 3's sizes and
+    the lesson changes instead:
+
+    1. Half the two_rooms maps start her near the door (0.7-2.5 m, any
+       heading), so the rare event she has to learn happens every episode.
+    2. R_DOOR the first time she reaches the other room.
+    3. R_INTERVENE only when the governor or reflex STOPS her (forward cut
+       below a quarter of what she asked). The jambs of a 0.8 m door are
+       0.40 m from her centre, inside the governor's 0.55 m slow zone, so in
+       round 3 every slightly off-centre approach to a door was punished.
+    More of the rooms are doors and corridors; the room of low things keeps
+    its share so the bump lesson is not forgotten."""
+    SCENES = (("corridor", 0.16), ("dining", 0.10), ("two_rooms", 0.24), ("low_things", 0.14),
+              ("open", 0.08), ("house", 0.18), ("random", 0.10))
+    PENALISE_SLOWING = False
+
+    def _fresh_body(self) -> None:
+        super()._fresh_body()
+        self._side = 0
+        self.crossed = False
+
+    def _sample_free_pose(self) -> np.ndarray:
+        pose = super()._sample_free_pose()
+        lab = getattr(self, "room_lab", None)
+        if lab is None or not (lab == 3).any() or self.np_random.random() >= DOOR_START:
+            return pose
+        rr, cc = np.nonzero(lab == 3)
+        res = self.cfg.resolution
+        dx, dy = (float(cc.mean()) + 0.5) * res, (float(rr.mean()) + 0.5) * res
+        for _ in range(80):
+            if 0.7 <= math.hypot(float(pose[0]) - dx, float(pose[1]) - dy) <= 2.5:
+                break
+            pose = super()._sample_free_pose()
+        return pose
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = super().step(action)
+        r, c = self._world_to_cell(float(self.pose[0]), float(self.pose[1]))
+        side = int(self.room_lab[r, c]) if 0 <= r < self.n_cells and 0 <= c < self.n_cells else 0
+        if side in (1, 2):
+            if not self._side:
+                self._side = side
+            elif side != self._side and not self.crossed:
+                self.crossed = True
+                reward += R_DOOR
+        info["crossed"] = self.crossed
+        return obs, reward, terminated, truncated, info
+
+
 def make_env_fn(cfg: T.EnvConfig, seed: int, rank: int):
     """train.make_env_fn with round 3's env (top level, so SubprocVecEnv can pickle it)."""
     def _init():
@@ -358,6 +423,16 @@ def make_env_fn4(cfg: T.EnvConfig, seed: int, rank: int):
     """The same for round 4."""
     def _init():
         env = Friday4Env(cfg)
+        env.reset(seed=seed + rank)
+        env.action_space.seed(seed + rank)
+        return env
+    return _init
+
+
+def make_env_fn5(cfg: T.EnvConfig, seed: int, rank: int):
+    """The same for round 5."""
+    def _init():
+        env = Friday5Env(cfg)
         env.reset(seed=seed + rank)
         env.action_space.seed(seed + rank)
         return env

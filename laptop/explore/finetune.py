@@ -32,7 +32,7 @@ import friday_body_env3 as fb3                            # noqa: E402
 import train as T                                         # noqa: E402
 
 ENVS = {1: (fb.FridayExplorationEnv, fb.make_env_fn), 3: (fb3.Friday3Env, fb3.make_env_fn),
-        4: (fb3.Friday4Env, fb3.make_env_fn4)}
+        4: (fb3.Friday4Env, fb3.make_env_fn4), 5: (fb3.Friday5Env, fb3.make_env_fn5)}
 
 RUNS = Path.home() / "FridayML" / "explore_runs"
 FINETUNE_LR = 1e-4        # his runs used 3e-4 from scratch; a fine-tune nudges, it does not relearn
@@ -122,6 +122,7 @@ def score(model_zip: Path, episodes: int, seed: int, steps: int, env_no: int = 1
     seen, crashes, driven, still, backing, house = [], 0, [], [], [], []
     by_scene: dict[str, list] = {}
     stops = []
+    doors = []            # two_rooms: did she reach the other room
     for ep in range(episodes):
         obs, _ = env.reset(seed=seed + ep)
         start = env.pose[:2].copy()
@@ -148,6 +149,8 @@ def score(model_zip: Path, episodes: int, seed: int, steps: int, env_no: int = 1
         stops.append(getattr(env, "interventions", 0) / max(1, env._steps))
         crashed = bool(info.get("collision")) if (term or trunc) else False
         by_scene.setdefault(getattr(env, "scene", "room"), []).append((seen[-1], crashed))
+        if getattr(env, "scene", "") == "two_rooms" and hasattr(env, "crossed"):
+            doors.append(env.crossed)
     out = {"area_m2": round(float(np.mean(seen)), 2), "crashes": crashes, "episodes": episodes,
            "driven_m": round(float(np.mean(driven)), 2), "still": round(float(np.mean(still)), 2),
            "reversing": round(float(np.mean(backing)), 3),
@@ -156,6 +159,8 @@ def score(model_zip: Path, episodes: int, seed: int, steps: int, env_no: int = 1
         out["safety_stops"] = round(float(np.mean(stops)), 3)
         out["by_room"] = {k: {"n": len(v), "area_m2": round(float(np.mean([a for a, _ in v])), 1),
                               "crashes": sum(c for _, c in v)} for k, v in sorted(by_scene.items())}
+    if doors:
+        out["through_the_door"] = f"{sum(doors)}/{len(doors)}"
     return out
 
 
@@ -172,7 +177,8 @@ def main() -> int:
     ap.add_argument("--episodes", type=int, default=30)
     ap.add_argument("--env", type=int, default=3, choices=sorted(ENVS),
                     help="1 = rounds 1-2's body; 3 = round 3: gyro input, the safety layers, the 2-min rooms; "
-                         "4 = round 4: narrower doors, longer corridors")
+                         "4 = round 4: narrower doors, longer corridors; "
+                         "5 = round 5: door practice + door bonus, only a stop is penalised")
     args = ap.parse_args()
     safe_ppo_load()
 

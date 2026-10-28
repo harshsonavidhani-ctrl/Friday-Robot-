@@ -1,0 +1,209 @@
+<title>Friday Sim Replays</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a robot-lab bench — room tabs, one shared transport bar, then a grid of
+   top-down replays you compare side by side. Friday's own colours: black + #FF6A00. */
+:root {
+  --bg: #f4f3f1; --panel: #ffffff; --fg: #1d1b19; --muted: #6b6560; --line: #d9d5d0;
+  --floor: #fbfaf8; --wall: #2a2622; --obst: #c9c2ba; --low: #b0703c;
+  --act: #3a6ea5; --r3: #e85d00; --r3b: #b8336a; --r4: #7a6bb0; --r5: #1f8a8a; --start: #2f8f4e;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121110; --panel: #1b1a18; --fg: #efebe6; --muted: #a39b93; --line: #34302c;
+  --floor: #171614; --wall: #e9e3dc; --obst: #4b4540; --low: #d58a4a;
+  --act: #6fa3dc; --r3: #ff7a1f; --r3b: #e0659a; --r4: #a597dc; --r5: #4cc3c3; --start: #4fbf72; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121110; --panel: #1b1a18; --fg: #efebe6; --muted: #a39b93; --line: #34302c;
+  --floor: #171614; --wall: #e9e3dc; --obst: #4b4540; --low: #d58a4a;
+  --act: #6fa3dc; --r3: #ff7a1f; --r3b: #e0659a; --r4: #a597dc; --r5: #4cc3c3; --start: #4fbf72; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px; }
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 18px; }
+h1 { font-family: var(--display); font-weight: 700; font-size: 2.2rem; letter-spacing: .01em; margin: 0; text-wrap: balance; }
+h1 span { color: var(--r3); }
+.lede { color: var(--muted); max-width: 68ch; margin: 4px 0 0; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tab { font: 500 .95rem var(--body); padding: 7px 12px; border: 1px solid var(--line); background: var(--panel);
+  color: var(--fg); border-radius: 6px; cursor: pointer; }
+.tab[aria-selected="true"] { border-color: var(--r3); box-shadow: inset 0 -2px 0 var(--r3); }
+.tab:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--r3); outline-offset: 2px; }
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.transport button { font: 500 .9rem var(--body); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); cursor: pointer; }
+.transport button.on { border-color: var(--r3); color: var(--r3); }
+#play { min-width: 74px; }
+.time { font: 500 1rem var(--mono); font-variant-numeric: tabular-nums; min-width: 9ch; }
+#t { flex: 1 1 220px; min-width: 0; accent-color: var(--r3); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: .85rem; }
+.legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: grid; gap: 8px; min-width: 0; }
+.card header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.card h2 { font-family: var(--display); font-weight: 700; font-size: 1.25rem; margin: 0; }
+.card .nth { color: var(--muted); font-size: .85rem; }
+canvas { width: 100%; height: auto; display: block; background: var(--floor); border-radius: 4px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; font-family: var(--mono); font-size: .82rem; font-variant-numeric: tabular-nums; }
+.stats div { display: grid; }
+.stats b { font-weight: 500; font-size: .95rem; }
+.stats span { color: var(--muted); font-family: var(--body); font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
+.bad { color: var(--r3); }
+.note { color: var(--muted); font-size: .85rem; max-width: 80ch; }
+.avg { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+.avg h3 { font: 600 .8rem var(--body); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 6px; }
+.avg table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: .88rem; font-variant-numeric: tabular-nums; }
+.avg th, .avg td { text-align: right; padding: 5px 8px; border-top: 1px solid var(--line); white-space: nowrap; }
+.avg th { font: 500 .72rem var(--body); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border-top: 0; }
+.avg th:first-child, .avg td:first-child { text-align: left; font-family: var(--body); font-weight: 600; }
+.avg td.best { font-weight: 700; }
+.empty { color: var(--muted); padding: 24px; border: 1px dashed var(--line); border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+  <div>
+    <h1>Friday <span>sim replays</span></h1>
+    <p class="lede">The same 2-minute rooms, the same robot code and motor driver, Friday's measured wheels and her LiDAR's chassis blind spots. Only the exploring model changes. Each line is where she drove, recorded once a simulated second.</p>
+  </div>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="transport">
+    <button id="play" type="button">Play</button>
+    <span class="time" id="clock">0 s</span>
+    <input id="t" type="range" min="0" max="120" step="0.1" value="120" aria-label="Time in the run">
+    <button type="button" data-speed="4">4×</button>
+    <button type="button" data-speed="10" class="on">10×</button>
+    <button type="button" data-speed="25">25×</button>
+  </div>
+  <div class="legend">
+    <span><i style="background:var(--act)"></i>ACT (on Friday today)</span>
+    <span><i style="background:var(--r3)"></i>Round 3 (gyro model)</span>
+    <span><i style="background:var(--r3b)"></i>Round 3, continued</span>
+    <span><i style="background:var(--r4)"></i>Round 4</span>
+    <span><i style="background:var(--r5)"></i>Round 5 (door practice)</span>
+    <span><i style="background:var(--low)"></i>Low things only the bumper sensor sees (dashed)</span>
+  </div>
+  <div class="avg" id="avg"></div>
+  <div class="grid" id="grid"></div>
+  <p class="note">Area seen is the floor the LiDAR swept. Bumps count every touch of her 0.22 m body. The averages table counts 4 runs each for ACT and round 3 (the first of them has no recorded path, so it is not drawn) and 3 each for round 3, continued and round 5; the extra two-rooms run is drawn but not averaged. Bold marks the best in each column.</p>
+</div>
+
+<script>
+const DATA = /*DATA*/null;
+const COLORS = { act: "--act", r3: "--r3", r3b: "--r3b", r4: "--r4", r5: "--r5" };
+const R_BODY = 0.22;
+let room = 0, t = 120, speed = 10, playing = false, last = 0;
+try { const saved = localStorage.getItem("friday-replay-room"); if (saved !== null) room = Math.min(+saved, DATA.rooms.length - 1); } catch (e) {}
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+function bounds(r) {
+  let xs = [], ys = [];
+  for (const [[x0, y0], [x1, y1]] of r.walls.concat(r.low_walls)) { xs.push(x0, x1); ys.push(y0, y1); }
+  for (const [x, y, rad] of r.circles.concat(r.low_circles)) { xs.push(x - rad, x + rad); ys.push(y - rad, y + rad); }
+  for (const run of r.runs) for (const [x, y] of run.path) { xs.push(x); ys.push(y); }
+  const pad = 0.3;
+  return { x0: Math.min(...xs) - pad, x1: Math.max(...xs) + pad, y0: Math.min(...ys) - pad, y1: Math.max(...ys) + pad };
+}
+
+function at(path, time) {           // position at `time` s, between the 1 s samples
+  const i = Math.min(Math.floor(time), path.length - 1), j = Math.min(i + 1, path.length - 1), f = time - Math.floor(time);
+  return [path[i][0] + (path[j][0] - path[i][0]) * f, path[i][1] + (path[j][1] - path[i][1]) * f];
+}
+
+function draw(canvas, r, run) {
+  const b = bounds(r), dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 300, h = Math.round(w * (b.y1 - b.y0) / (b.x1 - b.x0));
+  if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); canvas.style.height = h + "px"; }
+  const s = (w / (b.x1 - b.x0)) * dpr, X = (x) => (x - b.x0) * s, Y = (y) => (b.y1 - y) * s;
+  const g = canvas.getContext("2d");
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  g.lineCap = "round";
+  g.fillStyle = css("--obst");
+  for (const [x, y, rad] of r.circles) { g.beginPath(); g.arc(X(x), Y(y), Math.max(rad * s, 1.5 * dpr), 0, 7); g.fill(); }
+  g.strokeStyle = css("--low"); g.lineWidth = 1.6 * dpr; g.setLineDash([4 * dpr, 3 * dpr]);
+  for (const [x, y, rad] of r.low_circles) { g.beginPath(); g.arc(X(x), Y(y), rad * s, 0, 7); g.stroke(); }
+  for (const [[x0, y0], [x1, y1]] of r.low_walls) { g.beginPath(); g.moveTo(X(x0), Y(y0)); g.lineTo(X(x1), Y(y1)); g.stroke(); }
+  g.setLineDash([]);
+  g.strokeStyle = css("--wall"); g.lineWidth = 3 * dpr;
+  for (const [[x0, y0], [x1, y1]] of r.walls) { g.beginPath(); g.moveTo(X(x0), Y(y0)); g.lineTo(X(x1), Y(y1)); g.stroke(); }
+  const col = css(COLORS[run.model] || "--r3"), p = run.path, end = Math.min(t, p.length - 1);
+  g.strokeStyle = col; g.lineWidth = 2.2 * dpr; g.beginPath();
+  g.moveTo(X(p[0][0]), Y(p[0][1]));
+  for (let i = 1; i <= Math.floor(end); i++) g.lineTo(X(p[i][0]), Y(p[i][1]));
+  const [cx, cy] = at(p, end); g.lineTo(X(cx), Y(cy)); g.stroke();
+  g.fillStyle = css("--start"); g.beginPath(); g.arc(X(p[0][0]), Y(p[0][1]), 4 * dpr, 0, 7); g.fill();
+  g.fillStyle = col; g.globalAlpha = 0.25; g.beginPath(); g.arc(X(cx), Y(cy), R_BODY * s, 0, 7); g.fill();
+  g.globalAlpha = 1; g.beginPath(); g.arc(X(cx), Y(cy), 4 * dpr, 0, 7); g.fill();
+}
+
+function render() {
+  const r = DATA.rooms[room];
+  document.querySelectorAll(".tab").forEach((b, i) => b.setAttribute("aria-selected", i === room));
+  const best = (k, lowWins) => Math[lowWins ? "min" : "max"](...r.avg.map((a) => a[k]));
+  const cell = (a, k, unit, lowWins) => `<td class="${a[k] === best(k, lowWins) ? "best" : ""}">${a[k]}${unit}</td>`;
+  document.getElementById("avg").innerHTML = `<h3>Average in this room</h3><table>
+    <tr><th>Model</th><th>Runs</th><th>m² seen</th><th>Seen range</th><th>m driven</th><th>Bumps</th><th>Still</th></tr>
+    ${r.avg.map((a) => `<tr><td style="color:var(${COLORS[a.model]})">${a.label}</td><td>${a.n}</td>${cell(a, "seen", "", false)}
+      <td>${a.range[0]}–${a.range[1]}</td>${cell(a, "driven", "", false)}${cell(a, "bumps", "", true)}${cell(a, "still", "%", true)}</tr>`).join("")}
+  </table>`;
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  if (!r.runs.length) { grid.innerHTML = '<div class="empty">No finished run of this room has a recorded path yet. They appear here as the Pi finishes them.</div>'; return; }
+  for (const run of r.runs) {
+    const card = document.createElement("article");
+    card.className = "card";
+    card.innerHTML = `<header><h2 style="color:var(${COLORS[run.model]})">${run.label}</h2><span class="nth">${run.nth}</span></header>
+      <canvas aria-label="${run.label} ${run.nth}: path in ${r.title}"></canvas>
+      <div class="stats">
+        <div><b>${run.seen}</b><span>m² seen</span></div>
+        <div><b>${run.driven}</b><span>m driven</span></div>
+        <div><b class="${run.bumps ? "bad" : ""}">${run.bumps}</b><span>bumps</span></div>
+        <div><b>${run.still}%</b><span>still</span></div>
+      </div>`;
+    grid.appendChild(card);
+  }
+  paint();
+}
+
+function paint() {
+  const r = DATA.rooms[room];
+  document.querySelectorAll("#grid canvas").forEach((c, i) => draw(c, r, r.runs[i]));
+  document.getElementById("clock").textContent = `${Math.floor(t)} s`;
+  document.getElementById("t").value = t;
+}
+
+function tick(now) {
+  if (!playing) return;
+  const dt = last ? (now - last) / 1000 : 0; last = now;
+  t = Math.min(120, t + dt * speed);
+  paint();
+  if (t >= 120) { playing = false; document.getElementById("play").textContent = "Replay"; return; }
+  requestAnimationFrame(tick);
+}
+
+const tabs = document.getElementById("tabs");
+DATA.rooms.forEach((r, i) => {
+  const b = document.createElement("button");
+  b.className = "tab"; b.type = "button"; b.setAttribute("role", "tab");
+  b.textContent = `${r.title} (${r.runs.length})`;
+  b.onclick = () => { room = i; try { localStorage.setItem("friday-replay-room", i); } catch (e) {} render(); };
+  tabs.appendChild(b);
+});
+document.getElementById("play").onclick = (e) => {
+  if (playing) { playing = false; e.target.textContent = "Play"; return; }
+  if (t >= 120) t = 0;
+  playing = true; last = 0; e.target.textContent = "Pause"; requestAnimationFrame(tick);
+};
+document.getElementById("t").oninput = (e) => { t = +e.target.value; playing = false; document.getElementById("play").textContent = "Play"; paint(); };
+document.querySelectorAll("[data-speed]").forEach((b) => b.onclick = () => {
+  speed = +b.dataset.speed; document.querySelectorAll("[data-speed]").forEach((x) => x.classList.toggle("on", x === b));
+});
+window.addEventListener("resize", paint);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", paint);
+new MutationObserver(paint).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+render();
+</script>
