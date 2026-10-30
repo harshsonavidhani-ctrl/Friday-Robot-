@@ -505,6 +505,7 @@ def main(argv: list[str] | None = None) -> int:
     if cfg.bumper_escape:
         import escape as _escape
         loop.bumper_escape = _escape.EscapeManeuver(cfg)
+        cfg.tof_pivot_min_clearance = max(cfg.tof_pivot_min_clearance, _escape.NO_TURN_M)
         LOGGER.info("Bumper escape ON: one committed back-then-turn at a ToF block")
     # The seventh and eighth: the way back (2026-09-26) and undoing the last move
     # (2026-09-28). Without these lines --no-way-back / --no-unstick did nothing on

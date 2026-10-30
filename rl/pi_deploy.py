@@ -131,12 +131,12 @@ PIVOT_STALL_MEAS = 0.09      # ...while the gyro measures under ~5 deg/s...
 # a STEADY fall over >= PIVOT_MIN_SAMPLES readings, released the moment the
 # bumper opens past PIVOT_RELEASE_M. Replayed: the 13:46 bump still caught at
 # 0.16 m (same tick as before); 0% of the 14:39 run, 1% of 09-04.
-PIVOT_WATCH_M = 0.20
+PIVOT_WATCH_M = 0.30         # 0.20 until 2026-10-31: see escape.TURN_ROOM_M
 PIVOT_CLOSE_M = 0.05
 PIVOT_WINDOW_S = 0.4
 PIVOT_BLOCK_S = 0.6
 PIVOT_MIN_SAMPLES = 3
-PIVOT_RELEASE_M = 0.25
+PIVOT_RELEASE_M = 0.35
 # The reflex's back-off (see the ToF emergency in tick()).
 BACKOFF_MAX_S = 2.0
 BACKOFF_CHECK_S = 1.0
@@ -147,6 +147,9 @@ BOARD_RESET_EVERY_S = 20.0   # a chip that stays loose gets this, not a reset lo
 ESCAPE_SAME_SPOT_M = 0.4     # escapes this close together are one place...
 ESCAPE_AVOID_AFTER = 3       # ...and after this many the planner keeps away from it
 ESCAPE_SAY_S = 20.0          # at most one line this often: the wake word needs quiet
+# escape.BACK runs until the bumper has room. 1.2 s (reverse_max_s) cut every back-out to
+# 2-5 cm of real travel, so she always turned with her nose against the thing.
+ESCAPE_REVERSE_MAX_S = 4.5
 PIVOT_MIN_W = 0.2            # rad/s: a turn
 PIVOT_MAX_V = 0.05           # m/s: ...not driving forward (forward arcs are the forward reflex's)
 
@@ -1164,6 +1167,8 @@ TOF_CORROBORATE_FRAMES = 3
 # 250-315 mm, and it needs two hits besides. Cost: at most ~0.5 s of caution after
 # she turns away from something truly close.
 TOF_DARK_HOLD_MM = 250
+TOF_NEIGHBOUR_MM = 80        # tof_supported_ahead: "the same thing" in the next cell
+TOF_SIDE_MIN_COLS = 1.0      # tof_near_side: this far off centre is "to one side"
 # ALREADY INSIDE THE STOP ZONE NEEDS NO SECOND OPINION (2026-10-30). The 3-frame median
 # holds a new object back two frames, ~0.15 s, and she pivots ~15 deg in that time: 7
 # of 8 close-ins that day began in a pivot. The artefact the median is for lives at
@@ -1292,6 +1297,45 @@ def tof_floor_rows(frame) -> tuple[int, list]:
         prev = m
         horizon = r
     return horizon, med
+
+
+def tof_supported_ahead(ahead: list, echo: float) -> list:
+    """The ahead-row returns an intact floor cannot explain away.
+
+    Nearer than the floor she can still see, on its own in a cell, is multipath. But
+    a thin thing leaves the floor rows intact too: a chair or table leg, a bottle, a
+    cloth or a table edge above the floor all vanished here at ~33 cm, just as she
+    arrived (2026-10-31, Harsh: "not only bottle any cloth or chair table leg"). A
+    real thing fills the cell beside it at about the same range, a stray return does
+    not. Replayed on 4 runs: 150+ moments kept, 0 stops with nothing else near.
+    """
+    cells = {(r, c): v for r, c, v in ahead}
+
+    def agrees(r: int, c: int, v: int) -> bool:
+        return any(abs(cells.get((r + dr, c + dc), TOF_NO_RETURN_MM * 2) - v)
+                   <= TOF_NEIGHBOUR_MM
+                   for dr in (-1, 0, 1) for dc in (-1, 0, 1) if dr or dc)
+
+    return [(r, c, v) for r, c, v in ahead if v >= echo or agrees(r, c, v)]
+
+
+def tof_near_side(depth, reach_m: float = 0.10) -> float:
+    """Which way is AWAY from the nearest thing on the bumper: +1, -1, 0 = dead ahead.
+
+    `depth` is the (8, 8) obstacle array in metres. Column up is omega- : she turns +
+    and the scene slides to lower columns, measured over her real turns, 267 votes to
+    6 (2026-10-31). That is this code's frame: left/right words are mirrored.
+    """
+    if depth is None or np.size(depth) != TOF_ROWS * TOF_COLS:
+        return 0.0
+    d = np.asarray(depth, dtype=np.float64).reshape(TOF_ROWS, TOF_COLS)
+    nearest = float(d.min())
+    if nearest >= TOF_NO_RETURN_MM / 1000.0 - 1e-3:
+        return 0.0
+    col = float(np.nonzero(d <= nearest + reach_m)[1].mean())
+    if abs(col - (TOF_COLS - 1) / 2.0) < TOF_SIDE_MIN_COLS:
+        return 0.0
+    return -1.0 if col > (TOF_COLS - 1) / 2.0 else 1.0
 
 
 def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
@@ -1448,7 +1492,7 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
     # the filter discarded -- and the robot drove into something until the reflex
     # caught it at 16 mm.
     if floor_intact and ahead and echo is not None:
-        ahead = [(r, c, v) for r, c, v in ahead if v >= echo]
+        ahead = tof_supported_ahead(ahead, echo)
     for r, c, v in ahead:
         out[r, c] = float(v)
 
@@ -4623,7 +4667,7 @@ class ControlLoop:
         # This is the ONE stage allowed to issue motion the reflex refused, and only
         # that retrace; `--no-unstick` is the old run exactly.
         self._undo_active = False
-        escape_step = self._bumper_escape_step(emergency, scan, rec)
+        escape_step = self._bumper_escape_step(emergency, scan, rec, depth)
         if escape_step is not None:
             v, omega = escape_step
             pivot_allowed = omega != 0.0
@@ -5184,7 +5228,7 @@ class ControlLoop:
                 f"({now - self._turn_since:.1f} s of {self.turn_commit_s:.1f} s)")
         return -omega
 
-    def _bumper_escape_step(self, emergency: bool, scan, rec):
+    def _bumper_escape_step(self, emergency: bool, scan, rec, depth=None):
         """Stage 4b with --bumper-escape: (v, omega), or None for the normal chain.
 
         Harsh, 2026-10-30, of an otherwise good run: "just the tight space it
@@ -5209,7 +5253,8 @@ class ControlLoop:
             rear_min_m=self.governor.last_rear_min,
             can_reverse=not self._reverse_refused(scan, now),
             open_side=self._open_side(scan),
-            exec_v=ex_v, exec_omega=ex_w, dt=c.dt, bumper_m=self.reflex.last_min)
+            exec_v=ex_v, exec_omega=ex_w, dt=c.dt, bumper_m=self.reflex.last_min,
+            tof_side=tof_near_side(depth))
         if esc.episodes != started:
             self._escape_started()
         if step is None:
@@ -5270,9 +5315,10 @@ class ControlLoop:
         if not why:
             if self._rev_since is None:
                 self._rev_since = now
-            elif now - self._rev_since > c.reverse_max_s:
+            elif now - self._rev_since > (ESCAPE_REVERSE_MAX_S if gate == "escape"
+                                          else c.reverse_max_s):
                 self._rev_rest_until = now + c.reverse_rest_s
-                why = f"reversed {c.reverse_max_s:.1f} s: that is enough backing up"
+                why = f"reversed {now - self._rev_since:.1f} s: that is enough backing up"
         if why:
             self._rev_since = None
             self.stats["reverse_refused"] = self.stats.get("reverse_refused", 0) + 1
@@ -7140,6 +7186,7 @@ def main(argv: list[str] | None = None) -> int:
         keep_distance(cfg, args.keep_distance)
         if cfg.bumper_escape:
             loop.bumper_escape = _escape.EscapeManeuver(cfg)
+            cfg.tof_pivot_min_clearance = max(cfg.tof_pivot_min_clearance, _escape.NO_TURN_M)
         loop.recovery_enabled = not args.no_recovery
         loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]
         loop._threads = threads          # for the LiDAR rejection counter

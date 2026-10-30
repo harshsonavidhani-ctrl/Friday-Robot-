@@ -43,8 +43,25 @@ BACK = "back"
 TURN = "turn"
 
 TRIGGER_TICKS = 5            # blocked this long = stuck, not a passing brake
-BACK_MAX_TICKS = 15          # ~1.5 s at 10 Hz
-BACK_DIST_M = 0.15           # executed distance that is enough to turn in
+BACK_MAX_TICKS = 40          # ~4 s at 10 Hz: she backs until there is room to turn
+# 2026-10-31, the 5-minute run. 507 of the ticks with the bumper within 20 cm were this
+# turn, at full power, flipping sides. Turns begun with the bumper ...
+#   under 10 cm reached < 8 cm 95% of the time, 10-20 cm 50%, 20-30 cm 11%, 30-40 cm 4%.
+# So she does not turn until it reads this much, unless she truly cannot back up. The
+# ToF measures it: "backed 0.15 m" from the commanded speed was really 2-5 cm.
+TURN_ROOM_M = 0.30
+# -0.15 m/s only hums on the floor (M-81: 1.1 cm/s measured, 29 of 37 back-outs); the
+# stage that lifts reverses to reverse_floor_mps runs before this one. 2026-10-10 floor
+# test: -0.20 moved 9.8 cm in 1 s, -0.25 moved 13.5 cm.
+BACK_SPEED_MPS = 0.25
+# ...and she always gains this much first, however much she has: she stops at 0.38 m,
+# so "room already" meant no back-out at all and the turn swung her corners into low
+# things off to the side, out of the ToF's view (sim, low_things: 0 -> 11 bumps).
+BACK_GAIN_M = 0.12
+# Under this the other stages may not turn her at all (cfg.tof_pivot_min_clearance, was
+# 0.12): stopped, she is blocked, and this escape backs her out. It alone may turn
+# closer, and only when she cannot back up.
+NO_TURN_M = 0.20
 TURN_MAX_TICKS = 25          # ~2.5 s
 TURN_MAX_RAD = math.radians(150.0)
 CLEAR_TICKS = 2              # the way ahead must stay clear this long to exit
@@ -54,7 +71,7 @@ REAR_MARGIN_M = 0.05         # rear must be this much beyond rear_stop to back u
 # the bumper closing 0.07 -> 0.02 m each time (and the fast reflex stands aside for
 # this turn, so nothing else was going to stop it). A turn that brings the bumper
 # this much closer, once it is this near, is the wrong way: leave it at once.
-TURN_WATCH_M = 0.20
+TURN_WATCH_M = TURN_ROOM_M
 TURN_CLOSE_M = 0.04
 # Not freed: the other side next, and soon. COOLDOWN_TICKS is for a way out found.
 RETRY_TICKS = 3
@@ -71,6 +88,7 @@ class EscapeManeuver:
         self._cooldown = 0
         self._side = 1.0
         self._backed = 0.0
+        self._back_goal = TURN_ROOM_M
         self._turned = 0.0
         self._clear = 0
         self._turn_tof = None        # the widest the bumper has been in this turn
@@ -116,10 +134,20 @@ class EscapeManeuver:
         self._blocked = 0
         self._cooldown = COOLDOWN_TICKS if clear else RETRY_TICKS
 
+    def _begin_back(self, room_m: float) -> None:
+        self._enter(BACK)
+        self._back_goal = max(TURN_ROOM_M, room_m + BACK_GAIN_M)
+
+    def _back(self, room_m: float, rear_min_m: float) -> tuple[float, float, str]:
+        c = self.cfg
+        v = max(abs(c.v_min), float(getattr(c, "reverse_floor_mps", 0.0)), BACK_SPEED_MPS)
+        return (-v, 0.0, f"escape BACK {self._ticks}/{BACK_MAX_TICKS}: {room_m:.2f} m "
+                f"ahead, needs {self._back_goal:.2f}, {rear_min_m:.2f} m clear behind")
+
     def step(self, *, blocked: bool, ahead_m: float, rear_min_m: float,
              can_reverse: bool, open_side: float, exec_v: float,
-             exec_omega: float, dt: float,
-             bumper_m: float = math.inf) -> tuple[float, float, str] | None:
+             exec_omega: float, dt: float, bumper_m: float = math.inf,
+             tof_side: float = 0.0) -> tuple[float, float, str] | None:
         """(v, omega, why) to command this tick, or None to leave the tick alone.
 
         `blocked`   -- forward refused and she is not moving forward this tick.
@@ -128,9 +156,15 @@ class EscapeManeuver:
         `rear_min_m`-- the rear gate's own clearance, so BACK and the gate agree.
         `open_side` -- +1 left / -1 right from the shared chooser; read ONCE.
         `exec_v`, `exec_omega` -- what the wheels actually did, for the bounds.
-        `bumper_m`  -- the ToF alone: a turn it says is closing is left at once.
+        `bumper_m`  -- the ToF alone: room to turn, and a turn it says is closing
+                       is left at once.
+        `tof_side`  -- which way is AWAY from what the bumper sees to one side, 0 if
+                       it is dead ahead. It beats open_side: the LiDAR is over the
+                       top of what stopped her.
         """
         c = self.cfg
+        room = bumper_m if math.isfinite(bumper_m) else ahead_m
+        can_back = can_reverse and rear_min_m > c.rear_stop + REAR_MARGIN_M
 
         if self.phase == IDLE:
             if self._cooldown > 0:
@@ -141,24 +175,25 @@ class EscapeManeuver:
             if self._blocked < TRIGGER_TICKS:
                 return None
             self.episodes += 1
-            self._side = 1.0 if open_side >= 0 else -1.0     # decided ONCE
-            if self._side == self._bad_side:
-                self._side = -self._side                     # not the way that failed
+            if tof_side:
+                self._side = 1.0 if tof_side > 0 else -1.0   # decided ONCE
+            else:
+                self._side = 1.0 if open_side >= 0 else -1.0
+                if self._side == self._bad_side:
+                    self._side = -self._side                 # not the way that failed
             self._flipped = False
-            rear_clear = rear_min_m > c.rear_stop + REAR_MARGIN_M
-            self._enter(BACK if (can_reverse and rear_clear) else TURN)
+            if can_back:
+                self._begin_back(room)
+            else:
+                self._enter(TURN)
 
         self.ticks_active += 1
 
         if self.phase == BACK:
             self._ticks += 1
             self._backed += abs(float(exec_v)) * dt
-            rear_clear = rear_min_m > c.rear_stop + REAR_MARGIN_M
-            if (can_reverse and rear_clear and self._backed < BACK_DIST_M
-                    and self._ticks <= BACK_MAX_TICKS):
-                return (c.v_min, 0.0,
-                        f"escape BACK {self._ticks}/{BACK_MAX_TICKS}: backed "
-                        f"{self._backed:.2f} m, {rear_min_m:.2f} m clear behind")
+            if can_back and room < self._back_goal and self._ticks <= BACK_MAX_TICKS:
+                return self._back(room, rear_min_m)
             self._enter(TURN)
 
         # TURN
@@ -173,6 +208,10 @@ class EscapeManeuver:
             self._flipped = True
             self.flips += 1
             self._side = -self._side
+            if can_back:                          # room first, then the other way
+                self._begin_back(room)
+                self._ticks = 1
+                return self._back(room, rear_min_m)
             self._ticks, self._turned, self._turn_tof = 0, 0.0, bumper_m
         self._ticks += 1
         self._turned += abs(float(exec_omega)) * dt

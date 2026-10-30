@@ -55,7 +55,7 @@ o = tick(e, side=-1.0)
 check("blocked long enough: she backs straight out",
       o is not None and o[0] < 0 and o[1] == 0.0, str(o))
 seen = []
-for i in range(60):
+for i in range(esc.BACK_MAX_TICKS + esc.TURN_MAX_TICKS + 10):
     o = tick(e, side=1.0 if i % 2 else -1.0, ev=-0.2, ew=-1.0)
     if o is None:
         break
@@ -128,8 +128,11 @@ check("the bumper closing flips it at once", o is not None and o[1] == -first, s
 o = e.step(ahead_m=0.05, bumper_m=0.05, **kw)
 check("closing both ways: she stops pushing", o is None and not e.active)
 e, o = into_turn(bumper=4.0)
-o = e.step(ahead_m=0.3, bumper_m=0.21, **kw)
+o = e.step(ahead_m=0.4, bumper_m=esc.TURN_WATCH_M + 0.03, **kw)
 check("a start reading of nothing there is no false flip", e.flips == 0, str(o))
+e, o = into_turn(bumper=4.0)
+o = e.step(ahead_m=0.3, bumper_m=0.21, **kw)
+check("something swinging in at 21 cm IS closing", e.flips == 1, str(o))
 sides = []
 e = esc.EscapeManeuver(cfg)
 t = 0
@@ -229,6 +232,85 @@ for i in range(30):
     d.update(imu(2.0, 4.0 + (i % 5)), t)
     t += 0.1
 check("in a hand (idle) she still waits for stillness", d.lifted)
+
+# 2026-10-31, the 5-minute run: 507 ticks of full-power turning with the bumper inside
+# 20 cm, and back-outs that hummed in place for 1.2 s.
+import numpy as np                                          # noqa: E402
+from pi_deploy import ESCAPE_REVERSE_MAX_S, tof_near_side   # noqa: E402
+
+
+def blocked(e, bumper, can=True, rear=1.0, side=1.0, tof_side=0.0, ev=0.0):
+    return e.step(blocked=True, ahead_m=bumper, bumper_m=bumper, rear_min_m=rear,
+                  can_reverse=can, open_side=side, exec_v=ev, exec_omega=0.0, dt=DT,
+                  tof_side=tof_side)
+
+
+def started(bumper, **kw):
+    e = esc.EscapeManeuver(cfg)
+    for _ in range(esc.TRIGGER_TICKS - 1):
+        blocked(e, bumper, **kw)
+    return e, blocked(e, bumper, **kw)
+
+
+e, o = started(0.10)
+check("the back-out uses a speed that moves her, not the -0.15 hum",
+      o[0] <= -esc.BACK_SPEED_MPS and esc.BACK_SPEED_MPS >= 0.25, str(o))
+for _ in range(20):
+    o = blocked(e, 0.20, ev=-0.25)         # "2 m backed" by the commanded speed
+check("she backs by what the bumper says, not by the commanded speed",
+      e.phase == esc.BACK and o[0] < 0, str(o))
+o = blocked(e, esc.TURN_ROOM_M + 0.01)
+check("room ahead: the back-out ends and she turns", e.phase == esc.TURN and o[1] != 0.0,
+      str(o))
+e, o = started(0.38)
+check("stopped at the stop line she still gains room first (sim: 0 -> 11 bumps)",
+      e.phase == esc.BACK and o[0] < 0, str(o))
+o = blocked(e, 0.38 + esc.BACK_GAIN_M - 0.02)
+check("...all of it", e.phase == esc.BACK and o[0] < 0, str(o))
+o = blocked(e, 0.38 + esc.BACK_GAIN_M + 0.01)
+check("...then she turns", e.phase == esc.TURN and o[1] != 0.0, str(o))
+e, o = started(0.10, can=False)
+check("cannot back up: she still turns, she never freezes",
+      e.phase == esc.TURN and o[1] != 0.0, str(o))
+e, o = started(0.10, rear=cfg.rear_stop)
+check("the LiDAR's rear limit still stops the back-out", o[0] == 0.0, str(o))
+check("the run's reverse limit lets a whole back-out through",
+      ESCAPE_REVERSE_MAX_S >= esc.BACK_MAX_TICKS * DT)
+
+e, _ = started(0.40, side=-1.0, tof_side=1.0)
+check("the bumper's side beats the LiDAR's", e.side > 0)
+e, o = started(0.40, side=1.0)
+e._exit(clear=False)
+bad = e._bad_side
+e._cooldown = 0
+for _ in range(esc.TRIGGER_TICKS):
+    o = blocked(e, 0.40, side=1.0, tof_side=bad)
+check("what the bumper sees beats 'that way failed'", e.side == bad, str(o))
+
+e, o = started(0.10, side=1.0)
+o = blocked(e, 0.34)
+first = o[1]
+check("(room made, turning)", e.phase == esc.TURN and first != 0.0, str(o))
+o = blocked(e, 0.25)
+check("a turn closing with room behind: back out first...", o[0] < 0 and o[1] == 0.0, str(o))
+o = blocked(e, 0.25 + esc.BACK_GAIN_M + 0.01)
+check("...then the other way", o[0] == 0.0 and o[1] == -first, str(o))
+
+d = np.full((8, 8), 4.0, np.float32)
+check("nothing seen: no side", tof_near_side(d) == 0.0)
+check("no 8x8: no side", tof_near_side(None) == 0.0 and tof_near_side(np.ones(3)) == 0.0)
+d[0:4, 3:5] = 0.2
+check("dead ahead: no side", tof_near_side(d) == 0.0)
+d = np.full((8, 8), 4.0, np.float32)
+d[0:4, 7] = 0.2
+check("high column is the omega+ side: away is omega-", tof_near_side(d) == -1.0)
+d = np.full((8, 8), 4.0, np.float32)
+d[0:4, 0] = 0.2
+check("low column is the omega- side: away is omega+", tof_near_side(d) == 1.0)
+
+for name in ("friday_localnav_deploy.py", "pi_deploy.py"):
+    check(f"{name} keeps other stages from turning her inside NO_TURN_M",
+          "_escape.NO_TURN_M" in (ROOT / name).read_text())
 
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

@@ -333,5 +333,30 @@ seen = [_feed(r, f) for f in [frame(), _sofa(150), _sofa(160)] + [frame()] * 9]
 check("the hold lets go within ~0.5 s once the frames are clear",
       seen[-1] is not None and seen[-1] > 1.0, f"published {seen[-4:]}")
 
+# 2026-10-31: thin things leave the floor rows intact, and vanished here at ~33 cm.
+def _thin(mm, rows=(0, 1, 2), col=5):
+    f = frame()
+    for row in rows:
+        f[row][col] = mm
+    return f
+
+
+for mm in (290, 200, 120):
+    out, intact = tof_obstacles_mm(_thin(mm))
+    check(f"a chair leg at {mm} mm stays, floor intact",
+          intact and int((out[:4] < TOF_NO_RETURN_MM).sum()) >= 3
+          and float(out.min()) == mm, f"{out.min()} intact={intact}")
+out, intact = tof_obstacles_mm(_thin(200, rows=(1,)))
+check("one stray cell nearer than the floor is still multipath",
+      intact and float(out.min()) > 1000, str(out.min()))
+f = _thin(200, rows=(0,), col=2)
+f[2][6] = 240
+out, intact = tof_obstacles_mm(f)
+check("two strays that do not touch stay strays", float(out.min()) > 1000, str(out.min()))
+f = _thin(200, rows=(0,), col=2)
+f[1][2] = 500
+out, intact = tof_obstacles_mm(f)
+check("a neighbour at another range is no support", float(out.min()) == 500, str(out.min()))
+
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

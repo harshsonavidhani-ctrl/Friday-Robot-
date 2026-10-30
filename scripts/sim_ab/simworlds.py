@@ -204,7 +204,9 @@ def make_world_class(base, world, out_path):
             its floor fit: top half sees tall things, bottom half low ones too."""
             c = self.cfg
             th = float(self.pose[2])
-            cols = th + np.radians(np.linspace(22.5, -22.5, 8))   # 45 deg across
+            # 45 deg across. Column UP is omega+, as on the robot (267 votes to 6 over
+            # her real turns, 2026-10-31); it ran the other way here until then.
+            cols = th + np.radians(np.linspace(-22.5, 22.5, 8))
             hi = np.minimum(self._cast(cols, low=False), c.tof_max_range)
             lo = np.minimum(self._cast(cols, low=True), c.tof_max_range)
             depth = np.empty((8, 8), np.float32)
