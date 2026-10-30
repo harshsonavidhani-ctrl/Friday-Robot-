@@ -5132,7 +5132,7 @@ class ControlLoop:
             rear_min_m=self.governor.last_rear_min,
             can_reverse=not self._reverse_refused(scan, now),
             open_side=self._open_side(scan),
-            exec_v=ex_v, exec_omega=ex_w, dt=c.dt)
+            exec_v=ex_v, exec_omega=ex_w, dt=c.dt, bumper_m=self.reflex.last_min)
         if esc.episodes != started:
             self._escape_started()
         if step is None:

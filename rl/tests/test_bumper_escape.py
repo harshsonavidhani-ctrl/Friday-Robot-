@@ -69,7 +69,14 @@ check("backing comes before turning, never after",
       all(o[0] == 0.0 for o in seen[seen.index(turns[0]):]))
 check("it is bounded", len(seen) <= esc.BACK_MAX_TICKS + esc.TURN_MAX_TICKS + 2)
 check("it hands back", not e.active)
-check("and cools down, so the navigator gets a turn",
+check("not freed: she tries again soon, not after a long wait",
+      any(tick(e) is not None for _ in range(esc.RETRY_TICKS + esc.TRIGGER_TICKS + 1)))
+e = esc.EscapeManeuver(cfg)
+for _ in range(esc.TRIGGER_TICKS + 2):
+    tick(e, can=False)
+tick(e, can=False, ahead=2.0)
+tick(e, can=False, ahead=2.0)
+check("freed: it cools down, so the navigator gets a turn",
       all(tick(e) is None for _ in range(esc.COOLDOWN_TICKS)))
 
 # Reverse refused.
@@ -98,6 +105,48 @@ for _ in range(esc.TRIGGER_TICKS):
 tick(e, can=False, ahead=cfg.safe_distance + 0.1)
 check("a clear way ends the turn at once",
       tick(e, can=False, ahead=cfg.safe_distance + 0.1) is None and not e.active)
+
+# The real wall, 2026-10-30: a turn that closes on the bumper is the wrong way.
+kw = dict(blocked=True, rear_min_m=0.3, can_reverse=False, open_side=1.0, exec_v=0.0,
+          exec_omega=1.6, dt=DT)
+
+
+def into_turn(bumper=0.15):
+    e = esc.EscapeManeuver(cfg)
+    o = None
+    for _ in range(esc.TRIGGER_TICKS):
+        o = e.step(ahead_m=bumper, bumper_m=bumper, **kw)
+    return e, o
+
+
+e, o = into_turn()
+first = o[1]
+o = e.step(ahead_m=0.13, bumper_m=0.13, **kw)
+check("a small wobble does not flip the turn", o is not None and o[1] == first, str(o))
+o = e.step(ahead_m=0.10, bumper_m=0.10, **kw)
+check("the bumper closing flips it at once", o is not None and o[1] == -first, str(o))
+o = e.step(ahead_m=0.05, bumper_m=0.05, **kw)
+check("closing both ways: she stops pushing", o is None and not e.active)
+e, o = into_turn(bumper=4.0)
+o = e.step(ahead_m=0.3, bumper_m=0.21, **kw)
+check("a start reading of nothing there is no false flip", e.flips == 0, str(o))
+sides = []
+e = esc.EscapeManeuver(cfg)
+t = 0
+for _ in range(120):
+    o = e.step(blocked=True, ahead_m=0.1, bumper_m=0.1, rear_min_m=0.22, can_reverse=False,
+               open_side=1.0, exec_v=0.0, exec_omega=1.6, dt=DT)
+    if o is not None and (not sides or sides[-1] != o[1]):
+        sides.append(o[1])
+check("not freed: the next try goes the other way, however the LiDAR votes",
+      len(sides) >= 3 and all(a == -b for a, b in zip(sides, sides[1:])), str(sides))
+e = esc.EscapeManeuver(cfg)
+for _ in range(esc.TRIGGER_TICKS):
+    o = e.step(blocked=True, ahead_m=0.5, bumper_m=4.0, rear_min_m=0.22, can_reverse=False,
+               open_side=1.0, exec_v=0.0, exec_omega=1.6, dt=DT)
+o = e.step(blocked=True, ahead_m=0.5, bumper_m=0.45, rear_min_m=0.22, can_reverse=False,
+           open_side=1.0, exec_v=0.0, exec_omega=1.6, dt=DT)
+check("something coming into view far off is not a flip", e.flips == 0)
 
 # A gyro that lies.
 config_ok = config.BODY_FAULT_S > 0

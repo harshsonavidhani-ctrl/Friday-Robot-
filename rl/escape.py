@@ -50,6 +50,14 @@ TURN_MAX_RAD = math.radians(150.0)
 CLEAR_TICKS = 2              # the way ahead must stay clear this long to exit
 COOLDOWN_TICKS = 15          # give the navigator 1.5 s to drive before re-arming
 REAR_MARGIN_M = 0.05         # rear must be this much beyond rear_stop to back up
+# 2026-10-30, the real wall: boxed in, she turned the same way 13 times in 39 s with
+# the bumper closing 0.07 -> 0.02 m each time (and the fast reflex stands aside for
+# this turn, so nothing else was going to stop it). A turn that brings the bumper
+# this much closer, once it is this near, is the wrong way: leave it at once.
+TURN_WATCH_M = 0.20
+TURN_CLOSE_M = 0.04
+# Not freed: the other side next, and soon. COOLDOWN_TICKS is for a way out found.
+RETRY_TICKS = 3
 
 
 class EscapeManeuver:
@@ -65,10 +73,14 @@ class EscapeManeuver:
         self._backed = 0.0
         self._turned = 0.0
         self._clear = 0
+        self._turn_tof = None        # the widest the bumper has been in this turn
+        self._flipped = False
+        self._bad_side = 0.0         # the way that did not free her last time
         # Telemetry, so a run can show the escape did its job.
         self.episodes = 0
         self.backs = 0
         self.turns = 0
+        self.flips = 0
         self.exits_clear = 0
         self.exits_bounded = 0
         self.ticks_active = 0
@@ -87,6 +99,7 @@ class EscapeManeuver:
         self._backed = 0.0
         self._turned = 0.0
         self._clear = 0
+        self._turn_tof = None
         if phase == BACK:
             self.backs += 1
         elif phase == TURN:
@@ -95,15 +108,18 @@ class EscapeManeuver:
     def _exit(self, clear: bool) -> None:
         if clear:
             self.exits_clear += 1
+            self._bad_side = 0.0
         else:
             self.exits_bounded += 1
+            self._bad_side = self._side
         self.phase = IDLE
         self._blocked = 0
-        self._cooldown = COOLDOWN_TICKS
+        self._cooldown = COOLDOWN_TICKS if clear else RETRY_TICKS
 
     def step(self, *, blocked: bool, ahead_m: float, rear_min_m: float,
              can_reverse: bool, open_side: float, exec_v: float,
-             exec_omega: float, dt: float) -> tuple[float, float, str] | None:
+             exec_omega: float, dt: float,
+             bumper_m: float = math.inf) -> tuple[float, float, str] | None:
         """(v, omega, why) to command this tick, or None to leave the tick alone.
 
         `blocked`   -- forward refused and she is not moving forward this tick.
@@ -112,6 +128,7 @@ class EscapeManeuver:
         `rear_min_m`-- the rear gate's own clearance, so BACK and the gate agree.
         `open_side` -- +1 left / -1 right from the shared chooser; read ONCE.
         `exec_v`, `exec_omega` -- what the wheels actually did, for the bounds.
+        `bumper_m`  -- the ToF alone: a turn it says is closing is left at once.
         """
         c = self.cfg
 
@@ -125,6 +142,9 @@ class EscapeManeuver:
                 return None
             self.episodes += 1
             self._side = 1.0 if open_side >= 0 else -1.0     # decided ONCE
+            if self._side == self._bad_side:
+                self._side = -self._side                     # not the way that failed
+            self._flipped = False
             rear_clear = rear_min_m > c.rear_stop + REAR_MARGIN_M
             self._enter(BACK if (can_reverse and rear_clear) else TURN)
 
@@ -142,6 +162,18 @@ class EscapeManeuver:
             self._enter(TURN)
 
         # TURN
+        widest = min(bumper_m, TURN_WATCH_M + TURN_CLOSE_M)    # 4 m is "nothing there"
+        if self._turn_tof is None or widest > self._turn_tof:
+            self._turn_tof = widest
+        elif (bumper_m < TURN_WATCH_M
+              and self._turn_tof - bumper_m >= TURN_CLOSE_M):
+            if self._flipped:                     # closing both ways: stop pushing
+                self._exit(clear=False)
+                return None
+            self._flipped = True
+            self.flips += 1
+            self._side = -self._side
+            self._ticks, self._turned, self._turn_tof = 0, 0.0, bumper_m
         self._ticks += 1
         self._turned += abs(float(exec_omega)) * dt
         self._clear = self._clear + 1 if ahead_m >= c.safe_distance else 0
