@@ -324,8 +324,16 @@
         <!-- READ-ONLY view of state/rl_map.npz, the map the exploration run
              loads (dashboard/map_view.py). The run saves it when it ends, so
              during a run this is the previous map; the note says when. -->
-        <img id="mapimg" class="mapimg" alt="Friday's exploration map"
-             src="/api/map.png">
+        <div class="mapwrap">
+          <img id="mapimg" class="mapimg" alt="Friday's exploration map"
+               src="/api/map.png">
+          <div id="mapgps" class="mapgps" hidden>
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+              <polyline id="maptrail" points=""></polyline>
+            </svg>
+            <div id="mapmark" class="mapmark"></div>
+          </div>
+        </div>
         <p class="drivenote" id="mapnote">white free · black obstacle · slate unknown ·
           orange driven · red her position · grid 1 m</p>
       </div>

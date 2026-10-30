@@ -14,6 +14,7 @@ READ BY dashboard/map_view.py. It is never loaded by a run and never becomes a m
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -23,14 +24,18 @@ from pathlib import Path
 import numpy as np
 
 LOGGER = logging.getLogger("live_map")
-PERIOD_S = 1.0      # "like gps": her position moves, the map grows behind her
+PERIOD_S = 1.0      # the map itself
+POSE_EVERY_S = 0.2  # "like gps": her position, far oftener than the picture can be
+POSE_FILE = Path("/dev/shm/friday_live_pose.json")   # RAM: 5 writes a second, no SD wear
 NICE = 10
 
 
 class LiveMap(threading.Thread):
-    def __init__(self, world, path: Path, period_s: float = PERIOD_S) -> None:
+    def __init__(self, world, path: Path, period_s: float = PERIOD_S,
+                 pose_path: Path = POSE_FILE, pose_every_s: float = POSE_EVERY_S) -> None:
         super().__init__(name="live-map", daemon=True)
         self.world, self.path, self.period = world, Path(path), period_s
+        self.pose_path, self.pose_every = Path(pose_path), pose_every_s
         self._stop_event = threading.Event()
         self.writes = 0
         self.failed = False
@@ -52,14 +57,26 @@ class LiveMap(threading.Thread):
         self.writes += 1
         return True
 
+    def write_pose(self) -> None:
+        """Where she is, alone, so the page can move her between map pictures."""
+        pose = self.world.pose
+        tmp = self.pose_path.with_name(self.pose_path.name + ".tmp")
+        tmp.write_text(json.dumps({"x": round(float(pose[0]), 3), "y": round(float(pose[1]), 3),
+                                   "theta": round(float(pose[2]), 3), "t": time.time()}))
+        os.replace(tmp, self.pose_path)
+
     def run(self) -> None:
         try:
             os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), NICE)
         except OSError:
             pass
-        while not self._stop_event.wait(self.period):
+        next_map = time.monotonic() + self.period
+        while not self._stop_event.wait(self.pose_every):
             try:
-                self.write_once()
+                self.write_pose()
+                if time.monotonic() >= next_map:
+                    next_map = time.monotonic() + self.period
+                    self.write_once()
             except Exception as exc:                  # noqa: BLE001
                 if not self.failed:
                     LOGGER.warning("live map not written (%s: %s)", type(exc).__name__, exc)
@@ -67,7 +84,8 @@ class LiveMap(threading.Thread):
 
     def stop(self) -> None:
         self._stop_event.set()
-        try:
-            self.path.unlink()
-        except OSError:
-            pass
+        for path in (self.path, self.pose_path):
+            try:
+                path.unlink()
+            except OSError:
+                pass

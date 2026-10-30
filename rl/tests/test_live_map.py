@@ -28,7 +28,8 @@ w.map_file = tmp / "rl_map.npz"
 live = tmp / "rl_map.live.npz"
 pts = np.array([[1.0, 0.0], [1.0, 0.1], [0.0, 1.2], [-1.0, 0.3]], np.float32)
 
-m = live_map.LiveMap(w, live)
+pose_file = tmp / "pose.json"
+m = live_map.LiveMap(w, live, pose_path=pose_file)
 check("nothing mapped yet: nothing written", m.write_once() is False and not live.exists())
 try:
     w.grid.integrate(pts, (0.0, 0.0))
@@ -49,17 +50,23 @@ check("the dashboard draws it", png[:4] == b"\x89PNG" and meta.get("ok"), str(me
 check("it says it is live", meta.get("live") is True)
 check("her position comes from it", meta.get("pose") == [0.5, 0.25, 0.3], str(meta.get("pose")))
 
-# The picture is flipped so that her left is the screen's left (see map_view.MIRRORED).
+# Her position travels on its own, far faster than the picture can.
 import io                                                   # noqa: E402
 from PIL import Image                                       # noqa: E402
 im = np.asarray(Image.open(io.BytesIO(png)).convert("RGB")).astype(int)
-red = np.argwhere((im[:, :, 0] > 200) & (im[:, :, 1] < 100) & (im[:, :, 2] < 100))
-check("her marker is drawn", len(red) > 0)
-g = w.grid
-expect_row = (0.25 - float(g.origin[1])) / float(g.cell) * map_view.PX_PER_CELL
-check("the picture is flipped: +y runs down it",
-      abs(float(np.median(red[:, 0])) - expect_row) < 12,
-      f"{float(np.median(red[:, 0])):.0f} vs {expect_row:.0f}")
+red = np.argwhere((im[:, :, 0] >= 250) & (im[:, :, 1] <= 70) & (im[:, :, 2] <= 60))
+check("live, she is not baked into the picture", len(red) == 0, str(len(red)))
+m.write_pose()
+map_view.POSE_FILE_LIVE = pose_file
+p = map_view.live_pose()
+check("her position is its own small file",
+      p is not None and p["x"] == 0.5 and p["theta"] == 0.3, str(p))
+check("the page is told how to place her",
+      meta["mirrored"] is True and len(meta["origin"]) == 2 and meta["extent_m"][0] > 0, str(meta))
+old = time.time() - map_view.POSE_FRESH_S - 2
+pose_file.write_text('{"x": 1, "y": 1, "theta": 0, "t": %f}' % old)
+check("an old position is not shown as now", map_view.live_pose() is None)
+m.write_pose()
 v1 = meta["version"]
 time.sleep(0.02)
 w.set_pose(0.9, 0.25, 0.3)
@@ -75,9 +82,9 @@ _, meta = map_view.current()
 check("a live file that stopped changing is not believed", not meta.get("live"), str(meta))
 
 m.stop()
-check("the run ending removes it", not live.exists())
+check("the run ending removes it", not live.exists() and not pose_file.exists())
 
-m = live_map.LiveMap(w, tmp / "t.npz", period_s=0.05)
+m = live_map.LiveMap(w, tmp / "t.npz", period_s=0.05, pose_path=tmp / "p.json", pose_every_s=0.02)
 m.start()
 time.sleep(0.3)
 m.stop()

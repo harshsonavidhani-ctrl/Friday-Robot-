@@ -492,6 +492,7 @@ async function refreshMap() {
   let m;
   try { m = await (await fetch('/api/map')).json(); } catch { return; }
   if (!m.ok) { $('mapnow').textContent = 'no map'; return; }
+  mapGeom = m.origin ? m : mapGeom;
   setMapLive(!!m.live);
   if (m.version !== mapVersion) {          // re-fetch the picture only when it changed
     mapVersion = m.version;
@@ -509,12 +510,45 @@ async function refreshMap() {
 
 // Like a GPS while she is out: once a second, and only then. Idle, the heartbeat
 // looks every 4 s, which is also how a run starting is noticed.
-let mapLiveTimer = null;
+let mapLiveTimer = null, mapGpsTimer = null, mapGeom = null;
+let gpsBusy = false, gpsTrail = [];
 function setMapLive(on) {
   if (on === mapLive) return;
   mapLive = on;
   clearInterval(mapLiveTimer);
+  clearInterval(mapGpsTimer);
   mapLiveTimer = on ? setInterval(refreshMap, 1000) : null;
+  mapGpsTimer = on ? setInterval(moveMarker, 250) : null;
+  gpsTrail = [];
+  const g = $('mapgps');
+  if (g) g.hidden = !on;
+}
+
+// HER POSITION IS NOT IN THE PICTURE WHILE SHE IS OUT. A picture takes seconds to
+// reach a phone; this is a few bytes, four times a second, and the marker glides
+// between them (the CSS transition), which is what makes it read as a GPS.
+async function moveMarker() {
+  if (gpsBusy || !mapGeom) return;
+  gpsBusy = true;
+  try {
+    const p = await (await fetch('/api/map/pose')).json();
+    if (!p.live) return;
+    const x = (p.x - mapGeom.origin[0]) / mapGeom.extent_m[0] * 100;
+    let y = (p.y - mapGeom.origin[1]) / mapGeom.extent_m[1] * 100;
+    if (!mapGeom.mirrored) y = 100 - y;
+    const mark = $('mapmark');
+    mark.style.left = x + '%';
+    mark.style.top = y + '%';
+    // In the flipped picture +y runs down, so her heading is a plain clockwise angle.
+    mark.style.transform = `translate(-50%,-50%) rotate(${mapGeom.mirrored ? p.theta : -p.theta}rad)`;
+    gpsTrail.push(x.toFixed(2) + ',' + y.toFixed(2));
+    if (gpsTrail.length > 2400) gpsTrail.shift();
+    $('maptrail').setAttribute('points', gpsTrail.join(' '));
+  } catch (e) {
+    /* the next tick tries again */
+  } finally {
+    gpsBusy = false;
+  }
 }
 
 // ---- Maps: every navigation map she has (read-only) ----------------------

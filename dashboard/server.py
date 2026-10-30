@@ -1135,6 +1135,15 @@ async def api_map_meta(request: web.Request) -> web.Response:
     return web.json_response(meta)
 
 
+async def api_map_pose(request: web.Request) -> web.Response:
+    """Her position, several times a second while a run is out. One small file."""
+    pose = map_view.live_pose()
+    if pose is None:
+        return web.json_response({"live": False})
+    return web.json_response({"live": True, **pose},
+                             headers={"Cache-Control": "no-store"})
+
+
 async def api_maps(request: web.Request) -> web.Response:
     """Every navigation map she has: in use, earlier versions, surveys. READ-ONLY."""
     from dashboard import maps_gallery
@@ -1494,6 +1503,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/nav", api_nav_post)
     app.router.add_get("/api/map.png", api_map_png)
     app.router.add_get("/api/map", api_map_meta)
+    app.router.add_get("/api/map/pose", api_map_pose)
     app.router.add_get("/api/maps", api_maps)
     app.router.add_get("/api/maps/png", api_maps_png)
     app.router.add_post("/api/explore", api_explore_post)

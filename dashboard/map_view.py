@@ -30,6 +30,8 @@ VISITS_FILE = ROOT / "state" / "rl_map.visits.npz"
 POSE_FILE = ROOT / "state" / "rl_map.pose.json"
 LIVE_FILE = ROOT / "state" / "rl_map.live.npz"
 LIVE_FRESH_S = 6.0
+POSE_FILE_LIVE = Path("/dev/shm/friday_live_pose.json")   # rl/live_map.py, 5 a second
+POSE_FRESH_S = 3.0
 
 # THE RUN'S WORLD IS A MIRROR IMAGE (see config.TURN_WORDS_MIRRORED: it reads the
 # LiDAR's clockwise bearings as counter-clockwise). It steers fine inside it, but
@@ -125,7 +127,9 @@ def _render(live: bool = False) -> tuple[bytes, dict]:
     for gy in range(math.ceil(origin[1]), math.floor(origin[1] + ny * cell) + 1):
         _, y = px(0.0, gy)
         draw.line([(0, y), (nx * s, y)], fill=(77, 163, 255, 40))
-    if pose is not None:
+    # Live, the page draws her itself from live_pose(): baked into this picture she
+    # would lag the real robot by seconds.
+    if pose is not None and not live:
         x, y = px(pose[0], pose[1])
         r = 0.22 / cell * s
         draw.ellipse([x - r, y - r, x + r, y + r], outline=(255, 59, 48, 255), width=3)
@@ -149,8 +153,21 @@ def _render(live: bool = False) -> tuple[bytes, dict]:
         "driven_m2": round(len(visits) * vcell * vcell, 1),
         "sweeps": sweeps,
         "pose": None if pose is None else [round(v, 2) for v in pose],
+        # What the page needs to place her over the picture.
+        "origin": [round(float(origin[0]), 3), round(float(origin[1]), 3)],
+        "extent_m": [round(nx * cell, 3), round(ny * cell, 3)],
+        "mirrored": MIRRORED,
     }
     return buf.getvalue(), meta
+
+
+def live_pose() -> dict | None:
+    """Her position right now, or None when no run is publishing one."""
+    try:
+        pose = json.loads(POSE_FILE_LIVE.read_text())
+    except (OSError, ValueError):
+        return None
+    return pose if time.time() - float(pose.get("t", 0.0)) <= POSE_FRESH_S else None
 
 
 def current() -> tuple[bytes, dict]:

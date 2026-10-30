@@ -1319,10 +1319,16 @@ def tof_obstacles_mm(frame: list[list[int]]) -> tuple[np.ndarray, bool]:
         # max survives any minority of occluded cells -- the row's own MEDIAN does
         # not (a 3-of-8 occlusion already drags the median past the 45 mm margin,
         # which hid the object in exactly this row during testing).
+        #
+        # THE SECOND FARTHEST, not the farthest (2026-10-30): one stray long cell made
+        # clean floor look like an object. Row 7 read 121 122 125 125 117 119 117 167:
+        # against 167 every other cell is 45 mm "short", so a bare floor became a wall
+        # at 118 mm, on 12% of a run's frames. It takes two strays to do that now, and
+        # it still takes most of a row to hide an object.
         for r in range(horizon, TOF_ROWS):
-            valid = [v for v in frame[r] if 0 < v < TOF_NO_RETURN_MM]
+            valid = sorted(v for v in frame[r] if 0 < v < TOF_NO_RETURN_MM)
             if valid:
-                expected[r] = float(max(valid))
+                expected[r] = float(valid[-2] if len(valid) >= 2 else valid[-1])
     else:
         # Too sparse to fit this frame's own floor -- fall back to the fixed,
         # pitch-scaled profile. Never the primary model; see the note above.
