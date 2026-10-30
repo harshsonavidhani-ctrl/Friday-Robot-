@@ -53,10 +53,16 @@ s = eyes.Sightings()
 check("sure at the first look", s.update("up", {"person": 0.9}, 0.0) == ["person"])
 s = eyes.Sightings()
 s.update("up", {"chair": 0.6}, 0.0)
+for t in range(1, config.EYES_CONFIRM_OF):
+    s.update("up", {}, float(t))
+check("a look that fell out of the window does not count",
+      s.update("up", {"chair": 0.6}, 9.0) == [])
+s = eyes.Sightings()
+s.update("up", {"cup": 0.37}, 0.0)
 s.update("up", {}, 1.0)
 s.update("up", {}, 2.0)
-check("a look that fell out of the window does not count",
-      s.update("up", {"chair": 0.6}, 3.0) == [])
+check("a cup seen twice, seconds apart, is said",
+      s.update("up", {"cup": 0.42}, 3.0) == ["cup"])
 s = eyes.Sightings()
 s.update("up", {"box": 0.6}, 0.0)
 check("each camera confirms for itself", s.update("down", {"box": 0.6}, 1.0) == [])
