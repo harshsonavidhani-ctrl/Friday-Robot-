@@ -148,7 +148,12 @@ check("the television on an empty ceiling is not said",
       eyes.looked_at("up", FRAME, Detector(Box("television", 0.58)), None) == {})
 check("the classifier is never sure on one look",
       eyes.looked_at("up", FRAME, Detector(), Named("cup", 0.95))["cup"]
-      < config.EYES_SURE_SCORE)
+      < config.EYES_FOCUS_SURE)
+s = eyes.Sightings()
+check("one of the judges' objects is said at a strong first look",
+      s.update("up", {"phone": 0.6}, 0.0) == ["phone"])
+check("a dog needs to be very sure",
+      eyes.looked_at("up", FRAME, Detector(Box("dog", 0.65)), None) == {})
 check("a mug is a cup", eyes.spoken_name("coffee mug") == "cup")
 check("a smartphone-shaped guess is a phone",
       eyes.spoken_name("cellular telephone, cellular phone") == "phone"

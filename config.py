@@ -314,6 +314,7 @@ EYES_SAY_AGAIN_S = 15.0              # one name, once per this: objects get show
 EYES_SAY_AGAIN_PERSON_S = 300.0      # whoever is showing her things is always in frame
 EYES_FOCUS = ("cup", "phone", "bottle", "glass", "book", "shoe")
 EYES_PHONE_LOOKALIKES = ("mouse", "remote")   # say phone; () if a real one is shown
+EYES_FOCUS_SURE = 0.55               # one of these this strong is said at the first look
 EYES_FOCUS_SCORE = 0.33              # the detector's floor for these
 EYES_FOCUS_CLASS_SCORE = 0.20        # the classifier's
 EYES_CLOSE_CROP = 0.75               # of the frame's height, centred

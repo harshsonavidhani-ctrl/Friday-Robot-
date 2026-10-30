@@ -61,7 +61,7 @@ UNLIKELY_INDOORS = {
     "fire hydrant", "parking meter", "giraffe", "zebra", "elephant", "bear",
     "horse", "sheep", "cow", "kite", "surfboard", "skis", "snowboard",
     "frisbee", "baseball bat", "baseball glove", "skateboard", "tennis racket",
-    "traffic light", "bird", "television", "tv",
+    "traffic light", "bird", "television", "tv", "dog", "cat",
 }
 
 # Places and textures, not things: what a classifier says about a wall, a floor
@@ -206,7 +206,9 @@ class Sightings:
         looks.append(set(seen))
         fresh = []
         for label, score in sorted(seen.items(), key=lambda kv: -kv[1]):
-            if (score < config.EYES_SURE_SCORE
+            sure = (config.EYES_FOCUS_SURE if label in config.EYES_FOCUS
+                    else config.EYES_SURE_SCORE)
+            if (score < sure
                     and sum(label in look for look in looks) < config.EYES_CONFIRM):
                 continue
             again = (config.EYES_SAY_AGAIN_PERSON_S if label == "person"
@@ -329,7 +331,7 @@ def looked_at(which: str, frame, detector, classifier) -> dict[str, float]:
             floor = config.EYES_FOCUS_CLASS_SCORE
         if name and score >= floor:
             # Never EYES_SURE_SCORE: its guess must be seen twice, however keen.
-            keep(name, min(score, config.EYES_SURE_SCORE - 0.01))
+            keep(name, min(score, config.EYES_FOCUS_SURE - 0.01))
     return seen
 
 
