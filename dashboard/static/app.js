@@ -486,20 +486,35 @@ function ago(when) {
 }
 
 let mapVersion = null;
+let mapLive = false;
 async function refreshMap() {
   if (!$('mapimg')) return;
   let m;
   try { m = await (await fetch('/api/map')).json(); } catch { return; }
   if (!m.ok) { $('mapnow').textContent = 'no map'; return; }
+  setMapLive(!!m.live);
   if (m.version !== mapVersion) {          // re-fetch the picture only when it changed
     mapVersion = m.version;
     $('mapimg').src = '/api/map.png?v=' + m.version;
   }
-  $('mapnow').textContent = m.running ? 'last saved · run in progress' : 'saved ' + m.saved;
+  $('mapnow').textContent = m.live ? '● LIVE' :
+    (m.running ? 'last saved · run in progress' : 'saved ' + m.saved);
+  $('mapnow').classList.toggle('maplive', !!m.live);
   $('mapnote').textContent =
     `${m.size_m[0]} × ${m.size_m[1]} m · known ${m.known_m2} m² · driven ${m.driven_m2} m² · ` +
     `${m.sweeps} sweeps · white free, black obstacle, orange driven, red her position, grid 1 m` +
-    (m.running ? ' · updates when this run ends' : '');
+    (m.live ? ' · updating as she drives' : '') +
+    (m.running && !m.live ? ' · updates when this run ends' : '');
+}
+
+// Like a GPS while she is out: once a second, and only then. Idle, the heartbeat
+// looks every 4 s, which is also how a run starting is noticed.
+let mapLiveTimer = null;
+function setMapLive(on) {
+  if (on === mapLive) return;
+  mapLive = on;
+  clearInterval(mapLiveTimer);
+  mapLiveTimer = on ? setInterval(refreshMap, 1000) : null;
 }
 
 // ---- Maps: every navigation map she has (read-only) ----------------------

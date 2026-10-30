@@ -1129,7 +1129,9 @@ async def api_map_meta(request: web.Request) -> web.Response:
     """When the map was saved, how much is known and driven, and her pose."""
     _, meta = await asyncio.to_thread(map_view.current)
     meta = dict(meta)
-    meta["running"] = _explore_active()[0] is not None
+    # A live map IS a run: no systemctl call once a second, on the event loop.
+    meta["running"] = bool(meta.get("live")) or (
+        await asyncio.to_thread(_explore_active))[0] is not None
     return web.json_response(meta)
 
 

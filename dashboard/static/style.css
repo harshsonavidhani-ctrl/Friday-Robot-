@@ -885,3 +885,4 @@ aside::-webkit-scrollbar-thumb:hover,.log::-webkit-scrollbar-thumb:hover{
 .laptoppic{display:block;width:100%;height:auto;margin-top:8px;border-radius:8px;
   border:1px solid var(--line);background:#000}
 .laptoppic[hidden]{display:none}
+.badge.maplive{color:#fff;background:#d7263d;border-color:#d7263d}

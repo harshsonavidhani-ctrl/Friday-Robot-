@@ -163,6 +163,7 @@ from narrator import P_RECOVERY, Narrator  # noqa: E402
 import way_back as _way_back  # noqa: E402
 import unstick as _unstick  # noqa: E402
 import escape as _escape  # noqa: E402
+import live_map as _live_map  # noqa: E402
 from navigator import Navigator  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
@@ -469,6 +470,8 @@ class RobotConfig:
     # --bumper-escape: at a ToF block, ONE committed back-then-turn (rl/escape.py)
     # instead of the back-off, the undo and the turn-out taking it in turns.
     bumper_escape: bool = False
+    # --live-map: rl_map.live.npz beside the map, every second, for the dashboard.
+    live_map: bool = False
     strict_rear_extra: float = 0.10
     strict_rear_arc_deg: float = 60.0
     strict_rear_seen: float = 0.6
@@ -3364,6 +3367,7 @@ class ControlLoop:
         # one is reset every run by design, the other is the point of not being.
         self.world = WorldMap(max_range=cfg.lidar_max_range)
         self.mapper: MapperThread | None = None
+        self.live_map = None
         self.map_enabled = True
         self.planner: ExplorationPlanner | None = None
         self.planner_enabled = True
@@ -4860,6 +4864,10 @@ class ControlLoop:
             # against 7.4 ms mean per sweep). A literal here silently overrode it.
             self.mapper = MapperThread(self.world)
             self.mapper.start()
+            if self.cfg.live_map:
+                self.live_map = _live_map.LiveMap(
+                    self.world, self.world.map_file.with_name("rl_map.live.npz"))
+                self.live_map.start()
             if self.planner_enabled:
                 # 0.5 Hz: one cycle costs ~265 ms on this Pi (DistanceField 87 ms +
                 # frontier.find 179 ms over a 53 m^2 map), which is 2.65x the whole
@@ -5328,6 +5336,8 @@ class ControlLoop:
             self.mapper.stop()
             self.mapper.join(timeout=2.0)
             saved = self.world.save()
+            if self.live_map is not None:
+                self.live_map.stop()            # the saved map is the map now
             s = self.world.stats()
             if saved is not None:
                 LOGGER.info("World map saved: %s  (%.1f m^2 known, %.1f m^2 driven, "
@@ -6675,6 +6685,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-forward-speed", type=float, default=0.0, metavar="M_PER_S",
                    help="Forward never faster than this (stage 4e). 0.125 is how she "
                         "explored on 2026-09-04 03:52. 0 (default) = off.")
+    p.add_argument("--live-map", action="store_true",
+                   help="Write the map beside itself every second for the dashboard.")
     p.add_argument("--bumper-escape", action="store_true",
                    help="At a ToF block, one committed back-then-turn instead of the "
                         "back-off, undo and turn-out taking turns (rl/escape.py).")
@@ -7089,6 +7101,7 @@ def main(argv: list[str] | None = None) -> int:
         cfg.max_forward_speed = max(0.0, float(args.max_forward_speed))
         cfg.strict_reverse = bool(args.strict_reverse)
         cfg.bumper_escape = bool(args.bumper_escape)
+        cfg.live_map = bool(args.live_map)
         if cfg.bumper_escape:
             loop.bumper_escape = _escape.EscapeManeuver(cfg)
         loop.recovery_enabled = not args.no_recovery

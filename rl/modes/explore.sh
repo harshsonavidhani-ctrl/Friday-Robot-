@@ -130,6 +130,8 @@ fi
 # against a request to turn the other way -- no left/right dithering.
 [ -n "${MODE_TURN_COMMIT:-}" ] && ARGS+=(--turn-commit "$MODE_TURN_COMMIT")
 [ -n "${MODE_REVERSE_FLOOR:-}" ] && ARGS+=(--reverse-floor "$MODE_REVERSE_FLOOR")
+# MODE_LIVE_MAP=1 (2026-10-30): the dashboard's map updates while she drives.
+[ "${MODE_LIVE_MAP:-0}" = "1" ] && ARGS+=(--live-map)
 # MODE_BUMPER_ESCAPE=1 (2026-10-30): one committed way out of a tight spot.
 [ "${MODE_BUMPER_ESCAPE:-0}" = "1" ] && ARGS+=(--bumper-escape)
 # MODE_TURN_MIN_DUTY=N (2026-10-30): the duty a turn in place runs at. Must stay

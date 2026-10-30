@@ -6,10 +6,11 @@ visit trace and the pose are opened with np.load / read_text and never saved.
 
 What it draws is the map the exploration run loads (state/rl_map.npz, the
 persistent WorldMap): free space, obstacles, unknown, the area she has driven,
-and her position. The run SAVES that file only when it ends, so during a run
-the picture is the map as of the last run; the position marker is the saved
-pose. The metadata says which, so the dashboard never presents an old map as
-live.
+and her position. The run SAVES that file only when it ends, so while one is out
+the picture comes from state/rl_map.live.npz (rl/live_map.py), rewritten every
+second: the map grows and her position moves, like a GPS. A live file that has
+stopped changing is not believed, and the metadata says which one this is, so the
+dashboard never presents an old map as live.
 
 Rendering is cached on the files' mtimes, so a phone polling every few seconds
 costs one stat() per request until something actually changes.
@@ -27,6 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent
 MAP_FILE = ROOT / "state" / "rl_map.npz"
 VISITS_FILE = ROOT / "state" / "rl_map.visits.npz"
 POSE_FILE = ROOT / "state" / "rl_map.pose.json"
+LIVE_FILE = ROOT / "state" / "rl_map.live.npz"
+LIVE_FRESH_S = 6.0
 
 PX_PER_CELL = 3
 OCCUPIED_LOGODDS = 0.5
@@ -43,10 +46,22 @@ def _stamp(path: Path) -> float:
         return 0.0
 
 
-def _render() -> tuple[bytes, dict]:
-    import numpy as np
-    from PIL import Image, ImageDraw
+def _live_now() -> bool:
+    stamp = _stamp(LIVE_FILE)
+    return stamp > 0.0 and time.time() - stamp <= LIVE_FRESH_S
 
+
+def _load_live():
+    import numpy as np
+    with np.load(LIVE_FILE, allow_pickle=False) as z:
+        pose = z["pose"].astype(float)
+        return (z["logodds"].copy(), z["origin"].astype(float).copy(), float(z["cell"]),
+                int(z["scans"]), float(z["updated_at"]), z["cells"].copy(),
+                float(z["cell_m"]), (float(pose[0]), float(pose[1]), float(pose[2])))
+
+
+def _load_saved():
+    import numpy as np
     with np.load(MAP_FILE, allow_pickle=False) as z:
         logodds = z["logodds"].copy()
         origin = z["origin"].astype(float).copy()
@@ -67,6 +82,15 @@ def _render() -> tuple[bytes, dict]:
         pose = (float(p["x"]), float(p["y"]), float(p["theta"]))
     except (OSError, KeyError, ValueError, json.JSONDecodeError):
         pass
+    return logodds, origin, cell, sweeps, updated, visits, vcell, pose
+
+
+def _render(live: bool = False) -> tuple[bytes, dict]:
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    logodds, origin, cell, sweeps, updated, visits, vcell, pose = (
+        _load_live() if live else _load_saved())
 
     nx, ny = logodds.shape
     occ = logodds > OCCUPIED_LOGODDS
@@ -101,10 +125,12 @@ def _render() -> tuple[bytes, dict]:
                   fill=(255, 59, 48, 255), width=4)
 
     buf = io.BytesIO()
-    im.save(buf, "PNG", optimize=True)
+    # A live frame is replaced in a second, and this runs every second somebody watches.
+    im.save(buf, "PNG", compress_level=1 if live else 6, optimize=not live)
     meta = {
         "ok": True,
-        "file": "state/rl_map.npz",
+        "live": live,
+        "file": "state/rl_map.live.npz" if live else "state/rl_map.npz",
         "saved_at": updated,
         "saved": time.strftime("%Y-%m-%d %H:%M", time.localtime(updated)),
         "size_m": [round(nx * cell, 1), round(ny * cell, 1)],
@@ -119,14 +145,16 @@ def _render() -> tuple[bytes, dict]:
 
 def current() -> tuple[bytes, dict]:
     """(png bytes, metadata), re-rendered only when a source file changed."""
-    key = (_stamp(MAP_FILE), _stamp(VISITS_FILE), _stamp(POSE_FILE))
+    live = _live_now()
+    key = ((_stamp(LIVE_FILE), 0.0, 0.0) if live
+           else (_stamp(MAP_FILE), _stamp(VISITS_FILE), _stamp(POSE_FILE)))
     with _lock:
         if _cache["key"] == key and _cache["png"]:
             return _cache["png"], _cache["meta"]
     if key[0] == 0.0:
         return b"", {"ok": False, "why": "no map saved yet (state/rl_map.npz)"}
     try:
-        png, meta = _render()
+        png, meta = _render(live)
     except Exception as exc:                          # noqa: BLE001
         return b"", {"ok": False, "why": f"{type(exc).__name__}: {exc}"}
     meta["version"] = int(key[0] * 1000) ^ int(key[1] * 1000) ^ int(key[2] * 1000)

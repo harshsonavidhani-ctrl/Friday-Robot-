@@ -500,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg.max_forward_speed = max(0.0, float(getattr(args, "max_forward_speed", 0.0)))
     cfg.strict_reverse = bool(getattr(args, "strict_reverse", False))
     cfg.bumper_escape = bool(getattr(args, "bumper_escape", False))
+    cfg.live_map = bool(getattr(args, "live_map", False))
     if cfg.bumper_escape:
         import escape as _escape
         loop.bumper_escape = _escape.EscapeManeuver(cfg)
