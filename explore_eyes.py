@@ -297,13 +297,17 @@ def centre_view(frame):
     return frame[y:y + side, x:x + side]
 
 
-def looked_at(which: str, frame, detector, classifier) -> dict[str, float]:
+def looked_at(which: str, frame, detector, classifier,
+              turn: int | None = None) -> dict[str, float]:
     """Everything worth naming in one frame: {label: score}.
 
     EYES_FOCUS is what the judges will put in front of her (Harsh, 2026-10-30:
     "cup phone bottle"): those pass at a lower score, because a small object on
     the floor seen on the move never scores like a person does. Being seen in 2
     of 3 looks still has to hold, which is what keeps that honest.
+    `turn`: 0 = the whole picture only, 1 = the close-up only, None = both. The
+    loop takes turns, so one detector pass (~0.4 s) is one look and a thing is
+    named sooner than by doing both every time.
     """
     seen: dict[str, float] = {}
     close = centre_view(frame)
@@ -312,7 +316,8 @@ def looked_at(which: str, frame, detector, classifier) -> dict[str, float]:
         seen[label] = max(seen.get(label, 0.0), float(score))
 
     if detector is not None:
-        for view in (frame, close):
+        views = (frame, close) if turn is None else ((frame, close)[turn],)
+        for view in views:
             for d in detector._infer(view, min_score=config.EYES_FOCUS_SCORE):
                 name = DETECTOR_NAMES.get(d.label, d.label)
                 if name in config.EYES_FOCUS:
@@ -392,16 +397,16 @@ def _speaker(lines: queue.Queue) -> None:
             said_at, text = lines.get(timeout=1.0)
         except queue.Empty:
             continue
-        deadline = said_at + config.EYES_SAY_STALE_S
-        while tts.quiet_at() > time.time() and time.time() < deadline:
-            time.sleep(0.1)
-        if time.time() >= deadline:
+        if time.time() - said_at >= config.EYES_SAY_STALE_S:
             log.info("eyes: dropped, too late: %s", text)
             continue
+        started = time.time()
         try:
             tts.speak(text)
         except Exception as exc:                # noqa: BLE001
             log.warning("eyes: could not speak: %s", exc)
+        log.info("eyes: %r waited %.2f s, spoken in %.2f s", text,
+                 started - said_at, time.time() - started)
 
 
 def _say(lines: queue.Queue, text: str) -> None:
@@ -430,7 +435,50 @@ def _end_of_run(sights: Sightings, lines: queue.Queue) -> None:
         log.warning("eyes: could not remember the run: %s", exc)
 
 
+def rest_for_heat(celsius: float | None) -> float:
+    """Seconds to wait before the next look. The chassis is glued shut: on
+    2026-10-30 looking nonstop took the Pi from 43 to 84 C in 18 minutes and it
+    throttled, which slows the control loop and the voice too. Naming things is
+    worth less than the run, so eyes back off long before the Pi has to."""
+    if celsius is None or celsius < config.EYES_WARM_C:
+        return float(config.EYES_PERIOD_S)
+    if celsius < config.EYES_HOT_C:
+        return float(config.EYES_WARM_PERIOD_S)
+    return float(config.EYES_HOT_PERIOD_S)
+
+
+def _cpu_celsius() -> float | None:
+    try:
+        return int(Path("/sys/class/thermal/thermal_zone0/temp").read_text()) / 1000.0
+    except (OSError, ValueError):
+        return None
+
+
+def lines_to_prerecord() -> list[str]:
+    """Every name she is likely to say, the judges' objects first. Rendered at
+    start, a line plays at once. Live, Piper took 8.7 s for the first line and
+    1.4 s each after it, on top of the look: "its speaking late"."""
+    names = list(config.EYES_FOCUS) + ["person"] + [
+        "chair", "table", "sofa", "bed", "laptop", "screen", "keyboard", "bag",
+        "backpack", "suitcase", "umbrella", "clock", "vase", "scissors", "plant",
+        "bowl", "fork", "knife", "spoon", "banana", "apple", "orange", "ball",
+        "tie", "toothbrush", "sink", "microwave", "bench", "bicycle"]
+    return [sentence([name]) for name in dict.fromkeys(names)]
+
+
 def _run() -> None:
+    lines: queue.Queue = queue.Queue(maxsize=2)
+    # THE VOICE IS STARTED BEFORE THE PRIORITY DROP BELOW: a thread takes its nice
+    # from the thread that starts it and cannot take it back, and at nice 10 every
+    # line was queueing behind the detector.
+    threading.Thread(target=_speaker, args=(lines,), name="friday-eyes-voice",
+                     daemon=True).start()
+    try:
+        import tts
+        tts.prerender(lines_to_prerecord())
+    except Exception as exc:                    # noqa: BLE001
+        log.warning("eyes: could not prerecord: %s", exc)
+
     # Below the run and everything else on this Pi: being late to name a chair
     # costs nothing, being late to a control tick costs a bump.
     try:
@@ -451,12 +499,11 @@ def _run() -> None:
              "on" if detector is not None else "OFF",
              "on" if classifier is not None else "OFF")
 
-    lines: queue.Queue = queue.Queue(maxsize=2)
-    threading.Thread(target=_speaker, args=(lines,), name="friday-eyes-voice",
-                     daemon=True).start()
     sights = Sightings()
     in_run = False
     scene_at = -1e12
+    turn = 0
+    cooling = False
     while not _stop.is_set():
         exploring = _exploring()
         if exploring and not in_run:
@@ -474,7 +521,8 @@ def _run() -> None:
                 frame = _frame(which)
                 if frame is None:
                     continue
-                seen = looked_at(which, frame, detector, classifier)
+                turn = 1 - turn
+                seen = looked_at(which, frame, detector, classifier, turn)
                 now = time.monotonic()
                 if seen:
                     log.info("eyes: %s sees %s", which,
@@ -482,15 +530,20 @@ def _run() -> None:
                 if which == "up" and now - scene_at >= config.SCENE_PERIOD_S:
                     scene_at = now
                     _publish_scene(frame, seen)
-                fresh = sights.update(which, seen, now)[:2]
+                fresh = sights.update(which, seen, now)[:1]
                 if fresh:
                     sights.spoken(fresh, now)
                     _say(lines, sentence(fresh))
                     _publish(sights, fresh)
             except Exception as exc:            # noqa: BLE001
                 log.warning("eyes: look failed: %s: %s", type(exc).__name__, exc)
-            _stop.wait(max(0.05, config.EYES_PERIOD_S
-                           - (time.monotonic() - started)))
+            hot = _cpu_celsius()
+            rest = rest_for_heat(hot)
+            if rest >= config.EYES_HOT_PERIOD_S and not cooling:
+                log.warning("eyes: %.0f C, looking every %.0f s until she cools",
+                            hot, rest)
+            cooling = rest >= config.EYES_HOT_PERIOD_S
+            _stop.wait(rest)
 
 
 def start() -> None:

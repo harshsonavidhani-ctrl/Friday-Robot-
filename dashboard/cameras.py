@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import glob
 import os
 from pathlib import Path
@@ -60,6 +61,7 @@ class CameraStream:
         self._task: asyncio.Task | None = None
         self._subscribers: set[asyncio.Queue] = set()
         self._latest: bytes | None = None
+        self._latest_at = 0.0
         self._lock = asyncio.Lock()
         self.error: str | None = None
         self.passthrough = True
@@ -184,6 +186,7 @@ class CameraStream:
                     frame = bytes(buf[start:end + 2])
                     del buf[:end + 2]
                     self._latest = frame
+                    self._latest_at = time.monotonic()
                     for queue in list(self._subscribers):
                         if queue.full():
                             with contextlib.suppress(asyncio.QueueEmpty):

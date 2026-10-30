@@ -303,11 +303,15 @@ AUDIO_DRAIN_S = 0.30
 # --- She names what she sees while exploring (explore_eyes.py, 2026-10-30) ---
 EYES = True
 EYES_ALWAYS = True                   # hackathon: watching whenever she is on, not only in runs
-EYES_PERIOD_S = 0.3                  # rest between looks; a look is ~1 s of CPU
+EYES_PERIOD_S = 0.4                  # rest between looks; a look is ~0.65 s of one core
+EYES_WARM_C = 72.0                   # above this she looks less often...
+EYES_WARM_PERIOD_S = 1.5
+EYES_HOT_C = 78.0                    # ...and above this hardly at all
+EYES_HOT_PERIOD_S = 6.0
 EYES_MIN_SCORE = 0.6                 # SCENE_MIN_SCORE: the rest of the 80 words
 EYES_SURE_SCORE = 0.75               # said at the first look
-EYES_CONFIRM = 2                     # ...otherwise seen in 2 of the last 5 looks
-EYES_CONFIRM_OF = 5                  # ~5 s: live, a held cup scored 0.37 then 0.42, seconds apart
+EYES_CONFIRM = 2                     # ...otherwise seen in 2 of the last 6 looks
+EYES_CONFIRM_OF = 6                  # ~3 s: looks take turns between the two views
 EYES_CLASS_MIN_DOWN = 0.30           # the floor fills the frame: name more freely
 EYES_CLASS_MIN_UP = 0.55             # wall and ceiling: only when she is sure
 EYES_SAY_AGAIN_S = 15.0              # one name, once per this: objects get shown in turn
@@ -2378,6 +2382,7 @@ DASHBOARD_ROBOT_TIMEOUT_S = 15.0
 # Manual drive presets offered in the dashboard's motor panel, in seconds.
 # Short on purpose -- a tap should nudge, not launch.
 DASHBOARD_MOTOR_STEPS = (0.3, 0.6, 1.0)
+DASHBOARD_FRAME_FRESH_S = 0.4    # the newest frame is good enough this young
 DASHBOARD_FRAME_WAIT_S = 6.0     # explore_eyes' frame; the C270 takes 3+ s to wake
 EXPLORE_RUN_READS_CAMERAS = False   # rl/modes MODE_CAMERAS: keep the two the same
 

@@ -861,8 +861,11 @@ async def cam_latest(request: web.Request) -> web.Response:
         raise web.HTTPServiceUnavailable(text="no such camera right now")
     try:
         async with camera.subscribe() as queue:
-            # The first item can be the last frame of a stream long since
-            # stopped; the second is new.
+            # The newest frame if it is fresh: waiting for the next one cost up
+            # to 0.4 s a look. Otherwise the first item may be the last frame of
+            # a stream long since stopped, and the second is new.
+            if time.monotonic() - camera._latest_at <= config.DASHBOARD_FRAME_FRESH_S:
+                return web.Response(body=camera._latest, content_type="image/jpeg")
             frame = await asyncio.wait_for(queue.get(), config.DASHBOARD_FRAME_WAIT_S)
             frame = await asyncio.wait_for(queue.get(), config.DASHBOARD_FRAME_WAIT_S)
     except (asyncio.TimeoutError, TimeoutError):

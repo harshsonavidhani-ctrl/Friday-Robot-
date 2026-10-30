@@ -154,6 +154,20 @@ check("one of the judges' objects is said at a strong first look",
       s.update("up", {"phone": 0.6}, 0.0) == ["phone"])
 check("a dog needs to be very sure",
       eyes.looked_at("up", FRAME, Detector(Box("dog", 0.65)), None) == {})
+check("she takes turns: whole picture, then close-up",
+      eyes.looked_at("up", FRAME, Detector(Box("cup", 0.5)), None, 0) == {"cup": 0.5}
+      and eyes.looked_at("up", FRAME, Detector(Box("cup", 0.5)), None, 1) == {"cup": 0.5})
+check("the judges' objects are prerecorded first",
+      eyes.lines_to_prerecord()[:3] == ["Cup detected.", "Phone detected.",
+                                        "Bottle detected."])
+check("every prerecorded line is one name, as she will say it",
+      all(line.count(" and ") == 0 for line in eyes.lines_to_prerecord()))
+check("cool: she looks at full rate",
+      eyes.rest_for_heat(50.0) == config.EYES_PERIOD_S
+      and eyes.rest_for_heat(None) == config.EYES_PERIOD_S)
+check("warm: less often", eyes.rest_for_heat(config.EYES_WARM_C + 1)
+      == config.EYES_WARM_PERIOD_S)
+check("hot: hardly at all", eyes.rest_for_heat(84.0) == config.EYES_HOT_PERIOD_S)
 check("a mug is a cup", eyes.spoken_name("coffee mug") == "cup")
 check("a smartphone-shaped guess is a phone",
       eyes.spoken_name("cellular telephone, cellular phone") == "phone"
