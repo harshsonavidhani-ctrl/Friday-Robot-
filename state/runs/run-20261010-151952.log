@@ -1,0 +1,146 @@
+15:19:53 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+15:19:53 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+15:19:53 INFO    friday.localnav: LiDAR chassis self-mask: 71-79, 88-100, 221-237, 319-334 (raw bearings, pre-offset); mounting offset -51.8 deg
+15:19:53 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+15:19:53 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+15:19:54 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+15:19:54 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+15:19:54 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+15:19:54 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+15:19:56 INFO    pi_deploy: Motors: FRIDAY-MOTORS 1 on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+15:19:56 INFO    pi_deploy: Firmware watchdog armed at 500 ms (control period 100 ms)
+15:19:56 WARNING pi_deploy: Stiction floor 80 => slowest achievable wheel speed ~0.15 m/s (policy range is -0.15..0.50 m/s).
+15:19:56 WARNING pi_deploy: MOTORS ARE LIVE (max_duty=0.85). Wheels can turn.
+15:19:56 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+15:19:56 INFO    pi_deploy: Exploration map ignores 14 blind beam(s) (chassis): [np.int32(3), np.int32(4), np.int32(5), np.int32(7), np.int32(8), np.int32(9), np.int32(33), np.int32(34), np.int32(35), np.int32(36), np.int32(53), np.int32(54), np.int32(55), np.int32(56)]
+15:19:56 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+15:19:56 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port, --motor, --motor-kick-rest, --motor-plug-guard, --motor-pulse-burst. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+15:19:56 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
+15:19:56 INFO    pi_deploy: Reflex thread running at 30 Hz
+15:20:14 INFO    friday.vision: Object detection ON: ssd_mobilenet_v1_10.onnx at 320x320, ~1.0 Hz on 2 threads
+15:20:14 INFO    friday.tts: loading Piper voice en_US-hfc_female-medium.onnx (takes ~10s)
+15:20:19 INFO    friday.tts: Piper voice ready
+15:20:19 INFO    friday.tts: output volume: sink 0.95, Speaker 85%
+15:20:19 INFO    pi_deploy: World map restored from rl_map.npz: 57.2 m^2 known, 1137 sweeps, 4.3 m^2 previously driven
+15:20:23 INFO    pi_deploy: Relocalisation: score 0.328 (min 0.15), sharpness 2.65 (min 1.40), moved 0.00 m / 0 deg from the saved pose -- ACCEPTED
+15:20:23 INFO    pi_deploy: Frontier planner running every 2.0 s (heading bias only, capped at 55% of omega_max)
+15:20:23 INFO    pi_deploy: Way back ON: the start is tracked from the first sweep; when the time is up she drives back to it (within 0.25 m, up to 600 s).
+15:20:23 INFO    pi_deploy: Control loop starting at 10 Hz. Ctrl+C to stop.
+15:20:24 INFO    pi_deploy: t=    5 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.17,-0.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 50.8 ms
+15:20:24 INFO    pi_deploy: UNSTICK unstuck_retry: I'm boxed in. Trying another way. ({'state': 'resting', 'tries': 0, 'avoid_spots': 1, 'locks': 1, 'undos': 0, 'undo_turns': 0, 'undo_drives': 0, 'undo_freed': 0, 'undo_worse': 0, 'undo_rear_stop': 0, 'no_move_to_undo': 1, 'asked': 0, 'helped': 0, 'rests': 1})
+15:20:24 INFO    pi_deploy: UNSTICK: avoiding 1 stuck spot(s) -- 13 frontier keys blacklisted
+15:20:24 INFO    pi_deploy: t=   10 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.26,-0.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 60.0 ms
+15:20:25 INFO    way_back: tracker: start in the run frame moved 0.00 m / +0 deg (dead reckoning vs the start's view); here (0.00, 0.00) +0 deg; 1/1 matched since the last line; matched; fold 952 ms
+15:20:25 INFO    pi_deploy: t=   15 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.90) -> out(+0.00,+0.00) | REFLEX_STOP  | 211.4 ms
+15:20:26 INFO    pi_deploy: t=   20 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.00,+0.00) | REFLEX_STOP  | 85.3 ms
+15:20:27 INFO    pi_deploy: t=   25 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.00,+0.00) | REFLEX_STOP  | 22.2 ms
+15:20:27 INFO    pi_deploy: t=   30 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.63) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.6 ms
+15:20:28 INFO    pi_deploy: t=   35 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.00,+0.00) | REFLEX_STOP  | 13.5 ms
+15:20:28 INFO    pi_deploy: t=   40 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.61) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.4 ms
+15:20:29 INFO    pi_deploy: t=   45 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.63) -> out(+0.00,+0.00) | REFLEX_STOP  | 8.1 ms
+15:20:29 INFO    pi_deploy: t=   50 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.3 ms
+15:20:30 INFO    pi_deploy: t=   55 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.62) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.4 ms
+15:20:30 INFO    way_back: tracker: start in the run frame moved 0.00 m / +0 deg (dead reckoning vs the start's view); here (0.00, 0.00) +0 deg; 18/18 matched since the last line; matched; fold 26 ms
+15:20:30 INFO    pi_deploy: t=   60 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 14.4 ms
+15:20:31 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+15:20:31 INFO    pi_deploy: t=   65 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.42,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 49.4 ms
+15:20:31 INFO    pi_deploy: t=   70 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 25.3 ms
+15:20:32 INFO    pi_deploy: t=   75 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.42,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 38.1 ms
+15:20:33 INFO    pi_deploy: t=   80 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.90) -> out(+0.00,+0.00) | REFLEX_STOP  | 126.1 ms
+15:20:33 INFO    pi_deploy: t=   85 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 21.9 ms
+15:20:34 INFO    pi_deploy: t=   90 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.42,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 32.2 ms
+15:20:34 INFO    pi_deploy: t=   95 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 61.3 ms
+15:20:35 INFO    pi_deploy: t=  100 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.63) -> out(+0.00,+0.00) | REFLEX_STOP  | 21.6 ms
+15:20:35 INFO    way_back: tracker: start in the run frame moved 0.02 m / +0 deg (dead reckoning vs the start's view); here (-0.02, 0.00) +0 deg; 11/11 matched since the last line; matched; fold 49 ms
+15:20:35 INFO    pi_deploy: t=  105 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.1 ms
+15:20:36 INFO    pi_deploy: t=  110 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.62) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.1 ms
+15:20:36 INFO    pi_deploy: t=  115 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.63) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.1 ms
+15:20:36 INFO    pi_deploy: UNSTICK unstuck_retry: I'm boxed in. Trying another way. ({'state': 'resting', 'tries': 0, 'avoid_spots': 1, 'locks': 2, 'undos': 0, 'undo_turns': 0, 'undo_drives': 0, 'undo_freed': 0, 'undo_worse': 0, 'undo_rear_stop': 0, 'no_move_to_undo': 5, 'asked': 0, 'helped': 0, 'rests': 5})
+15:20:37 INFO    pi_deploy: t=  120 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 8.6 ms
+15:20:37 INFO    pi_deploy: t=  125 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.62) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.8 ms
+15:20:38 INFO    pi_deploy: t=  130 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.96) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.5 ms
+15:20:38 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+15:20:38 INFO    pi_deploy: t=  135 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.61) -> out(+0.00,+0.00) | REFLEX_STOP  | 38.3 ms
+15:20:39 INFO    pi_deploy: t=  140 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 38.2 ms
+15:20:39 INFO    pi_deploy: t=  145 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.42,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 30.8 ms
+15:20:40 INFO    pi_deploy: t=  150 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 49.3 ms
+15:20:40 INFO    pi_deploy: t=  155 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 30.4 ms
+15:20:41 INFO    way_back: tracker: start in the run frame moved 0.02 m / +0 deg (dead reckoning vs the start's view); here (-0.02, 0.00) +0 deg; 15/15 matched since the last line; matched; fold 377 ms
+15:20:41 INFO    pi_deploy: t=  160 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.55) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.8 ms
+15:20:41 INFO    pi_deploy: t=  165 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.5 ms
+15:20:42 INFO    pi_deploy: t=  170 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 21.9 ms
+15:20:42 INFO    pi_deploy: t=  175 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.55) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.9 ms
+15:20:43 INFO    pi_deploy: t=  180 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.89) -> out(+0.00,+0.00) | REFLEX_STOP  | 12.7 ms
+15:20:43 INFO    pi_deploy: t=  185 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.88) -> out(+0.00,+0.00) | REFLEX_STOP  | 23.1 ms
+15:20:44 INFO    pi_deploy: t=  190 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.89) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.0 ms
+15:20:44 INFO    pi_deploy: t=  195 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.89) -> out(+0.00,+0.00) | REFLEX_STOP  | 7.6 ms
+15:20:45 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+15:20:45 INFO    pi_deploy: t=  200 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.86) -> out(+0.00,+0.00) | REFLEX_STOP  | 38.8 ms
+15:20:45 INFO    pi_deploy: t=  205 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.88) -> out(+0.00,+0.00) | REFLEX_STOP  | 32.3 ms
+15:20:46 INFO    way_back: tracker: start in the run frame moved 0.02 m / +0 deg (dead reckoning vs the start's view); here (-0.02, 0.00) +0 deg; 15/15 matched since the last line; matched; fold 829 ms
+15:20:46 INFO    pi_deploy: t=  210 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.89) -> out(+0.00,+0.00) | REFLEX_STOP  | 70.1 ms
+15:20:46 INFO    pi_deploy: t=  215 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.87) -> out(+0.00,+0.00) | REFLEX_STOP  | 33.3 ms
+15:20:47 INFO    pi_deploy: t=  220 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.97) -> out(+0.00,+0.00) | REFLEX_STOP  | 77.8 ms
+15:20:48 INFO    pi_deploy: t=  225 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.98) -> out(+0.00,+0.00) | REFLEX_STOP  | 54.6 ms
+15:20:48 INFO    pi_deploy: t=  230 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.97) -> out(+0.00,+0.00) | REFLEX_STOP  | 13.2 ms
+15:20:48 INFO    pi_deploy: t=  235 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+0.40) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.5 ms
+15:20:49 INFO    pi_deploy: t=  240 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-1.01) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.1 ms
+15:20:50 INFO    pi_deploy: t=  245 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-1.01) -> out(+0.00,+0.00) | REFLEX_STOP  | 38.5 ms
+15:20:50 INFO    pi_deploy: t=  250 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.0 ms
+15:20:51 INFO    pi_deploy: t=  255 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.5 ms
+15:20:51 INFO    way_back: tracker: start in the run frame moved 0.02 m / +0 deg (dead reckoning vs the start's view); here (-0.02, 0.00) +0 deg; 14/14 matched since the last line; matched; fold 26 ms
+15:20:51 INFO    pi_deploy: t=  260 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.1 ms
+15:20:52 INFO    pi_deploy: UNSTICK unstuck_retry: I'm boxed in. Trying another way. ({'state': 'resting', 'tries': 0, 'avoid_spots': 1, 'locks': 2, 'undos': 0, 'undo_turns': 0, 'undo_drives': 0, 'undo_freed': 0, 'undo_worse': 0, 'undo_rear_stop': 0, 'no_move_to_undo': 10, 'asked': 0, 'helped': 0, 'rests': 10})
+15:20:52 INFO    pi_deploy: t=  265 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 23.3 ms
+15:20:52 INFO    pi_deploy: t=  270 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 21.3 ms
+15:20:52 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+15:20:53 INFO    pi_deploy: t=  275 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 116.5 ms
+15:20:53 INFO    pi_deploy: t=  280 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.55) -> out(+0.00,+0.00) | REFLEX_STOP  | 21.9 ms
+15:20:54 INFO    pi_deploy: t=  285 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,+1.57) -> out(+0.00,+0.00) | REFLEX_STOP  | 37.4 ms
+15:20:54 INFO    pi_deploy: t=  290 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-0.06) -> out(+0.00,+0.00) | REFLEX_STOP  | 24.3 ms
+15:20:55 INFO    pi_deploy: t=  295 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.8 ms
+15:20:55 INFO    pi_deploy: t=  300 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-1.53) -> out(+0.00,+0.00) | REFLEX_STOP  | 32.3 ms
+15:20:56 INFO    pi_deploy: t=  305 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-1.53) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.5 ms
+15:20:56 INFO    way_back: tracker: start in the run frame moved 0.02 m / +0 deg (dead reckoning vs the start's view); here (-0.02, 0.00) +0 deg; 12/12 matched since the last line; matched; fold 39 ms
+15:20:56 INFO    pi_deploy: t=  310 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-1.01) -> out(+0.00,+0.00) | REFLEX_STOP  | 31.8 ms
+15:20:57 INFO    pi_deploy: t=  315 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 6.8 ms
+15:20:57 INFO    pi_deploy: t=  320 | lidar 0.32 | tof 0.04 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 7.9 ms
+15:20:57 INFO    pi_deploy: WAY BACK (explored): heading to where I started, 0.02 m away by the start tracker ({'updates': 90, 'matched': 90, 'reason': 'matched', 'fold_ms': 53.5, 'error': '', 'home_rl': (16.47902392704454, 11.796910763141648, 1.5151212215423584)}).
+15:20:57 INFO    pi_deploy: WAY BACK ARRIVED after 0 s, 0.02 m from the start ({'updates': 90, 'matched': 90, 'reason': 'matched', 'fold_ms': 53.5, 'error': '', 'home_rl': (16.47902392704454, 11.796910763141648, 1.5151212215423584)}).
+15:20:59 INFO    pi_deploy: Way back: {'phase': 'done', 'why': 'explored', 'outcome': 'arrived', 'distance_m': 0.02, 'tracker': {'updates': 91, 'matched': 91, 'reason': 'matched', 'fold_ms': 46.3, 'error': '', 'home_rl': (16.47902392704454, 11.796910763141648, 1.5151212215423584)}}
+15:20:59 INFO    pi_deploy: Unstick: {'state': 'resting', 'tries': 0, 'avoid_spots': 1, 'locks': 2, 'undos': 0, 'undo_turns': 0, 'undo_drives': 0, 'undo_freed': 0, 'undo_worse': 0, 'undo_rear_stop': 0, 'no_move_to_undo': 11, 'asked': 0, 'helped': 0, 'rests': 11}
+15:20:59 INFO    pi_deploy: Planner: 5 chosen, 1 ARRIVED at, 1 revealed without arriving, 3 abandoned, 12 cycles, 0 frontiers left  (EXHAUSTED)
+15:20:59 INFO    pi_deploy: World map saved: rl_map.npz  (58.1 m^2 known, 4.4 m^2 driven, 1.9 m^2 re-entered, revisit ratio 0.44, 149 sweeps, 172 superseded)
+15:20:59 INFO    pi_deploy: Motor noise: {'starts': 1, 'kicks': 1, 'plug_coasts': 0, 'pulse_bursts': 0, 'pivot_holds': 0, 'starts_debounced': 0}
+15:20:59 INFO    pi_deploy: Black box written: /home/harsh/friday/rl/blackbox-20261010-152059.csv (321 rows)
+15:20:59 INFO    pi_deploy: ==========================================================================
+15:20:59 INFO    pi_deploy: ticks=321  explored=17.3 m^2
+15:20:59 INFO    pi_deploy: loop ms over the LAST 200 ticks: mean 25.47 | p95 71.23 | max 116.52 (budget 100) -- the black box has the whole run
+15:20:59 INFO    pi_deploy: budget by stage, mean ms/tick over all 321 ticks: sensors+obs 11.8  pose+telemetry 11.2  navigator 8.2  governor+escape+rear 4.2  actuate 1.8  policy 1.7  adapter 1.0  reflex 0.3  planner-bias 0.1  cameras 0.1
+15:20:59 INFO    pi_deploy:   measured inside tick(): 40.3 ms/tick; wall clock per tick (last 200): 25.5 ms; unaccounted 0.0 ms = time this thread was NOT RUNNING (other threads holding the GIL)
+15:20:59 INFO    pi_deploy: navigator: 0 ticks steered (0%), 321 handed back (0 blocked ahead, 321 no drivable arc); open 0 / corridor 0 / cluttered 0
+15:20:59 INFO    pi_deploy:   near field: 321 ticks with a ToF barrier in the arc search (321 of them already inside the reflex's stop distance -- the other 0 are arcs steered around something the reflex could only have braked for), 321 ticks speed-capped by it
+15:20:59 INFO    pi_deploy:   commitments 0 taken, 0 reversed by a better option, 0 expired on age; arc choice 5.23 ms mean (a HIGH handback count means she is spending her time in places with no drivable way forward)
+15:20:59 INFO    pi_deploy: escape turns: 0  (boxed in: forward blocked and not moving, so she turned toward open space)
+15:20:59 INFO    pi_deploy: reverse lifts: 0  (policy asked for a reverse too gentle to execute; honoured at the executable v_min instead of pivoting)
+15:20:59 INFO    pi_deploy: reverse floor lifts: 0  (a reverse from ANY stage -- escape, recovery, the policy -- that was under the stiction floor and would have executed as a stop, reissued at the slowest speed the wheels can actually turn)
+15:20:59 INFO    pi_deploy: no-reverse turns: 0  (policy asked to back up; this drivetrain cannot, so it turned toward open space instead)
+15:20:59 INFO    pi_deploy: interventions: reflex=321 visual=0 governor=0 rear=102 stale=0 scrape=0 overruns=14
+15:20:59 INFO    pi_deploy: object detection: 0 frames, 0 ms mean, 0 failures; currently sees nothing
+15:20:59 INFO    pi_deploy: cameras: free-space updates=0 failures=0, nudges=0, ticks driven on vision=0
+15:20:59 INFO    pi_deploy: lidar: 0 sub-footprint returns rejected outside the self-mask (a growing count means the chassis wedge moved -- re-measure --lidar-self-mask); 0 ticks braked for closing rate alone
+15:20:59 INFO    pi_deploy:   sensor lidar  updates=414     stale=False
+15:20:59 INFO    pi_deploy:   sensor tof    updates=667     stale=False
+15:20:59 INFO    pi_deploy:   sensor cam_up updates=0       stale=True
+15:20:59 INFO    pi_deploy:   sensor cam_down updates=0       stale=True
+15:20:59 INFO    pi_deploy:   sensor cam_up_rgb updates=0       stale=True
+15:20:59 INFO    pi_deploy:   sensor lidar_fine updates=414     stale=False
+15:20:59 INFO    pi_deploy: ==========================================================================
+15:20:59 INFO    friday.localnav: policy source: LEROBOT_EXPERIMENTAL
+15:20:59 INFO    friday.explore: exploration: phase=recover explored=17.3 m^2 frontier_cells=1079
+15:20:59 INFO    friday.explore: targets: selected=2 reached=0 abandoned=1  blacklisted=1
+15:20:59 INFO    friday.explore: recoveries: 4 attempted, 3 successful
+15:20:59 INFO    friday.localnav: no_target_ticks=0
+15:20:59 INFO    friday.voice: voice: backend=friday spoken=5 dropped(cooldown=314 full=3)
+15:20:59 INFO    friday.localnav: ACT chunks: 41 forward passes over 321 ticks (7.83 ticks/pass)
+15:20:59 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.

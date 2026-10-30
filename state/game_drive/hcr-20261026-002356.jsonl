@@ -1,0 +1,125 @@
+{"t": 0.7, "screen": "other", "tilt": null}
+{"t": 2.9, "screen": "other", "tilt": null}
+{"t": 8.4, "screen": "other", "tilt": null}
+{"t": 9.6, "screen": "other", "tilt": null}
+{"t": 10.8, "screen": "other", "tilt": null}
+{"t": 12.0, "screen": "other", "tilt": null}
+{"t": 13.2, "screen": "other", "tilt": null}
+{"t": 14.5, "screen": "other", "tilt": null}
+{"t": 15.6, "screen": "other", "tilt": null}
+{"t": 16.9, "screen": "other", "tilt": null}
+{"t": 18.1, "screen": "other", "tilt": null}
+{"t": 19.4, "screen": "other", "tilt": null}
+{"t": 28.8, "screen": "end", "tilt": null, "click": "end"}
+{"t": 31.8, "screen": "end", "tilt": null, "click": "end"}
+{"t": 34.8, "screen": "end", "tilt": null, "click": "end"}
+{"t": 37.7, "screen": "end", "tilt": null, "click": "end"}
+{"t": 50.6, "screen": "end", "tilt": null, "click": "end"}
+{"t": 53.5, "screen": "menu", "tilt": null, "click": "menu"}
+{"t": 56.4, "screen": "choose_run", "tilt": null, "click": "choose_run"}
+{"t": 59.2, "screen": "driving", "tilt": -8, "last": null}
+{"t": 60.6, "screen": "driving", "tilt": -9, "last": {"tilt": -7, "ahead": -28, "keys": "right0.8"}}
+{"t": 62.1, "screen": "driving", "tilt": 4, "last": {"tilt": 6, "ahead": 9, "keys": "right0.8"}}
+{"t": 63.4, "screen": "driving", "tilt": 13, "last": {"tilt": 13, "ahead": 20, "keys": "right0.7"}}
+{"t": 64.8, "screen": "driving", "tilt": -12, "last": {"tilt": 8, "ahead": 36, "keys": "right0.4"}}
+{"t": 66.2, "screen": "driving", "tilt": 7, "last": {"tilt": 9, "ahead": 13, "keys": "right0.8"}}
+{"t": 67.6, "screen": "driving", "tilt": 31, "last": {"tilt": 31, "ahead": 27, "keys": "right0.5"}}
+{"t": 69.0, "screen": "driving", "tilt": -7, "last": {"tilt": -25, "ahead": -131, "keys": "right1.0"}}
+{"t": 70.4, "screen": "driving", "tilt": -84, "last": {"tilt": -86, "ahead": -89, "keys": "right1.0"}}
+{"t": 71.8, "screen": "driving", "tilt": -105, "last": {"tilt": -106, "ahead": -115, "keys": "right1.0"}}
+{"t": 73.2, "screen": "driving", "tilt": 98, "last": {"tilt": 113, "ahead": 96, "keys": "left1.0"}}
+{"t": 74.6, "screen": "driving", "tilt": 130, "last": {"tilt": 99, "ahead": 64, "keys": "left0.4"}}
+{"t": 76.0, "screen": "driving", "tilt": 90, "last": {"tilt": 91, "ahead": 91, "keys": "left1.0"}}
+{"t": 77.3, "screen": "driving", "tilt": 23, "last": {"tilt": 113, "ahead": 311, "keys": "left1.0"}}
+{"t": 78.6, "screen": "other", "tilt": null}
+{"t": 79.9, "screen": "second_chance", "tilt": null, "click": "second_chance"}
+{"t": 82.7, "screen": "second_chance", "tilt": null, "click": "second_chance"}
+{"t": 88.7, "screen": "second_chance", "tilt": null, "click": "second_chance"}
+{"t": 91.6, "screen": "bonus", "tilt": null, "click": "bonus"}
+{"t": 97.5, "screen": "menu", "tilt": null, "click": "menu"}
+{"t": 100.3, "screen": "choose_run", "tilt": null, "click": "choose_run"}
+{"t": 103.2, "screen": "driving", "tilt": -12, "last": null}
+{"t": 104.6, "screen": "driving", "tilt": -2, "last": {"tilt": 1, "ahead": 12, "keys": "right0.8"}}
+{"t": 105.9, "screen": "driving", "tilt": 6, "last": {"tilt": 17, "ahead": 35, "keys": "right0.4"}}
+{"t": 107.2, "screen": "driving", "tilt": 12, "last": {"tilt": 9, "ahead": 6, "keys": "right0.8"}}
+{"t": 108.6, "screen": "driving", "tilt": -4, "last": {"tilt": -11, "ahead": -35, "keys": "right0.8"}}
+{"t": 110.0, "screen": "driving", "tilt": 3, "last": {"tilt": 9, "ahead": 17, "keys": "right0.7"}}
+{"t": 111.3, "screen": "driving", "tilt": 30, "last": {"tilt": 29, "ahead": 6, "keys": "right0.8"}}
+{"t": 112.6, "screen": "driving", "tilt": 14, "last": {"tilt": 23, "ahead": 23, "keys": "right0.6"}}
+{"t": 114.0, "screen": "driving", "tilt": -84, "last": {"tilt": -85, "ahead": -85, "keys": "right1.0"}}
+{"t": 115.4, "screen": "driving", "tilt": -101, "last": {"tilt": -103, "ahead": -108, "keys": "right1.0"}}
+{"t": 116.7, "screen": "driving", "tilt": 144, "last": {"tilt": 131, "ahead": 220, "keys": "left1.0"}}
+{"t": 118.1, "screen": "driving", "tilt": 112, "last": {"tilt": 119, "ahead": 125, "keys": "left1.0"}}
+{"t": 119.5, "screen": "driving", "tilt": 130, "last": {"tilt": 121, "ahead": 124, "keys": "left1.0"}}
+{"t": 120.9, "screen": "driving", "tilt": 176, "last": {"tilt": -115, "ahead": -103, "keys": "right1.0"}}
+{"t": 122.2, "screen": "driving", "tilt": -168, "last": {"tilt": -130, "ahead": -122, "keys": "right1.0"}}
+{"t": 123.6, "screen": "driving", "tilt": -126, "last": {"tilt": -119, "ahead": -124, "keys": "right1.0"}}
+{"t": 125.0, "screen": "driving", "tilt": -142, "last": {"tilt": -121, "ahead": -122, "keys": "right1.0"}}
+{"t": 126.3, "screen": "driving", "tilt": -142, "last": {"tilt": -121, "ahead": -119, "keys": "right1.0"}}
+{"t": 127.7, "screen": "second_chance", "tilt": null, "click": "second_chance"}
+{"t": 130.4, "screen": "second_chance", "tilt": null, "click": "second_chance"}
+{"t": 133.3, "screen": "second_chance", "tilt": null, "click": "second_chance"}
+{"t": 139.1, "screen": "bonus", "tilt": null, "click": "bonus"}
+{"t": 141.9, "screen": "menu", "tilt": null, "click": "menu"}
+{"t": 144.7, "screen": "choose_run", "tilt": null, "click": "choose_run"}
+{"t": 147.6, "screen": "driving", "tilt": -13, "last": null}
+{"t": 157.2, "screen": "driving", "tilt": 16, "last": null}
+{"t": 158.5, "screen": "driving", "tilt": -84, "last": {"tilt": -85, "ahead": -86, "keys": "right1.0"}}
+{"t": 159.9, "screen": "driving", "tilt": -101, "last": {"tilt": -102, "ahead": -106, "keys": "right1.0"}}
+{"t": 161.2, "screen": "driving", "tilt": 138, "last": {"tilt": 127, "ahead": 229, "keys": "left1.0"}}
+{"t": 162.6, "screen": "driving", "tilt": 101, "last": {"tilt": 106, "ahead": 105, "keys": "left1.0"}}
+{"t": 164.0, "screen": "driving", "tilt": -12, "last": {"tilt": 104, "ahead": 108, "keys": "left1.0"}}
+{"t": 165.4, "screen": "driving", "tilt": 108, "last": {"tilt": 112, "ahead": 115, "keys": "left1.0"}}
+{"t": 166.7, "screen": "driving", "tilt": 152, "last": {"tilt": 128, "ahead": 140, "keys": "left1.0"}}
+{"t": 168.1, "screen": "driving", "tilt": -157, "last": {"tilt": -119, "ahead": -129, "keys": "right1.0"}}
+{"t": 169.5, "screen": "driving", "tilt": -152, "last": {"tilt": -127, "ahead": -126, "keys": "right1.0"}}
+{"t": 170.9, "screen": "driving", "tilt": -127, "last": {"tilt": -118, "ahead": -123, "keys": "right1.0"}}
+{"t": 172.3, "screen": "driving", "tilt": -130, "last": {"tilt": -123, "ahead": -128, "keys": "right1.0"}}
+{"t": 173.7, "screen": "driving", "tilt": -135, "last": {"tilt": null, "keys": ""}}
+{"t": 175.0, "screen": "second_chance", "tilt": null, "click": "second_chance"}
+{"t": 177.8, "screen": "second_chance", "tilt": null, "click": "second_chance"}
+{"t": 180.6, "screen": "second_chance", "tilt": null, "click": "second_chance"}
+{"t": 183.4, "screen": "bonus", "tilt": null, "click": "bonus"}
+{"t": 186.3, "screen": "other", "tilt": null}
+{"t": 187.5, "screen": "choose_run", "tilt": null, "click": "choose_run"}
+{"t": 190.3, "screen": "other", "tilt": null}
+{"t": 191.5, "screen": "other", "tilt": null}
+{"t": 192.7, "screen": "other", "tilt": null}
+{"t": 193.9, "screen": "other", "tilt": null}
+{"t": 195.1, "screen": "other", "tilt": null}
+{"t": 196.3, "screen": "other", "tilt": null}
+{"t": 197.5, "screen": "other", "tilt": null}
+{"t": 198.7, "screen": "other", "tilt": null}
+{"t": 199.9, "screen": "other", "tilt": null}
+{"t": 201.1, "screen": "other", "tilt": null}
+{"t": 202.3, "screen": "other", "tilt": null}
+{"t": 203.5, "screen": "other", "tilt": null}
+{"t": 204.7, "screen": "other", "tilt": null}
+{"t": 205.9, "screen": "other", "tilt": null}
+{"t": 207.1, "screen": "other", "tilt": null}
+{"t": 208.4, "screen": "other", "tilt": null}
+{"t": 209.6, "screen": "other", "tilt": null}
+{"t": 210.9, "screen": "other", "tilt": null}
+{"t": 212.1, "screen": "other", "tilt": null}
+{"t": 213.3, "screen": "other", "tilt": null}
+{"t": 214.5, "screen": "other", "tilt": null}
+{"t": 215.7, "screen": "other", "tilt": null}
+{"t": 216.9, "screen": "other", "tilt": null}
+{"t": 218.1, "screen": "other", "tilt": null}
+{"t": 219.4, "screen": "other", "tilt": null}
+{"t": 220.6, "screen": "other", "tilt": null}
+{"t": 221.8, "screen": "other", "tilt": null}
+{"t": 223.0, "screen": "other", "tilt": null}
+{"t": 224.2, "screen": "other", "tilt": null}
+{"t": 225.5, "screen": "other", "tilt": null}
+{"t": 226.7, "screen": "other", "tilt": null}
+{"t": 227.9, "screen": "other", "tilt": null}
+{"t": 229.2, "screen": "other", "tilt": null}
+{"t": 230.4, "screen": "other", "tilt": null}
+{"t": 231.7, "screen": "other", "tilt": null}
+{"t": 233.3, "screen": "other", "tilt": null}
+{"t": 234.6, "screen": "other", "tilt": null}
+{"t": 235.8, "screen": "other", "tilt": null}
+{"t": 237.0, "screen": "other", "tilt": null}
+{"t": 238.2, "screen": "other", "tilt": null}
+{"t": 239.4, "screen": "other", "tilt": null}

@@ -1,16 +1,16 @@
 {
-  "map_sha256": "b2505db4220dc7049dd775f21c785c0ad16e16dce26100b484d249c8bbab6e4a",
+  "map_sha256": "ac49ce982b33466646e46d3c83946e824e0b5a5e4040acff80b0d88ecbaab64c",
   "places": [
     {
       "name": "home",
-      "x": -0.02499999999999991,
-      "y": 0.125,
+      "x": 0.0,
+      "y": 0.0,
       "radius_m": 0.75,
-      "kind": "place",
-      "note": null,
+      "kind": "home",
+      "note": "{\"theta\": 0.0, \"set_by\": \"boot\", \"at\": 1793342456.1660688}",
       "created_at": null,
-      "last_seen": 1790526886.7243767,
-      "visits": 1
+      "last_seen": 1793342456.1661403,
+      "visits": 0
     }
   ]
 }

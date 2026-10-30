@@ -1,0 +1,14 @@
+{"t": 0.7, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 0, "stucks": 0}
+{"t": 3.2, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 16, "stucks": 0, "last": {"tilt": 11, "keys": "right"}}
+{"t": 5.2, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 32, "stucks": 0, "last": {"tilt": -3, "keys": "right"}}
+{"t": 9.2, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 64, "stucks": 0, "last": {"tilt": 9, "keys": "right"}}
+{"t": 11.7, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 82, "stucks": 0, "last": {"tilt": -93, "keys": "right"}}
+{"t": 14.0, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 101, "stucks": 0, "last": {"tilt": 119, "keys": "left"}}
+{"t": 16.0, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 117, "stucks": 0, "last": {"tilt": 127, "keys": "left"}}
+{"t": 21.3, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 159, "stucks": 0, "last": {"tilt": -166, "keys": "right"}}
+{"t": 23.8, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 178, "stucks": 0, "last": {"tilt": -163, "keys": "right"}}
+{"t": 25.8, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 194, "stucks": 0, "last": {"tilt": -163, "keys": "right"}}
+{"t": 27.9, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 211, "stucks": 0, "last": {"tilt": -163, "keys": "right"}}
+{"t": 30.6, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 232, "stucks": 0, "last": {"tilt": -163, "keys": "right"}}
+{"t": 32.9, "why": "", "ok": true, "running": true, "mode": "balance", "ticks": 251, "stucks": 0, "last": {"tilt": -163, "keys": "right"}}
+{"t": 47.1, "why": "TimeoutError"}

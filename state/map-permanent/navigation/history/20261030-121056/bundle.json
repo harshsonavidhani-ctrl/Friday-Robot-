@@ -1,0 +1,22 @@
+{
+  "saved_at": "2026-10-20T21:15:48+0530",
+  "at": 1792511148.9058197,
+  "reason": "the map grew by exploring: 0.0 -> 11.3 m\u00b2",
+  "map_file": "/home/harsh/friday/state/map.npz",
+  "map_sha256": "b2505db4220dc7049dd775f21c785c0ad16e16dce26100b484d249c8bbab6e4a",
+  "places_key": "02fdcec87aa84e0fc01accb2e296a647e7626f5d9925e615b34eba012b1580f7",
+  "places": [
+    "home"
+  ],
+  "trips_logged": 66,
+  "files": [
+    "map.npz",
+    "map_session.json",
+    "nav_early_return.json",
+    "nav_log.jsonl",
+    "nav_mode.json",
+    "places.json"
+  ],
+  "history": 10,
+  "archived_previous": null
+}

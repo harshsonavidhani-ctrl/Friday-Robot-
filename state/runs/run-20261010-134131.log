@@ -1,0 +1,95 @@
+13:41:33 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+13:41:33 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+13:41:33 INFO    friday.localnav: LiDAR chassis self-mask: 71-79, 88-100, 221-237, 319-334 (raw bearings, pre-offset); mounting offset -51.8 deg
+13:41:33 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+13:41:33 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+13:41:34 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+13:41:34 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+13:41:34 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+13:41:34 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+13:41:36 INFO    pi_deploy: Motors: FRIDAY-MOTORS 1 on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+13:41:36 INFO    pi_deploy: Firmware watchdog armed at 500 ms (control period 100 ms)
+13:41:36 WARNING pi_deploy: Stiction floor 80 => slowest achievable wheel speed ~0.15 m/s (policy range is -0.15..0.50 m/s).
+13:41:36 WARNING pi_deploy: MOTORS ARE LIVE (max_duty=0.85). Wheels can turn.
+13:41:36 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+13:41:36 INFO    pi_deploy: Exploration map ignores 14 blind beam(s) (chassis): [np.int32(3), np.int32(4), np.int32(5), np.int32(7), np.int32(8), np.int32(9), np.int32(33), np.int32(34), np.int32(35), np.int32(36), np.int32(53), np.int32(54), np.int32(55), np.int32(56)]
+13:41:36 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+13:41:36 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port, --motor, --motor-start-debounce, --motor-steady-pivots. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+13:41:36 INFO    pi_deploy: Reflex thread running at 30 Hz
+13:41:36 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
+13:41:55 INFO    friday.vision: Object detection ON: ssd_mobilenet_v1_10.onnx at 320x320, ~1.0 Hz on 2 threads
+13:41:55 WARNING friday.tts: could not set the pipewire sink volume: Command '['wpctl', 'set-volume', '@DEFAULT_AUDIO_SINK@', '0.95']' timed out after 5 seconds
+13:41:55 INFO    friday.tts: output volume: Speaker 85%
+13:41:55 INFO    friday.tts: loading Piper voice en_US-hfc_female-medium.onnx (takes ~10s)
+13:42:01 INFO    friday.tts: Piper voice ready
+13:42:01 INFO    pi_deploy: World map restored from rl_map.npz: 97.8 m^2 known, 2511 sweeps, 4.4 m^2 previously driven
+13:42:05 INFO    pi_deploy: Relocalisation: score 0.178 (min 0.15), sharpness 4.12 (min 1.40), moved 0.02 m / 0 deg from the saved pose -- ACCEPTED
+13:42:05 INFO    pi_deploy: Frontier planner running every 2.0 s (heading bias only, capped at 55% of omega_max)
+13:42:05 INFO    pi_deploy: Way back ON: the start is tracked from the first sweep; when the time is up she drives back to it (within 0.25 m, up to 600 s).
+13:42:05 INFO    pi_deploy: Control loop starting at 10 Hz. Ctrl+C to stop.
+13:42:06 INFO    pi_deploy: t=    5 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.20,+0.32) -> out(+0.20,+0.32) | navigator    | 84.3 ms
+13:42:06 INFO    way_back: tracker: start in the run frame moved 0.00 m / +0 deg (dead reckoning vs the start's view); here (0.00, 0.00) +0 deg; 1/1 matched since the last line; matched; fold 951 ms
+13:42:06 INFO    pi_deploy: t=   10 | lidar 0.30 | tof 0.12 | vis 0.00 | pol(+0.17,-0.38) -> out(+0.00,+0.00) | REFLEX_STOP  | 105.9 ms
+13:42:07 INFO    pi_deploy: UNSTICK unstuck_undo: I'm boxed in. Undoing my last move. ({'state': 'undoing', 'tries': 1, 'avoid_spots': 0, 'locks': 1, 'undos': 1, 'undo_turns': 1, 'undo_drives': 0, 'undo_freed': 0, 'undo_worse': 0, 'undo_rear_stop': 0, 'no_move_to_undo': 0, 'asked': 0, 'helped': 0})
+13:42:07 INFO    pi_deploy: t=   15 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.26,+0.90) -> out(+0.00,+0.17) | undo         | 149.8 ms
+13:42:08 INFO    pi_deploy: t=   20 | lidar 0.31 | tof 0.12 | vis 0.00 | pol(+0.26,+0.89) -> out(+0.00,+0.00) | REFLEX_STOP  | 87.0 ms
+13:42:09 INFO    pi_deploy: UNSTICK unstuck_retry: I'm boxed in. Trying another way. ({'state': 'resting', 'tries': 1, 'avoid_spots': 1, 'locks': 2, 'undos': 1, 'undo_turns': 1, 'undo_drives': 0, 'undo_freed': 0, 'undo_worse': 0, 'undo_rear_stop': 0, 'no_move_to_undo': 1, 'asked': 0, 'helped': 0, 'rests': 1})
+13:42:09 INFO    pi_deploy: UNSTICK: avoiding 1 stuck spot(s) -- 13 frontier keys blacklisted
+13:42:09 INFO    pi_deploy: t=   25 | lidar 0.29 | tof 0.12 | vis 0.00 | pol(+0.17,+0.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 13.7 ms
+13:42:09 INFO    pi_deploy: t=   30 | lidar 0.29 | tof 0.15 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+1.35) | REFLEX_STOP  | 11.6 ms
+13:42:10 INFO    pi_deploy: t=   35 | lidar 0.29 | tof 0.12 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 10.5 ms
+13:42:10 INFO    pi_deploy: t=   40 | lidar 0.29 | tof 0.12 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 8.4 ms
+13:42:11 INFO    pi_deploy: t=   45 | lidar 0.29 | tof 0.12 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 13.3 ms
+13:42:11 INFO    way_back: tracker: start in the run frame moved 0.04 m / -1 deg (dead reckoning vs the start's view); here (0.04, -0.00) +17 deg; 17/17 matched since the last line; matched; fold 14 ms
+13:42:11 INFO    pi_deploy: t=   50 | lidar 0.29 | tof 0.12 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 12.9 ms
+13:42:12 INFO    pi_deploy: t=   55 | lidar 0.29 | tof 0.12 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 15.0 ms
+13:42:12 INFO    pi_deploy: t=   60 | lidar 0.28 | tof 0.12 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 14.8 ms
+13:42:13 INFO    pi_deploy: t=   65 | lidar 0.29 | tof 0.15 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+1.35) | REFLEX_STOP  | 13.4 ms
+13:42:13 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+13:42:13 INFO    pi_deploy: t=   70 | lidar 0.29 | tof 0.12 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 21.1 ms
+13:42:14 INFO    pi_deploy: t=   75 | lidar 0.28 | tof 0.12 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+0.00) | REFLEX_STOP  | 61.0 ms
+13:42:14 INFO    pi_deploy: t=   80 | lidar 0.28 | tof 0.15 | vis 0.00 | pol(+0.17,+1.35) -> out(+0.00,+1.35) | REFLEX_STOP  | 37.8 ms
+Traceback (most recent call last):
+  File "/home/harsh/friday/rl/way_back.py", line 897, in <module>
+    sys.exit(_serve(float(sys.argv[2])))
+             ~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/harsh/friday/rl/way_back.py", line 672, in _serve
+    job = pickle.load(inp)
+KeyboardInterrupt
+13:42:14 WARNING pi_deploy: Interrupted -- stopping motors.
+13:42:16 INFO    pi_deploy: Way back: {'phase': 'exploring', 'why': '', 'outcome': '', 'distance_m': None, 'tracker': {'updates': 28, 'matched': 28, 'reason': 'matched', 'fold_ms': 24.8, 'error': 'tracker process: EOFError: Ran out of input', 'home_rl': (14.302796274801771, 10.762532428584107, 2.3374648154665074)}}
+13:42:16 INFO    pi_deploy: Unstick: {'state': 'resting', 'tries': 0, 'avoid_spots': 1, 'locks': 2, 'undos': 1, 'undo_turns': 1, 'undo_drives': 0, 'undo_freed': 0, 'undo_worse': 0, 'undo_rear_stop': 0, 'no_move_to_undo': 2, 'asked': 0, 'helped': 0, 'rests': 2}
+13:42:16 INFO    pi_deploy: Planner: 3 chosen, 0 ARRIVED at, 2 revealed without arriving, 0 abandoned, 4 cycles, 142 frontiers left
+13:42:17 INFO    pi_deploy: World map saved: rl_map.npz  (97.7 m^2 known, 4.4 m^2 driven, 2.6 m^2 re-entered, revisit ratio 0.59, 39 sweeps, 41 superseded)
+13:42:17 INFO    pi_deploy: Motor noise: {'starts': 3, 'kicks': 3, 'plug_coasts': 0, 'pulse_bursts': 0, 'pivot_holds': 0, 'starts_debounced': 11}
+13:42:17 INFO    pi_deploy: Black box written: /home/harsh/friday/rl/blackbox-20261010-134217.csv (80 rows)
+13:42:17 INFO    pi_deploy: ==========================================================================
+13:42:17 INFO    pi_deploy: ticks=80  explored=15.8 m^2
+13:42:17 INFO    pi_deploy: loop ms over the LAST 80 ticks: mean 51.14 | p95 193.67 | max 254.06 (budget 100) -- the black box has the whole run
+13:42:17 INFO    pi_deploy: budget by stage, mean ms/tick over all 80 ticks: sensors+obs 23.1  pose+telemetry 16.5  navigator 10.8  actuate 5.4  governor+escape+rear 3.9  adapter 2.0  policy 1.8  reflex 0.2  cameras 0.1  planner-bias 0.0
+13:42:17 INFO    pi_deploy:   measured inside tick(): 63.6 ms/tick; wall clock per tick (last 80): 51.1 ms; unaccounted 0.0 ms = time this thread was NOT RUNNING (other threads holding the GIL)
+13:42:17 INFO    pi_deploy: navigator: 4 ticks steered (5%), 76 handed back (0 blocked ahead, 76 no drivable arc); open 0 / corridor 0 / cluttered 4
+13:42:17 INFO    pi_deploy:   near field: 78 ticks with a ToF barrier in the arc search (77 of them already inside the reflex's stop distance -- the other 1 are arcs steered around something the reflex could only have braked for), 77 ticks speed-capped by it
+13:42:17 INFO    pi_deploy:   commitments 2 taken, 0 reversed by a better option, 0 expired on age; arc choice 8.62 ms mean (a HIGH handback count means she is spending her time in places with no drivable way forward)
+13:42:17 INFO    pi_deploy: escape turns: 0  (boxed in: forward blocked and not moving, so she turned toward open space)
+13:42:17 INFO    pi_deploy: reverse lifts: 0  (policy asked for a reverse too gentle to execute; honoured at the executable v_min instead of pivoting)
+13:42:17 INFO    pi_deploy: reverse floor lifts: 0  (a reverse from ANY stage -- escape, recovery, the policy -- that was under the stiction floor and would have executed as a stop, reissued at the slowest speed the wheels can actually turn)
+13:42:17 INFO    pi_deploy: no-reverse turns: 0  (policy asked to back up; this drivetrain cannot, so it turned toward open space instead)
+13:42:17 INFO    pi_deploy: interventions: reflex=76 visual=0 governor=62 rear=0 stale=0 scrape=0 overruns=13
+13:42:17 INFO    pi_deploy: object detection: 0 frames, 0 ms mean, 0 failures; currently sees nothing
+13:42:17 INFO    pi_deploy: cameras: free-space updates=0 failures=0, nudges=0, ticks driven on vision=0
+13:42:17 INFO    pi_deploy: lidar: 0 sub-footprint returns rejected outside the self-mask (a growing count means the chassis wedge moved -- re-measure --lidar-self-mask); 0 ticks braked for closing rate alone
+13:42:17 INFO    pi_deploy:   sensor lidar  updates=179     stale=False
+13:42:17 INFO    pi_deploy:   sensor tof    updates=301     stale=False
+13:42:17 INFO    pi_deploy:   sensor cam_up updates=0       stale=True
+13:42:17 INFO    pi_deploy:   sensor cam_down updates=0       stale=True
+13:42:17 INFO    pi_deploy:   sensor cam_up_rgb updates=0       stale=True
+13:42:17 INFO    pi_deploy:   sensor lidar_fine updates=179     stale=False
+13:42:17 INFO    pi_deploy: ==========================================================================
+13:42:17 INFO    friday.localnav: policy source: LEROBOT_EXPERIMENTAL
+13:42:17 INFO    friday.explore: exploration: phase=navigate explored=15.8 m^2 frontier_cells=374
+13:42:17 INFO    friday.explore: targets: selected=1 reached=0 abandoned=0  blacklisted=0
+13:42:17 INFO    friday.explore: recoveries: 0 attempted, 0 successful
+13:42:17 INFO    friday.localnav: no_target_ticks=0
+13:42:17 INFO    friday.voice: voice: backend=friday spoken=1 dropped(cooldown=151 full=0)
+13:42:17 INFO    friday.localnav: ACT chunks: 11 forward passes over 81 ticks (7.36 ticks/pass)

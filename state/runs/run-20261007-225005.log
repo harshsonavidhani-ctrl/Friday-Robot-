@@ -1,0 +1,46 @@
+22:50:06 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+22:50:06 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+22:50:06 INFO    friday.localnav: LiDAR chassis self-mask: 71-79, 88-99, 221-237, 319-334 (raw bearings, pre-offset); mounting offset -51.8 deg
+22:50:06 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+22:50:06 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+22:50:07 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+22:50:07 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+22:50:07 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+22:50:07 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+Traceback (most recent call last):
+  File "/home/harsh/friday/rl/pi_deploy.py", line 2594, in __init__
+    self._ser = serial.Serial(port, baud, timeout=1.0, write_timeout=0.2)
+                ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/harsh/friday/venv/lib/python3.13/site-packages/serial/serialutil.py", line 244, in __init__
+    self.open()
+    ~~~~~~~~~^^
+  File "/home/harsh/friday/venv/lib/python3.13/site-packages/serial/serialposix.py", line 336, in open
+    self._update_dtr_state()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/harsh/friday/venv/lib/python3.13/site-packages/serial/serialposix.py", line 713, in _update_dtr_state
+    fcntl.ioctl(self.fd, TIOCMBIS, TIOCM_DTR_str)
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 5] Input/output error
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/harsh/friday/rl/friday_localnav_deploy.py", line 544, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/harsh/friday/rl/friday_localnav_deploy.py", line 467, in main
+    motors = build_motors(cfg, args)
+  File "/home/harsh/friday/rl/friday_localnav_deploy.py", line 370, in build_motors
+    return pi_deploy.build_motors(cfg, args)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/harsh/friday/rl/pi_deploy.py", line 5597, in build_motors
+    motors = FridayMotorDriver(
+        cfg, resolve_serial_port("motor", args.motor_port),
+    ...<13 lines>...
+        start_debounce_ticks=args.motor_start_debounce,
+    )
+  File "/home/harsh/friday/rl/pi_deploy.py", line 2596, in __init__
+    raise RuntimeError(
+    ...<8 lines>...
+    ) from exc
+RuntimeError: Could not open the motor controller on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0: [Errno 5] Input/output error. The device node exists but the adapter is not answering, which on this robot means the FTDI has dropped off the USB bus rather than that anything is wrong with this program -- the node outlives the device. Confirm with `lsusb | grep FTDI` (absent = gone) and `dmesg | tail` (errors -32/-71 = the adapter is flapping). It is a cable, connector or hub-power fault: reseat the FTDI's USB connection. The wheels stay stopped until it is back.

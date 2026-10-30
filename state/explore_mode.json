@@ -1,10 +1,10 @@
 {
   "mode": "confident_explore",
-  "state": "failed",
-  "started": "2026-10-04T16:28:51+05:30",
-  "ended": "2026-10-04T16:32:41+05:30",
-  "exit_code": 130,
-  "log": "/home/harsh/friday/rl/../state/runs/run-20261004-162859.log",
+  "state": "completed",
+  "started": "2026-10-31T01:09:09+05:30",
+  "ended": "2026-10-31T01:26:53+05:30",
+  "exit_code": 0,
+  "log": "/home/harsh/friday/rl/../state/runs/run-20261031-010920.log",
   "code_tag": "run-20260904-2118-best",
   "previous_map": "state/rl_map.prev.npz"
 }

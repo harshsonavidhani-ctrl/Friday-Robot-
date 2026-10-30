@@ -1,0 +1,959 @@
+23:58:51 INFO    friday.localnav: POLICY_SOURCE = LEROBOT_EXPERIMENTAL
+23:58:51 INFO    friday.localnav: Config verified against LEROBOT_EXPERIMENTAL training spec.
+23:58:51 INFO    friday.localnav: LiDAR chassis self-mask: 71-79, 88-100, 221-237, 319-334 (raw bearings, pre-offset); mounting offset -51.8 deg
+23:58:51 INFO    pi_deploy: Auto-detected lidar port: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+23:58:51 INFO    pi_deploy: Auto-detected tof port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00
+23:58:52 INFO    friday.localnav: LEROBOT_EXPERIMENTAL policy loaded: friday_localnav_act.onnx (obs=77, chunk=16, exec=8, threads=2)
+23:58:52 INFO    pi_deploy: Auto-detected motor port: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+23:58:52 INFO    pi_deploy: DFRobot 8x8 ToF opened on /dev/serial/by-id/usb-Raspberry_Pi_Pico_E66554A14B3F7423-if00 @ 115200 baud
+23:58:52 INFO    pi_deploy: LD19/STL-19P opened on /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0 @ 230400 baud
+23:58:54 INFO    pi_deploy: Motors: FRIDAY-MOTORS 1 on /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0
+23:58:54 INFO    pi_deploy: Firmware watchdog armed at 500 ms (control period 100 ms)
+23:58:54 WARNING pi_deploy: Stiction floor 80 => slowest achievable wheel speed ~0.15 m/s (policy range is -0.15..0.50 m/s).
+23:58:54 WARNING pi_deploy: MOTORS ARE LIVE (max_duty=0.85). Wheels can turn.
+23:58:54 INFO    friday.voice: Voice feedback: backend=friday enabled=True
+23:58:54 INFO    pi_deploy: Exploration map ignores 14 blind beam(s) (chassis): [np.int32(3), np.int32(4), np.int32(5), np.int32(7), np.int32(8), np.int32(9), np.int32(33), np.int32(34), np.int32(35), np.int32(36), np.int32(53), np.int32(54), np.int32(55), np.int32(56)]
+23:58:54 INFO    pi_deploy: Visual hazard gate: DISABLED (uncalibrated)
+23:58:54 INFO    pi_deploy: Keep distance +0.14 m: plans 1.02 m ahead, forward stops at 0.50 m (LiDAR) / 0.38 m (ToF), slows from 0.74 m
+23:58:54 INFO    friday.localnav: Bumper escape ON: one committed back-then-turn at a ToF block
+23:58:54 WARNING friday.localnav: CHECK THESE FLAGS: --i-am-watching, --lidar-port, --motor, --motor-kick-rest, --motor-plug-guard, --motor-pulse-burst, --motor-turn-kick-duty. You set them away from their defaults, and this entry point never names them (though `args` is also passed to callees whole, which this check cannot see inside). Six flags have already been accepted by the parser and silently ignored here, each costing a hardware run to notice.
+23:58:54 INFO    pi_deploy: Reflex thread running at 30 Hz
+23:58:54 INFO    friday.voice: SAY [boot] Friday is starting autonomous exploration.
+23:59:21 INFO    friday.vision: Object detection ON: ssd_mobilenet_v1_10.onnx at 320x320, ~1.0 Hz on 2 threads
+23:59:21 WARNING friday.tts: could not set the ALSA hardware gain: Command '['amixer', '-c', 'Device', 'sset', 'Speaker', '85%', 'unmute']' returned non-zero exit status 1.
+23:59:21 INFO    friday.tts: output volume: sink 0.95
+23:59:21 INFO    friday.tts: loading Piper voice en_US-hfc_female-medium.onnx (takes ~10s)
+23:59:27 INFO    friday.tts: Piper voice ready
+23:59:27 INFO    pi_deploy: World map restored from rl_map.npz: 149.2 m^2 known, 2777 sweeps, 10.2 m^2 previously driven
+23:59:32 INFO    pi_deploy: Relocalisation: score 0.028 (min 0.15), sharpness 104.08 (min 1.40), moved 0.00 m / 1 deg from the saved pose -- ACCEPTED [accepted on sharpness 104.1 at 0.00 m from the saved pose: with 157 occupied cells the score measures how little is mapped, not how badly this fits]
+23:59:32 INFO    pi_deploy: Frontier planner running every 2.0 s (heading bias only, capped at 55% of omega_max)
+23:59:32 INFO    pi_deploy: Way back ON: the start is tracked from the first sweep; when the time is up she drives back to it (within 0.25 m, up to 600 s).
+23:59:32 INFO    pi_deploy: Control loop starting at 10 Hz. Ctrl+C to stop.
+23:59:33 INFO    pi_deploy: t=    5 | lidar 1.25 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 71.7 ms
+23:59:33 INFO    way_back: tracker: start in the run frame moved 0.00 m / +0 deg (dead reckoning vs the start's view); here (0.00, 0.00) +0 deg; 1/1 matched since the last line; matched; fold 1257 ms
+23:59:34 INFO    pi_deploy: t=   10 | lidar 1.30 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 51.0 ms
+23:59:35 INFO    pi_deploy: t=   15 | lidar 1.31 | tof 4.00 | vis 0.00 | pol(+0.50,+1.28) -> out(+0.12,+1.28) | navigator    | 147.9 ms
+23:59:37 INFO    pi_deploy: t=   20 | lidar 1.26 | tof 4.00 | vis 0.00 | pol(+0.42,+0.48) -> out(+0.12,+0.48) | navigator    | 116.0 ms
+23:59:37 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+23:59:37 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmplji9ly6f.wav']' returned non-zero exit status 1.); trying pipewire's default output
+23:59:37 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+23:59:37 INFO    pi_deploy: t=   25 | lidar 1.30 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 152.9 ms
+23:59:38 INFO    pi_deploy: t=   30 | lidar 1.40 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 13.2 ms
+23:59:38 INFO    pi_deploy: t=   35 | lidar 1.47 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 22.7 ms
+23:59:39 INFO    way_back: tracker: start in the run frame moved 0.60 m / +9 deg (dead reckoning vs the start's view); here (0.59, 0.62) +63 deg; 15/15 matched since the last line; matched; fold 32 ms
+23:59:39 INFO    pi_deploy: t=   40 | lidar 1.53 | tof 0.37 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.09,+0.16) | navigator    | 42.1 ms
+23:59:39 INFO    pi_deploy: t=   45 | lidar 1.58 | tof 4.00 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 52.3 ms
+23:59:40 INFO    pi_deploy: t=   50 | lidar 1.61 | tof 4.00 | vis 0.00 | pol(+0.42,+0.16) -> out(+0.12,+0.16) | navigator    | 18.1 ms
+23:59:41 INFO    pi_deploy: t=   55 | lidar 1.71 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 93.6 ms
+23:59:41 INFO    pi_deploy: t=   60 | lidar 1.84 | tof 4.00 | vis 0.00 | pol(+0.42,-0.16) -> out(+0.12,-0.16) | navigator    | 25.7 ms
+23:59:42 INFO    pi_deploy: t=   65 | lidar 2.04 | tof 4.00 | vis 0.00 | pol(+0.42,-0.16) -> out(+0.12,-0.16) | navigator    | 53.1 ms
+23:59:42 INFO    pi_deploy: t=   70 | lidar 2.17 | tof 4.00 | vis 0.00 | pol(+0.42,-0.16) -> out(+0.12,-0.16) | navigator    | 50.7 ms
+23:59:43 INFO    pi_deploy: t=   75 | lidar 2.30 | tof 4.00 | vis 0.00 | pol(+0.42,-0.16) -> out(+0.12,-0.16) | navigator    | 14.4 ms
+23:59:43 INFO    pi_deploy: t=   80 | lidar 2.44 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 22.4 ms
+23:59:44 INFO    pi_deploy: t=   85 | lidar 2.58 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 22.7 ms
+23:59:44 INFO    way_back: tracker: start in the run frame moved 0.88 m / +11 deg (dead reckoning vs the start's view); here (0.23, 1.59) +69 deg; 18/18 matched since the last line; matched; fold 21 ms
+23:59:44 INFO    pi_deploy: t=   90 | lidar 2.51 | tof 4.00 | vis 0.00 | pol(+0.42,-0.16) -> out(+0.12,-0.16) | navigator    | 28.9 ms
+23:59:45 INFO    pi_deploy: t=   95 | lidar 2.34 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 12.7 ms
+23:59:46 INFO    pi_deploy: t=  100 | lidar 2.21 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 122.3 ms
+23:59:46 INFO    pi_deploy: t=  105 | lidar 2.09 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.12,+0.00) | navigator    | 20.2 ms
+23:59:47 INFO    pi_deploy: t=  110 | lidar 1.96 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.12,+0.00) | navigator    | 36.2 ms
+23:59:47 INFO    pi_deploy: t=  115 | lidar 1.78 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.12,+0.00) | navigator    | 39.2 ms
+23:59:48 INFO    pi_deploy: t=  120 | lidar 1.39 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.12,+0.00) | navigator    | 42.7 ms
+23:59:48 INFO    pi_deploy: t=  125 | lidar 1.06 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.12,+0.00) | navigator    | 18.6 ms
+23:59:49 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (0.19, 2.54) +54 deg; 11/17 matched since the last line; score too low; fold 35 ms
+23:59:49 INFO    pi_deploy: t=  130 | lidar 0.82 | tof 0.57 | vis 0.00 | pol(+0.33,+1.60) -> out(+0.08,+1.60) | navigator    | 21.3 ms
+23:59:49 INFO    pi_deploy: t=  135 | lidar 0.75 | tof 4.00 | vis 0.00 | pol(+0.33,-0.32) -> out(+0.00,+0.00) | governor     | 10.4 ms
+23:59:50 INFO    pi_deploy: t=  140 | lidar 0.74 | tof 0.39 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.02,-1.60) | navigator    | 18.2 ms
+23:59:50 INFO    pi_deploy: t=  145 | lidar 0.64 | tof 4.00 | vis 0.00 | pol(+0.20,-0.16) -> out(+0.00,-0.16) | governor     | 28.9 ms
+23:59:51 INFO    pi_deploy: t=  150 | lidar 0.55 | tof 0.32 | vis 0.00 | pol(+0.09,-0.96) -> out(+0.00,-0.96) | REFLEX_STOP  | 137.8 ms
+23:59:51 WARNING pi_deploy: CAPABILITY MISMATCH: the policy asked to reverse at -0.070 m/s, below the 0.149 m/s stiction floor. Note v_min -0.150 m/s IS executable, so this is a PARTIAL mismatch -- only reverses slower than the floor are being substituted with a pivot (CAPABILITY_ADAPTER in telemetry; raw policy output preserved). The margin is 0.001 m/s, which is thin enough that measurement error in wheel_speed_max could close it. --no-reverse-fallback shows the raw behaviour.
+23:59:52 INFO    pi_deploy: t=  155 | lidar 0.38 | tof 0.25 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 67.2 ms
+23:59:52 INFO    pi_deploy: t=  160 | lidar 0.39 | tof 0.25 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 46.0 ms
+23:59:53 INFO    pi_deploy: t=  165 | lidar 0.37 | tof 0.23 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 46.9 ms
+23:59:53 INFO    pi_deploy: t=  170 | lidar 0.34 | tof 0.14 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 26.3 ms
+23:59:54 INFO    pi_deploy: t=  175 | lidar 0.41 | tof 0.19 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 18.4 ms
+23:59:54 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (0.13, 2.43) +105 deg; 0/17 matched since the last line; score too low; fold 56 ms
+23:59:54 INFO    pi_deploy: t=  180 | lidar 0.23 | tof 0.23 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,-0.96) | REFLEX_STOP  | 66.5 ms
+23:59:55 INFO    pi_deploy: t=  185 | lidar 0.25 | tof 0.25 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,-0.96) | REFLEX_STOP  | 111.4 ms
+23:59:55 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.4 metres ahead. I am changing my route.
+23:59:55 INFO    pi_deploy: t=  190 | lidar 0.45 | tof 0.23 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.00) | reverse_refused | 163.4 ms
+23:59:56 INFO    pi_deploy: t=  195 | lidar 0.22 | tof 0.19 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 21.9 ms
+23:59:56 INFO    pi_deploy: t=  200 | lidar 0.29 | tof 0.09 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,+0.00) | REFLEX_STOP  | 62.1 ms
+23:59:57 INFO    pi_deploy: t=  205 | lidar 0.29 | tof 0.09 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 151.3 ms
+23:59:58 INFO    pi_deploy: t=  210 | lidar 0.44 | tof 0.23 | vis 0.00 | pol(-0.15,-0.97) -> out(+0.00,-1.60) | escape       | 37.1 ms
+23:59:58 INFO    pi_deploy: t=  215 | lidar 0.39 | tof 0.14 | vis 0.00 | pol(+0.50,+0.08) -> out(+0.00,+1.60) | escape       | 56.0 ms
+23:59:59 INFO    pi_deploy: t=  220 | lidar 0.29 | tof 0.06 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 33.2 ms
+23:59:59 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (0.36, 2.09) +113 deg; 0/12 matched since the last line; score too low; fold 321 ms
+23:59:59 INFO    pi_deploy: t=  225 | lidar 0.30 | tof 0.05 | vis 0.00 | pol(+0.09,-0.40) -> out(-0.15,+0.00) | escape       | 111.9 ms
+00:00:00 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:00 INFO    pi_deploy: t=  230 | lidar 0.34 | tof 0.06 | vis 0.00 | pol(+0.09,-0.40) -> out(-0.15,+0.00) | escape       | 118.5 ms
+00:00:00 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpvzgctqc4.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:00:00 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:01 INFO    pi_deploy: t=  235 | lidar 0.35 | tof 0.06 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 62.0 ms
+00:00:01 INFO    pi_deploy: t=  240 | lidar 0.26 | tof 0.03 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 41.1 ms
+00:00:02 INFO    pi_deploy: GYRO: a turn was commanded (-2.02 rad/s) but she is not turning (-0.01 rad/s) -- stalled turn #1
+00:00:02 INFO    pi_deploy: t=  245 | lidar 0.28 | tof 0.03 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 12.4 ms
+00:00:02 INFO    pi_deploy: t=  250 | lidar 0.24 | tof 0.03 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 26.7 ms
+00:00:03 INFO    pi_deploy: t=  255 | lidar 0.25 | tof 0.02 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 12.4 ms
+00:00:03 INFO    pi_deploy: t=  260 | lidar 0.34 | tof 0.03 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,+0.00) | REFLEX_STOP  | 13.1 ms
+00:00:04 INFO    pi_deploy: t=  265 | lidar 0.34 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,-0.96) | reverse_lifted | 69.8 ms
+00:00:04 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:04 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpdi7vwbhs.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:00:04 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:04 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (0.63, 1.93) +178 deg; 0/14 matched since the last line; score too low; fold 54 ms
+00:00:05 INFO    pi_deploy: t=  270 | lidar 0.34 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.96) | reverse_refused | 60.7 ms
+00:00:05 INFO    pi_deploy: t=  275 | lidar 0.31 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.96) | reverse_refused | 17.0 ms
+00:00:05 INFO    pi_deploy: t=  280 | lidar 0.26 | tof 0.17 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,+0.00) | pivot_closing | 7.9 ms
+00:00:06 INFO    pi_deploy: t=  285 | lidar 0.34 | tof 0.23 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 6.7 ms
+00:00:06 INFO    pi_deploy: t=  290 | lidar 0.36 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 7.4 ms
+00:00:07 INFO    pi_deploy: t=  295 | lidar 0.31 | tof 0.20 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 56.1 ms
+00:00:08 INFO    pi_deploy: t=  300 | lidar 0.29 | tof 0.14 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,-0.96) | REFLEX_STOP  | 54.6 ms
+00:00:08 INFO    pi_deploy: t=  305 | lidar 0.33 | tof 0.19 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 52.2 ms
+00:00:08 INFO    pi_deploy: t=  310 | lidar 0.31 | tof 0.20 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.00) | reverse_refused | 53.9 ms
+00:00:09 INFO    pi_deploy: t=  315 | lidar 0.26 | tof 0.12 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.00) | reverse_refused | 28.5 ms
+00:00:09 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (1.06, 1.84) +161 deg; 0/18 matched since the last line; score too low; fold 90 ms
+00:00:09 INFO    pi_deploy: t=  320 | lidar 0.28 | tof 0.10 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,+0.00) | REFLEX_STOP  | 13.1 ms
+00:00:10 INFO    pi_deploy: t=  325 | lidar 0.29 | tof 0.15 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 10.2 ms
+00:00:11 INFO    pi_deploy: t=  330 | lidar 0.28 | tof 0.18 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 11.0 ms
+00:00:11 INFO    pi_deploy: t=  335 | lidar 0.29 | tof 0.11 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 63.6 ms
+00:00:12 INFO    pi_deploy: t=  340 | lidar 0.28 | tof 0.13 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,-0.96) | REFLEX_STOP  | 38.9 ms
+00:00:12 INFO    pi_deploy: t=  345 | lidar 0.27 | tof 0.20 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 25.5 ms
+00:00:13 INFO    pi_deploy: t=  350 | lidar 0.28 | tof 0.14 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 36.1 ms
+00:00:13 INFO    pi_deploy: t=  355 | lidar 0.33 | tof 0.19 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 20.8 ms
+00:00:14 INFO    pi_deploy: t=  360 | lidar 0.33 | tof 4.00 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 7.5 ms
+00:00:14 INFO    pi_deploy: t=  365 | lidar 0.29 | tof 4.00 | vis 0.00 | pol(-0.15,-0.72) -> out(-0.20,-0.01) | planner      | 69.6 ms
+00:00:15 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (1.46, 1.85) -58 deg; 0/18 matched since the last line; score too low; fold 39 ms
+00:00:15 INFO    pi_deploy: t=  370 | lidar 0.29 | tof 4.00 | vis 0.00 | pol(+0.22,+1.60) -> out(+0.00,+1.60) | governor     | 26.0 ms
+00:00:15 INFO    pi_deploy: t=  375 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.22,+1.60) -> out(+0.00,+1.60) | governor     | 20.3 ms
+00:00:16 INFO    pi_deploy: t=  380 | lidar 0.29 | tof 4.00 | vis 0.00 | pol(+0.22,+0.32) -> out(+0.00,+0.32) | governor     | 30.4 ms
+00:00:16 INFO    pi_deploy: t=  385 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.22,+0.32) -> out(+0.00,+0.32) | governor     | 25.6 ms
+00:00:17 INFO    pi_deploy: t=  390 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.37,+0.32) -> out(+0.00,+0.32) | governor     | 17.7 ms
+00:00:17 INFO    pi_deploy: t=  395 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.38,+0.32) -> out(+0.00,+0.32) | governor     | 26.5 ms
+00:00:18 INFO    pi_deploy: t=  400 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.38,+0.32) -> out(+0.12,+0.32) | navigator    | 164.5 ms
+00:00:19 INFO    pi_deploy: t=  405 | lidar 0.29 | tof 4.00 | vis 0.00 | pol(+0.38,+0.32) -> out(+0.12,+0.40) | navigator    | 28.0 ms
+00:00:19 INFO    pi_deploy: t=  410 | lidar 0.29 | tof 4.00 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.12,+0.16) | navigator    | 32.0 ms
+00:00:20 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (1.65, 1.96) +39 deg; 0/17 matched since the last line; score too low; fold 19 ms
+00:00:20 INFO    pi_deploy: t=  415 | lidar 0.36 | tof 4.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.12,+0.56) | navigator    | 34.7 ms
+00:00:20 INFO    pi_deploy: t=  420 | lidar 0.49 | tof 4.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.12,+0.64) | navigator    | 26.7 ms
+00:00:21 INFO    pi_deploy: t=  425 | lidar 0.58 | tof 4.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.12,+0.64) | navigator    | 18.0 ms
+00:00:21 INFO    pi_deploy: t=  430 | lidar 1.26 | tof 4.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.12,+0.64) | navigator    | 28.9 ms
+00:00:22 INFO    pi_deploy: t=  435 | lidar 1.37 | tof 4.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.12,+0.64) | navigator    | 29.5 ms
+00:00:22 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+00:00:22 INFO    pi_deploy: t=  440 | lidar 1.48 | tof 4.00 | vis 0.00 | pol(+0.50,+0.64) -> out(+0.12,+0.64) | navigator    | 43.3 ms
+00:00:23 INFO    pi_deploy: t=  445 | lidar 1.50 | tof 4.00 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.12,+0.48) | navigator    | 123.4 ms
+00:00:24 INFO    pi_deploy: t=  450 | lidar 1.59 | tof 4.00 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.12,+0.48) | navigator    | 65.6 ms
+00:00:25 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:25 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpgdnwrn9g.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:00:25 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:25 INFO    pi_deploy: t=  455 | lidar 1.63 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 112.4 ms
+00:00:25 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (1.94, 2.32) +67 deg; 0/12 matched since the last line; score too low; fold 42 ms
+00:00:26 INFO    pi_deploy: t=  460 | lidar 1.89 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 29.7 ms
+00:00:27 INFO    pi_deploy: t=  465 | lidar 2.04 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 174.1 ms
+00:00:27 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:27 INFO    pi_deploy: t=  470 | lidar 2.28 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.12,+0.00) | navigator    | 179.1 ms
+00:00:27 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpoh8gkxiu.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:00:28 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:28 INFO    pi_deploy: t=  475 | lidar 2.46 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.12,+0.00) | navigator    | 29.0 ms
+00:00:28 INFO    pi_deploy: t=  480 | lidar 2.52 | tof 4.00 | vis 0.00 | pol(+0.50,+0.00) -> out(+0.12,+0.00) | navigator    | 11.4 ms
+00:00:29 INFO    pi_deploy: t=  485 | lidar 2.57 | tof 4.00 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.10,+0.72) | navigator    | 37.4 ms
+00:00:29 INFO    pi_deploy: t=  490 | lidar 2.62 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 17.0 ms
+00:00:30 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.29, 2.76) +50 deg; 0/16 matched since the last line; score too low; fold 29 ms
+00:00:30 INFO    pi_deploy: t=  495 | lidar 2.65 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 44.9 ms
+00:00:30 INFO    pi_deploy: t=  500 | lidar 2.68 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 17.0 ms
+00:00:31 INFO    pi_deploy: t=  505 | lidar 2.62 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 30.1 ms
+00:00:32 INFO    pi_deploy: t=  510 | lidar 2.68 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 47.6 ms
+00:00:32 INFO    pi_deploy: t=  515 | lidar 2.76 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 19.8 ms
+00:00:33 INFO    pi_deploy: t=  520 | lidar 2.75 | tof 2.18 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 66.9 ms
+00:00:33 INFO    pi_deploy: t=  525 | lidar 2.61 | tof 0.37 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | REFLEX_STOP  | 8.0 ms
+00:00:34 INFO    pi_deploy: t=  530 | lidar 2.14 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 11.1 ms
+00:00:34 INFO    pi_deploy: t=  535 | lidar 2.05 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 69.5 ms
+00:00:35 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.24, 3.22) +93 deg; 0/17 matched since the last line; score too low; fold 24 ms
+00:00:35 INFO    pi_deploy: t=  540 | lidar 1.86 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 37.1 ms
+00:00:35 INFO    pi_deploy: t=  545 | lidar 1.73 | tof 1.37 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 48.9 ms
+00:00:36 INFO    pi_deploy: t=  550 | lidar 1.61 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 15.9 ms
+00:00:36 INFO    pi_deploy: t=  555 | lidar 1.50 | tof 1.21 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 19.9 ms
+00:00:37 INFO    pi_deploy: t=  560 | lidar 1.40 | tof 1.16 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.12,+0.48) | navigator    | 39.8 ms
+00:00:38 INFO    pi_deploy: t=  565 | lidar 1.31 | tof 1.00 | vis 0.00 | pol(+0.50,+1.60) -> out(+0.12,+1.00) | navigator    | 87.1 ms
+00:00:38 INFO    pi_deploy: t=  570 | lidar 1.25 | tof 0.90 | vis 0.00 | pol(+0.50,+1.60) -> out(+0.00,+1.60) | governor     | 68.8 ms
+00:00:39 INFO    pi_deploy: t=  575 | lidar 1.25 | tof 0.92 | vis 0.00 | pol(+0.50,-1.60) -> out(+0.08,-0.41) | navigator    | 108.7 ms
+00:00:39 INFO    pi_deploy: t=  580 | lidar 1.20 | tof 0.92 | vis 0.00 | pol(+0.50,-1.60) -> out(+0.12,-1.60) | navigator    | 44.0 ms
+00:00:40 INFO    pi_deploy: t=  585 | lidar 1.11 | tof 0.78 | vis 0.00 | pol(+0.50,-1.60) -> out(+0.12,-1.60) | navigator    | 48.4 ms
+00:00:40 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.22, 3.58) +126 deg; 0/16 matched since the last line; score too low; fold 20 ms
+00:00:40 INFO    pi_deploy: t=  590 | lidar 0.94 | tof 0.69 | vis 0.00 | pol(+0.43,-1.60) -> out(+0.12,-1.60) | navigator    | 43.6 ms
+00:00:41 INFO    pi_deploy: t=  595 | lidar 0.79 | tof 0.36 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | REFLEX_STOP  | 27.1 ms
+00:00:41 INFO    pi_deploy: t=  600 | lidar 0.67 | tof 0.44 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 98.1 ms
+00:00:42 INFO    pi_deploy: t=  605 | lidar 0.67 | tof 0.38 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | REFLEX_STOP  | 42.9 ms
+00:00:43 INFO    pi_deploy: t=  610 | lidar 0.62 | tof 0.35 | vis 0.00 | pol(+0.50,-1.01) -> out(-0.15,+0.00) | escape       | 72.2 ms
+00:00:43 INFO    pi_deploy: t=  615 | lidar 0.62 | tof 0.34 | vis 0.00 | pol(+0.50,-0.65) -> out(-0.15,+0.00) | escape       | 31.0 ms
+00:00:44 INFO    pi_deploy: t=  620 | lidar 0.62 | tof 0.34 | vis 0.00 | pol(+0.50,-0.96) -> out(+0.00,-1.60) | escape       | 8.4 ms
+00:00:44 INFO    pi_deploy: t=  625 | lidar 0.56 | tof 0.30 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | escape       | 162.2 ms
+00:00:45 INFO    pi_deploy: t=  630 | lidar 0.22 | tof 0.22 | vis 0.00 | pol(+0.50,-0.58) -> out(+0.00,-1.60) | escape       | 29.3 ms
+00:00:45 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.33, 3.54) +112 deg; 0/17 matched since the last line; score too low; fold 17 ms
+00:00:45 INFO    pi_deploy: t=  635 | lidar 0.28 | tof 0.05 | vis 0.00 | pol(+0.50,-0.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 166.2 ms
+00:00:45 INFO    friday.voice: SAY [reflex] Emergency stop. Something is directly in front of me.
+00:00:46 INFO    pi_deploy: t=  640 | lidar 0.28 | tof 0.05 | vis 0.00 | pol(+0.50,-0.66) -> out(+0.00,+0.00) | REFLEX_STOP  | 54.4 ms
+00:00:47 INFO    pi_deploy: t=  645 | lidar 0.28 | tof 0.05 | vis 0.00 | pol(+0.50,-1.00) -> out(+0.00,-1.60) | escape       | 90.2 ms
+00:00:47 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:47 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpjzhnz_3_.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:00:47 INFO    pi_deploy: t=  650 | lidar 0.27 | tof 0.05 | vis 0.00 | pol(+0.50,-1.22) -> out(+0.00,-1.60) | escape       | 35.0 ms
+00:00:47 INFO    pi_deploy: GYRO: a turn was commanded (-2.02 rad/s) but she is not turning (0.00 rad/s) -- stalled turn #2
+00:00:47 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:48 INFO    pi_deploy: t=  655 | lidar 0.27 | tof 0.05 | vis 0.00 | pol(+0.50,-0.97) -> out(+0.00,-1.60) | escape       | 28.3 ms
+00:00:48 INFO    pi_deploy: t=  660 | lidar 0.27 | tof 0.05 | vis 0.00 | pol(+0.50,-1.00) -> out(+0.00,+0.00) | REFLEX_STOP  | 25.0 ms
+00:00:49 INFO    pi_deploy: UNSTICK: avoiding 1 stuck spot(s) -- 13 frontier keys blacklisted
+00:00:49 INFO    pi_deploy: t=  665 | lidar 0.27 | tof 0.04 | vis 0.00 | pol(+0.50,-1.22) -> out(+0.00,+1.60) | escape       | 149.2 ms
+00:00:49 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:49 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmp8mnxnzyi.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:00:49 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:00:49 INFO    pi_deploy: t=  670 | lidar 0.33 | tof 0.08 | vis 0.00 | pol(+0.50,-0.97) -> out(+0.00,+1.60) | escape       | 37.7 ms
+00:00:50 INFO    pi_deploy: t=  675 | lidar 0.37 | tof 0.12 | vis 0.00 | pol(+0.42,-1.59) -> out(+0.00,+1.60) | escape       | 39.3 ms
+00:00:50 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.33, 3.54) -60 deg; 0/11 matched since the last line; score too low; fold 27 ms
+00:00:51 INFO    pi_deploy: t=  680 | lidar 0.39 | tof 0.29 | vis 0.00 | pol(+0.42,-0.72) -> out(+0.00,-0.72) | REFLEX_STOP  | 14.8 ms
+00:00:51 INFO    pi_deploy: t=  685 | lidar 0.36 | tof 4.00 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+1.59) | governor     | 8.4 ms
+00:00:51 INFO    pi_deploy: t=  690 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | governor     | 17.1 ms
+00:00:52 INFO    pi_deploy: t=  695 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.50,+0.63) -> out(+0.00,+0.63) | governor     | 27.5 ms
+00:00:52 INFO    pi_deploy: t=  700 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.50,-0.07) -> out(+0.00,-0.07) | governor     | 39.5 ms
+00:00:53 INFO    pi_deploy: t=  705 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.00,-0.80) | rear_blocked | 89.3 ms
+00:00:54 INFO    pi_deploy: t=  710 | lidar 0.24 | tof 4.00 | vis 0.00 | pol(+0.50,+0.03) -> out(+0.00,-0.80) | rear_blocked | 43.4 ms
+00:00:54 INFO    pi_deploy: t=  715 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.37,+0.00) -> out(-0.08,-0.80) | recovery     | 74.9 ms
+00:00:55 INFO    pi_deploy: t=  720 | lidar 0.29 | tof 4.00 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.00,+0.16) | governor     | 37.8 ms
+00:00:55 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.33, 3.54) +91 deg; 0/17 matched since the last line; score too low; fold 22 ms
+00:00:55 INFO    pi_deploy: t=  725 | lidar 0.29 | tof 4.00 | vis 0.00 | pol(+0.37,+0.16) -> out(+0.00,+0.16) | governor     | 21.5 ms
+00:00:56 INFO    pi_deploy: t=  730 | lidar 0.27 | tof 4.00 | vis 0.00 | pol(+0.37,+0.16) -> out(+0.00,+0.16) | governor     | 23.3 ms
+00:00:56 INFO    pi_deploy: t=  735 | lidar 0.27 | tof 4.00 | vis 0.00 | pol(+0.37,+0.16) -> out(+0.00,+0.16) | governor     | 20.2 ms
+00:00:57 INFO    pi_deploy: t=  740 | lidar 0.26 | tof 4.00 | vis 0.00 | pol(+0.37,+0.16) -> out(+0.00,+0.16) | governor     | 34.7 ms
+00:00:57 INFO    pi_deploy: t=  745 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.31,+0.00) -> out(+0.12,+0.00) | navigator    | 107.9 ms
+00:00:58 INFO    pi_deploy: t=  750 | lidar 0.23 | tof 4.00 | vis 0.00 | pol(+0.37,+0.16) -> out(+0.00,-0.80) | rear_blocked | 75.5 ms
+00:00:58 INFO    pi_deploy: t=  755 | lidar 0.33 | tof 4.00 | vis 0.00 | pol(+0.37,+0.16) -> out(-0.20,-0.80) | recovery     | 15.2 ms
+00:00:59 INFO    pi_deploy: t=  760 | lidar 0.34 | tof 4.00 | vis 0.00 | pol(+0.37,+0.16) -> out(+0.12,+0.16) | navigator    | 25.9 ms
+00:00:59 INFO    pi_deploy: t=  765 | lidar 0.41 | tof 4.00 | vis 0.00 | pol(+0.37,+0.16) -> out(+0.12,+0.16) | navigator    | 8.6 ms
+00:01:00 INFO    pi_deploy: t=  770 | lidar 0.50 | tof 4.00 | vis 0.00 | pol(+0.31,+0.16) -> out(+0.12,+0.16) | navigator    | 65.5 ms
+00:01:00 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.30, 3.74) +93 deg; 0/18 matched since the last line; score too low; fold 34 ms
+00:01:01 INFO    pi_deploy: t=  775 | lidar 0.59 | tof 4.00 | vis 0.00 | pol(+0.37,+0.00) -> out(+0.12,+0.00) | navigator    | 59.5 ms
+00:01:01 INFO    pi_deploy: t=  780 | lidar 0.65 | tof 4.00 | vis 0.00 | pol(+0.37,+0.00) -> out(+0.12,+0.00) | navigator    | 34.1 ms
+00:01:02 INFO    pi_deploy: t=  785 | lidar 0.76 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 79.9 ms
+00:01:02 INFO    pi_deploy: t=  790 | lidar 0.81 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 26.3 ms
+00:01:03 INFO    pi_deploy: t=  795 | lidar 0.85 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 14.2 ms
+00:01:03 INFO    pi_deploy: t=  800 | lidar 0.85 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 28.7 ms
+00:01:04 INFO    pi_deploy: t=  805 | lidar 0.88 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 12.5 ms
+00:01:04 INFO    pi_deploy: t=  810 | lidar 0.92 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 145.4 ms
+00:01:05 INFO    pi_deploy: t=  815 | lidar 0.98 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 67.4 ms
+00:01:05 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.44, 4.38) +60 deg; 0/18 matched since the last line; score too low; fold 43 ms
+00:01:06 INFO    pi_deploy: t=  820 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 25.3 ms
+00:01:06 INFO    pi_deploy: t=  825 | lidar 1.03 | tof 4.00 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.12,-0.48) | navigator    | 38.5 ms
+00:01:07 INFO    pi_deploy: t=  830 | lidar 1.10 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 46.1 ms
+00:01:07 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.2 metres ahead. I am changing my route.
+00:01:07 INFO    pi_deploy: t=  835 | lidar 1.17 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 35.1 ms
+00:01:08 INFO    pi_deploy: t=  840 | lidar 1.23 | tof 0.41 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.04,-0.74) | navigator    | 40.4 ms
+00:01:08 INFO    pi_deploy: t=  845 | lidar 1.31 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 71.3 ms
+00:01:09 INFO    pi_deploy: t=  850 | lidar 1.33 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 28.0 ms
+00:01:10 INFO    pi_deploy: t=  855 | lidar 1.36 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 79.9 ms
+00:01:10 INFO    pi_deploy: t=  860 | lidar 1.38 | tof 2.23 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 60.8 ms
+00:01:11 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:01:11 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpmcge1j3a.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:01:11 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.32, 4.80) +88 deg; 0/11 matched since the last line; score too low; fold 526 ms
+00:01:11 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:01:11 INFO    pi_deploy: t=  865 | lidar 1.42 | tof 2.09 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 45.0 ms
+00:01:12 INFO    pi_deploy: t=  870 | lidar 1.49 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.37) | navigator    | 46.0 ms
+00:01:12 INFO    pi_deploy: t=  875 | lidar 1.53 | tof 1.80 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 15.1 ms
+00:01:13 INFO    pi_deploy: t=  880 | lidar 1.56 | tof 1.61 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 27.4 ms
+00:01:13 INFO    pi_deploy: t=  885 | lidar 1.60 | tof 1.52 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.40) | navigator    | 83.0 ms
+00:01:14 INFO    pi_deploy: t=  890 | lidar 1.58 | tof 1.36 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 117.3 ms
+00:01:14 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:01:14 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpse4995gb.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:01:14 INFO    pi_deploy: t=  895 | lidar 1.58 | tof 1.15 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 183.0 ms
+00:01:14 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:01:15 INFO    pi_deploy: t=  900 | lidar 1.44 | tof 1.06 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.12,-0.48) | navigator    | 51.3 ms
+00:01:16 INFO    pi_deploy: t=  905 | lidar 1.37 | tof 1.00 | vis 0.00 | pol(+0.50,+1.60) -> out(+0.12,+1.52) | navigator    | 32.9 ms
+00:01:16 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.56, 5.25) +84 deg; 0/16 matched since the last line; score too low; fold 106 ms
+00:01:16 INFO    pi_deploy: t=  910 | lidar 1.38 | tof 1.00 | vis 0.00 | pol(+0.50,-1.60) -> out(+0.12,+0.39) | navigator    | 20.1 ms
+00:01:16 INFO    pi_deploy: t=  915 | lidar 1.34 | tof 0.92 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.1 ms
+00:01:17 INFO    pi_deploy: t=  920 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:18 INFO    pi_deploy: t=  925 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:18 INFO    pi_deploy: t=  930 | lidar 0.22 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 2.8 ms
+00:01:19 INFO    pi_deploy: t=  935 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:19 INFO    pi_deploy: t=  940 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:20 INFO    pi_deploy: t=  945 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 41.9 ms
+00:01:20 INFO    pi_deploy: t=  950 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 6.8 ms
+00:01:21 INFO    pi_deploy: t=  955 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:01:21 INFO    pi_deploy: t=  960 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:22 INFO    pi_deploy: t=  965 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:22 INFO    pi_deploy: t=  970 | lidar 1.33 | tof 0.35 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:01:23 INFO    pi_deploy: t=  975 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 32.6 ms
+00:01:23 INFO    pi_deploy: t=  980 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 9.3 ms
+00:01:24 INFO    pi_deploy: t=  985 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:24 INFO    pi_deploy: t=  990 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:25 INFO    pi_deploy: t=  995 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 2.8 ms
+00:01:25 INFO    pi_deploy: t= 1000 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.9 ms
+00:01:26 INFO    pi_deploy: t= 1005 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 2.4 ms
+00:01:26 INFO    pi_deploy: t= 1010 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 2.5 ms
+00:01:27 INFO    pi_deploy: t= 1015 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:27 INFO    pi_deploy: t= 1020 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:28 INFO    pi_deploy: t= 1025 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.4 ms
+00:01:28 INFO    pi_deploy: t= 1030 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.4 ms
+00:01:29 INFO    pi_deploy: t= 1035 | lidar 0.22 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:29 INFO    pi_deploy: t= 1040 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.3 ms
+00:01:30 INFO    pi_deploy: t= 1045 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.8 ms
+00:01:30 INFO    pi_deploy: t= 1050 | lidar 0.22 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:31 INFO    pi_deploy: t= 1055 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.3 ms
+00:01:31 INFO    pi_deploy: t= 1060 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.8 ms
+00:01:32 INFO    pi_deploy: t= 1065 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:32 INFO    pi_deploy: t= 1070 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 14.6 ms
+00:01:33 INFO    pi_deploy: t= 1075 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:33 INFO    pi_deploy: t= 1080 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.0 ms
+00:01:34 INFO    pi_deploy: t= 1085 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.6 ms
+00:01:34 INFO    pi_deploy: t= 1090 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 2.7 ms
+00:01:35 INFO    pi_deploy: t= 1095 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:35 INFO    pi_deploy: t= 1100 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 10.3 ms
+00:01:36 INFO    pi_deploy: t= 1105 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.8 ms
+00:01:36 INFO    pi_deploy: t= 1110 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.8 ms
+00:01:37 INFO    pi_deploy: t= 1115 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:37 INFO    pi_deploy: t= 1120 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:38 INFO    pi_deploy: t= 1125 | lidar 0.22 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:38 INFO    pi_deploy: t= 1130 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 7.7 ms
+00:01:39 INFO    pi_deploy: t= 1135 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:01:39 INFO    pi_deploy: t= 1140 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:01:40 INFO    pi_deploy: t= 1145 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:40 INFO    pi_deploy: t= 1150 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:01:41 INFO    pi_deploy: t= 1155 | lidar 0.22 | tof 0.92 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:01:41 INFO    pi_deploy: t= 1160 | lidar 1.33 | tof 0.92 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 3.7 ms
+00:01:42 INFO    pi_deploy: t= 1165 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:42 INFO    pi_deploy: t= 1170 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.4 ms
+00:01:43 INFO    pi_deploy: t= 1175 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 3.3 ms
+00:01:43 INFO    pi_deploy: t= 1180 | lidar 1.33 | tof 0.92 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.1 ms
+00:01:44 INFO    pi_deploy: t= 1185 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:44 INFO    pi_deploy: t= 1190 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 4.4 ms
+00:01:45 INFO    pi_deploy: t= 1195 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 3.0 ms
+00:01:45 INFO    pi_deploy: t= 1200 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:46 INFO    pi_deploy: t= 1205 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 4.0 ms
+00:01:46 INFO    pi_deploy: t= 1210 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.9 ms
+00:01:47 INFO    pi_deploy: t= 1215 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.2 ms
+00:01:47 INFO    pi_deploy: t= 1220 | lidar 1.33 | tof 0.91 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:48 INFO    pi_deploy: t= 1225 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 11.1 ms
+00:01:48 INFO    pi_deploy: t= 1230 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 5.9 ms
+00:01:49 INFO    pi_deploy: t= 1235 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 4.5 ms
+00:01:49 INFO    pi_deploy: t= 1240 | lidar 1.33 | tof 0.92 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:50 INFO    pi_deploy: t= 1245 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:50 INFO    pi_deploy: t= 1250 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:01:51 INFO    pi_deploy: t= 1255 | lidar 0.23 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 7.3 ms
+00:01:51 INFO    pi_deploy: t= 1260 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:52 INFO    pi_deploy: t= 1265 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:52 INFO    pi_deploy: t= 1270 | lidar 0.22 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:53 INFO    pi_deploy: t= 1275 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.3 ms
+00:01:53 INFO    pi_deploy: t= 1280 | lidar 1.33 | tof 0.95 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 3.4 ms
+00:01:54 INFO    pi_deploy: t= 1285 | lidar 0.23 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 8.8 ms
+00:01:54 INFO    pi_deploy: t= 1290 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:55 INFO    pi_deploy: t= 1295 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:01:55 INFO    pi_deploy: t= 1300 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:01:56 INFO    pi_deploy: t= 1305 | lidar 1.33 | tof 0.92 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:56 INFO    pi_deploy: t= 1310 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:01:57 INFO    pi_deploy: t= 1315 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.2 ms
+00:01:57 INFO    pi_deploy: t= 1320 | lidar 1.33 | tof 0.93 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.5 ms
+00:01:58 INFO    pi_deploy: t= 1325 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:01:58 INFO    friday.voice: SAY [stuck] I am unable to make progress. Initiating recovery.
+00:01:58 INFO    pi_deploy: t= 1330 | lidar 1.33 | tof 0.94 | vis 0.00 | pol(+0.50,-1.60) -> out(+0.07,-0.37) | navigator    | 75.0 ms
+00:01:59 INFO    pi_deploy: t= 1335 | lidar 1.32 | tof 0.90 | vis 0.00 | pol(+0.42,-1.60) -> out(+0.10,-1.60) | navigator    | 51.1 ms
+00:01:59 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.55, 5.31) +107 deg; 0/2 matched since the last line; score too low; fold 629 ms
+00:01:59 INFO    pi_deploy: t= 1340 | lidar 1.15 | tof 0.86 | vis 0.00 | pol(+0.42,-1.60) -> out(+0.12,-1.60) | navigator    | 53.5 ms
+00:02:00 INFO    pi_deploy: t= 1345 | lidar 1.00 | tof 0.44 | vis 0.00 | pol(+0.50,-1.60) -> out(+0.12,-1.60) | navigator    | 93.3 ms
+00:02:01 INFO    pi_deploy: t= 1350 | lidar 0.71 | tof 0.26 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 81.0 ms
+00:02:02 INFO    pi_deploy: t= 1355 | lidar 0.35 | tof 0.10 | vis 0.00 | pol(+0.34,+1.59) -> out(-0.15,+0.00) | escape       | 16.6 ms
+00:02:02 INFO    pi_deploy: t= 1360 | lidar 0.31 | tof 0.11 | vis 0.00 | pol(+0.34,+1.59) -> out(-0.15,+0.00) | escape       | 57.9 ms
+00:02:03 INFO    pi_deploy: t= 1365 | lidar 0.37 | tof 0.11 | vis 0.00 | pol(-0.15,+1.36) -> out(+0.00,-1.60) | escape       | 9.8 ms
+00:02:03 INFO    pi_deploy: t= 1370 | lidar 0.28 | tof 0.01 | vis 0.00 | pol(-0.15,+0.96) -> out(+0.00,+1.60) | escape       | 41.3 ms
+00:02:04 INFO    pi_deploy: t= 1375 | lidar 0.30 | tof 0.03 | vis 0.00 | pol(-0.15,-0.19) -> out(-0.20,+0.00) | REFLEX_STOP  | 7.2 ms
+00:02:04 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (2.49, 5.03) +94 deg; 0/13 matched since the last line; score too low; fold 16 ms
+00:02:04 INFO    pi_deploy: t= 1380 | lidar 0.36 | tof 0.05 | vis 0.00 | pol(-0.15,-0.20) -> out(-0.15,+0.00) | escape       | 25.0 ms
+00:02:05 INFO    pi_deploy: t= 1385 | lidar 0.42 | tof 0.17 | vis 0.00 | pol(-0.15,-0.21) -> out(+0.00,-1.60) | escape       | 92.2 ms
+00:02:06 INFO    pi_deploy: t= 1390 | lidar 0.33 | tof 0.06 | vis 0.00 | pol(-0.15,-0.09) -> out(+0.00,+1.60) | escape       | 29.8 ms
+00:02:06 INFO    pi_deploy: t= 1395 | lidar 0.31 | tof 0.03 | vis 0.00 | pol(-0.15,-0.31) -> out(-0.20,+0.00) | REFLEX_STOP  | 101.5 ms
+00:02:07 INFO    pi_deploy: t= 1400 | lidar 0.32 | tof 0.10 | vis 0.00 | pol(-0.15,-0.33) -> out(-0.15,+0.00) | escape       | 113.4 ms
+00:02:07 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:02:07 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpris4u244.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:02:07 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:02:08 INFO    pi_deploy: t= 1405 | lidar 0.24 | tof 0.14 | vis 0.00 | pol(-0.15,-0.27) -> out(+0.00,-1.60) | escape       | 59.3 ms
+00:02:08 INFO    pi_deploy: t= 1410 | lidar 0.30 | tof 0.04 | vis 0.00 | pol(-0.15,-0.49) -> out(-0.20,+0.00) | REFLEX_STOP  | 65.6 ms
+00:02:09 INFO    pi_deploy: t= 1415 | lidar 0.33 | tof 0.08 | vis 0.00 | pol(-0.15,-0.58) -> out(-0.20,+0.00) | REFLEX_STOP  | 19.8 ms
+00:02:09 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.65, 4.62) +137 deg; 0/9 matched since the last line; score too low; fold 16 ms
+00:02:09 INFO    pi_deploy: t= 1420 | lidar 0.44 | tof 0.17 | vis 0.00 | pol(-0.15,-0.56) -> out(+0.00,+0.00) | reverse_refused | 9.5 ms
+00:02:10 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:02:10 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmppz4l_rzd.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:02:10 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:02:10 INFO    pi_deploy: t= 1425 | lidar 0.41 | tof 0.18 | vis 0.00 | pol(-0.15,-0.36) -> out(+0.00,-1.60) | escape       | 18.1 ms
+00:02:11 INFO    pi_deploy: t= 1430 | lidar 0.30 | tof 0.04 | vis 0.00 | pol(-0.15,-0.48) -> out(-0.20,+0.00) | REFLEX_STOP  | 128.5 ms
+00:02:11 INFO    pi_deploy: t= 1435 | lidar 0.30 | tof 0.04 | vis 0.00 | pol(-0.15,-0.55) -> out(-0.20,+0.00) | REFLEX_STOP  | 32.9 ms
+00:02:12 INFO    pi_deploy: t= 1440 | lidar 0.31 | tof 0.04 | vis 0.00 | pol(-0.15,-0.55) -> out(+0.00,-1.60) | escape       | 29.0 ms
+00:02:12 INFO    pi_deploy: t= 1445 | lidar 0.29 | tof 0.01 | vis 0.00 | pol(-0.15,-0.46) -> out(+0.00,-1.60) | escape       | 5.4 ms
+00:02:13 INFO    pi_deploy: GYRO: a turn was commanded (-2.02 rad/s) but she is not turning (-0.01 rad/s) -- stalled turn #3
+00:02:13 INFO    pi_deploy: t= 1450 | lidar 0.29 | tof 0.01 | vis 0.00 | pol(-0.15,-0.46) -> out(+0.00,-1.60) | escape       | 7.5 ms
+00:02:13 INFO    pi_deploy: t= 1455 | lidar 0.29 | tof 0.01 | vis 0.00 | pol(-0.15,-0.46) -> out(-0.20,+0.00) | REFLEX_STOP  | 8.7 ms
+00:02:14 INFO    pi_deploy: t= 1460 | lidar 0.31 | tof 0.05 | vis 0.00 | pol(-0.15,-0.47) -> out(-0.15,+0.00) | escape       | 36.3 ms
+00:02:14 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.93, 4.31) +132 deg; 0/18 matched since the last line; score too low; fold 76 ms
+00:02:15 INFO    pi_deploy: t= 1465 | lidar 0.36 | tof 0.10 | vis 0.00 | pol(-0.15,-0.47) -> out(+0.00,+1.60) | escape       | 140.7 ms
+00:02:15 INFO    pi_deploy: t= 1470 | lidar 0.32 | tof 0.14 | vis 0.00 | pol(-0.15,-0.72) -> out(+0.00,+1.60) | escape       | 50.5 ms
+00:02:16 INFO    pi_deploy: t= 1475 | lidar 0.37 | tof 0.16 | vis 0.00 | pol(-0.15,-0.80) -> out(+0.00,+1.60) | escape       | 57.7 ms
+00:02:16 INFO    pi_deploy: t= 1480 | lidar 0.31 | tof 0.24 | vis 0.00 | pol(-0.15,-0.72) -> out(-0.20,-0.72) | REFLEX_STOP  | 10.5 ms
+00:02:17 INFO    pi_deploy: t= 1485 | lidar 0.32 | tof 0.48 | vis 0.00 | pol(-0.15,+1.60) -> out(-0.20,+0.59) | ok           | 35.4 ms
+00:02:17 INFO    pi_deploy: t= 1490 | lidar 0.31 | tof 0.36 | vis 0.00 | pol(+0.01,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 17.4 ms
+00:02:18 INFO    pi_deploy: t= 1495 | lidar 0.30 | tof 4.00 | vis 0.00 | pol(+0.50,+1.60) -> out(+0.00,+1.60) | governor     | 25.4 ms
+00:02:18 INFO    pi_deploy: t= 1500 | lidar 0.25 | tof 4.00 | vis 0.00 | pol(+0.32,+0.32) -> out(+0.00,+0.32) | governor     | 93.6 ms
+00:02:19 INFO    pi_deploy: t= 1505 | lidar 0.25 | tof 4.00 | vis 0.00 | pol(+0.32,+0.32) -> out(+0.00,+0.32) | governor     | 84.7 ms
+00:02:19 INFO    pi_deploy: t= 1510 | lidar 0.25 | tof 4.00 | vis 0.00 | pol(+0.32,+0.32) -> out(+0.00,+0.32) | governor     | 80.4 ms
+00:02:20 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.95, 4.50) +8 deg; 0/17 matched since the last line; score too low; fold 138 ms
+00:02:20 INFO    pi_deploy: t= 1515 | lidar 0.25 | tof 4.00 | vis 0.00 | pol(+0.32,+0.32) -> out(+0.00,+0.32) | governor     | 28.4 ms
+00:02:20 INFO    pi_deploy: t= 1520 | lidar 0.25 | tof 4.00 | vis 0.00 | pol(+0.32,+0.32) -> out(+0.00,+0.32) | governor     | 32.9 ms
+00:02:21 INFO    pi_deploy: t= 1525 | lidar 0.25 | tof 4.00 | vis 0.00 | pol(+0.32,+0.32) -> out(+0.00,+0.32) | governor     | 29.6 ms
+00:02:21 INFO    pi_deploy: t= 1530 | lidar 0.24 | tof 4.00 | vis 0.00 | pol(+0.32,+0.16) -> out(+0.00,+0.16) | governor     | 9.0 ms
+00:02:22 INFO    pi_deploy: t= 1535 | lidar 0.24 | tof 0.38 | vis 0.00 | pol(+0.50,+0.89) -> out(+0.00,+1.60) | recovery     | 36.9 ms
+00:02:23 INFO    pi_deploy: t= 1540 | lidar 0.24 | tof 0.42 | vis 0.00 | pol(+0.38,+0.16) -> out(+0.00,+1.60) | recovery     | 67.0 ms
+00:02:23 INFO    pi_deploy: t= 1545 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.50,-0.80) -> out(+0.12,-0.00) | navigator    | 73.3 ms
+00:02:24 INFO    pi_deploy: t= 1550 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.38,-0.32) -> out(+0.12,-0.32) | navigator    | 28.9 ms
+00:02:24 INFO    pi_deploy: t= 1555 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.37,-0.32) -> out(+0.12,-0.32) | navigator    | 50.5 ms
+00:02:25 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.81, 4.60) +142 deg; 0/17 matched since the last line; score too low; fold 17 ms
+00:02:25 INFO    pi_deploy: t= 1560 | lidar 0.28 | tof 4.00 | vis 0.00 | pol(+0.38,-0.32) -> out(+0.12,-0.32) | navigator    | 14.8 ms
+00:02:25 INFO    pi_deploy: t= 1565 | lidar 0.33 | tof 4.00 | vis 0.00 | pol(+0.38,-0.32) -> out(+0.12,-0.32) | navigator    | 23.9 ms
+00:02:26 INFO    pi_deploy: t= 1570 | lidar 0.35 | tof 4.00 | vis 0.00 | pol(+0.38,-0.32) -> out(+0.12,-0.32) | navigator    | 19.5 ms
+00:02:26 INFO    pi_deploy: t= 1575 | lidar 0.37 | tof 4.00 | vis 0.00 | pol(+0.38,-0.32) -> out(+0.12,-0.32) | navigator    | 88.8 ms
+00:02:27 INFO    pi_deploy: t= 1580 | lidar 0.37 | tof 0.40 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.02,-1.12) | navigator    | 39.6 ms
+00:02:28 INFO    pi_deploy: t= 1585 | lidar 0.47 | tof 4.00 | vis 0.00 | pol(+0.38,-0.16) -> out(+0.12,-0.16) | navigator    | 28.9 ms
+00:02:28 INFO    pi_deploy: t= 1590 | lidar 0.61 | tof 4.00 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.12,-0.48) | navigator    | 50.7 ms
+00:02:29 INFO    pi_deploy: t= 1595 | lidar 0.73 | tof 4.00 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.12,-0.48) | navigator    | 35.9 ms
+00:02:29 INFO    pi_deploy: t= 1600 | lidar 0.83 | tof 4.00 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.12,-0.48) | navigator    | 15.6 ms
+00:02:30 INFO    pi_deploy: t= 1605 | lidar 0.93 | tof 4.00 | vis 0.00 | pol(+0.50,-0.48) -> out(+0.12,-0.48) | navigator    | 10.3 ms
+00:02:30 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.60, 5.00) +94 deg; 0/18 matched since the last line; score too low; fold 17 ms
+00:02:30 INFO    pi_deploy: t= 1610 | lidar 1.01 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 15.8 ms
+00:02:31 INFO    pi_deploy: t= 1615 | lidar 1.08 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 129.5 ms
+00:02:31 INFO    pi_deploy: t= 1620 | lidar 1.15 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 52.1 ms
+00:02:32 INFO    pi_deploy: t= 1625 | lidar 1.19 | tof 0.44 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 105.0 ms
+00:02:32 INFO    pi_deploy: t= 1630 | lidar 1.23 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 15.1 ms
+00:02:33 INFO    pi_deploy: t= 1635 | lidar 1.30 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 70.7 ms
+00:02:33 INFO    pi_deploy: t= 1640 | lidar 1.38 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 18.5 ms
+00:02:34 INFO    pi_deploy: t= 1645 | lidar 1.46 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 13.4 ms
+00:02:35 INFO    pi_deploy: t= 1650 | lidar 1.48 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 39.3 ms
+00:02:35 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.71, 5.50) +63 deg; 0/18 matched since the last line; score too low; fold 20 ms
+00:02:35 INFO    pi_deploy: t= 1655 | lidar 1.55 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 28.6 ms
+00:02:36 INFO    pi_deploy: t= 1660 | lidar 1.61 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 102.1 ms
+00:02:36 INFO    pi_deploy: t= 1665 | lidar 1.62 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 65.6 ms
+00:02:36 INFO    friday.voice: SAY [coverage] I have now mapped 131 square metres.
+00:02:37 INFO    pi_deploy: t= 1670 | lidar 1.69 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 50.7 ms
+00:02:37 INFO    pi_deploy: t= 1675 | lidar 1.73 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 53.4 ms
+00:02:38 INFO    pi_deploy: t= 1680 | lidar 1.80 | tof 0.36 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 22.7 ms
+00:02:39 INFO    pi_deploy: t= 1685 | lidar 1.85 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.86) | navigator    | 59.3 ms
+00:02:39 INFO    pi_deploy: t= 1690 | lidar 1.88 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 35.0 ms
+00:02:40 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.92, 5.91) +90 deg; 0/11 matched since the last line; score too low; fold 235 ms
+00:02:40 INFO    pi_deploy: t= 1695 | lidar 1.94 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 143.9 ms
+00:02:40 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:02:40 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmp629ggswj.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:02:41 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:02:41 INFO    pi_deploy: t= 1700 | lidar 1.98 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 124.0 ms
+00:02:41 INFO    pi_deploy: t= 1705 | lidar 2.01 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 9.6 ms
+00:02:42 INFO    pi_deploy: t= 1710 | lidar 2.02 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 22.3 ms
+00:02:42 INFO    pi_deploy: t= 1715 | lidar 2.04 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 33.1 ms
+00:02:43 INFO    pi_deploy: t= 1720 | lidar 2.06 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,-0.00) | navigator    | 21.4 ms
+00:02:44 INFO    pi_deploy: t= 1725 | lidar 2.11 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 103.5 ms
+00:02:44 INFO    pi_deploy: t= 1730 | lidar 2.21 | tof 4.00 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.12,+0.32) | navigator    | 39.3 ms
+00:02:45 INFO    pi_deploy: t= 1735 | lidar 2.26 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.34) | navigator    | 28.3 ms
+00:02:45 INFO    pi_deploy: t= 1740 | lidar 2.32 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 24.0 ms
+00:02:45 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.10, 6.51) +79 deg; 0/18 matched since the last line; score too low; fold 20 ms
+00:02:46 INFO    pi_deploy: t= 1745 | lidar 2.36 | tof 0.38 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.01,+1.60) | navigator    | 19.3 ms
+00:02:46 INFO    pi_deploy: t= 1750 | lidar 2.41 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 28.0 ms
+00:02:47 INFO    pi_deploy: t= 1755 | lidar 2.41 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 28.8 ms
+00:02:47 INFO    pi_deploy: t= 1760 | lidar 2.40 | tof 4.00 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 60.5 ms
+00:02:48 INFO    pi_deploy: t= 1765 | lidar 2.38 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 22.5 ms
+00:02:48 INFO    pi_deploy: t= 1770 | lidar 2.37 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 48.6 ms
+00:02:49 INFO    pi_deploy: t= 1775 | lidar 2.27 | tof 1.89 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 17.7 ms
+00:02:49 INFO    pi_deploy: t= 1780 | lidar 2.15 | tof 1.77 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 56.6 ms
+00:02:50 INFO    pi_deploy: t= 1785 | lidar 2.02 | tof 1.58 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 22.4 ms
+00:02:50 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.01, 7.12) +89 deg; 0/17 matched since the last line; score too low; fold 24 ms
+00:02:50 INFO    pi_deploy: t= 1790 | lidar 1.89 | tof 1.45 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 26.9 ms
+00:02:51 INFO    pi_deploy: t= 1795 | lidar 1.77 | tof 4.00 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.08,-1.20) | navigator    | 87.6 ms
+00:02:52 INFO    pi_deploy: t= 1800 | lidar 1.61 | tof 1.65 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.16) | navigator    | 105.2 ms
+00:02:52 INFO    pi_deploy: t= 1805 | lidar 1.22 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.00,+0.16) | governor     | 29.7 ms
+00:02:53 INFO    pi_deploy: t= 1810 | lidar 0.94 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.08,+0.16) | navigator    | 22.9 ms
+00:02:53 INFO    pi_deploy: t= 1815 | lidar 0.96 | tof 2.07 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 26.4 ms
+00:02:54 INFO    pi_deploy: t= 1820 | lidar 1.33 | tof 4.00 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 16.9 ms
+00:02:55 INFO    pi_deploy: t= 1825 | lidar 1.26 | tof 0.39 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.02,+1.60) | navigator    | 18.9 ms
+00:02:55 INFO    pi_deploy: t= 1830 | lidar 1.26 | tof 1.59 | vis 0.00 | pol(+0.50,-0.16) -> out(+0.12,-0.09) | navigator    | 32.0 ms
+00:02:56 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.15, 7.60) +117 deg; 0/17 matched since the last line; score too low; fold 20 ms
+00:02:56 INFO    pi_deploy: t= 1835 | lidar 1.21 | tof 1.39 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 33.2 ms
+00:02:56 INFO    pi_deploy: t= 1840 | lidar 1.16 | tof 1.42 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 36.6 ms
+00:02:57 INFO    pi_deploy: t= 1845 | lidar 1.12 | tof 1.41 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 59.3 ms
+00:02:57 INFO    pi_deploy: t= 1850 | lidar 1.09 | tof 1.39 | vis 0.00 | pol(+0.50,-0.32) -> out(+0.12,-0.32) | navigator    | 41.0 ms
+00:02:58 INFO    pi_deploy: t= 1855 | lidar 1.06 | tof 1.35 | vis 0.00 | pol(+0.50,+0.16) -> out(+0.12,+0.16) | navigator    | 12.5 ms
+00:02:59 INFO    pi_deploy: t= 1860 | lidar 0.94 | tof 1.22 | vis 0.00 | pol(+0.50,+0.32) -> out(+0.08,+0.32) | navigator    | 19.7 ms
+00:02:59 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.2 metres ahead. I am changing my route.
+00:02:59 INFO    pi_deploy: t= 1865 | lidar 0.91 | tof 1.15 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.12,+0.48) | navigator    | 80.6 ms
+00:03:00 INFO    pi_deploy: t= 1870 | lidar 0.87 | tof 1.08 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.12,+0.48) | navigator    | 90.0 ms
+00:03:01 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.03, 7.95) +113 deg; 0/13 matched since the last line; score too low; fold 320 ms
+00:03:01 INFO    pi_deploy: t= 1875 | lidar 0.23 | tof 1.12 | vis 0.00 | pol(+0.50,+0.48) -> out(+0.12,+0.48) | navigator    | 136.3 ms
+00:03:02 ERROR   pi_deploy: Motor write failed: Write timeout
+00:03:03 INFO    pi_deploy: t= 1880 | lidar 0.81 | tof 1.01 | vis 0.00 | pol(+0.50,+1.60) -> out(+0.12,+1.60) | navigator    | 50.6 ms
+00:03:03 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:03 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmprtsl9_0f.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:03:03 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:03 INFO    pi_deploy: t= 1885 | lidar 0.90 | tof 0.44 | vis 0.00 | pol(+0.35,-1.60) -> out(+0.12,-1.60) | navigator    | 73.2 ms
+00:03:04 INFO    pi_deploy: t= 1890 | lidar 0.78 | tof 0.61 | vis 0.00 | pol(+0.32,-1.60) -> out(+0.12,-1.60) | navigator    | 26.2 ms
+00:03:05 INFO    pi_deploy: t= 1895 | lidar 0.56 | tof 0.39 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 27.3 ms
+00:03:05 INFO    pi_deploy: t= 1900 | lidar 0.47 | tof 0.40 | vis 0.00 | pol(+0.15,-1.60) -> out(+0.00,-1.60) | governor     | 25.9 ms
+00:03:06 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (2.95, 8.03) +155 deg; 0/10 matched since the last line; score too low; fold 13 ms
+00:03:06 INFO    pi_deploy: t= 1905 | lidar 0.37 | tof 0.20 | vis 0.00 | pol(+0.50,+0.06) -> out(+0.00,+0.06) | REFLEX_STOP  | 24.3 ms
+00:03:06 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:06 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmp_dhzvfkn.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:03:06 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:07 INFO    pi_deploy: t= 1910 | lidar 0.22 | tof 0.14 | vis 0.00 | pol(+0.17,-0.06) -> out(+0.00,-1.60) | escape       | 27.5 ms
+00:03:07 INFO    pi_deploy: t= 1915 | lidar 0.22 | tof 1.36 | vis 0.00 | pol(+0.17,-0.06) -> out(+0.00,-1.60) | escape       | 67.1 ms
+00:03:07 INFO    pi_deploy: GYRO: a turn was commanded (-2.02 rad/s) but she is not turning (0.00 rad/s) -- stalled turn #4
+00:03:08 INFO    pi_deploy: t= 1920 | lidar 0.22 | tof 1.18 | vis 0.00 | pol(+0.09,-0.07) -> out(+0.00,-1.60) | recovery     | 78.9 ms
+00:03:08 INFO    pi_deploy: t= 1925 | lidar 0.22 | tof 0.24 | vis 0.00 | pol(+0.09,-0.40) -> out(+0.00,-0.40) | REFLEX_STOP  | 16.6 ms
+00:03:09 INFO    pi_deploy: t= 1930 | lidar 0.22 | tof 1.27 | vis 0.00 | pol(+0.09,-0.40) -> out(+0.00,-0.40) | governor     | 14.5 ms
+00:03:09 INFO    pi_deploy: t= 1935 | lidar 0.22 | tof 1.29 | vis 0.00 | pol(+0.09,-0.96) -> out(+0.00,-0.96) | governor     | 12.3 ms
+00:03:10 INFO    pi_deploy: GYRO: a turn was commanded (-2.02 rad/s) but she is not turning (0.00 rad/s) -- stalled turn #5
+00:03:10 INFO    pi_deploy: t= 1940 | lidar 0.22 | tof 1.29 | vis 0.00 | pol(+0.09,-0.96) -> out(+0.00,-0.96) | governor     | 42.7 ms
+00:03:10 INFO    pi_deploy: t= 1945 | lidar 0.22 | tof 1.25 | vis 0.00 | pol(+0.09,-0.97) -> out(+0.00,-0.97) | governor     | 73.1 ms
+00:03:11 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (2.95, 8.03) +144 deg; 0/20 matched since the last line; score too low; fold 2 ms
+00:03:11 INFO    pi_deploy: t= 1950 | lidar 0.22 | tof 1.10 | vis 0.00 | pol(+0.09,-0.97) -> out(+0.00,-0.97) | governor     | 8.9 ms
+00:03:12 INFO    pi_deploy: t= 1955 | lidar 0.25 | tof 0.74 | vis 0.00 | pol(+0.09,-0.96) -> out(+0.00,-0.80) | rear_blocked | 140.8 ms
+00:03:12 INFO    pi_deploy: t= 1960 | lidar 0.27 | tof 0.78 | vis 0.00 | pol(+0.17,-0.32) -> out(+0.00,-0.80) | rear_blocked | 80.8 ms
+00:03:13 INFO    pi_deploy: t= 1965 | lidar 0.32 | tof 0.36 | vis 0.00 | pol(+0.01,-1.56) -> out(+0.00,-1.56) | REFLEX_STOP  | 67.3 ms
+00:03:13 INFO    pi_deploy: t= 1970 | lidar 0.37 | tof 0.47 | vis 0.00 | pol(+0.50,-1.09) -> out(+0.00,+1.60) | escape       | 58.9 ms
+00:03:14 INFO    pi_deploy: t= 1975 | lidar 0.41 | tof 0.25 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+1.60) | escape       | 66.8 ms
+00:03:14 INFO    pi_deploy: t= 1980 | lidar 0.50 | tof 0.36 | vis 0.00 | pol(+0.34,-1.56) -> out(+0.00,-1.56) | REFLEX_STOP  | 25.1 ms
+00:03:15 INFO    pi_deploy: t= 1985 | lidar 0.51 | tof 0.27 | vis 0.00 | pol(+0.26,-1.55) -> out(+0.00,-1.55) | REFLEX_STOP  | 30.1 ms
+00:03:15 INFO    pi_deploy: t= 1990 | lidar 0.23 | tof 0.28 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,-1.58) | REFLEX_STOP  | 44.1 ms
+00:03:16 INFO    pi_deploy: UNSTICK: avoiding 2 stuck spot(s) -- 26 frontier keys blacklisted
+00:03:16 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (2.95, 8.03) +168 deg; 0/19 matched since the last line; score too low; fold 24 ms
+00:03:16 INFO    pi_deploy: t= 1995 | lidar 0.23 | tof 0.32 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.60) | escape       | 33.1 ms
+00:03:17 INFO    pi_deploy: t= 2000 | lidar 0.28 | tof 0.82 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.60) | escape       | 23.9 ms
+00:03:17 INFO    pi_deploy: t= 2005 | lidar 0.29 | tof 0.94 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.80) | REFLEX_STOP  | 58.9 ms
+00:03:18 INFO    pi_deploy: t= 2010 | lidar 0.29 | tof 0.92 | vis 0.00 | pol(+0.01,-0.97) -> out(+0.00,-0.80) | rear_blocked | 20.7 ms
+00:03:18 INFO    pi_deploy: t= 2015 | lidar 0.29 | tof 0.98 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.80) | rear_blocked | 7.3 ms
+00:03:19 INFO    pi_deploy: t= 2020 | lidar 0.28 | tof 0.20 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,-1.58) | REFLEX_STOP  | 60.4 ms
+00:03:19 INFO    pi_deploy: t= 2025 | lidar 0.25 | tof 0.47 | vis 0.00 | pol(+0.01,-1.57) -> out(+0.00,-1.57) | governor     | 8.3 ms
+00:03:20 INFO    pi_deploy: t= 2030 | lidar 0.28 | tof 0.47 | vis 0.00 | pol(+0.15,-0.96) -> out(+0.12,-0.96) | navigator    | 96.1 ms
+00:03:21 INFO    pi_deploy: t= 2035 | lidar 0.33 | tof 0.19 | vis 0.00 | pol(+0.01,-1.34) -> out(+0.00,+0.00) | pivot_closing | 134.6 ms
+00:03:21 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (2.95, 8.03) +64 deg; 0/19 matched since the last line; score too low; fold 3 ms
+00:03:21 INFO    pi_deploy: t= 2040 | lidar 0.37 | tof 0.17 | vis 0.00 | pol(+0.50,-1.22) -> out(+0.00,-1.60) | escape       | 36.8 ms
+00:03:22 INFO    pi_deploy: t= 2045 | lidar 0.45 | tof 0.10 | vis 0.00 | pol(+0.42,-0.76) -> out(+0.00,+0.00) | REFLEX_STOP  | 32.8 ms
+00:03:22 INFO    pi_deploy: t= 2050 | lidar 0.38 | tof 0.10 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 9.4 ms
+00:03:23 INFO    pi_deploy: t= 2055 | lidar 0.41 | tof 0.10 | vis 0.00 | pol(+0.42,-1.04) -> out(+0.00,+1.60) | escape       | 21.4 ms
+00:03:23 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.4 metres ahead. I am changing my route.
+00:03:23 INFO    pi_deploy: t= 2060 | lidar 0.33 | tof 0.10 | vis 0.00 | pol(+0.26,-1.00) -> out(+0.00,+1.60) | escape       | 35.5 ms
+00:03:24 INFO    pi_deploy: t= 2065 | lidar 0.43 | tof 0.24 | vis 0.00 | pol(+0.50,-1.57) -> out(+0.00,+1.60) | escape       | 79.4 ms
+00:03:25 INFO    pi_deploy: t= 2070 | lidar 0.39 | tof 0.55 | vis 0.00 | pol(+0.17,-0.98) -> out(+0.00,-0.98) | governor     | 71.6 ms
+00:03:25 INFO    pi_deploy: t= 2075 | lidar 0.37 | tof 0.15 | vis 0.00 | pol(+0.01,-1.35) -> out(+0.00,-1.35) | REFLEX_STOP  | 102.8 ms
+00:03:27 INFO    pi_deploy: t= 2080 | lidar 0.31 | tof 0.27 | vis 0.00 | pol(+0.01,-1.58) -> out(-0.15,+0.00) | escape       | 40.6 ms
+00:03:27 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (2.86, 8.04) +152 deg; 0/12 matched since the last line; score too low; fold 747 ms
+00:03:27 INFO    pi_deploy: t= 2085 | lidar 0.31 | tof 0.26 | vis 0.00 | pol(+0.01,-1.59) -> out(-0.15,+0.00) | escape       | 37.4 ms
+00:03:27 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:28 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpf4f628g4.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:03:28 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:28 INFO    pi_deploy: t= 2090 | lidar 0.31 | tof 0.18 | vis 0.00 | pol(+0.01,-1.35) -> out(+0.00,+1.60) | escape       | 105.1 ms
+00:03:29 INFO    pi_deploy: t= 2095 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.01,-1.35) -> out(+0.00,+1.60) | escape       | 143.3 ms
+00:03:29 INFO    pi_deploy: t= 2100 | lidar 0.22 | tof 0.19 | vis 0.00 | pol(-0.15,-0.97) -> out(+0.00,+1.60) | escape       | 41.2 ms
+00:03:30 INFO    pi_deploy: t= 2105 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.01,-0.97) -> out(+0.00,-0.97) | REFLEX_STOP  | 14.5 ms
+00:03:31 INFO    pi_deploy: t= 2110 | lidar 0.23 | tof 0.16 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 154.0 ms
+00:03:31 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:31 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpotzj4nl7.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:03:31 INFO    pi_deploy: t= 2115 | lidar 0.23 | tof 0.17 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 21.7 ms
+00:03:31 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:32 INFO    pi_deploy: t= 2120 | lidar 0.23 | tof 0.17 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 10.9 ms
+00:03:32 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.17, 7.94) +156 deg; 0/12 matched since the last line; score too low; fold 26 ms
+00:03:32 INFO    pi_deploy: t= 2125 | lidar 0.24 | tof 0.18 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 15.2 ms
+00:03:33 INFO    pi_deploy: t= 2130 | lidar 0.24 | tof 0.23 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 13.2 ms
+00:03:33 INFO    pi_deploy: t= 2135 | lidar 0.24 | tof 0.17 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.20,-0.96) | REFLEX_STOP  | 11.7 ms
+00:03:34 INFO    pi_deploy: t= 2140 | lidar 0.25 | tof 0.21 | vis 0.00 | pol(-0.15,-0.96) -> out(-0.15,+0.00) | escape       | 78.4 ms
+00:03:34 INFO    pi_deploy: t= 2145 | lidar 0.24 | tof 0.17 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 55.9 ms
+00:03:35 INFO    pi_deploy: t= 2150 | lidar 0.22 | tof 0.18 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 25.6 ms
+00:03:35 INFO    pi_deploy: t= 2155 | lidar 0.22 | tof 0.13 | vis 0.00 | pol(-0.15,-0.02) -> out(-0.20,-0.02) | REFLEX_STOP  | 35.8 ms
+00:03:36 INFO    pi_deploy: t= 2160 | lidar 0.22 | tof 0.16 | vis 0.00 | pol(-0.15,-0.22) -> out(-0.15,+0.00) | escape       | 7.6 ms
+00:03:36 INFO    pi_deploy: t= 2165 | lidar 0.23 | tof 0.19 | vis 0.00 | pol(-0.15,-0.76) -> out(+0.00,+1.60) | escape       | 96.0 ms
+00:03:37 INFO    pi_deploy: t= 2170 | lidar 0.23 | tof 0.33 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 110.2 ms
+00:03:37 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (3.57, 7.78) -114 deg; 0/18 matched since the last line; score too low; fold 34 ms
+00:03:38 INFO    pi_deploy: t= 2175 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-1.60) | escape       | 35.1 ms
+00:03:38 INFO    pi_deploy: t= 2180 | lidar 0.31 | tof 0.25 | vis 0.00 | pol(-0.15,+0.95) -> out(+0.00,-1.60) | escape       | 38.6 ms
+00:03:39 INFO    pi_deploy: t= 2185 | lidar 0.41 | tof 0.29 | vis 0.00 | pol(-0.15,-0.72) -> out(-0.20,-0.72) | REFLEX_STOP  | 7.8 ms
+00:03:39 INFO    pi_deploy: t= 2190 | lidar 0.42 | tof 0.56 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+0.00) | governor     | 36.2 ms
+00:03:40 INFO    pi_deploy: t= 2195 | lidar 0.44 | tof 0.59 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.08,+1.60) | navigator    | 34.0 ms
+00:03:40 INFO    pi_deploy: t= 2200 | lidar 0.40 | tof 0.26 | vis 0.00 | pol(+0.01,-0.76) -> out(+0.00,+1.60) | escape       | 59.2 ms
+00:03:41 INFO    pi_deploy: t= 2205 | lidar 0.38 | tof 0.24 | vis 0.00 | pol(+0.01,-1.19) -> out(+0.00,+1.60) | escape       | 100.8 ms
+00:03:41 INFO    pi_deploy: t= 2210 | lidar 0.38 | tof 0.20 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+1.60) | escape       | 56.7 ms
+00:03:42 INFO    pi_deploy: t= 2215 | lidar 0.44 | tof 0.25 | vis 0.00 | pol(+0.01,-0.97) -> out(+0.00,-0.97) | REFLEX_STOP  | 26.0 ms
+00:03:42 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (3.54, 7.91) +158 deg; 0/18 matched since the last line; score too low; fold 33 ms
+00:03:43 INFO    pi_deploy: t= 2220 | lidar 0.43 | tof 0.18 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-0.96) | reverse_refused | 56.3 ms
+00:03:43 INFO    pi_deploy: UNSTICK: avoiding 3 stuck spot(s) -- 35 frontier keys blacklisted
+00:03:43 INFO    pi_deploy: t= 2225 | lidar 0.49 | tof 0.25 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 26.4 ms
+00:03:44 INFO    pi_deploy: t= 2230 | lidar 0.40 | tof 0.12 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+0.00) | REFLEX_STOP  | 51.2 ms
+00:03:44 INFO    pi_deploy: t= 2235 | lidar 0.36 | tof 0.12 | vis 0.00 | pol(-0.15,+0.08) -> out(-0.20,+0.00) | REFLEX_STOP  | 16.5 ms
+00:03:44 INFO    pi_deploy: t= 2240 | lidar 0.40 | tof 0.10 | vis 0.00 | pol(-0.15,-1.59) -> out(-0.15,+0.00) | escape       | 13.6 ms
+00:03:45 INFO    pi_deploy: t= 2245 | lidar 0.41 | tof 0.10 | vis 0.00 | pol(-0.15,-1.59) -> out(+0.00,-1.60) | escape       | 39.7 ms
+00:03:46 INFO    pi_deploy: t= 2250 | lidar 0.33 | tof 0.11 | vis 0.00 | pol(-0.15,-1.58) -> out(+0.00,-1.60) | escape       | 39.7 ms
+00:03:46 INFO    pi_deploy: t= 2255 | lidar 0.22 | tof 0.02 | vis 0.00 | pol(-0.15,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 29.6 ms
+00:03:47 INFO    pi_deploy: t= 2260 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+0.00) | REFLEX_STOP  | 63.0 ms
+00:03:47 INFO    pi_deploy: t= 2265 | lidar 0.22 | tof 0.02 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.60) | escape       | 10.1 ms
+00:03:48 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (3.56, 7.73) +95 deg; 0/18 matched since the last line; score too low; fold 15 ms
+00:03:48 INFO    pi_deploy: t= 2270 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.60) | escape       | 69.7 ms
+00:03:48 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.2 metres ahead. I am changing my route.
+00:03:48 INFO    pi_deploy: t= 2275 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(-0.15,-0.84) -> out(+0.00,-1.60) | escape       | 54.3 ms
+00:03:49 INFO    pi_deploy: t= 2280 | lidar 0.22 | tof 0.04 | vis 0.00 | pol(-0.15,-0.86) -> out(-0.20,+0.00) | REFLEX_STOP  | 26.5 ms
+00:03:50 INFO    pi_deploy: t= 2285 | lidar 0.22 | tof 0.04 | vis 0.00 | pol(-0.15,-0.88) -> out(-0.15,+0.00) | escape       | 83.1 ms
+00:03:51 INFO    pi_deploy: t= 2290 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(-0.15,-0.88) -> out(+0.00,+1.60) | escape       | 95.1 ms
+00:03:52 INFO    pi_deploy: t= 2295 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+1.60) | escape       | 80.9 ms
+00:03:53 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.44, 7.56) -54 deg; 0/8 matched since the last line; score too low; fold 141 ms
+00:03:53 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:53 INFO    pi_deploy: t= 2300 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,+1.60) | escape       | 67.2 ms
+00:03:53 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpdwo7ubaz.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:03:53 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:54 INFO    pi_deploy: t= 2305 | lidar 0.22 | tof 0.04 | vis 0.00 | pol(-0.15,+0.72) -> out(+0.00,+0.00) | REFLEX_STOP  | 60.3 ms
+00:03:55 INFO    pi_deploy: t= 2310 | lidar 0.22 | tof 0.19 | vis 0.00 | pol(-0.15,+0.57) -> out(+0.00,-1.60) | escape       | 68.8 ms
+00:03:55 INFO    pi_deploy: t= 2315 | lidar 0.22 | tof 0.13 | vis 0.00 | pol(-0.15,+0.61) -> out(+0.00,+0.61) | REFLEX_STOP  | 78.5 ms
+00:03:56 INFO    pi_deploy: t= 2320 | lidar 0.22 | tof 0.36 | vis 0.00 | pol(-0.15,+0.40) -> out(+0.00,+0.40) | governor     | 23.5 ms
+00:03:56 INFO    pi_deploy: t= 2325 | lidar 0.22 | tof 0.92 | vis 0.00 | pol(-0.15,+0.28) -> out(+0.00,+0.28) | governor     | 9.6 ms
+00:03:57 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:57 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpukpqmndb.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:03:57 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:03:57 INFO    pi_deploy: t= 2330 | lidar 0.22 | tof 0.91 | vis 0.00 | pol(-0.15,+0.25) -> out(+0.00,+0.25) | governor     | 36.4 ms
+00:03:57 INFO    pi_deploy: t= 2335 | lidar 0.22 | tof 0.93 | vis 0.00 | pol(-0.15,+0.23) -> out(+0.00,-1.60) | recovery     | 7.7 ms
+00:03:58 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.44, 7.56) +7 deg; 0/17 matched since the last line; score too low; fold 3 ms
+00:03:58 INFO    pi_deploy: t= 2340 | lidar 0.22 | tof 0.32 | vis 0.00 | pol(-0.15,+0.47) -> out(+0.00,-1.60) | recovery     | 79.3 ms
+00:03:59 INFO    pi_deploy: t= 2345 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(-0.15,+0.75) -> out(+0.00,-1.60) | escape       | 112.3 ms
+00:03:59 INFO    pi_deploy: t= 2350 | lidar 0.22 | tof 0.11 | vis 0.00 | pol(-0.15,-0.71) -> out(+0.00,+0.00) | REFLEX_STOP  | 18.8 ms
+00:04:00 INFO    pi_deploy: t= 2355 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.42,-0.73) -> out(+0.00,+0.00) | REFLEX_STOP  | 20.3 ms
+00:04:00 INFO    pi_deploy: t= 2360 | lidar 0.22 | tof 0.08 | vis 0.00 | pol(+0.34,-0.67) -> out(+0.00,-1.60) | escape       | 13.4 ms
+00:04:01 INFO    pi_deploy: t= 2365 | lidar 0.22 | tof 0.08 | vis 0.00 | pol(+0.42,-0.73) -> out(+0.00,+1.60) | escape       | 22.0 ms
+00:04:01 INFO    pi_deploy: t= 2370 | lidar 0.23 | tof 0.12 | vis 0.00 | pol(+0.50,-1.34) -> out(+0.00,+1.60) | escape       | 14.3 ms
+00:04:02 INFO    pi_deploy: t= 2375 | lidar 0.22 | tof 0.74 | vis 0.00 | pol(+0.50,-1.55) -> out(-0.20,-0.80) | recovery     | 29.2 ms
+00:04:02 INFO    pi_deploy: t= 2380 | lidar 0.22 | tof 0.33 | vis 0.00 | pol(+0.42,-1.57) -> out(+0.00,-1.57) | REFLEX_STOP  | 18.1 ms
+00:04:03 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.42, 7.53) +58 deg; 0/18 matched since the last line; score too low; fold 43 ms
+00:04:03 INFO    pi_deploy: t= 2385 | lidar 0.22 | tof 0.43 | vis 0.00 | pol(+0.50,-1.51) -> out(+0.00,-1.51) | governor     | 29.0 ms
+00:04:04 INFO    pi_deploy: t= 2390 | lidar 0.22 | tof 0.09 | vis 0.00 | pol(+0.50,-1.02) -> out(+0.00,+0.00) | REFLEX_STOP  | 55.8 ms
+00:04:04 INFO    pi_deploy: t= 2395 | lidar 0.22 | tof 0.11 | vis 0.00 | pol(+0.34,-1.03) -> out(-0.15,+0.00) | escape       | 21.3 ms
+00:04:05 INFO    pi_deploy: t= 2400 | lidar 0.22 | tof 0.11 | vis 0.00 | pol(+0.42,-1.10) -> out(+0.00,-1.60) | escape       | 10.4 ms
+00:04:05 INFO    pi_deploy: t= 2405 | lidar 0.22 | tof 0.06 | vis 0.00 | pol(+0.34,-0.95) -> out(+0.00,+1.60) | escape       | 9.7 ms
+00:04:06 INFO    pi_deploy: t= 2410 | lidar 0.22 | tof 0.04 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.00,+1.60) | escape       | 6.5 ms
+00:04:06 INFO    pi_deploy: t= 2415 | lidar 0.22 | tof 0.11 | vis 0.00 | pol(+0.34,+1.59) -> out(+0.00,+1.60) | escape       | 57.0 ms
+00:04:07 INFO    pi_deploy: t= 2420 | lidar 0.24 | tof 0.14 | vis 0.00 | pol(+0.34,+1.45) -> out(+0.00,+1.45) | REFLEX_STOP  | 18.6 ms
+00:04:07 INFO    pi_deploy: t= 2425 | lidar 0.25 | tof 0.81 | vis 0.00 | pol(+0.34,+1.09) -> out(+0.00,+1.09) | governor     | 33.3 ms
+00:04:08 INFO    pi_deploy: t= 2430 | lidar 0.23 | tof 0.85 | vis 0.00 | pol(+0.42,+0.72) -> out(+0.00,+0.72) | governor     | 30.6 ms
+00:04:08 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.26, 7.51) -124 deg; 0/17 matched since the last line; score too low; fold 36 ms
+00:04:08 INFO    pi_deploy: t= 2435 | lidar 0.23 | tof 0.91 | vis 0.00 | pol(+0.42,+1.05) -> out(+0.00,+0.00) | recovery     | 22.5 ms
+00:04:09 INFO    pi_deploy: t= 2440 | lidar 0.22 | tof 0.86 | vis 0.00 | pol(+0.50,+0.83) -> out(+0.00,-1.60) | recovery     | 10.1 ms
+00:04:09 INFO    pi_deploy: t= 2445 | lidar 1.09 | tof 0.33 | vis 0.00 | pol(+0.50,-1.53) -> out(+0.00,-1.53) | REFLEX_STOP  | 15.4 ms
+00:04:10 INFO    pi_deploy: t= 2450 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(+0.50,-1.21) -> out(+0.00,-1.21) | REFLEX_STOP  | 64.5 ms
+00:04:10 INFO    pi_deploy: t= 2455 | lidar 0.22 | tof 0.58 | vis 0.00 | pol(+0.50,-0.97) -> out(+0.00,-0.97) | governor     | 34.5 ms
+00:04:11 INFO    pi_deploy: t= 2460 | lidar 0.24 | tof 0.35 | vis 0.00 | pol(+0.26,-0.06) -> out(+0.00,-0.06) | REFLEX_STOP  | 60.8 ms
+00:04:12 INFO    pi_deploy: t= 2465 | lidar 0.23 | tof 0.36 | vis 0.00 | pol(+0.34,+1.57) -> out(+0.00,+1.57) | governor     | 44.4 ms
+00:04:12 INFO    pi_deploy: t= 2470 | lidar 0.23 | tof 0.36 | vis 0.00 | pol(+0.01,+0.79) -> out(+0.00,+0.79) | REFLEX_STOP  | 18.5 ms
+00:04:13 INFO    pi_deploy: t= 2475 | lidar 0.22 | tof 0.67 | vis 0.00 | pol(+0.17,-1.60) -> out(-0.20,-0.72) | recovery     | 38.7 ms
+00:04:13 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.22, 7.54) -49 deg; 0/17 matched since the last line; score too low; fold 17 ms
+00:04:13 INFO    pi_deploy: t= 2480 | lidar 0.26 | tof 0.68 | vis 0.00 | pol(+0.18,-0.48) -> out(+0.12,-0.48) | navigator    | 77.9 ms
+00:04:14 INFO    pi_deploy: t= 2485 | lidar 0.22 | tof 0.64 | vis 0.00 | pol(+0.42,+0.71) -> out(+0.00,+0.71) | governor     | 26.2 ms
+00:04:14 INFO    pi_deploy: t= 2490 | lidar 0.23 | tof 0.62 | vis 0.00 | pol(+0.23,-0.64) -> out(+0.12,+0.32) | navigator    | 20.3 ms
+00:04:15 INFO    friday.voice: SAY [recovery_ok] Recovery successful. Continuing exploration.
+00:04:15 INFO    pi_deploy: t= 2495 | lidar 0.23 | tof 0.66 | vis 0.00 | pol(+0.42,+1.59) -> out(+0.10,+1.52) | tof_slow     | 250.5 ms
+00:04:16 INFO    pi_deploy: t= 2500 | lidar 0.22 | tof 0.24 | vis 0.00 | pol(+0.34,+1.58) -> out(+0.00,+1.58) | governor     | 77.9 ms
+00:04:18 INFO    pi_deploy: t= 2505 | lidar 0.22 | tof 0.09 | vis 0.00 | pol(+0.34,+1.57) -> out(+0.00,-1.60) | escape       | 286.1 ms
+00:04:18 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:04:18 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpen4n2jwg.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:04:18 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.29, 7.47) +158 deg; 0/11 matched since the last line; score too low; fold 8 ms
+00:04:18 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:04:20 INFO    pi_deploy: t= 2510 | lidar 0.23 | tof 0.78 | vis 0.00 | pol(+0.23,+0.80) -> out(+0.00,-1.60) | escape       | 282.3 ms
+00:04:21 INFO    pi_deploy: t= 2515 | lidar 0.22 | tof 0.35 | vis 0.00 | pol(+0.50,+0.53) -> out(+0.00,+0.53) | REFLEX_STOP  | 73.1 ms
+00:04:21 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:04:21 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmp_j_1zp7a.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:04:21 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback, alsa_output.platform-fef05700.hdmi.hdmi-stereo
+00:04:21 INFO    pi_deploy: t= 2520 | lidar 0.27 | tof 0.40 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.00,+1.60) | navigator    | 46.6 ms
+00:04:22 INFO    pi_deploy: t= 2525 | lidar 0.31 | tof 0.23 | vis 0.00 | pol(+0.01,+1.36) -> out(+0.00,+1.36) | REFLEX_STOP  | 40.1 ms
+00:04:22 INFO    pi_deploy: t= 2530 | lidar 0.40 | tof 0.25 | vis 0.00 | pol(+0.01,+1.27) -> out(+0.00,-1.60) | REFLEX_STOP  | 130.3 ms
+00:04:23 INFO    pi_deploy: t= 2535 | lidar 0.33 | tof 0.25 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-1.60) | escape       | 103.8 ms
+00:04:23 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.29, 7.48) +108 deg; 0/16 matched since the last line; score too low; fold 25 ms
+00:04:23 INFO    pi_deploy: t= 2540 | lidar 0.37 | tof 0.39 | vis 0.00 | pol(-0.15,+0.24) -> out(+0.00,-1.60) | escape       | 57.1 ms
+00:04:24 INFO    pi_deploy: t= 2545 | lidar 0.40 | tof 0.30 | vis 0.00 | pol(-0.15,+0.54) -> out(+0.00,-1.60) | escape       | 13.6 ms
+00:04:25 INFO    pi_deploy: t= 2550 | lidar 0.37 | tof 0.28 | vis 0.00 | pol(-0.15,+0.96) -> out(+0.00,+0.96) | reverse_refused | 130.6 ms
+00:04:25 INFO    pi_deploy: t= 2555 | lidar 0.44 | tof 0.22 | vis 0.00 | pol(-0.15,+0.26) -> out(-0.15,+0.00) | escape       | 23.0 ms
+00:04:26 INFO    pi_deploy: t= 2560 | lidar 0.47 | tof 0.21 | vis 0.00 | pol(-0.15,+0.12) -> out(-0.15,+0.00) | escape       | 41.9 ms
+00:04:26 INFO    pi_deploy: t= 2565 | lidar 0.49 | tof 0.21 | vis 0.00 | pol(-0.15,+0.08) -> out(+0.00,+1.60) | escape       | 78.4 ms
+00:04:27 INFO    pi_deploy: t= 2570 | lidar 0.50 | tof 0.52 | vis 0.00 | pol(-0.15,+0.06) -> out(+0.00,+1.60) | escape       | 22.9 ms
+00:04:28 INFO    pi_deploy: t= 2575 | lidar 0.35 | tof 0.36 | vis 0.00 | pol(-0.15,-0.08) -> out(+0.00,-0.08) | reverse_refused | 76.5 ms
+00:04:28 INFO    pi_deploy: t= 2580 | lidar 0.28 | tof 0.20 | vis 0.00 | pol(-0.15,+0.80) -> out(+0.00,+0.80) | REFLEX_STOP  | 60.7 ms
+00:04:28 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.32, 7.34) +43 deg; 0/17 matched since the last line; score too low; fold 3 ms
+00:04:29 INFO    pi_deploy: t= 2585 | lidar 0.26 | tof 0.20 | vis 0.00 | pol(-0.15,+1.59) -> out(+0.00,-1.60) | escape       | 19.0 ms
+00:04:29 INFO    pi_deploy: t= 2590 | lidar 0.41 | tof 0.21 | vis 0.00 | pol(+0.01,+1.59) -> out(+0.00,-1.60) | escape       | 18.1 ms
+00:04:30 INFO    pi_deploy: t= 2595 | lidar 0.51 | tof 0.20 | vis 0.00 | pol(-0.15,+1.59) -> out(+0.00,-1.60) | escape       | 16.5 ms
+00:04:31 INFO    pi_deploy: t= 2600 | lidar 0.22 | tof 0.10 | vis 0.00 | pol(-0.15,+0.71) -> out(+0.00,+0.00) | REFLEX_STOP  | 36.7 ms
+00:04:31 INFO    pi_deploy: t= 2605 | lidar 0.26 | tof 0.06 | vis 0.00 | pol(-0.15,+0.09) -> out(+0.00,+1.60) | escape       | 59.1 ms
+00:04:32 INFO    pi_deploy: t= 2610 | lidar 0.32 | tof 0.07 | vis 0.00 | pol(-0.15,+0.80) -> out(+0.00,+1.60) | escape       | 77.0 ms
+00:04:32 INFO    pi_deploy: t= 2615 | lidar 0.25 | tof 0.18 | vis 0.00 | pol(-0.15,+1.59) -> out(+0.00,+1.60) | escape       | 92.6 ms
+00:04:33 INFO    pi_deploy: t= 2620 | lidar 0.22 | tof 0.21 | vis 0.00 | pol(-0.15,+0.97) -> out(-0.20,+0.97) | REFLEX_STOP  | 102.1 ms
+00:04:33 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.39, 7.33) -140 deg; 0/16 matched since the last line; score too low; fold 16 ms
+00:04:33 INFO    pi_deploy: UNSTICK: avoiding 4 stuck spot(s) -- 40 frontier keys blacklisted
+00:04:33 INFO    pi_deploy: t= 2625 | lidar 0.22 | tof 0.25 | vis 0.00 | pol(-0.15,-0.24) -> out(+0.00,-1.60) | escape       | 19.6 ms
+00:04:34 INFO    pi_deploy: t= 2630 | lidar 0.24 | tof 0.42 | vis 0.00 | pol(+0.50,-1.58) -> out(+0.00,-1.60) | escape       | 14.2 ms
+00:04:35 INFO    pi_deploy: t= 2635 | lidar 0.22 | tof 0.21 | vis 0.00 | pol(+0.34,-1.55) -> out(+0.00,-1.60) | escape       | 27.1 ms
+00:04:35 INFO    pi_deploy: t= 2640 | lidar 0.22 | tof 0.14 | vis 0.00 | pol(+0.26,-1.55) -> out(+0.00,-0.80) | reverse_refused | 181.0 ms
+00:04:36 INFO    pi_deploy: t= 2645 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,+1.60) | escape       | 19.4 ms
+00:04:37 INFO    pi_deploy: t= 2650 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,+1.60) | escape       | 40.0 ms
+00:04:37 INFO    pi_deploy: t= 2655 | lidar 0.22 | tof 0.20 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,+1.60) | escape       | 12.7 ms
+00:04:38 INFO    pi_deploy: t= 2660 | lidar 0.22 | tof 0.82 | vis 0.00 | pol(+0.01,-0.97) -> out(+0.00,-0.97) | governor     | 123.2 ms
+00:04:38 INFO    friday.voice: SAY [obstacle_ahead] I detected an obstacle 0.5 metres ahead. I am changing my route.
+00:04:39 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.39, 7.33) -149 deg; 0/17 matched since the last line; score too low; fold 50 ms
+00:04:39 INFO    pi_deploy: t= 2665 | lidar 0.22 | tof 0.20 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.59) | REFLEX_STOP  | 127.8 ms
+00:04:39 INFO    pi_deploy: t= 2670 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(-0.15,-1.60) -> out(+0.00,+1.60) | escape       | 30.1 ms
+00:04:40 INFO    pi_deploy: t= 2675 | lidar 0.22 | tof 0.14 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+1.60) | escape       | 82.3 ms
+00:04:41 INFO    pi_deploy: t= 2680 | lidar 0.22 | tof 0.21 | vis 0.00 | pol(+0.01,-1.60) -> out(+0.00,+1.60) | escape       | 26.6 ms
+00:04:43 INFO    pi_deploy: t= 2685 | lidar 0.22 | tof 0.61 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,-0.80) | rear_blocked | 44.9 ms
+00:04:44 INFO    way_back: tracker: start in the run frame moved 1.31 m / +11 deg (dead reckoning vs the start's view); here (3.39, 7.33) -112 deg; 0/6 matched since the last line; score too low; fold 110 ms
+00:04:44 INFO    pi_deploy: t= 2690 | lidar 0.25 | tof 0.24 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,-1.60) | escape       | 45.3 ms
+00:04:45 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
+00:04:45 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmp8ruj8z7v.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:04:45 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
+00:04:45 INFO    pi_deploy: t= 2695 | lidar 0.22 | tof 0.09 | vis 0.00 | pol(+0.50,-1.58) -> out(+0.00,+1.60) | escape       | 41.6 ms
+00:04:46 INFO    pi_deploy: t= 2700 | lidar 0.22 | tof 0.08 | vis 0.00 | pol(+0.26,-0.67) -> out(+0.00,+0.00) | REFLEX_STOP  | 18.9 ms
+00:04:46 INFO    pi_deploy: t= 2705 | lidar 0.22 | tof 0.08 | vis 0.00 | pol(+0.26,-0.66) -> out(+0.00,-1.60) | escape       | 35.5 ms
+00:04:47 INFO    pi_deploy: t= 2710 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.01,-0.69) -> out(+0.00,+1.60) | escape       | 15.5 ms
+00:04:47 INFO    pi_deploy: t= 2715 | lidar 0.23 | tof 0.03 | vis 0.00 | pol(+0.01,-0.09) -> out(+0.00,+1.60) | escape       | 18.0 ms
+00:04:48 INFO    pi_deploy: t= 2720 | lidar 0.22 | tof 0.04 | vis 0.00 | pol(+0.01,-1.50) -> out(+0.00,+1.60) | escape       | 11.8 ms
+00:04:49 INFO    pi_deploy: t= 2725 | lidar 0.24 | tof 0.34 | vis 0.00 | pol(+0.01,-1.59) -> out(+0.00,-1.59) | governor     | 60.5 ms
+00:04:49 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
+00:04:49 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpio_impod.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:04:49 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (3.41, 7.33) -37 deg; 0/12 matched since the last line; score too low; fold 3 ms
+00:04:49 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
+00:04:49 INFO    pi_deploy: t= 2730 | lidar 0.22 | tof 0.09 | vis 0.00 | pol(+0.50,-1.40) -> out(+0.00,-1.60) | escape       | 20.9 ms
+00:04:50 INFO    pi_deploy: t= 2735 | lidar 0.23 | tof 0.06 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,-1.60) | escape       | 84.8 ms
+00:04:50 INFO    pi_deploy: t= 2740 | lidar 0.22 | tof 0.04 | vis 0.00 | pol(+0.26,-0.44) -> out(+0.00,+1.60) | escape       | 23.9 ms
+00:04:51 INFO    pi_deploy: t= 2745 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(+0.01,-1.57) -> out(+0.00,+1.60) | escape       | 18.3 ms
+00:04:51 INFO    pi_deploy: t= 2750 | lidar 0.22 | tof 0.63 | vis 0.00 | pol(+0.01,-1.34) -> out(+0.00,-0.80) | rear_blocked | 10.8 ms
+00:04:52 INFO    pi_deploy: t= 2755 | lidar 0.22 | tof 0.63 | vis 0.00 | pol(+0.42,-1.55) -> out(+0.00,-1.55) | governor     | 19.0 ms
+00:04:52 INFO    pi_deploy: t= 2760 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,-1.55) | REFLEX_STOP  | 47.9 ms
+00:04:53 INFO    pi_deploy: t= 2765 | lidar 0.22 | tof 0.07 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,-1.60) | escape       | 20.5 ms
+00:04:53 INFO    pi_deploy: t= 2770 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.50,-1.35) -> out(+0.00,+1.60) | escape       | 34.4 ms
+00:04:54 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (3.41, 7.33) -26 deg; 0/19 matched since the last line; score too low; fold 4 ms
+00:04:54 INFO    pi_deploy: t= 2775 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+1.60) | escape       | 60.7 ms
+00:04:54 INFO    pi_deploy: t= 2780 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.42,-1.56) -> out(+0.00,-1.56) | REFLEX_STOP  | 27.8 ms
+00:04:55 INFO    pi_deploy: t= 2785 | lidar 0.22 | tof 0.29 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,-0.80) | reverse_refused | 11.4 ms
+00:04:56 INFO    pi_deploy: t= 2790 | lidar 0.23 | tof 0.09 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,+1.60) | escape       | 89.9 ms
+00:04:56 INFO    pi_deploy: t= 2795 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(+0.26,-0.97) -> out(+0.00,+0.00) | REFLEX_STOP  | 108.4 ms
+00:04:57 INFO    pi_deploy: t= 2800 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(+0.50,-0.98) -> out(+0.00,-1.60) | escape       | 26.9 ms
+00:04:57 INFO    pi_deploy: t= 2805 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.26,-0.97) -> out(+0.00,-1.60) | escape       | 15.0 ms
+00:04:58 INFO    pi_deploy: t= 2810 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.50,-0.64) -> out(+0.00,-1.60) | escape       | 12.1 ms
+00:04:58 INFO    pi_deploy: t= 2815 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.17,-0.61) -> out(+0.00,+0.00) | REFLEX_STOP  | 8.4 ms
+00:04:59 INFO    pi_deploy: t= 2820 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.01,-1.00) -> out(+0.00,+1.60) | escape       | 10.4 ms
+00:04:59 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (3.41, 7.33) -79 deg; 0/19 matched since the last line; score too low; fold 2 ms
+00:04:59 INFO    pi_deploy: t= 2825 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.01,-1.40) -> out(+0.00,+1.60) | escape       | 24.7 ms
+00:05:00 INFO    pi_deploy: t= 2830 | lidar 0.23 | tof 0.05 | vis 0.00 | pol(+0.50,-1.57) -> out(+0.00,+1.60) | escape       | 50.2 ms
+00:05:01 INFO    pi_deploy: t= 2835 | lidar 0.22 | tof 0.43 | vis 0.00 | pol(+0.42,-1.56) -> out(+0.00,-0.80) | reverse_refused | 33.8 ms
+00:05:01 INFO    pi_deploy: t= 2840 | lidar 0.23 | tof 0.44 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,-0.80) | rear_blocked | 20.7 ms
+00:05:01 INFO    pi_deploy: t= 2845 | lidar 0.22 | tof 0.43 | vis 0.00 | pol(+0.50,-1.56) -> out(+0.00,-0.80) | rear_blocked | 7.1 ms
+00:05:02 INFO    pi_deploy: t= 2850 | lidar 0.22 | tof 0.29 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,-1.60) | escape       | 13.3 ms
+00:05:03 INFO    pi_deploy: t= 2855 | lidar 0.22 | tof 0.26 | vis 0.00 | pol(+0.50,-0.98) -> out(+0.00,-1.60) | escape       | 64.2 ms
+00:05:03 INFO    pi_deploy: t= 2860 | lidar 0.22 | tof 0.10 | vis 0.00 | pol(+0.26,-0.59) -> out(+0.00,+1.60) | escape       | 31.0 ms
+00:05:04 INFO    pi_deploy: t= 2865 | lidar 0.22 | tof 0.29 | vis 0.00 | pol(+0.17,-0.97) -> out(+0.00,+1.60) | escape       | 33.3 ms
+00:05:04 INFO    way_back: tracker: start in the run frame moved 1.32 m / +11 deg (dead reckoning vs the start's view); here (3.41, 7.33) +76 deg; 0/18 matched since the last line; score too low; fold 14 ms
+00:05:04 INFO    pi_deploy: t= 2870 | lidar 0.23 | tof 0.78 | vis 0.00 | pol(+0.50,-1.01) -> out(+0.12,+1.13) | governor     | 45.7 ms
+00:05:05 INFO    pi_deploy: t= 2875 | lidar 0.67 | tof 0.43 | vis 0.00 | pol(+0.15,+1.60) -> out(+0.07,-0.53) | navigator    | 89.0 ms
+00:05:05 INFO    pi_deploy: t= 2880 | lidar 0.61 | tof 0.36 | vis 0.00 | pol(+0.15,+1.60) -> out(-0.15,+0.00) | escape       | 38.4 ms
+00:05:06 INFO    friday.voice: SAY [explored_here] This area has already been explored. Selecting a new direction.
+00:05:06 INFO    pi_deploy: t= 2885 | lidar 0.61 | tof 0.38 | vis 0.00 | pol(+0.15,+1.60) -> out(-0.15,+0.00) | escape       | 80.2 ms
+00:05:07 INFO    pi_deploy: t= 2890 | lidar 0.61 | tof 0.25 | vis 0.00 | pol(+0.50,-1.56) -> out(+0.00,-1.60) | escape       | 29.2 ms
+00:05:07 INFO    pi_deploy: t= 2895 | lidar 0.22 | tof 0.25 | vis 0.00 | pol(+0.50,-1.56) -> out(+0.00,-1.60) | escape       | 81.6 ms
+00:05:08 INFO    pi_deploy: t= 2900 | lidar 0.22 | tof 0.70 | vis 0.00 | pol(+0.50,-1.55) -> out(+0.00,-1.60) | escape       | 265.9 ms
+00:05:09 INFO    pi_deploy: t= 2905 | lidar 0.31 | tof 0.12 | vis 0.00 | pol(+0.50,-1.54) -> out(+0.00,+0.00) | REFLEX_STOP  | 83.8 ms
+00:05:09 INFO    pi_deploy: t= 2910 | lidar 0.30 | tof 0.12 | vis 0.00 | pol(+0.26,-1.56) -> out(+0.00,+0.00) | REFLEX_STOP  | 78.5 ms
+00:05:09 INFO    way_back: tracker: start in the run frame moved 1.29 m / +11 deg (dead reckoning vs the start's view); here (3.45, 7.21) +4 deg; 0/10 matched since the last line; score too low; fold 341 ms
+00:05:09 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
+00:05:09 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmpyu3kfau_.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:05:10 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
+00:05:10 INFO    pi_deploy: t= 2915 | lidar 0.24 | tof 0.11 | vis 0.00 | pol(+0.01,-0.97) -> out(+0.00,-1.60) | escape       | 36.9 ms
+00:05:10 INFO    pi_deploy: t= 2920 | lidar 0.28 | tof 0.03 | vis 0.00 | pol(+0.01,-1.58) -> out(+0.00,+0.00) | REFLEX_STOP  | 98.9 ms
+00:05:11 INFO    pi_deploy: t= 2925 | lidar 0.29 | tof 0.10 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.00) | REFLEX_STOP  | 43.1 ms
+00:05:12 INFO    pi_deploy: t= 2930 | lidar 0.28 | tof 0.11 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,-1.60) | escape       | 7.6 ms
+00:05:12 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
+00:05:12 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmp6nxi1ooh.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:05:12 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
+00:05:12 INFO    pi_deploy: t= 2935 | lidar 0.31 | tof 0.02 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.00) | REFLEX_STOP  | 63.4 ms
+00:05:13 INFO    pi_deploy: t= 2940 | lidar 0.23 | tof 0.03 | vis 0.00 | pol(-0.15,-0.96) -> out(+0.00,+0.00) | REFLEX_STOP  | 17.5 ms
+00:05:13 INFO    pi_deploy: WAY BACK (time): heading to where I started, 7.98 m away by the start tracker ({'updates': 900, 'matched': 45, 'reason': 'score too low', 'fold_ms': 14.2, 'error': '', 'home_rl': (11.79045347902736, 14.442715018742756, -0.4989649981921698)}).
+00:05:13 INFO    pi_deploy: t= 2945 | lidar 0.30 | tof 0.02 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | escape       | 49.2 ms
+00:05:14 INFO    pi_deploy: t= 2950 | lidar 0.31 | tof 0.03 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | escape       | 17.1 ms
+00:05:14 INFO    pi_deploy: t= 2955 | lidar 0.28 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:05:15 INFO    pi_deploy: t= 2960 | lidar 0.28 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:05:16 INFO    pi_deploy: t= 2965 | lidar 0.28 | tof 0.05 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 22.9 ms
+00:05:16 INFO    pi_deploy: t= 2970 | lidar 0.28 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:05:17 INFO    pi_deploy: t= 2975 | lidar 0.23 | tof 0.05 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.9 ms
+00:05:17 INFO    pi_deploy: t= 2980 | lidar 0.28 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:05:17 INFO    pi_deploy: t= 2985 | lidar 0.27 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.8 ms
+00:05:18 INFO    pi_deploy: t= 2990 | lidar 0.27 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:05:18 INFO    pi_deploy: t= 2995 | lidar 0.24 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.0 ms
+00:05:19 INFO    pi_deploy: t= 3000 | lidar 0.23 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:05:20 INFO    pi_deploy: t= 3005 | lidar 0.28 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 3.6 ms
+00:05:20 INFO    pi_deploy: t= 3010 | lidar 0.24 | tof 0.06 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.9 ms
+00:05:21 INFO    pi_deploy: t= 3015 | lidar 0.27 | tof 0.08 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,+1.60) | escape       | 66.2 ms
+00:05:21 INFO    way_back: tracker: start in the run frame moved 1.29 m / +11 deg (dead reckoning vs the start's view); here (3.42, 7.21) -4 deg; 0/16 matched since the last line; score too low; fold 392 ms
+00:05:22 INFO    pi_deploy: t= 3020 | lidar 0.22 | tof 0.88 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,+1.60) | escape       | 95.9 ms
+00:05:23 INFO    pi_deploy: t= 3025 | lidar 0.22 | tof 0.30 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,-1.60) | recovery     | 170.6 ms
+00:05:24 INFO    pi_deploy: t= 3030 | lidar 0.22 | tof 0.17 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,-1.60) | escape       | 46.4 ms
+00:05:25 INFO    pi_deploy: t= 3035 | lidar 0.29 | tof 0.46 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,-1.60) | escape       | 54.1 ms
+00:05:26 INFO    pi_deploy: t= 3040 | lidar 0.39 | tof 0.34 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,-1.60) | escape       | 55.6 ms
+00:05:26 INFO    pi_deploy: t= 3045 | lidar 0.24 | tof 0.16 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,+1.60) | escape       | 125.7 ms
+00:05:27 INFO    way_back: tracker: start in the run frame moved 1.29 m / +11 deg (dead reckoning vs the start's view); here (3.42, 7.21) +43 deg; 0/9 matched since the last line; score too low; fold 456 ms
+00:05:28 INFO    pi_deploy: t= 3050 | lidar 0.27 | tof 0.20 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 232.2 ms
+00:05:28 INFO    pi_deploy: t= 3055 | lidar 0.22 | tof 0.47 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,+1.60) | mission_drive | 86.7 ms
+00:05:29 INFO    pi_deploy: t= 3060 | lidar 0.22 | tof 0.39 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,-0.80) | rear_blocked | 22.1 ms
+00:05:29 INFO    pi_deploy: t= 3065 | lidar 0.23 | tof 0.41 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,-0.80) | reverse_refused | 51.6 ms
+00:05:30 INFO    pi_deploy: t= 3070 | lidar 0.22 | tof 0.36 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,-0.80) | REFLEX_STOP  | 11.8 ms
+00:05:31 INFO    pi_deploy: t= 3075 | lidar 0.22 | tof 0.38 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,-1.60) | escape       | 46.8 ms
+00:05:31 INFO    pi_deploy: t= 3080 | lidar 0.22 | tof 0.26 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,-1.60) | escape       | 48.6 ms
+00:05:31 INFO    pi_deploy: t= 3085 | lidar 0.31 | tof 0.25 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.9 ms
+00:05:32 INFO    way_back: tracker: start in the run frame moved 1.29 m / +11 deg (dead reckoning vs the start's view); here (3.42, 7.21) +8 deg; 0/15 matched since the last line; score too low; fold 2 ms
+00:05:32 INFO    pi_deploy: t= 3090 | lidar 0.38 | tof 0.41 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,+1.60) | mission_drive | 20.8 ms
+00:05:33 INFO    pi_deploy: t= 3095 | lidar 0.34 | tof 0.37 | vis 0.00 | pol(+0.00,+1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 29.8 ms
+00:05:33 INFO    pi_deploy: t= 3100 | lidar 0.26 | tof 0.31 | vis 0.00 | pol(+0.30,-0.73) -> out(+0.00,+1.60) | escape       | 19.5 ms
+00:05:34 INFO    pi_deploy: t= 3105 | lidar 0.25 | tof 0.27 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | escape       | 33.6 ms
+00:05:34 INFO    pi_deploy: t= 3110 | lidar 0.33 | tof 0.34 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-0.80) | REFLEX_STOP  | 134.3 ms
+00:05:35 INFO    pi_deploy: t= 3115 | lidar 0.32 | tof 0.25 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-0.80) | REFLEX_STOP  | 310.5 ms
+00:05:36 INFO    pi_deploy: t= 3120 | lidar 0.33 | tof 0.19 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | escape       | 148.1 ms
+00:05:37 INFO    pi_deploy: t= 3125 | lidar 0.41 | tof 0.35 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | escape       | 28.8 ms
+00:05:37 INFO    way_back: tracker: start in the run frame moved 1.29 m / +11 deg (dead reckoning vs the start's view); here (3.42, 7.21) +179 deg; 0/14 matched since the last line; score too low; fold 173 ms
+00:05:37 INFO    pi_deploy: t= 3130 | lidar 0.30 | tof 0.20 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | escape       | 18.6 ms
+00:05:38 INFO    pi_deploy: t= 3135 | lidar 0.45 | tof 0.29 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | REFLEX_STOP  | 44.0 ms
+00:05:38 INFO    pi_deploy: t= 3140 | lidar 0.41 | tof 0.20 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | REFLEX_STOP  | 61.5 ms
+00:05:39 INFO    pi_deploy: t= 3145 | lidar 0.42 | tof 0.10 | vis 0.00 | pol(+0.00,-1.60) -> out(-0.15,+0.00) | escape       | 112.6 ms
+00:05:40 INFO    pi_deploy: t= 3150 | lidar 0.39 | tof 0.10 | vis 0.00 | pol(+0.00,-1.60) -> out(-0.15,+0.00) | escape       | 22.5 ms
+00:05:40 INFO    pi_deploy: t= 3155 | lidar 0.36 | tof 0.10 | vis 0.00 | pol(+0.30,-1.18) -> out(+0.00,-1.60) | escape       | 60.6 ms
+00:05:41 INFO    pi_deploy: t= 3160 | lidar 0.31 | tof 0.04 | vis 0.00 | pol(+0.30,-0.20) -> out(+0.00,+1.60) | escape       | 21.7 ms
+00:05:41 INFO    pi_deploy: t= 3165 | lidar 0.23 | tof 0.02 | vis 0.00 | pol(+0.30,-0.41) -> out(+0.00,+1.60) | escape       | 28.3 ms
+00:05:42 INFO    pi_deploy: t= 3170 | lidar 0.25 | tof 0.02 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | escape       | 16.4 ms
+00:05:42 INFO    way_back: tracker: start in the run frame moved 1.30 m / +11 deg (dead reckoning vs the start's view); here (3.55, 7.17) -79 deg; 0/15 matched since the last line; score too low; fold 42 ms
+00:05:42 INFO    pi_deploy: t= 3175 | lidar 0.22 | tof 0.02 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 11.2 ms
+00:05:43 INFO    pi_deploy: t= 3180 | lidar 0.22 | tof 0.02 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | escape       | 15.0 ms
+00:05:43 INFO    pi_deploy: t= 3185 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | escape       | 17.4 ms
+00:05:44 INFO    pi_deploy: t= 3190 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | escape       | 25.4 ms
+00:05:44 INFO    pi_deploy: t= 3195 | lidar 0.22 | tof 0.04 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 14.8 ms
+00:05:45 INFO    pi_deploy: t= 3200 | lidar 0.22 | tof 0.04 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 17.1 ms
+00:05:45 INFO    pi_deploy: t= 3205 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | escape       | 16.6 ms
+00:05:46 INFO    pi_deploy: t= 3210 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | escape       | 8.1 ms
+00:05:46 INFO    pi_deploy: t= 3215 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 50.5 ms
+00:05:47 INFO    pi_deploy: t= 3220 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 78.4 ms
+00:05:47 INFO    way_back: tracker: start in the run frame moved 1.30 m / +11 deg (dead reckoning vs the start's view); here (3.49, 7.19) -14 deg; 0/18 matched since the last line; score too low; fold 6 ms
+00:05:47 INFO    pi_deploy: t= 3225 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(+0.00,-1.60) -> out(-0.15,+0.00) | escape       | 32.3 ms
+00:05:48 INFO    pi_deploy: t= 3230 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | escape       | 23.9 ms
+00:05:48 INFO    pi_deploy: t= 3235 | lidar 0.22 | tof 0.02 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | escape       | 50.9 ms
+00:05:49 INFO    pi_deploy: t= 3240 | lidar 0.22 | tof 0.04 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 39.4 ms
+00:05:50 INFO    pi_deploy: t= 3245 | lidar 0.22 | tof 0.13 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | REFLEX_STOP  | 21.6 ms
+00:05:50 INFO    pi_deploy: t= 3250 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | escape       | 30.9 ms
+00:05:51 INFO    pi_deploy: t= 3255 | lidar 0.22 | tof 0.05 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,-1.60) | escape       | 13.4 ms
+00:05:51 INFO    pi_deploy: t= 3260 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+0.00) | REFLEX_STOP  | 29.8 ms
+00:05:52 INFO    pi_deploy: t= 3265 | lidar 0.22 | tof 0.31 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | REFLEX_STOP  | 26.7 ms
+00:05:52 INFO    pi_deploy: t= 3270 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.00,-1.60) -> out(+0.00,+1.60) | escape       | 18.3 ms
+00:05:53 INFO    way_back: tracker: start in the run frame moved 1.30 m / +11 deg (dead reckoning vs the start's view); here (3.48, 7.19) -33 deg; 0/19 matched since the last line; score too low; fold 91 ms
+00:05:53 INFO    pi_deploy: t= 3275 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.4 ms
+00:05:53 INFO    pi_deploy: t= 3280 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.5 ms
+00:05:54 INFO    pi_deploy: t= 3285 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:05:54 INFO    pi_deploy: t= 3290 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:05:55 INFO    pi_deploy: t= 3295 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 2.3 ms
+00:05:55 INFO    pi_deploy: t= 3300 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:05:56 INFO    pi_deploy: t= 3305 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:05:56 INFO    pi_deploy: t= 3310 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 5.4 ms
+00:05:57 INFO    pi_deploy: t= 3315 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:05:57 INFO    pi_deploy: t= 3320 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 3.3 ms
+00:05:58 INFO    pi_deploy: t= 3325 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:05:58 INFO    pi_deploy: t= 3330 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.8 ms
+00:05:59 INFO    pi_deploy: t= 3335 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 22.7 ms
+00:05:59 INFO    pi_deploy: t= 3340 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:00 INFO    pi_deploy: t= 3345 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:06:00 INFO    pi_deploy: t= 3350 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:06:01 INFO    pi_deploy: t= 3355 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:06:01 INFO    pi_deploy: t= 3360 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.4 ms
+00:06:02 INFO    pi_deploy: t= 3365 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 10.5 ms
+00:06:02 INFO    pi_deploy: t= 3370 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 14.3 ms
+00:06:03 INFO    pi_deploy: t= 3375 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 2.6 ms
+00:06:03 INFO    pi_deploy: t= 3380 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.4 ms
+00:06:04 INFO    pi_deploy: t= 3385 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:04 INFO    pi_deploy: t= 3390 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 2.2 ms
+00:06:05 INFO    pi_deploy: t= 3395 | lidar 0.22 | tof 0.01 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.8 ms
+00:06:05 INFO    pi_deploy: t= 3400 | lidar 0.22 | tof 0.02 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:06 INFO    pi_deploy: t= 3405 | lidar 0.22 | tof 0.02 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.4 ms
+00:06:06 INFO    pi_deploy: t= 3410 | lidar 0.23 | tof 0.02 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.4 ms
+00:06:07 INFO    pi_deploy: t= 3415 | lidar 0.22 | tof 0.03 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 6.5 ms
+00:06:07 INFO    pi_deploy: t= 3420 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 20.1 ms
+00:06:08 INFO    pi_deploy: t= 3425 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:06:08 INFO    pi_deploy: t= 3430 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.8 ms
+00:06:09 INFO    pi_deploy: t= 3435 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:06:09 INFO    pi_deploy: t= 3440 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:10 INFO    pi_deploy: t= 3445 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.7 ms
+00:06:10 INFO    pi_deploy: t= 3450 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 11.1 ms
+00:06:11 INFO    pi_deploy: t= 3455 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 2.3 ms
+00:06:11 INFO    pi_deploy: t= 3460 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.0 ms
+00:06:12 INFO    pi_deploy: t= 3465 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.0 ms
+00:06:12 INFO    pi_deploy: t= 3470 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:06:13 INFO    pi_deploy: t= 3475 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.9 ms
+00:06:13 INFO    pi_deploy: t= 3480 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.2 ms
+00:06:14 INFO    pi_deploy: t= 3485 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:06:14 INFO    pi_deploy: t= 3490 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:15 INFO    pi_deploy: t= 3495 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:06:15 INFO    pi_deploy: t= 3500 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:06:16 INFO    pi_deploy: t= 3505 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:16 INFO    pi_deploy: t= 3510 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 8.8 ms
+00:06:17 INFO    pi_deploy: t= 3515 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:17 INFO    pi_deploy: t= 3520 | lidar 0.22 | tof 0.12 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:06:18 INFO    pi_deploy: t= 3525 | lidar 0.22 | tof 0.15 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.9 ms
+00:06:18 INFO    pi_deploy: t= 3530 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.9 ms
+00:06:19 INFO    pi_deploy: t= 3535 | lidar 0.22 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:19 INFO    pi_deploy: t= 3540 | lidar 0.35 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 4.2 ms
+00:06:20 INFO    pi_deploy: t= 3545 | lidar 0.60 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.4 ms
+00:06:20 INFO    pi_deploy: t= 3550 | lidar 0.75 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.8 ms
+00:06:21 INFO    pi_deploy: t= 3555 | lidar 1.18 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:21 INFO    pi_deploy: t= 3560 | lidar 1.60 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 16.2 ms
+00:06:22 INFO    pi_deploy: t= 3565 | lidar 1.70 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 1.5 ms
+00:06:22 INFO    pi_deploy: t= 3570 | lidar 1.70 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:06:23 INFO    pi_deploy: t= 3575 | lidar 1.71 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.7 ms
+00:06:23 INFO    pi_deploy: t= 3580 | lidar 1.70 | tof 2.40 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:06:24 INFO    pi_deploy: t= 3585 | lidar 1.71 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.6 ms
+00:06:24 INFO    pi_deploy: t= 3590 | lidar 1.71 | tof 4.00 | vis 0.00 | pol(+0.00,+0.00) -> out(+0.00,+0.00) | mission_hold | 0.5 ms
+00:06:25 WARNING pi_deploy: Interrupted -- stopping motors.
+Traceback (most recent call last):
+  File "/home/harsh/friday/rl/way_back.py", line 986, in <module>
+    sys.exit(_serve(float(sys.argv[2])))
+             ~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/harsh/friday/rl/way_back.py", line 713, in _serve
+    job = pickle.load(inp)
+KeyboardInterrupt
+00:06:25 INFO    pi_deploy: Way back: {'phase': 'returning', 'why': 'time', 'outcome': '', 'distance_m': 7.99, 'tracker': {'updates': 994, 'matched': 45, 'reason': 'score too low', 'fold_ms': 90.6, 'error': '', 'home_rl': (11.788935382669926, 14.437880218497202, -0.4989649981921698)}}
+00:06:25 INFO    pi_deploy: Unstick: {'state': 'idle', 'tries': 0, 'avoid_spots': 4, 'locks': 0, 'undos': 0, 'undo_turns': 0, 'undo_drives': 0, 'undo_freed': 0, 'undo_worse': 0, 'undo_rear_stop': 0, 'no_move_to_undo': 0, 'asked': 0, 'helped': 0}
+00:06:25 INFO    pi_deploy: Planner: 25 chosen, 0 ARRIVED at, 14 revealed without arriving, 11 abandoned, 80 cycles, 240 frontiers left
+00:06:26 INFO    pi_deploy: World map saved: rl_map.npz  (227.5 m^2 known, 18.2 m^2 driven, 10.4 m^2 re-entered, revisit ratio 0.57, 1297 sweeps, 1492 superseded)
+00:06:26 INFO    pi_deploy: Motor noise: {'starts': 232, 'kicks': 268, 'plug_coasts': 0, 'pulse_bursts': 126, 'pivot_holds': 0, 'starts_debounced': 0}
+00:06:26 INFO    pi_deploy: Black box written: /home/harsh/friday/rl/blackbox-20261031-000626.csv (2789 rows)
+00:06:26 INFO    pi_deploy: ==========================================================================
+00:06:26 INFO    pi_deploy: ticks=3594  explored=154.6 m^2
+00:06:26 INFO    pi_deploy: loop ms over the LAST 200 ticks: mean 43.45 | p95 129.76 | max 310.48 (budget 100) -- the black box has the whole run
+00:06:26 INFO    pi_deploy: budget by stage, mean ms/tick over all 3594 ticks: pose+telemetry 19.1  sensors+obs 16.2  navigator 5.7  governor+escape+rear 4.4  actuate 3.3  policy 1.9  reflex 1.8  adapter 1.3  planner-bias 0.1  cameras 0.1
+00:06:26 INFO    pi_deploy:   measured inside tick(): 53.7 ms/tick; wall clock per tick (last 200): 43.5 ms; unaccounted 0.0 ms = time this thread was NOT RUNNING (other threads holding the GIL)
+00:06:26 INFO    pi_deploy: navigator: 1076 ticks steered (57%), 824 handed back (594 blocked ahead, 230 no drivable arc); open 774 / corridor 195 / cluttered 107
+00:06:26 INFO    pi_deploy:   near field: 559 ticks with a ToF barrier in the arc search (175 of them already inside the reflex's stop distance -- the other 384 are arcs steered around something the reflex could only have braked for), 313 ticks speed-capped by it
+00:06:26 INFO    pi_deploy:   commitments 45 taken, 19 reversed by a better option, 27 expired on age; arc choice 11.18 ms mean (a HIGH handback count means she is spending her time in places with no drivable way forward)
+00:06:26 INFO    pi_deploy: escape turns: 0  (boxed in: forward blocked and not moving, so she turned toward open space)
+00:06:26 INFO    pi_deploy: reverse lifts: 332  (policy asked for a reverse too gentle to execute; honoured at the executable v_min instead of pivoting)
+00:06:26 INFO    pi_deploy: reverse floor lifts: 558  (a reverse from ANY stage -- escape, recovery, the policy -- that was under the stiction floor and would have executed as a stop, reissued at the slowest speed the wheels can actually turn)
+00:06:26 INFO    pi_deploy: no-reverse turns: 0  (policy asked to back up; this drivetrain cannot, so it turned toward open space instead)
+00:06:26 INFO    pi_deploy: interventions: reflex=1431 visual=0 governor=1082 rear=172 stale=2 scrape=0 overruns=302
+00:06:26 INFO    pi_deploy: object detection: 0 frames, 0 ms mean, 0 failures; currently sees nothing
+00:06:26 INFO    pi_deploy: cameras: free-space updates=0 failures=0, nudges=0, ticks driven on vision=0
+00:06:26 INFO    pi_deploy: lidar: 0 sub-footprint returns rejected outside the self-mask (a growing count means the chassis wedge moved -- re-measure --lidar-self-mask); 55 ticks braked for closing rate alone
+00:06:26 INFO    pi_deploy:   sensor lidar  updates=4054    stale=False
+00:06:26 INFO    pi_deploy:   sensor tof    updates=6420    stale=False
+00:06:26 INFO    pi_deploy:   sensor cam_up updates=0       stale=True
+00:06:26 INFO    pi_deploy:   sensor cam_down updates=0       stale=True
+00:06:26 INFO    pi_deploy:   sensor cam_up_rgb updates=0       stale=True
+00:06:26 INFO    pi_deploy:   sensor lidar_fine updates=4054    stale=False
+00:06:26 INFO    pi_deploy: ==========================================================================
+00:06:26 INFO    friday.localnav: policy source: LEROBOT_EXPERIMENTAL
+00:06:26 INFO    friday.explore: exploration: phase=select explored=154.6 m^2 frontier_cells=218
+00:06:26 INFO    friday.explore: targets: selected=31 reached=0 abandoned=2  blacklisted=0
+00:06:26 INFO    friday.explore: recoveries: 17 attempted, 16 successful
+00:06:26 INFO    friday.localnav: no_target_ticks=0
+00:06:26 INFO    friday.voice: voice: backend=friday spoken=13 dropped(cooldown=0 full=0 listening=1453)
+00:06:26 INFO    friday.localnav: ACT chunks: 349 forward passes over 2789 ticks (7.99 ticks/pass)
+00:06:26 INFO    friday.voice: SAY [halt] Exploration stopped.
+00:06:29 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
+00:06:29 WARNING friday.tts: her speaker is not reachable through ALSA either (Command '['aplay', '-q', '-D', 'plughw:CARD=Device,DEV=0', '/tmp/tmp642jslm4.wav']' returned non-zero exit status 1.); trying pipewire's default output
+00:06:29 ERROR   friday.audio: speaker 'alsa_output.usb-GeneralPlus_USB_Audio_Device-00.analog-stereo' is NOT PRESENT and no node on that card is either. Using the system default, which may be the wrong device entirely. Present: alsa_output.platform-fe00b840.mailbox.stereo-fallback
