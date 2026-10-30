@@ -68,7 +68,7 @@ s.update("up", {"box": 0.6}, 0.0)
 check("each camera confirms for itself", s.update("down", {"box": 0.6}, 1.0) == [])
 s = eyes.Sightings()
 check("strongest first",
-      s.update("up", {"cup": 0.8, "person": 0.95}, 0.0) == ["person", "cup"])
+      s.update("up", {"cup": 0.8, "book": 0.95}, 0.0) == ["book", "cup"])
 
 # Once per EYES_SAY_AGAIN_S.
 s = eyes.Sightings()
@@ -78,7 +78,7 @@ check("said again later",
       s.update("up", {"cup": 0.9}, config.EYES_SAY_AGAIN_S + 1) == ["cup"])
 s = eyes.Sightings()
 s.spoken(s.update("up", {"person": 0.9}, 0.0), 0.0)
-check("a person waits longer",
+check("a person waits much longer",
       s.update("up", {"person": 0.9}, config.EYES_SAY_AGAIN_S + 1) == []
       and s.update("up", {"person": 0.9},
                    config.EYES_SAY_AGAIN_PERSON_S + 1) == ["person"])
@@ -133,10 +133,15 @@ check("she says phone, not cell phone",
       eyes.looked_at("up", FRAME, Detector(Box("cell phone", 0.5)), None) == {"phone": 0.5})
 check("the classifier's cup passes low too",
       eyes.looked_at("up", FRAME, Detector(), Named("cup", 0.25)) == {"cup": 0.25})
-check("the close-up comes from the bottom of the picture",
-      eyes.floor_view(np.arange(480 * 640 * 3, dtype=np.uint32)
-                      .reshape(480, 640, 3))[-1, -1, 2] > 0
-      and eyes.floor_view(FRAME).shape[:2] == (360, 360))
+check("the close-up is the middle of the picture",
+      eyes.centre_view(FRAME).shape[:2] == (360, 360))
+s = eyes.Sightings()
+check("a thing goes first: the person showing it is not said",
+      s.update("up", {"person": 0.9, "cup": 0.8}, 0.0) == ["cup"])
+s = eyes.Sightings()
+s.update("up", {"person": 0.9}, 0.0)
+check("alone, a person is still said",
+      s.update("up", {"person": 0.9}, 1.0) == ["person"])
 check("a phone misread as a mouse says phone",
       eyes.looked_at("up", FRAME, Detector(Box("mouse", 0.8)), None) == {"phone": 0.8})
 check("the television on an empty ceiling is not said",
@@ -159,6 +164,29 @@ mods = {n.module for n in ast.walk(tree)
         if isinstance(n, ast.ImportFrom) and n.module}
 check("no motor, no movement", not names & {"motor", "movement", "safety"}
       and not {m for m in mods if "tools" in m})
+
+# A family adds up: stand-in session, nothing loaded.
+class Session:
+    def __init__(self, logits):
+        self.logits = logits
+
+    def get_inputs(self):
+        return [type("I", (), {"name": "x"})()]
+
+    def run(self, _, __):
+        return [self.logits[None]]
+
+
+names = ["n"] * 1000
+names[504] = "coffee mug"
+names[968] = "cup"
+names[441] = "beer glass"
+names[600] = "hook, claw"
+logits = np.full(1000, -10.0, np.float32)
+logits[[504, 441, 968]] = np.log([0.15, 0.13, 0.05])
+logits[600] = np.log(0.2)
+got = eyes.Classifier(Session(logits), names).best(FRAME)
+check("a cup split over its family still wins", got[0] == "cup" and got[1] > 0.3, str(got))
 
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

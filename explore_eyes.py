@@ -129,6 +129,16 @@ DETECTOR_NAMES = {
 DETECTOR_NAMES.update({k: "phone" for k in config.EYES_PHONE_LOOKALIKES})
 
 
+# Round 2's objects spread their probability over neighbouring classes (a paper
+# cup read 0.15 "coffee mug" + 0.13 "beer glass" live), so each is scored on the
+# SUM of its family and can win although no one class did.
+FAMILIES = {
+    "cup": ("coffee mug", "cup", "beer glass", "measuring cup"),
+    "phone": ("cellular telephone", "iPod", "hand-held computer", "remote control"),
+    "bottle": ("water bottle", "pop bottle", "beer bottle", "wine bottle",
+               "pill bottle", "water jug"),
+}
+
 # Everyday things beyond PLAIN_NAMES that she may name as they are.
 EVERYDAY = {
     "umbrella", "pillow", "bucket", "broom", "plunger", "teapot", "coffeepot",
@@ -204,6 +214,8 @@ class Sightings:
             if now - self.said.get(label, -1e12) < again:
                 continue
             fresh.append(label)
+        if any(label != "person" for label in fresh):
+            fresh = [label for label in fresh if label != "person"]
         return fresh
 
     def spoken(self, labels: list[str], now: float) -> None:
@@ -226,6 +238,9 @@ class Classifier:
     def __init__(self, session, names: list[str]) -> None:
         self.session, self.names = session, names
         self.input = session.get_inputs()[0].name
+        first = {n.split(",")[0].strip(): i for i, n in enumerate(names)}
+        self.family_ids = {name: [first[c] for c in classes if c in first]
+                           for name, classes in FAMILIES.items()}
 
     @classmethod
     def load(cls) -> "Classifier | None":
@@ -256,20 +271,28 @@ class Classifier:
         logits = self.session.run(None, {self.input: rgb.transpose(2, 0, 1)[None]})[0][0]
         logits = logits - logits.max()
         probs = np.exp(logits) / np.exp(logits).sum()
+        family, weight = "", 0.0
+        for name, classes in FAMILIES.items():
+            total = sum(float(probs[i]) for i in self.family_ids.get(name, ()))
+            if total > weight:
+                family, weight = name, total
         top = int(probs.argmax())
+        if weight >= float(probs[top]) * config.EYES_FAMILY_EDGE:
+            return family, weight
         if top < FIRST_THING_CLASS or top >= len(self.names):
             return "", float(probs[top])
         return spoken_name(self.names[top]), float(probs[top])
 
 
-def floor_view(frame):
-    """The floor just ahead, close up. A cup on the floor at 80 cm is 30 pixels
-    of a 640 frame and 15 of the detector's 320: too small to name. Cut from the
-    full picture it is twice that, for the price of one more look."""
+def centre_view(frame):
+    """What is right in front of her, close up. A cup at 80 cm is 30 pixels of a
+    640 frame and 15 of the detector's 320: too small to name. Cut from the full
+    picture it is twice that, for the price of one more look. The middle of the
+    picture, not the bottom: live, what he held up was never in the bottom."""
     h, w = frame.shape[:2]
-    side = int(min(h, w) * config.EYES_FLOOR_CROP)
-    x = (w - side) // 2
-    return frame[h - side:h, x:x + side]
+    side = int(min(h, w) * config.EYES_CLOSE_CROP)
+    x, y = (w - side) // 2, (h - side) // 2
+    return frame[y:y + side, x:x + side]
 
 
 def looked_at(which: str, frame, detector, classifier) -> dict[str, float]:
@@ -281,7 +304,7 @@ def looked_at(which: str, frame, detector, classifier) -> dict[str, float]:
     of 3 looks still has to hold, which is what keeps that honest.
     """
     seen: dict[str, float] = {}
-    close = floor_view(frame)
+    close = centre_view(frame)
 
     def keep(label: str, score: float) -> None:
         seen[label] = max(seen.get(label, 0.0), float(score))
