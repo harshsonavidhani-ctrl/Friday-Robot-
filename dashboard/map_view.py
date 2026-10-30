@@ -31,6 +31,13 @@ POSE_FILE = ROOT / "state" / "rl_map.pose.json"
 LIVE_FILE = ROOT / "state" / "rl_map.live.npz"
 LIVE_FRESH_S = 6.0
 
+# THE RUN'S WORLD IS A MIRROR IMAGE (see config.TURN_WORDS_MIRRORED: it reads the
+# LiDAR's clockwise bearings as counter-clockwise). It steers fine inside it, but
+# drawn as it stands the room is backwards and, live, she turns left on the floor
+# and right on the phone. So the picture alone flips: +y runs DOWN the image. The
+# map, the pose and every file stay exactly as the run wrote them.
+MIRRORED = True
+
 PX_PER_CELL = 3
 OCCUPIED_LOGODDS = 0.5
 FREE_LOGODDS = -0.5
@@ -99,17 +106,19 @@ def _render(live: bool = False) -> tuple[bytes, dict]:
     rgb = np.full((ny, nx, 3), (46, 52, 64), np.uint8)       # unknown: dark slate
     rgb[free.T] = (226, 232, 240)                            # free: light
     rgb[occ.T] = (10, 12, 16)                                # obstacle: near-black
-    rgb = rgb[::-1]                                          # +y up
+    if not MIRRORED:
+        rgb = rgb[::-1]                                      # +y up
     im = Image.fromarray(rgb).resize((nx * s, ny * s), Image.NEAREST)
     draw = ImageDraw.Draw(im, "RGBA")
 
     def px(x: float, y: float) -> tuple[float, float]:
-        return ((x - origin[0]) / cell * s, (ny - (y - origin[1]) / cell) * s)
+        row = (y - origin[1]) / cell
+        return ((x - origin[0]) / cell * s, (row if MIRRORED else ny - row) * s)
 
     for a, b in visits:
-        x0, y1 = px(a * vcell, b * vcell)
-        x1, y0 = px((a + 1) * vcell, (b + 1) * vcell)
-        draw.rectangle([x0, y0, x1, y1], fill=(255, 106, 0, 95))
+        x0, y0 = px(a * vcell, b * vcell)
+        x1, y1 = px((a + 1) * vcell, (b + 1) * vcell)
+        draw.rectangle([x0, min(y0, y1), x1, max(y0, y1)], fill=(255, 106, 0, 95))
     for gx in range(math.ceil(origin[0]), math.floor(origin[0] + nx * cell) + 1):
         x, _ = px(gx, 0.0)
         draw.line([(x, 0), (x, ny * s)], fill=(77, 163, 255, 40))
@@ -120,8 +129,9 @@ def _render(live: bool = False) -> tuple[bytes, dict]:
         x, y = px(pose[0], pose[1])
         r = 0.22 / cell * s
         draw.ellipse([x - r, y - r, x + r, y + r], outline=(255, 59, 48, 255), width=3)
-        draw.line([(x, y), (x + 2.2 * r * math.cos(pose[2]),
-                            y - 2.2 * r * math.sin(pose[2]))],
+        tip = px(pose[0] + 2.2 * 0.22 * math.cos(pose[2]),
+                 pose[1] + 2.2 * 0.22 * math.sin(pose[2]))
+        draw.line([(x, y), tip],
                   fill=(255, 59, 48, 255), width=4)
 
     buf = io.BytesIO()

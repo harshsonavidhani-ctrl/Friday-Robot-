@@ -48,6 +48,18 @@ png, meta = map_view.current()
 check("the dashboard draws it", png[:4] == b"\x89PNG" and meta.get("ok"), str(meta))
 check("it says it is live", meta.get("live") is True)
 check("her position comes from it", meta.get("pose") == [0.5, 0.25, 0.3], str(meta.get("pose")))
+
+# The picture is flipped so that her left is the screen's left (see map_view.MIRRORED).
+import io                                                   # noqa: E402
+from PIL import Image                                       # noqa: E402
+im = np.asarray(Image.open(io.BytesIO(png)).convert("RGB")).astype(int)
+red = np.argwhere((im[:, :, 0] > 200) & (im[:, :, 1] < 100) & (im[:, :, 2] < 100))
+check("her marker is drawn", len(red) > 0)
+g = w.grid
+expect_row = (0.25 - float(g.origin[1])) / float(g.cell) * map_view.PX_PER_CELL
+check("the picture is flipped: +y runs down it",
+      abs(float(np.median(red[:, 0])) - expect_row) < 12,
+      f"{float(np.median(red[:, 0])):.0f} vs {expect_row:.0f}")
 v1 = meta["version"]
 time.sleep(0.02)
 w.set_pose(0.9, 0.25, 0.3)
