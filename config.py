@@ -3358,7 +3358,11 @@ EXPLORATION_MISSION = {
                      "min_room_m2": 1.5, "polygon_epsilon_m": 0.10,
                      "max_polygon_vertices": 40, "same_area_iou": 0.5,
                      "grow_update_ratio": 1.2},
-    "label": {"trigger": "segmentation", "min_area_m2": 2.5, "min_dwell_s": 15,
+    # ask_rooms False (Harsh, 2026-10-31 01:11: "pls dont ask the room continue
+    # exploring"): she never stops to ask what a room is called. His own "this is the
+    # kitchen" still names it.
+    "label": {"ask_rooms": False, "trigger": "segmentation", "min_area_m2": 2.5,
+              "min_dwell_s": 15,
               "recent_exit_s": 20, "cooldown_s": 30, "distance_prompt_m": 4.0,
               "reask_once": True, "max_name_words": 4, "max_name_chars": 30,
               "suggest_from_objects": True, "suggestion_min_conf": 0.6,

@@ -1384,6 +1384,8 @@ class MissionManager:
                 self._run_gone(now)
             return
         self.estop = self.a.run.estop(status)
+        if self.pending_label is not None and not self.cfg.label.ask_rooms:
+            self.pending_label = None           # nobody asks it now: drop, do not hold
         if self.pending_label is not None and not self.estop:
             # Left over from before a power cut: asked again, first thing.
             self._after_ask, self._stage, self._preset = "EXPLORE", "stopping", None
@@ -1429,6 +1431,8 @@ class MissionManager:
                 self.stop_reason = "no_frontiers"
                 self._end_exploring(now)
                 return
+        if not self.cfg.label.ask_rooms:
+            return
         choice = segmentation.choose_label_target(
             res["seg"], self.dwell, now, self._t_question, True, self.lparams,
             distance_from_saved_m=self._distance_from_saved(res))
@@ -1576,7 +1580,7 @@ class MissionManager:
         # NOT gated on the e-stop: exploring is over, the hold keeps her still
         # either way, and both 2026-10-02 22:43 and 23:21 the time ran out with
         # her reflex-stopped against something, so no room was ever asked about.
-        if res is not None:
+        if res is not None and self.cfg.label.ask_rooms:
             choice = segmentation.choose_label_target(
                 res["seg"], self.dwell, now, self._t_question, True, self.lparams,
                 ignore_cooldown=True)

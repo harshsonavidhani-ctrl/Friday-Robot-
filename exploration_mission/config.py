@@ -78,6 +78,7 @@ SCHEMA: dict[str, Any] = {
         "grow_update_ratio": (_F, 1.0, 100.0),
     },
     "label": {
+        "ask_rooms": (_B, None, None),
         "trigger": (_S, None, None),
         "min_area_m2": (_F, 0.0, 1000.0),
         "min_dwell_s": (_F, 0.0, 3600.0),

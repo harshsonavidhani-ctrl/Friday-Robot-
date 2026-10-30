@@ -26,6 +26,7 @@ import netguard                                         # noqa: E402
 netguard.block()
 
 import config                                           # noqa: E402
+config.EXPLORATION_MISSION["label"]["ask_rooms"] = True   # these tests are of the question itself
 from exploration_mission import adapters as ad          # noqa: E402
 from exploration_mission import boot                    # noqa: E402
 from exploration_mission import config as mcfg          # noqa: E402

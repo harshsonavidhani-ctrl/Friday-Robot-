@@ -24,6 +24,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests" / "exploration_mission"))
 
 import netguard                                         # noqa: E402
+import config                                           # noqa: E402
+config.EXPLORATION_MISSION["label"]["ask_rooms"] = True   # these tests are of the question itself
 netguard.block()
 
 from exploration_mission import intents                 # noqa: E402
