@@ -124,11 +124,6 @@ DETECTOR_NAMES = {
     "potted plant": "plant", "dining table": "table", "tv": "screen",
     "television": "screen", "mouse": "computer mouse", "handbag": "bag",
 }
-# Live, a phone held up read as "mouse" 0.87 and "remote". Round 2's list has a
-# phone in it, so for now those two say phone (config.EYES_PHONE_LOOKALIKES).
-DETECTOR_NAMES.update({k: "phone" for k in config.EYES_PHONE_LOOKALIKES})
-
-
 # Round 2's objects spread their probability over neighbouring classes (a paper
 # cup read 0.15 "coffee mug" + 0.13 "beer glass" live), so each is scored on the
 # SUM of its family and can win although no one class did.
@@ -137,6 +132,7 @@ FAMILIES = {
     "phone": ("cellular telephone", "iPod", "hand-held computer", "remote control"),
     "bottle": ("water bottle", "pop bottle", "beer bottle", "wine bottle",
                "pill bottle", "water jug"),
+    "pen": ("ballpoint", "fountain pen", "quill"),
 }
 
 # Everyday things beyond PLAIN_NAMES that she may name as they are.
@@ -203,9 +199,20 @@ class Sightings:
     def update(self, which: str, seen: dict[str, float], now: float) -> list[str]:
         looks = self.looks.setdefault(
             which, deque(maxlen=int(config.EYES_CONFIRM_OF)))
-        looks.append(set(seen))
+        looks.append(dict(seen))
+        evidence: dict[str, float] = {}
+        for look in looks:
+            for label, score in look.items():
+                evidence[label] = evidence.get(label, 0.0) + score
+        # The judges' objects compete: live, a black paper cup also read "mobile
+        # phone" 0.48-0.63. Only the one with the most evidence in these looks
+        # may be named, so one object cannot be called two things in turn.
+        rivals = [k for k in evidence if k in config.EYES_FOCUS]
+        leader = max(rivals, key=evidence.get) if rivals else None
         fresh = []
         for label, score in sorted(seen.items(), key=lambda kv: -kv[1]):
+            if label in config.EYES_FOCUS and label != leader:
+                continue
             sure = (config.EYES_FOCUS_SURE if label in config.EYES_FOCUS
                     else config.EYES_SURE_SCORE)
             if (score < sure
@@ -319,6 +326,8 @@ def looked_at(which: str, frame, detector, classifier,
         views = (frame, close) if turn is None else ((frame, close)[turn],)
         for view in views:
             for d in detector._infer(view, min_score=config.EYES_FOCUS_SCORE):
+                if d.label in config.EYES_NEVER_SAY:
+                    continue
                 name = DETECTOR_NAMES.get(d.label, d.label)
                 if name in config.EYES_FOCUS:
                     keep(name, d.score)

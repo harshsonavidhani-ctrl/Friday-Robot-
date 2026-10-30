@@ -68,7 +68,7 @@ s.update("up", {"box": 0.6}, 0.0)
 check("each camera confirms for itself", s.update("down", {"box": 0.6}, 1.0) == [])
 s = eyes.Sightings()
 check("strongest first",
-      s.update("up", {"cup": 0.8, "book": 0.95}, 0.0) == ["book", "cup"])
+      s.update("up", {"chair": 0.8, "book": 0.95}, 0.0) == ["book", "chair"])
 
 # Once per EYES_SAY_AGAIN_S.
 s = eyes.Sightings()
@@ -142,8 +142,16 @@ s = eyes.Sightings()
 s.update("up", {"person": 0.9}, 0.0)
 check("alone, a person is still said",
       s.update("up", {"person": 0.9}, 1.0) == ["person"])
-check("a phone misread as a mouse says phone",
-      eyes.looked_at("up", FRAME, Detector(Box("mouse", 0.8)), None) == {"phone": 0.8})
+check("a mouse or remote guess is never said",
+      eyes.looked_at("up", FRAME, Detector(Box("mouse", 0.9), Box("remote", 0.9)), None) == {})
+s = eyes.Sightings()
+s.update("up", {"cup": 0.5}, 0.0)
+s.update("up", {"cup": 0.5, "phone": 0.45}, 1.0)
+check("a cup misread as a phone stays a cup",
+      s.update("up", {"phone": 0.5}, 2.0) == [] and "cup" in s.update("up", {"cup": 0.5}, 3.0))
+check("a pen is a thing she can name",
+      eyes.spoken_name("ballpoint, ballpoint pen") == "pen"
+      and eyes.looked_at("up", FRAME, Detector(), Named("pen", 0.25)) == {"pen": 0.25})
 check("the television on an empty ceiling is not said",
       eyes.looked_at("up", FRAME, Detector(Box("television", 0.58)), None) == {})
 check("the classifier is never sure on one look",
@@ -151,7 +159,7 @@ check("the classifier is never sure on one look",
       < config.EYES_FOCUS_SURE)
 s = eyes.Sightings()
 check("one of the judges' objects is said at a strong first look",
-      s.update("up", {"phone": 0.6}, 0.0) == ["phone"])
+      s.update("up", {"phone": 0.72}, 0.0) == ["phone"])
 check("a dog needs to be very sure",
       eyes.looked_at("up", FRAME, Detector(Box("dog", 0.65)), None) == {})
 check("she takes turns: whole picture, then close-up",
@@ -160,6 +168,7 @@ check("she takes turns: whole picture, then close-up",
 check("the judges' objects are prerecorded first",
       eyes.lines_to_prerecord()[:3] == ["Cup detected.", "Phone detected.",
                                         "Bottle detected."])
+check("pen is prerecorded", "Pen detected." in eyes.lines_to_prerecord())
 check("every prerecorded line is one name, as she will say it",
       all(line.count(" and ") == 0 for line in eyes.lines_to_prerecord()))
 check("cool: she looks at full rate",
