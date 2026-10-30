@@ -14,6 +14,7 @@ import config                                               # noqa: E402
 import explore_eyes as eyes                                 # noqa: E402
 
 fails = 0
+config.EYES_ONLY_FOCUS = False      # the general rules first; tested on its own below
 
 
 def check(name, ok, detail=""):
@@ -127,8 +128,8 @@ check("the up camera asks the classifier for more",
 check("not a thing is not said",
       eyes.looked_at("down", FRAME, Detector(), Named("", 0.9)) == {})
 check("a cup passes lower than a chair",
-      eyes.looked_at("down", FRAME, Detector(Box("cup", 0.4)), None) == {"cup": 0.4}
-      and eyes.looked_at("down", FRAME, Detector(Box("chair", 0.4)), None) == {})
+      eyes.looked_at("down", FRAME, Detector(Box("cup", 0.5)), None) == {"cup": 0.5}
+      and eyes.looked_at("down", FRAME, Detector(Box("chair", 0.5)), None) == {})
 check("she says phone, not cell phone",
       eyes.looked_at("up", FRAME, Detector(Box("cell phone", 0.5)), None) == {"phone": 0.5})
 check("the classifier's cup passes low too",
@@ -149,6 +150,15 @@ s.update("up", {"cup": 0.5}, 0.0)
 s.update("up", {"cup": 0.5, "phone": 0.45}, 1.0)
 check("a cup misread as a phone stays a cup",
       s.update("up", {"phone": 0.5}, 2.0) == [] and "cup" in s.update("up", {"cup": 0.5}, 3.0))
+s = eyes.Sightings()
+s.update("up", {"cup": 0.73}, 0.0)
+check("too close to call: she says nothing",
+      s.update("up", {"phone": 0.6}, 1.0) == [])
+config.EYES_ONLY_FOCUS = True
+check("only her objects are said",
+      eyes.looked_at("up", FRAME, Detector(Box("chair", 0.7), Box("cup", 0.6)), None) == {"cup": 0.6}
+      and eyes.looked_at("up", FRAME, Detector(), Named("umbrella", 0.9)) == {})
+config.EYES_ONLY_FOCUS = False
 check("a pen is a thing she can name",
       eyes.spoken_name("ballpoint, ballpoint pen") == "pen"
       and eyes.looked_at("up", FRAME, Detector(), Named("pen", 0.25)) == {"pen": 0.25})
@@ -159,7 +169,7 @@ check("the classifier is never sure on one look",
       < config.EYES_FOCUS_SURE)
 s = eyes.Sightings()
 check("one of the judges' objects is said at a strong first look",
-      s.update("up", {"phone": 0.72}, 0.0) == ["phone"])
+      s.update("up", {"phone": 0.85}, 0.0) == ["phone"])
 check("a dog needs to be very sure",
       eyes.looked_at("up", FRAME, Detector(Box("dog", 0.65)), None) == {})
 check("she takes turns: whole picture, then close-up",

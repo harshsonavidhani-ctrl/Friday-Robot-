@@ -209,6 +209,12 @@ class Sightings:
         # may be named, so one object cannot be called two things in turn.
         rivals = [k for k in evidence if k in config.EYES_FOCUS]
         leader = max(rivals, key=evidence.get) if rivals else None
+        # ...and it has to win clearly: a blurry phone that flips cup 0.73, phone
+        # 0.55 is a thing she cannot read, so she says nothing rather than guess.
+        if leader is not None and any(
+                k != leader and evidence[k] * config.EYES_LEAD > evidence[leader]
+                for k in rivals):
+            leader = None
         fresh = []
         for label, score in sorted(seen.items(), key=lambda kv: -kv[1]):
             if label in config.EYES_FOCUS and label != leader:
@@ -346,6 +352,11 @@ def looked_at(which: str, frame, detector, classifier,
         if name and score >= floor:
             # Never EYES_SURE_SCORE: its guess must be seen twice, however keen.
             keep(name, min(score, config.EYES_FOCUS_SURE - 0.01))
+    if config.EYES_ONLY_FOCUS:
+        # A wrong name in front of a judge costs more than a missed one: live it
+        # said "Refrigerator" at a glass door and "Vase" at nothing.
+        seen = {k: v for k, v in seen.items()
+                if k in config.EYES_FOCUS or k == "person"}
     return seen
 
 
