@@ -142,6 +142,7 @@ BACKOFF_MAX_S = 2.0
 BACKOFF_CHECK_S = 1.0
 BACKOFF_PROGRESS_M = 0.03
 BACKOFF_REST_S = 3.0
+LOOKAHEAD_PER_EXTRA = 3.0    # the arcs must see past the new stop line, not to it
 BOARD_RESET_EVERY_S = 20.0   # a chip that stays loose gets this, not a reset loop
 ESCAPE_SAME_SPOT_M = 0.4     # escapes this close together are one place...
 ESCAPE_AVOID_AFTER = 3       # ...and after this many the planner keeps away from it
@@ -2210,6 +2211,31 @@ class LidarGovernor:
             self.rear_blocks += 1
             return 0.0
         return v
+
+
+def keep_distance(cfg: "RobotConfig", extra_m: float) -> None:
+    """Everything that decides "too close" moves out by extra_m, together.
+
+    Harsh, 2026-10-30: "it goes closer to the obstacle then it turns ... it should
+    change its path from far distance and choose a new route." She planned only 0.60 m
+    ahead and could drive on to 0.36 m (LiDAR) and 0.24 m (ToF), so she reached things
+    before she chose a way round. All of these move as one: moving only the stop lines
+    gives a robot that stops early but still turns late. The freeze inside
+    tof_pivot_min_clearance and the rear limits are NOT moved. 0 = off.
+    """
+    if extra_m <= 0.0:
+        return
+    import dwa
+    import navigator
+    cfg.safe_distance += extra_m
+    cfg.hard_stop_extra += extra_m
+    cfg.tof_stop_distance += extra_m
+    cfg.tof_slow_distance += extra_m
+    dwa.LOOKAHEAD_M += extra_m * LOOKAHEAD_PER_EXTRA
+    navigator.BLOCKED_AHEAD_M += extra_m
+    LOGGER.info("Keep distance +%.2f m: plans %.2f m ahead, forward stops at %.2f m "
+                "(LiDAR) / %.2f m (ToF), slows from %.2f m", extra_m, dwa.LOOKAHEAD_M,
+                cfg.hard_stop, cfg.tof_stop_distance, cfg.tof_slow_distance)
 
 
 def strict_rear_refusal(scan_m: np.ndarray | None, blind_beams, cfg: "RobotConfig") -> str:
@@ -6691,6 +6717,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-forward-speed", type=float, default=0.0, metavar="M_PER_S",
                    help="Forward never faster than this (stage 4e). 0.125 is how she "
                         "explored on 2026-09-04 03:52. 0 (default) = off.")
+    p.add_argument("--keep-distance", type=float, default=0.0, metavar="M",
+                   help="Move planning, braking and the stop lines out by M together, "
+                        "so she changes course early. See keep_distance().")
     p.add_argument("--live-map", action="store_true",
                    help="Write the map beside itself every second for the dashboard.")
     p.add_argument("--bumper-escape", action="store_true",
@@ -7108,6 +7137,7 @@ def main(argv: list[str] | None = None) -> int:
         cfg.strict_reverse = bool(args.strict_reverse)
         cfg.bumper_escape = bool(args.bumper_escape)
         cfg.live_map = bool(args.live_map)
+        keep_distance(cfg, args.keep_distance)
         if cfg.bumper_escape:
             loop.bumper_escape = _escape.EscapeManeuver(cfg)
         loop.recovery_enabled = not args.no_recovery

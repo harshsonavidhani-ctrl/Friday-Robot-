@@ -130,6 +130,8 @@ fi
 # against a request to turn the other way -- no left/right dithering.
 [ -n "${MODE_TURN_COMMIT:-}" ] && ARGS+=(--turn-commit "$MODE_TURN_COMMIT")
 [ -n "${MODE_REVERSE_FLOOR:-}" ] && ARGS+=(--reverse-floor "$MODE_REVERSE_FLOOR")
+# MODE_KEEP_DISTANCE=M (2026-10-30): change course M earlier. See keep_distance().
+[ -n "${MODE_KEEP_DISTANCE:-}" ] && ARGS+=(--keep-distance "$MODE_KEEP_DISTANCE")
 # MODE_LIVE_MAP=1 (2026-10-30): the dashboard's map updates while she drives.
 [ "${MODE_LIVE_MAP:-0}" = "1" ] && ARGS+=(--live-map)
 # MODE_BUMPER_ESCAPE=1 (2026-10-30): one committed way out of a tight spot.

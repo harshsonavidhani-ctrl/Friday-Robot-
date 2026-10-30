@@ -501,6 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg.strict_reverse = bool(getattr(args, "strict_reverse", False))
     cfg.bumper_escape = bool(getattr(args, "bumper_escape", False))
     cfg.live_map = bool(getattr(args, "live_map", False))
+    pi_deploy.keep_distance(cfg, float(getattr(args, "keep_distance", 0.0)))
     if cfg.bumper_escape:
         import escape as _escape
         loop.bumper_escape = _escape.EscapeManeuver(cfg)
