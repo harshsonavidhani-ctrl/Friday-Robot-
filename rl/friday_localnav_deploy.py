@@ -499,6 +499,11 @@ def main(argv: list[str] | None = None) -> int:
     # The tenth and eleventh (2026-10-20): the 09-04 speed, and the strict reverse.
     cfg.max_forward_speed = max(0.0, float(getattr(args, "max_forward_speed", 0.0)))
     cfg.strict_reverse = bool(getattr(args, "strict_reverse", False))
+    cfg.bumper_escape = bool(getattr(args, "bumper_escape", False))
+    if cfg.bumper_escape:
+        import escape as _escape
+        loop.bumper_escape = _escape.EscapeManeuver(cfg)
+        LOGGER.info("Bumper escape ON: one committed back-then-turn at a ToF block")
     # The seventh and eighth: the way back (2026-09-26) and undoing the last move
     # (2026-09-28). Without these lines --no-way-back / --no-unstick did nothing on
     # the robot, because run_localnav.sh drives THIS main().

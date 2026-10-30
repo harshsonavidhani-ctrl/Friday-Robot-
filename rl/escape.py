@@ -134,7 +134,7 @@ class EscapeManeuver:
             self._ticks += 1
             self._backed += abs(float(exec_v)) * dt
             rear_clear = rear_min_m > c.rear_stop + REAR_MARGIN_M
-            if (rear_clear and self._backed < BACK_DIST_M
+            if (can_reverse and rear_clear and self._backed < BACK_DIST_M
                     and self._ticks <= BACK_MAX_TICKS):
                 return (c.v_min, 0.0,
                         f"escape BACK {self._ticks}/{BACK_MAX_TICKS}: backed "

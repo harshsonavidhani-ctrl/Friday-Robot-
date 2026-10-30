@@ -27,6 +27,7 @@ import random
 import tempfile
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import config
@@ -69,6 +70,26 @@ class Detector:
         self._last: dict[str, float] = {}
         self._held_said = False
         self._bumps = None
+        self.fault = False              # the chip is talking nonsense: see _impossible
+        self._recent: deque = deque()
+
+    def _impossible(self, tilt: float, shake: float, now: float) -> bool:
+        """A reading no body can produce: hard shaking that never varies, on a tilt
+        that never moves. 2026-10-30: tilt 80, shake 52 for two minutes while the
+        ToF and LiDAR stood perfectly still; 2026-10-19: a steady 71.4. Both a
+        half-connected chip after a knock. She said "dizzy" every 5 s, and a real
+        hand is never that steady."""
+        c = self.c
+        self._recent.append((now, tilt, shake))
+        while now - self._recent[0][0] > c.BODY_FAULT_S:
+            self._recent.popleft()
+        if now - self._recent[0][0] < c.BODY_FAULT_S * 0.9:
+            return False
+        tilts = [r[1] for r in self._recent]
+        shakes = [r[2] for r in self._recent]
+        return (min(shakes) >= c.BODY_SHAKEN_DPS
+                and max(shakes) - min(shakes) <= c.BODY_FAULT_SHAKE_SPAN
+                and max(tilts) - min(tilts) <= c.BODY_FAULT_TILT_SPAN)
 
     def _held(self, key: str, cond: bool, now: float, need_s: float) -> bool:
         if not cond:
@@ -94,6 +115,11 @@ class Detector:
             return []
         c = self.c
         tilt, shake = imu["tilt_deg"], imu["shake_dps"]
+        self.fault = self._impossible(tilt, shake, now)
+        if self.fault:
+            self.lifted = False         # she was never lifted
+            self._since.clear()
+            return []
         out: list[str] = []
         bumps = imu.get("bumps", 0)
         new_bump = self._bumps is not None and bumps > self._bumps
@@ -125,7 +151,10 @@ class Detector:
         if (self._held("upside", tilt > c.BODY_UPSIDE_DOWN_DEG, now, c.BODY_EVENT_S)
                 and self._once("upside_down", now)):
             out.append("upside_down")
-        if (self._held("shaken", shake > c.BODY_SHAKEN_DPS, now, c.BODY_EVENT_S)
+        # shake_lift off = the run's detector: nobody is shaking a robot that is
+        # driving itself, and this line is what said "dizzy" every 5 s on 10-30.
+        if (self.shake_lift
+                and self._held("shaken", shake > c.BODY_SHAKEN_DPS, now, c.BODY_EVENT_S)
                 and self._once("shaken", now)):
             out.append("shaken")
         if (self._held("spun", abs(imu.get("rate_dps", 0.0)) > c.BODY_SPUN_DPS,

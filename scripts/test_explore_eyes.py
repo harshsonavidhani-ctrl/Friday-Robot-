@@ -15,6 +15,7 @@ import explore_eyes as eyes                                 # noqa: E402
 
 fails = 0
 config.EYES_ONLY_FOCUS = False      # the general rules first; tested on its own below
+config.EYES_CONFIRM, config.EYES_LEAD, config.EYES_FOCUS_SURE = 2, 1.5, 0.70   # rules, not tuning
 
 
 def check(name, ok, detail=""):

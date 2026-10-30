@@ -142,6 +142,10 @@ BACKOFF_MAX_S = 2.0
 BACKOFF_CHECK_S = 1.0
 BACKOFF_PROGRESS_M = 0.03
 BACKOFF_REST_S = 3.0
+BOARD_RESET_EVERY_S = 20.0   # a chip that stays loose gets this, not a reset loop
+ESCAPE_SAME_SPOT_M = 0.4     # escapes this close together are one place...
+ESCAPE_AVOID_AFTER = 3       # ...and after this many the planner keeps away from it
+ESCAPE_SAY_S = 20.0          # at most one line this often: the wake word needs quiet
 PIVOT_MIN_W = 0.2            # rad/s: a turn
 PIVOT_MAX_V = 0.05           # m/s: ...not driving forward (forward arcs are the forward reflex's)
 
@@ -158,6 +162,7 @@ from dwa import DynamicWindowPlanner  # noqa: E402
 from narrator import P_RECOVERY, Narrator  # noqa: E402
 import way_back as _way_back  # noqa: E402
 import unstick as _unstick  # noqa: E402
+import escape as _escape  # noqa: E402
 from navigator import Navigator  # noqa: E402
 from recovery import RecoveryController  # noqa: E402
 from world import MapperThread, WorldMap  # noqa: E402
@@ -461,6 +466,9 @@ class RobotConfig:
     # rear +-strict_rear_arc_deg actually seen, and at most reverse_max_s of
     # reversing before reverse_rest_s of turning only.
     strict_reverse: bool = False
+    # --bumper-escape: at a ToF block, ONE committed back-then-turn (rl/escape.py)
+    # instead of the back-off, the undo and the turn-out taking it in turns.
+    bumper_escape: bool = False
     strict_rear_extra: float = 0.10
     strict_rear_arc_deg: float = 60.0
     strict_rear_seen: float = 0.6
@@ -3063,6 +3071,21 @@ class FridayMotorDriver(MotorDriver):
         except Exception as exc:                          # noqa: BLE001
             LOGGER.error("Motor write failed: %s", exc)
 
+    def reset_board(self) -> None:
+        """Pulse DTR: the Uno reboots, re-inits its gyro and forgets `tilted`.
+
+        Only for a chip that is lying (body_sense.Detector.fault): the board refuses
+        every M while it believes she is tipped, so a loose gyro wire would otherwise
+        hold the wheels for the rest of the run. Motors are off through the ~2 s
+        reboot and M lines sent meanwhile are lost, so this can only ever stop her.
+        The firmware's watchdog defaults to the same 500 ms."""
+        if self._closed or self._ser is None or not self._ser.is_open:
+            return
+        with self._lock:
+            self._ser.dtr = False
+            time.sleep(0.05)
+            self._ser.dtr = True
+
     def request_imu(self) -> None:
         """Ask the board for its gyro + accelerometer (firmware GYRO 2+). The
         reply is picked up by the next drain. NOT a motor command: last_wire
@@ -3321,6 +3344,11 @@ class ControlLoop:
         # got her there -- space her own body has just left -- and after two tries
         # at one place asks to be moved. See rl/unstick.py.
         self.unstick_enabled = True
+        self.bumper_escape = None           # set once the flags are in: main()
+        self._esc_spot = None
+        self._esc_tries = 0
+        self._esc_said = -1e9
+        self._board_reset_t = -1e9
         self.unstick = _unstick.Unstick(cfg.robot_radius, cfg.v_min, cfg.omega_max,
                                         cfg.tof_pivot_min_clearance)
         self._undo_active = False
@@ -4466,7 +4494,8 @@ class ControlLoop:
                     LOGGER.info("BACKOFF: %.1f s of reversing opened the bumper only %.2f m "
                                 "-- she is not moving; resting %.0f s",
                                 elapsed, gained, BACKOFF_REST_S)
-            if (bo is None and rev_floor > 0.0 and v >= 0.0 and rear_clear
+            if (self.bumper_escape is None
+                    and bo is None and rev_floor > 0.0 and v >= 0.0 and rear_clear
                     and now_b >= self._backoff_rest_until
                     and self.reflex.last_min <= c.tof_pivot_min_clearance):
                 self._backoff = bo = {"t0": now_b, "tof0": float(self.reflex.last_min)}
@@ -4523,7 +4552,13 @@ class ControlLoop:
         # This is the ONE stage allowed to issue motion the reflex refused, and only
         # that retrace; `--no-unstick` is the old run exactly.
         self._undo_active = False
-        if self.unstick_enabled:
+        escape_step = self._bumper_escape_step(emergency, scan, rec)
+        if escape_step is not None:
+            v, omega = escape_step
+            pivot_allowed = omega != 0.0
+            self._undo_active = True        # the fast reflex and 4c stand aside
+            gate = "escape"
+        elif self.unstick_enabled and self.bumper_escape is None:
             # 2026-10-30: a reverse stage 4e will refuse is no way out either. Testing
             # only v >= 0 here hid 609 ticks of (0, 0) from this stage.
             frozen = bool(emergency
@@ -5029,6 +5064,18 @@ class ControlLoop:
                 if self._body_publish is not None:
                     self._body_publish(event, self._body.lifted, self._body_seq,
                                        tilt_deg=imu.get("tilt_deg"), during="run")
+            # A loose chip: nothing to react to, but the board still refuses every
+            # M while it thinks she is tipped, so reboot it. At most this often.
+            if (self._body.fault and imu.get("tilted")
+                    and now - self._board_reset_t >= BOARD_RESET_EVERY_S
+                    and hasattr(self.motors, "reset_board")):
+                self._board_reset_t = now
+                self.stats["board_resets"] = self.stats.get("board_resets", 0) + 1
+                LOGGER.warning("BODY: impossible gyro reading (tilt %.0f deg, shake %.1f "
+                               "deg/s): a loose chip, not a lift. Resetting the motor "
+                               "board.", imu.get("tilt_deg", 0.0), imu.get("shake_dps", 0.0))
+                self.motors.reset_board()
+                self._gyro_prev = None      # the board's yaw restarts from zero
             # Why she is not put down yet, every 5 s while lifted: the two
             # stuck lifts on 2026-10-10 left nothing in the log to say why.
             if self._body.lifted and now - getattr(self, "_lifted_log_t", 0.0) >= 5.0:
@@ -5059,6 +5106,58 @@ class ControlLoop:
                 f"kept turning {'left' if self._turn_sign > 0 else 'right'} "
                 f"({now - self._turn_since:.1f} s of {self.turn_commit_s:.1f} s)")
         return -omega
+
+    def _bumper_escape_step(self, emergency: bool, scan, rec):
+        """Stage 4b with --bumper-escape: (v, omega), or None for the normal chain.
+
+        Harsh, 2026-10-30, of an otherwise good run: "just the tight space it
+        confused". Black box: 101 changes of behaviour in 230 s at the blocked spot,
+        the back-off, undo, turn-out and recovery each with their own idea, a left
+        then a right inside two seconds. So one thing decides, once. It starts only
+        when the bumper has stayed blocked (escape.TRIGGER_TICKS): driving in the
+        open never reaches it. Every reverse still passes stage 4e and the fast
+        reflex still kills any forward.
+        """
+        esc = self.bumper_escape
+        if esc is None:
+            return None
+        c = self.cfg
+        now = time.monotonic()
+        started = esc.episodes
+        ex_v, ex_w = (self.motors.executed() if hasattr(self.motors, "executed")
+                      else (0.0, 0.0))
+        step = esc.step(
+            blocked=bool(emergency),
+            ahead_m=min(self.reflex.last_min, self.governor.last_fwd_min),
+            rear_min_m=self.governor.last_rear_min,
+            can_reverse=not self._reverse_refused(scan, now),
+            open_side=self._open_side(scan),
+            exec_v=ex_v, exec_omega=ex_w, dt=c.dt)
+        if esc.episodes != started:
+            self._escape_started()
+        if step is None:
+            return None
+        rec.add("escape", step[0], step[1], step[2])
+        self.stats["escape_ticks"] = self.stats.get("escape_ticks", 0) + 1
+        return step[0], step[1]
+
+    def _escape_started(self) -> None:
+        """Say it once in a while, and stop aiming at a spot that keeps blocking her."""
+        x, y = float(self.map.pose[0]), float(self.map.pose[1])
+        spot = self._esc_spot
+        if spot is not None and math.hypot(x - spot[0], y - spot[1]) <= ESCAPE_SAME_SPOT_M:
+            self._esc_tries += 1
+        else:
+            self._esc_spot, self._esc_tries = (x, y), 1
+        if self._esc_tries == ESCAPE_AVOID_AFTER:
+            self.unstick.avoid.append(self._esc_spot)
+            self._drain_unstick()
+        now = time.monotonic()
+        if now - self._esc_said >= ESCAPE_SAY_S:
+            self._esc_said = now
+            self._say("escape", "Tight space. Backing out."
+                      if self.bumper_escape.phase == _escape.BACK
+                      else "Tight space. Turning out.")
 
     def _reverse_refused(self, scan, now: float) -> bool:
         """Would stage 4e refuse a reverse right now? No side effects."""
@@ -6535,6 +6634,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-forward-speed", type=float, default=0.0, metavar="M_PER_S",
                    help="Forward never faster than this (stage 4e). 0.125 is how she "
                         "explored on 2026-09-04 03:52. 0 (default) = off.")
+    p.add_argument("--bumper-escape", action="store_true",
+                   help="At a ToF block, one committed back-then-turn instead of the "
+                        "back-off, undo and turn-out taking turns (rl/escape.py).")
     p.add_argument("--strict-reverse", action="store_true",
                    help="Reverse only into space the LiDAR SEES is empty, and at most "
                         "reverse_max_s at a time (stage 4e).")
@@ -6945,6 +7047,9 @@ def main(argv: list[str] | None = None) -> int:
         cfg.reverse_floor_mps = max(0.0, float(args.reverse_floor))
         cfg.max_forward_speed = max(0.0, float(args.max_forward_speed))
         cfg.strict_reverse = bool(args.strict_reverse)
+        cfg.bumper_escape = bool(args.bumper_escape)
+        if cfg.bumper_escape:
+            loop.bumper_escape = _escape.EscapeManeuver(cfg)
         loop.recovery_enabled = not args.no_recovery
         loop.cam_threads = [t for t in threads if isinstance(t, CameraThread)]
         loop._threads = threads          # for the LiDAR rejection counter
