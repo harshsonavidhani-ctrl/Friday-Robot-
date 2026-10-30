@@ -209,5 +209,26 @@ for i in range(50):
     t += 0.1
 check("at rest is no fault", not d.fault and not d.lifted)
 
+# Lifted in a run ends when she is level, whatever the shake says.
+d = body_sense.Detector(shake_lift=False, tilt_lift=False, bumps=False)
+t = 100.0
+for i in range(5):
+    d.update(imu(40.0 + i, 5.0, tilted=True), t)
+    t += 0.1
+check("the board's tilted flag lifts her in a run", d.lifted)
+for i in range(30):
+    d.update(imu(2.0 + (i % 3), 4.0 + (i % 5)), t)
+    t += 0.1
+check("level for a moment frees her, shake or no shake", not d.lifted)
+d = body_sense.Detector()
+t = 100.0
+for i in range(8):
+    d.update(imu(40.0 + 3 * (i % 3), 5.0 + i, tilted=True), t)
+    t += 0.1
+for i in range(30):
+    d.update(imu(2.0, 4.0 + (i % 5)), t)
+    t += 0.1
+check("in a hand (idle) she still waits for stillness", d.lifted)
+
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

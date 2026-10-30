@@ -142,7 +142,12 @@ class Detector:
             return out
 
         # -- lifted ------------------------------------------------------------
-        if self._held("down", tilt < c.BODY_LEVEL_DEG and shake < c.BODY_DOWN_SHAKE_DPS
+        # The run's detector (shake_lift off) lifts on the board's TILTED flag alone,
+        # so level and no longer tilted is what releases it. Asking it for stillness
+        # too left the wheels frozen 701 of 1454 ticks on 2026-10-30, tilt 1-4 deg and
+        # shake 4-8: her own LiDAR and rocking never let it read under 0.8.
+        calm = shake < c.BODY_DOWN_SHAKE_DPS or not self.shake_lift
+        if self._held("down", tilt < c.BODY_LEVEL_DEG and calm
                       and not imu.get("tilted"), now, c.BODY_DOWN_S):
             self.lifted = False
             self._since.clear()
