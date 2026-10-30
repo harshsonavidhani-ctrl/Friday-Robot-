@@ -494,7 +494,8 @@ details.fold summary:hover{color:var(--dim)}
   transition:background .12s,border-color .12s,transform .06s;
   -webkit-tap-highlight-color:transparent;
   overscroll-behavior:none;
-  touch-action:manipulation;          /* no 300ms double-tap delay */
+  touch-action:none;                  /* held to drive: the page must not take the thumb */
+  user-select:none;-webkit-user-select:none;
 }
 .dbtn:hover{border-color:var(--accent-dim)}
 .dbtn:active{transform:scale(.95);background:var(--line)}

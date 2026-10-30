@@ -300,6 +300,34 @@ AUDIO_DRAIN_S = 0.30
 # the brain for one short remark. Every gate must pass or no call is made; the
 # worst case is one fast Haiku call (with the frame, ~$0.003) per cooldown.
 # The numbers are behaviour knobs chosen, not measured -- change them freely.
+# --- She names what she sees while exploring (explore_eyes.py, 2026-10-30) ---
+EYES = True
+EYES_ALWAYS = True                   # hackathon: watching whenever she is on, not only in runs
+EYES_PERIOD_S = 0.3                  # rest between looks; a look is ~1 s of CPU
+EYES_MIN_SCORE = 0.6                 # SCENE_MIN_SCORE: the rest of the 80 words
+EYES_SURE_SCORE = 0.75               # said at the first look
+EYES_CONFIRM = 2                     # ...otherwise seen in 2 of the last 3 looks
+EYES_CONFIRM_OF = 3
+EYES_CLASS_MIN_DOWN = 0.30           # the floor fills the frame: name more freely
+EYES_CLASS_MIN_UP = 0.55             # wall and ceiling: only when she is sure
+EYES_SAY_AGAIN_S = 15.0              # one name, once per this: objects get shown in turn
+EYES_SAY_AGAIN_PERSON_S = 60.0       # a crowd must not make her chant
+EYES_FOCUS = ("cup", "phone", "bottle", "glass", "book", "shoe")
+EYES_PHONE_LOOKALIKES = ("mouse", "remote")   # say phone; () if a real one is shown
+EYES_FOCUS_SCORE = 0.35              # the detector's floor for these
+EYES_FOCUS_CLASS_SCORE = 0.20        # the classifier's
+EYES_FLOOR_CROP = 0.75               # of the frame's height, bottom centre
+EYES_SAY_STALE_S = 5.0               # she has driven past it by now
+EYES_RUN_NAMES = 6                   # at most this many in the end-of-run sentence
+EYES_NICE = 10
+EYES_THREADS = 1
+EYES_IDLE_POLL_S = 1.0
+EYES_FRAME_TIMEOUT_S = 8.0
+EYES_DETECTOR_WAIT_S = 120.0
+EYES_CLASSIFIER = ROOT / "assets" / "models" / "vision" / "mobilenetv2-12-int8.onnx"
+EYES_CLASSIFIER_LABELS = ROOT / "assets" / "models" / "vision" / "synset.txt"
+EYES_STATE_FILE = ROOT / "state" / "explore_eyes.json"
+
 SCENE_BRIDGE = True
 SCENE_BRIDGE_POLL_S = 2.0            # how often scene.json is re-read (a file stat)
 SCENE_BRIDGE_MIN_SCORE = 0.6         # SCENE_MIN_SCORE already drops below this
@@ -513,7 +541,7 @@ LAPTOP_MISS_HOURS = (9, 23)            # local hours, [start, end); play keeps L
 # every LAPTOP_GAME_WATCH_GAP_S -- one paid vision look each. PLAY: only when
 # he says so, slow games only, at most GAME_PLAY_MAX_MOVES clicks, a pause
 # between them. Both: the daily spend cap and RATE_LIMITS apply.
-LAPTOP_GAME_WATCH = True
+LAPTOP_GAME_WATCH = False   # off for now (Harsh 2026-10-30: "stop the random reaction games")
 LAPTOP_GAME_WATCH_GAP_S = 90.0
 LAPTOP_GAME_WATCH_ACTIVE_S = 20.0
 GAME_PLAY_MAX_MOVES = 60
@@ -1996,6 +2024,12 @@ MOTOR_PORT = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A5069RR4-if00-port0"
 # If the motor leads are ever physically corrected, set this back to False.
 MOTOR_INVERT_LEFT = False
 MOTOR_INVERT_RIGHT = True
+# 2026-10-30, measured with the up camera and the LiDAR: the drive's "left" is
+# physically RIGHT. rl/ and slam/ read the LiDAR mirrored too, so they cancel and
+# steer correctly; only a PERSON'S left/right came out reversed. True = the MCP
+# tools move and turn_degrees translate (mcp_server/tools/movement._person_word).
+# Do NOT "fix" this in motor.py or safety.py: exploring and the way home need it.
+TURN_WORDS_MIRRORED = True
 
 # KICKSTART. From rest the motors need more torque to start than to keep
 # going; below that threshold they sit and buzz without moving, which is worst
@@ -2342,6 +2376,8 @@ DASHBOARD_ROBOT_TIMEOUT_S = 15.0
 # Manual drive presets offered in the dashboard's motor panel, in seconds.
 # Short on purpose -- a tap should nudge, not launch.
 DASHBOARD_MOTOR_STEPS = (0.3, 0.6, 1.0)
+DASHBOARD_FRAME_WAIT_S = 6.0     # explore_eyes' frame; the C270 takes 3+ s to wake
+EXPLORE_RUN_READS_CAMERAS = False   # rl/modes MODE_CAMERAS: keep the two the same
 
 # Motor calibration the dashboard panel edits. Written to state/, NOT to
 # this file, so config stays declarative and the values survive edits here.

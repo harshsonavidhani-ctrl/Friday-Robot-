@@ -14,6 +14,7 @@ carries its error margin, and the brain is expected to say "about" out loud.
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 import config
@@ -33,8 +34,35 @@ def _margin(centre: float, unit: str) -> str:
             f"±{config.ODOMETRY_ERROR_PERCENT}% — timed, not measured)")
 
 
-@tool
-def move(direction: str, duration_seconds: float = 1.0) -> str:
+def _person_word(direction: str) -> str:
+    """A person's left/right as the word the drive below this line wants.
+
+    ⚠ `move()` AND `turn_degrees()` ARE MIRRORED, and the map stack depends on
+    it. Measured 2026-10-30 with the up camera AND the LiDAR: move("left") turns
+    her physically RIGHT. Exploring and navigation never noticed, because rl/ and
+    slam/ read the LiDAR's clockwise bearings as counter-clockwise, so their whole
+    world is mirrored too and the two cancel ("left" there means "the way the
+    mirrored map calls left"). Flipping the drive would break all of them.
+
+    So the plain functions stay as they are for nav_follower, the mission and
+    home-facing, and only the MCP tools -- what a dashboard button, a spoken
+    "turn left" or the brain reach -- translate here.
+    """
+    if config.TURN_WORDS_MIRRORED:
+        return {"left": "right", "right": "left"}.get(direction, direction)
+    return direction
+
+
+def _person_text(text: str) -> str:
+    """The drive's answer in a person's left/right."""
+    if not config.TURN_WORDS_MIRRORED:
+        return text
+    return re.sub(r"\b(left|right)\b",
+                  lambda m: "right" if m.group(1) == "left" else "left", text)
+
+
+@tool(name="move")
+def move_tool(direction: str, duration_seconds: float = 1.0) -> str:
     """Drive Friday in a direction for a number of seconds.
 
     YOU MUST CALL observe() FIRST. Forward and backward moves are refused
@@ -51,6 +79,13 @@ def move(direction: str, duration_seconds: float = 1.0) -> str:
             pivot in place rather than steering through an arc.
         duration_seconds: how long to drive. Capped by the server.
     """
+    word = _person_word((direction or "").strip().lower())
+    return _person_text(move(word, duration_seconds))
+
+
+def move(direction: str, duration_seconds: float = 1.0) -> str:
+    """The guarded move in the map stack's (mirrored) left/right: see
+    _person_word. People and the brain reach this through move_tool."""
     direction = (direction or "").strip().lower()
     if direction not in DIRECTIONS:
         return (f"'{direction}' is not a direction. Use one of: "
@@ -155,8 +190,8 @@ def move_distance(cm: float) -> str:
     return f"{text} ({clip_note})" if clip_note else text
 
 
-@tool
-def turn_degrees(degrees: float) -> str:
+@tool(name="turn_degrees")
+def turn_degrees_tool(degrees: float) -> str:
     """Pivot Friday in place by roughly this many degrees.
 
     APPROXIMATE, for the same reason as move_distance: this is a timed pivot,
@@ -166,6 +201,12 @@ def turn_degrees(degrees: float) -> str:
     Args:
         degrees: negative turns left, positive turns right.
     """
+    sign = -1.0 if config.TURN_WORDS_MIRRORED else 1.0     # see _person_word
+    return _person_text(turn_degrees(sign * degrees))
+
+
+def turn_degrees(degrees: float) -> str:
+    """The pivot in the map stack's (mirrored) left/right: see _person_word."""
     measured = _gyro_turn(degrees)
     if measured is not None:
         return measured

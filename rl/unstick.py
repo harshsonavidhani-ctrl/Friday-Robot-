@@ -91,6 +91,15 @@ FREED_TICKS = 10
 ASK_REPEAT_S = 30.0
 # The planner steers away from frontiers within this of a place she got stuck.
 AVOID_RADIUS_M = 0.5
+# TURN OUT (2026-10-30, the hackathon's first round). Something 3 cm off the
+# bumper, things 10-15 cm behind her tail, and 3-4 m of open floor on one side:
+# the reflex froze turning, the strict reverse refused backing, there was no move
+# to retrace, and she sat at (0, 0) for two minutes in front of the judges. When
+# nothing can be undone she pivots toward the open side instead. A pivot does not
+# translate, the bumper reading still ends it, and a turn that did not free her
+# is followed by one the other way. The most she tries before resting REST_S:
+PIVOT_OUT_TRIES = 6
+PIVOT_OUT_S = 1.2
 
 TURN_W = 0.1        # rad/s: executed rotation above this is turning
 DRIVE_V = 0.03      # m/s: executed speed above this is driving
@@ -131,6 +140,7 @@ class Unstick:
     free_since: float | None = None
     undo: _Undo | None = None
     asked_at: float = -math.inf
+    pivot_tries: int = 0
     avoid: list = field(default_factory=list)       # [(x, y)] -- the loop reads it
     events: list = field(default_factory=list)      # (key, text) to say -- the loop drains it
     stats: dict = field(default_factory=lambda: {
@@ -202,9 +212,11 @@ class Unstick:
     # ---------------------------------------------------------------- update ---
     def update(self, *, frozen: bool, tof_min: float | None, rear_min: float,
                pose: tuple[float, float, float] | Any,
-               now: float | None = None) -> tuple[float, float, str] | None:
+               now: float | None = None,
+               open_side: float = 0.0) -> tuple[float, float, str] | None:
         """Called every tick after the ToF reflex. Returns (v, omega, why) to
-        issue instead of the chain's output, or None to leave it alone."""
+        issue instead of the chain's output, or None to leave it alone.
+        `open_side`: +1 / -1, the side the LiDAR sees open; 0 = no turning out."""
         now = time.monotonic() if now is None else now
         x, y = float(pose[0]), float(pose[1])
         tof = math.inf if tof_min is None else float(tof_min)
@@ -214,6 +226,7 @@ class Unstick:
             guard = self.robot_radius + REAR_GUARD_EXTRA_M
             if tof >= self.tof_freeze_m + ROOM_MARGIN_M:
                 self.stats["undo_freed"] += 1
+                self.pivot_tries = 0
                 return self._end_undo(now, freed=True)
             if tof < u.tof_at_start - WORSE_M:
                 self.stats["undo_worse"] += 1
@@ -267,18 +280,15 @@ class Unstick:
             self.spot = (x, y)
             self.tries = 0
         if self.tries >= MAX_TRIES:
-            self._ask(now)
-            return None
+            return self._turn_out(now, tof, open_side)
         plan = self._plan(rear_min)
         if plan is None:
             self.stats["no_move_to_undo"] += 1
-            self._ask(now)
-            return None
+            return self._turn_out(now, tof, open_side)
         # A reverse must also clear the LiDAR guard before it starts.
         if plan.v < 0 and rear_min <= self.robot_radius + REAR_GUARD_EXTRA_M:
             self.stats["undo_rear_stop"] += 1
-            self._ask(now)
-            return None
+            return self._turn_out(now, tof, open_side)
         self.tries += 1
         self.stats["undos"] += 1
         self.stats["undo_turns" if plan.kind == "turn" else "undo_drives"] += 1
@@ -292,6 +302,26 @@ class Unstick:
         return (min(plan.v, 0.0), plan.w, plan.why)
 
     # --------------------------------------------------------------- helpers ---
+    def _turn_out(self, now: float, tof: float,
+                  open_side: float) -> tuple[float, float, str] | None:
+        """Nothing to undo: pivot out toward the open side (PIVOT_OUT_TRIES)."""
+        if not open_side or self.pivot_tries >= PIVOT_OUT_TRIES:
+            self.pivot_tries = 0
+            self._ask(now)
+            return None
+        sign = math.copysign(1.0, open_side)
+        if self.pivot_tries % 2:
+            sign = -sign                    # that side did not free her
+        self.pivot_tries += 1
+        self.stats["turn_outs"] = self.stats.get("turn_outs", 0) + 1
+        if self.pivot_tries == 1:
+            self.events.append(("unstuck_turn", "I'm boxed in. Turning out."))
+        self.undo = _Undo("pivot", 0.0, sign * self.omega_max, PIVOT_OUT_S,
+                          f"turning out toward the open side (try {self.pivot_tries})",
+                          started=now, tof_at_start=tof)
+        self.state = "undoing"
+        return (0.0, self.undo.w, self.undo.why)
+
     def _end_undo(self, now: float, *, freed: bool) -> None:
         self.state = "idle"
         self.undo = None

@@ -223,5 +223,60 @@ for trial in range(200):
             ok = False
 check("undo speeds stay inside the robot's limits", ok)
 
+# 12. TURN OUT (the 2026-10-30 lock): frozen, nothing to undo, an open side.
+def frozen_ticks(u, n, t, side=1.0, tof=0.03, rear=0.32):
+    out = []
+    for _ in range(n):
+        out.append(u.update(frozen=True, tof_min=tof, rear_min=rear,
+                            pose=(0, 0, 0), now=t, open_side=side))
+        t += DT
+    return out, t
+
+u = make()
+outs, t = frozen_ticks(u, U.LOCK_TICKS, 100.0)
+turn = next((o for o in outs if o is not None), None)
+check("frozen with nothing to undo: she turns out", turn is not None)
+check("...in place, toward the open side, never forward",
+      turn is not None and turn[0] == 0.0 and turn[1] > 0.0, str(turn))
+
+u = make()
+outs, t = frozen_ticks(u, U.LOCK_TICKS, 100.0, side=-1.0)
+turn = next((o for o in outs if o is not None), None)
+check("the open side decides the way", turn is not None and turn[1] < 0.0, str(turn))
+
+# The turn ends when it runs out, and the next one goes the other way.
+u = make()
+outs, t = frozen_ticks(u, U.LOCK_TICKS, 100.0)
+first = next(o for o in outs if o is not None)
+outs, t = frozen_ticks(u, int(U.PIVOT_OUT_S / DT) + 2 + U.LOCK_TICKS, t)
+turns = [o for o in outs if o is not None]
+check("a turn that did not free her is followed by one the other way",
+      bool(turns) and turns[-1][1] == -first[1], str(turns[-1:] ))
+
+# The bumper opening ends it at once.
+u = make()
+outs, t = frozen_ticks(u, U.LOCK_TICKS, 100.0)
+after = u.update(frozen=True, tof_min=cfg.tof_pivot_min_clearance + U.ROOM_MARGIN_M,
+                 rear_min=0.32, pose=(0, 0, 0), now=t)
+check("the bumper opening ends the turn", after is None and u.state == "idle", u.state)
+
+# Bounded: she rests after PIVOT_OUT_TRIES, then tries again.
+u = make(); u.keep_trying = True
+t, turns = 100.0, 0
+for _ in range(4000):
+    o = u.update(frozen=True, tof_min=0.03, rear_min=0.32, pose=(0, 0, 0), now=t,
+                 open_side=1.0)
+    turns += o is not None and u.undo is not None and u.state == "undoing"
+    if u.state == "resting":
+        break
+    t += DT
+check("turning out is bounded, then she rests", u.state == "resting", u.state)
+
+# No open side given: exactly the old behaviour.
+u = make(); u.keep_trying = True
+outs, t = frozen_ticks(u, U.LOCK_TICKS, 100.0, side=0.0)
+check("no open side: no turning out", all(o is None for o in outs)
+      and u.state == "resting", u.state)
+
 print(f"--- {'ALL PASSED' if not fails else f'{fails} FAILURE(S)'} ---")
 sys.exit(1 if fails else 0)

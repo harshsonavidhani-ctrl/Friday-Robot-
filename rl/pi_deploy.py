@@ -4472,8 +4472,13 @@ class ControlLoop:
                 self._backoff = bo = {"t0": now_b, "tof0": float(self.reflex.last_min)}
                 self.stats["reflex_backoffs"] = self.stats.get("reflex_backoffs", 0) + 1
             if bo is not None and rev_floor > 0.0:
-                v, omega = -min(rev_floor, c.v_max), 0.0
-                gate = "REFLEX_BACKOFF"
+                if self._reverse_refused(scan, now_b):
+                    # Stage 4e runs last and would zero this, and a back-off that
+                    # is doomed must not stop the unstick stage seeing the freeze.
+                    self._backoff = bo = None
+                else:
+                    v, omega = -min(rev_floor, c.v_max), 0.0
+                    gate = "REFLEX_BACKOFF"
         elif tof_scale < 1.0 and v > 0:
             v = min(v, c.v_max * tof_scale)
             if gate == "ok":
@@ -4519,12 +4524,16 @@ class ControlLoop:
         # that retrace; `--no-unstick` is the old run exactly.
         self._undo_active = False
         if self.unstick_enabled:
-            frozen = bool(emergency and v >= 0.0
-                          and self.reflex.last_min <= c.tof_pivot_min_clearance)
+            # 2026-10-30: a reverse stage 4e will refuse is no way out either. Testing
+            # only v >= 0 here hid 609 ticks of (0, 0) from this stage.
+            frozen = bool(emergency
+                          and self.reflex.last_min <= c.tof_pivot_min_clearance
+                          and (v >= 0.0 or self._reverse_refused(scan, time.monotonic())))
             undo = self.unstick.update(
                 frozen=frozen,
                 tof_min=self.reflex.last_min if depth is not None else None,
-                rear_min=self.governor.last_rear_min, pose=self.map.pose)
+                rear_min=self.governor.last_rear_min, pose=self.map.pose,
+                open_side=self._open_side(scan) if frozen else 0.0)
             if undo is not None:
                 v, omega, why_undo = undo
                 v = min(v, 0.0)                     # never forward, whoever asked
@@ -5050,6 +5059,14 @@ class ControlLoop:
                 f"kept turning {'left' if self._turn_sign > 0 else 'right'} "
                 f"({now - self._turn_since:.1f} s of {self.turn_commit_s:.1f} s)")
         return -omega
+
+    def _reverse_refused(self, scan, now: float) -> bool:
+        """Would stage 4e refuse a reverse right now? No side effects."""
+        c = self.cfg
+        if not getattr(c, "strict_reverse", False):
+            return False
+        return (now < self._rev_rest_until
+                or bool(strict_rear_refusal(scan, self.map.blind_beams, c)))
 
     def _careful(self, v: float, omega: float, gate: str, scan, rec) -> tuple[float, str]:
         """Stage 4e: the forward cap and the strict reverse (see RobotConfig)."""

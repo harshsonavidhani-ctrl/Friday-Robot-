@@ -42,6 +42,8 @@ log = logging.getLogger("friday.scene")
 
 _thread: threading.Thread | None = None
 _stop = threading.Event()
+_shared = None
+_detector_ready = threading.Event()
 
 
 def start() -> None:
@@ -61,6 +63,16 @@ def stop() -> None:
     _stop.set()
 
 
+def shared_detector(wait_s: float = 0.0):
+    """The loaded detector, for explore_eyes: one session, not two 29 MB ones.
+    Waits for it because creating one takes ~20 s and scene.py does it first."""
+    until = time.monotonic() + wait_s
+    while not _detector_ready.wait(0.5):
+        if time.monotonic() >= until:
+            return None
+    return _shared
+
+
 def _detector():
     """The object detector, or None -- a scene with no names still has a frame."""
     if str(config.ROOT) not in sys.path:
@@ -77,6 +89,10 @@ def _why_not_now() -> str | None:
     import vision
     if hardware.lease_active() > 0:
         return "an autonomous run has the robot"
+    if config.EYES and config.EYES_ALWAYS:
+        # explore_eyes keeps one stream open and writes scene.json itself.
+        # Opening the camera here every 8 s is what reset the C270 on the USB bus.
+        return "explore_eyes is watching the up camera"
     device = vision.resolve_cameras().get("up")
     if device is None:
         return "the up camera is not on the USB bus"
@@ -163,12 +179,15 @@ def _tick(detector) -> None:
 
 
 def _run() -> None:
+    global _shared
     detector = None
     try:
         detector = _detector()
     except Exception as exc:                    # noqa: BLE001
         log.warning("scene: object detection OFF (%s: %s)",
                     type(exc).__name__, exc)
+    _shared = detector
+    _detector_ready.set()
     log.info("scene watcher on: up camera every %.0fs, object detection %s",
              config.SCENE_PERIOD_S, "on" if detector is not None else "OFF")
     paused: str | None = None

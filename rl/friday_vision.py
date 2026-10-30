@@ -174,7 +174,8 @@ class ObjectDetector(threading.Thread):
         self._stop.set()
 
     # ---- the work ----------------------------------------------------------------
-    def _infer(self, bgr) -> list[Detection]:
+    def _infer(self, bgr, min_score: float | None = None) -> list[Detection]:
+        floor = MIN_SCORE if min_score is None else min_score
         h, w = bgr.shape[:2]
         # RGB, and letterboxed rather than stretched: SSD's aspect assumptions are
         # baked into its anchors, and squashing a 4:3 frame into a square moves
@@ -198,7 +199,7 @@ class ObjectDetector(threading.Thread):
         boxes, classes, scores = boxes[0], classes[0], scores[0]
         for i in range(len(scores)):
             s = float(scores[i])
-            if s < MIN_SCORE:
+            if s < floor:
                 break                       # SSD emits these already sorted
             label = COCO_LABELS.get(int(classes[i]))
             if label is None:

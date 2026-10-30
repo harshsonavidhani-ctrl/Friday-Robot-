@@ -36,6 +36,7 @@ def _serial_of(node: str) -> str:
 JPEG_SOI = b"\xff\xd8"          # start of image
 JPEG_EOI = b"\xff\xd9"          # end of image
 BOUNDARY = "fridayframe"
+MAX_FRAME_BYTES = 2_000_000      # no 640x480 JPEG is this big
 
 
 class CameraStream:
@@ -168,9 +169,17 @@ class CameraStream:
                 while True:
                     start = buf.find(JPEG_SOI)
                     if start < 0:
+                        # ⚠ NOT A PICTURE AT ALL (2026-10-30: bytes with no SOI,
+                        # after the C270 reset on the USB bus). Keeping them grew
+                        # the buffer without limit and rescanned all of it on
+                        # every read: 92% of a core, the event loop starved and
+                        # no frame ever came out. Keep one byte: half a marker.
+                        del buf[:-1]
                         break
                     end = buf.find(JPEG_EOI, start + 2)
                     if end < 0:
+                        if len(buf) - start > MAX_FRAME_BYTES:
+                            del buf[:]      # a start with no end: a broken frame
                         break
                     frame = bytes(buf[start:end + 2])
                     del buf[:end + 2]

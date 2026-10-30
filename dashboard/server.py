@@ -851,6 +851,32 @@ async def api_camera(request: web.Request) -> web.Response:
                               "cameras": cams.status()})
 
 
+async def cam_latest(request: web.Request) -> web.Response:
+    """One fresh frame for explore_eyes, from the stream this process owns, so
+    nothing ever opens a camera a second time. Loopback only."""
+    if request.remote not in ("127.0.0.1", "::1"):
+        raise web.HTTPForbidden()
+    camera = request.app["cams"].get(request.match_info["which"])
+    if camera is None or not camera.available:
+        raise web.HTTPServiceUnavailable(text="no such camera right now")
+    try:
+        async with camera.subscribe() as queue:
+            # The first item can be the last frame of a stream long since
+            # stopped; the second is new.
+            frame = await asyncio.wait_for(queue.get(), config.DASHBOARD_FRAME_WAIT_S)
+            frame = await asyncio.wait_for(queue.get(), config.DASHBOARD_FRAME_WAIT_S)
+    except (asyncio.TimeoutError, TimeoutError):
+        # A running ffmpeg with no pictures coming out: it does not recover by
+        # itself after a USB reset. Stop it, and the next look starts it afresh.
+        log.warning("%s camera gave no frame in %.0f s: restarting its stream",
+                    camera.name, config.DASHBOARD_FRAME_WAIT_S)
+        await camera.stop()
+        raise web.HTTPServiceUnavailable(text="no frame: stream restarted")
+    except (OSError, RuntimeError) as exc:
+        raise web.HTTPServiceUnavailable(text=f"no frame: {exc}")
+    return web.Response(body=frame, content_type="image/jpeg")
+
+
 async def cam_stream(request: web.Request) -> web.StreamResponse:
     which = request.match_info["which"]
     cams: CameraSet = request.app["cams"]
@@ -868,7 +894,10 @@ async def cam_stream(request: web.Request) -> web.StreamResponse:
     # would be camera-blind anyway, a few seconds later and harder to see.
     # in a thread: this is a systemctl call, and the event loop is also serving
     # her live log.
-    if (await asyncio.to_thread(_explore_active))[0] is not None:
+    # ...only if the run reads them. MODE_CAMERAS=0 (since 09-17): it does not,
+    # so his phone can watch her explore, sharing this ffmpeg with explore_eyes.
+    if (config.EXPLORE_RUN_READS_CAMERAS
+            and (await asyncio.to_thread(_explore_active))[0] is not None):
         raise web.HTTPConflict(
             text=f"{which} camera belongs to the exploration run until she parks")
 
@@ -1439,6 +1468,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/calibration", api_calibration_get)
     app.router.add_post("/api/calibration", api_calibration_post)
     app.router.add_get("/cam/{which}", cam_stream)
+    app.router.add_get("/api/cam/{which}/latest.jpg", cam_latest)
     app.router.add_post("/api/camera/{which}", api_camera)
     app.router.add_post("/api/motor", api_motor)
     app.router.add_post("/api/motor/speed", api_motor_speed)

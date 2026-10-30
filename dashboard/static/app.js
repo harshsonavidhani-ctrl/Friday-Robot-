@@ -1526,12 +1526,21 @@ function buildDrive() {
     seg.appendChild(b);
   }
 
-  for (const b of document.querySelectorAll('.dbtn'))
-    b.onclick = () => drive(b.dataset.dir, b);
+  for (const b of document.querySelectorAll('.dbtn')) {
+    if (b.dataset.dir === 'stop') b.onclick = () => drive('stop', b);
+    else holdable(b);
+  }
 
   const speed = $('drivespeed');
   if (speed) {
     speed.oninput = () => { $('speedval').textContent = speed.value + '%'; };
+    // Show the speed she is really at, not the page's own idea of it.
+    fetch('/api/calibration').then((r) => r.json()).then((c) => {
+      if (c.speed_percent) {
+        speed.value = c.speed_percent;
+        $('speedval').textContent = c.speed_percent + '%';
+      }
+    }).catch(() => {});
     speed.onchange = async () => {
       try {
         const r = await fetch('/api/motor/speed', {
@@ -1543,6 +1552,34 @@ function buildDrive() {
       } catch (e) { note(String(e), true); }
     };
   }
+}
+
+/* HOLD TO DRIVE. A tap is one step. Keep the thumb down and she keeps going,
+   step after step, each one still guarded by the server; lift it and she stops.
+   If the phone loses the Pi mid-hold the step that is running simply ends. */
+function holdable(button) {
+  let held = false, started = 0;
+  const release = () => {
+    if (!held) return;
+    held = false;
+    // A tap plays its one step out; a hold ends the moment the thumb lifts.
+    if (performance.now() - started > driveStep * 1000) drive('stop');
+  };
+  button.onpointerdown = async (e) => {
+    e.preventDefault();
+    if (held) return;
+    try { button.setPointerCapture(e.pointerId); } catch (err) { /* it still works */ }
+    held = true;
+    started = performance.now();
+    do {
+      await drive(button.dataset.dir, button);
+      await new Promise((r) => setTimeout(r, 15));
+    } while (held);
+  };
+  button.onpointerup = button.onpointercancel = release;
+  button.oncontextmenu = (e) => e.preventDefault();
+  // A keyboard's Enter arrives as a click with no pointer behind it.
+  button.onclick = (e) => { if (e.detail === 0) drive(button.dataset.dir, button); };
 }
 
 function note(text, bad) {
