@@ -1160,6 +1160,12 @@ TOF_CORROBORATE_FRAMES = 3
 # 250-315 mm, and it needs two hits besides. Cost: at most ~0.5 s of caution after
 # she turns away from something truly close.
 TOF_DARK_HOLD_MM = 250
+# ALREADY INSIDE THE STOP ZONE NEEDS NO SECOND OPINION (2026-10-30). The 3-frame median
+# holds a new object back two frames, ~0.15 s, and she pivots ~15 deg in that time: 7
+# of 8 close-ins that day began in a pivot. The artefact the median is for lives at
+# 250-315 mm, above this, so a frame that puts tof_min_valid_zones cells under this
+# passes straight through.
+TOF_FAST_STOP_MM = 240
 TOF_DARK_FRAMES = 8                   # ~0.5 s at 15 Hz
 TOF_DARK_MIN_HITS = 2
 
@@ -1247,6 +1253,15 @@ TOF_FLOOR_BOTTOM_MAX_MM = 300
 RELOC_TRUST_SHARPNESS = 3.0
 RELOC_TRUST_M = 0.30
 RELOC_TRUST_DEG = 15.0
+
+
+def tof_fast_stop(med: np.ndarray, frame_mm: np.ndarray, zones: int) -> np.ndarray:
+    """med (m) with this one frame's cells taken at once, when at least `zones` of
+    them are inside TOF_FAST_STOP_MM. See TOF_FAST_STOP_MM."""
+    near = frame_mm < TOF_FAST_STOP_MM
+    if int(near.sum()) < zones:
+        return med
+    return np.where(near, np.minimum(med, frame_mm / 1000.0), med).astype(np.float32)
 
 
 def tof_floor_rows(frame) -> tuple[int, list]:
@@ -1457,6 +1472,8 @@ class DFRobotToFThread(SensorThread):
         self._dark: deque = deque(maxlen=TOF_DARK_FRAMES)
         self._frames = self._blind = 0
         self._held = 0                    # frames a dark thing's reading was held
+        self._rec_path = os.environ.get("FRIDAY_TOF_RECORD") or None
+        self._rec = None
 
     def _setup(self) -> None:
         import serial
@@ -1510,6 +1527,7 @@ class DFRobotToFThread(SensorThread):
         frame = [self._partial[r] for r in range(TOF_ROWS)]
         self._partial = {}
         self._frames += 1
+        self._record(frame)
         obstacles, intact = tof_obstacles_mm(frame)
         self._recent.append((obstacles, intact))
         self._dark.append(obstacles)
@@ -1527,7 +1545,21 @@ class DFRobotToFThread(SensorThread):
         stack = np.stack([o for o, _ in self._recent])
         med = np.median(stack, axis=0).astype(np.float32) / 1000.0
         med = self._hold_dark(med)
+        med = tof_fast_stop(med, obstacles, self.cfg.tof_min_valid_zones)
         self.slot.publish(np.minimum(med, self.cfg.tof_max_range))
+
+    def _record(self, frame) -> None:
+        """Every raw frame to FRIDAY_TOF_RECORD, for replaying what she really saw.
+        ~5 KB/s. Never raises: a full disk must not cost a tick."""
+        if self._rec_path is None:
+            return
+        try:
+            if self._rec is None:
+                self._rec = open(self._rec_path, "a", buffering=1 << 16)
+            self._rec.write(json.dumps({"t": round(time.monotonic(), 3), "f": frame},
+                                       separators=(",", ":")) + "\n")
+        except (OSError, ValueError):
+            self._rec_path = None
 
     def _hold_dark(self, med: np.ndarray) -> np.ndarray:
         """A dark thing that went silent up close stays (TOF_DARK_HOLD_MM)."""
@@ -3288,7 +3320,10 @@ class BlackBox:
               # there was no camera at all (cv2 was missing from the venv, so every
               # frame was None). `cam_conf` is the column that makes that visible:
               # a run of zeros means she is blind, whatever the logs say.
-              "cam_bearing", "cam_range", "cam_conf")
+              "cam_bearing", "cam_range", "cam_conf",
+              # WHAT ACTUALLY TOUCHED HER (2026-10-30): the board's bump counter and tilt,
+              # so a contact is a fact in the file and not a guess from a ToF column.
+              "imu_bumps", "tilt")
 
     def __init__(self, seconds: float, hz: float) -> None:
         self.buf: deque[tuple] = deque(maxlen=int(seconds * hz) + 16)
@@ -4732,7 +4767,8 @@ class ControlLoop:
                               round(min(self.governor.last_rear_min, 99.9), 3),
                               round(math.degrees(self.free_view.bearing), 1),
                               round(self.free_view.centre_range, 2),
-                              round(self.free_view.confidence, 2)))
+                              round(self.free_view.confidence, 2),
+                              *self._body_columns()))
         lap("pose+telemetry")
         self.stage_wall_s += time.perf_counter() - t_start
         return row
@@ -4986,6 +5022,7 @@ class ControlLoop:
             return None
         imu = m.imu(max_age_s=0.5)
         m.request_imu()
+        self._last_imu = imu
         if imu is not None and "tilt_deg" in imu:
             if self._body is None:
                 self._init_body()
@@ -5158,6 +5195,10 @@ class ControlLoop:
             self._say("escape", "Tight space. Backing out."
                       if self.bumper_escape.phase == _escape.BACK
                       else "Tight space. Turning out.")
+
+    def _body_columns(self) -> tuple:
+        imu = getattr(self, "_last_imu", None) or {}
+        return (imu.get("bumps", ""), imu.get("tilt_deg", ""))
 
     def _reverse_refused(self, scan, now: float) -> bool:
         """Would stage 4e refuse a reverse right now? No side effects."""

@@ -148,6 +148,23 @@ o = e.step(blocked=True, ahead_m=0.5, bumper_m=0.45, rear_min_m=0.22, can_revers
            open_side=1.0, exec_v=0.0, exec_omega=1.6, dt=DT)
 check("something coming into view far off is not a flip", e.flips == 0)
 
+# Already inside the stop zone: no waiting for a second frame.
+import numpy as np                                          # noqa: E402
+from pi_deploy import tof_fast_stop, TOF_FAST_STOP_MM       # noqa: E402
+med = np.full((8, 8), 4.0, np.float32)
+frame = np.full((8, 8), 4000.0, np.float32)
+frame[3, 3:6] = 150.0
+out = tof_fast_stop(med, frame, 3)
+check("three cells inside the stop zone pass straight through",
+      float(np.sort(out.reshape(-1))[2]) <= 0.151, str(np.sort(out.reshape(-1))[:3]))
+frame = np.full((8, 8), 4000.0, np.float32)
+frame[3, 3:5] = 150.0
+check("two cells is speckle: the median stands", float(tof_fast_stop(med, frame, 3).min()) == 4.0)
+frame = np.full((8, 8), 4000.0, np.float32)
+frame[2, 2:6] = 280.0
+check("the 250-315 mm crosstalk is not let through",
+      TOF_FAST_STOP_MM < 250 and float(tof_fast_stop(med, frame, 3).min()) == 4.0)
+
 # A gyro that lies.
 config_ok = config.BODY_FAULT_S > 0
 
