@@ -2431,6 +2431,15 @@ class MissionManager:
         if how == "self":
             log.info("the run finished on its own: exploring is over")
             self._run_ended = True
+            if self.state == "PAUSED":
+                # A PERSON'S STOP OUTRANKS THE CLOCK (2026-10-30). The run's timer
+                # running out under a pause read as "exploring is over", which asked
+                # the last question, and that timing out sent her home: she set off
+                # by herself a minute after being told to stop. Paused stays paused
+                # until "continue" or "go back".
+                self.stop_reason = self.stop_reason or "time_cap"
+                self._t_last_fix = now
+                return
             self.stop_reason = self.stop_reason or (
                 "time_cap" if self._minutes and self._t_explore is not None
                 and now - self._t_explore >= self._minutes * 60.0 - 15.0
