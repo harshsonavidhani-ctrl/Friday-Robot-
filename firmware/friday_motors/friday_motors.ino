@@ -21,7 +21,7 @@
  *
  *   P              identify        -> "FRIDAY-MOTORS 1"
  *   M <l> <r>      set speeds      -> "OK"     l and r are -255..255
- *   S              stop            -> "OK"
+ *   S              stop            -> "OK"     brakes BRAKE_MS, then free (GYRO 8)
  *   W <ms>         watchdog window -> "OK"     0 disables (not advised)
  *   G              gyro            -> "G <yaw cdeg> <rate cdeg/s> <ok|cal|nogyro> <gaps> <errors>
  *                                       ... *XX" (GYRO 6+: XOR checksum of the line before '*')
@@ -456,9 +456,36 @@ void setSide(uint8_t en, uint8_t a, uint8_t b, int speed) {
   }
 }
 
+// A STOP BRAKES, then lets go (2026-10-30). Coasting was the end of most bumps: the
+// reflex fired, the wire said S, and she rolled on. 7 of 8 close-ins that day began
+// in a pivot, and the bumper kept closing 0.20 -> 0.11 -> 0.02 m after the stop. Both
+// inputs low with EN up shorts each motor through the bridge's low side, so it draws
+// nothing from the battery and cannot brown the Pi out. Held BRAKE_MS, then released:
+// an idle robot must not sit with the bridge enabled. Only a moving robot brakes, so
+// the S the drivers repeat at rest does nothing, and any M cancels it.
+const int BRAKE_DUTY = 200;
+const unsigned long BRAKE_MS = 200;
+unsigned long brakeSinceMs = 0;
+bool braking = false;
+
+void releaseBrake() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+  braking = false;
+}
+
 void allStop() {
-  setSide(ENA, IN1, IN2, 0);
-  setSide(ENB, IN3, IN4, 0);
+  if (moving) {
+    digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+    digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+    analogWrite(ENA, BRAKE_DUTY);
+    analogWrite(ENB, BRAKE_DUTY);
+    brakeSinceMs = millis();
+    braking = true;
+  } else if (!braking) {
+    setSide(ENA, IN1, IN2, 0);
+    setSide(ENB, IN3, IN4, 0);
+  }
   moving = false;
 }
 
@@ -513,7 +540,7 @@ void loop() {
           Serial.println("OK");
         }
       } else if (cmd == 'V' || cmd == 'v') {
-        Serial.print("FRIDAY-MOTORS 1 GYRO 7 who=0x");
+        Serial.print("FRIDAY-MOTORS 1 GYRO 8 who=0x");
         Serial.print(gyroWho, HEX);
         Serial.print(" tries=");
         Serial.print(whoTries - 1);
@@ -540,6 +567,7 @@ void loop() {
             allStop();                        // held: she is tipped or in a hand
             Serial.println("TILT");
           } else {
+            braking = false;                  // a new order overrides the brake
             setSide(ENA, IN1, IN2, l);
             setSide(ENB, IN3, IN4, r);
             moving = (l != 0 || r != 0);
@@ -558,6 +586,7 @@ void loop() {
     Serial.println("WATCHDOG");
   }
 
+  if (braking && millis() - brakeSinceMs >= BRAKE_MS) releaseBrake();
   if (moving) stillSinceMs = millis();
   gyroUpdate();
 }
